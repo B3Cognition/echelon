@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from dataclasses import fields
 import hashlib
 import json
-import math
 from urllib.parse import quote
 from uuid import UUID
 
@@ -22,6 +21,7 @@ from harness.element_identity_json import strict_json
 from harness.element_identity_snapshot import IdentityHistorySnapshot
 from harness.issue_identity import issue_fingerprint
 from kernel.element_ids import decimal_to_int, int_to_decimal
+from echelon.spec_graph_values import copy_tree
 
 
 _KINDS = {
@@ -52,20 +52,8 @@ def _require(condition):
 
 
 def _copy_tree(value):
-    """Detach JSON property trees, including non-pickleable Mapping proxies."""
-    if isinstance(value, Mapping):
-        _require(all(type(key) is str for key in value))
-        for key in value:
-            key.encode("utf-8")
-        return {key: _copy_tree(item) for key, item in value.items()}
-    if type(value) in (list, tuple):
-        return type(value)(_copy_tree(item) for item in value)
-    _require(value is None or type(value) in (str, bool, int, float))
-    if type(value) is str:
-        value.encode("utf-8")
-    if type(value) is float:
-        _require(math.isfinite(value))
-    return value
+    """Compatibility wrapper for the shared property-tree copier."""
+    return copy_tree(value)
 
 
 def _copy_graph(graph):

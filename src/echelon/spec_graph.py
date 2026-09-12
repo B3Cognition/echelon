@@ -386,6 +386,11 @@ def _add_re_topology(
     edges: list[GraphEdge],
     inputs: dict[str, GraphInput],
 ) -> None:
+    from echelon.spec_graph_re import (
+        _add_decision, _add_described_by, _add_source, _annotate_artifact,
+        _decision_id, _source_properties, _topology_properties,
+    )
+
     context_path = spec_dir / "re-context.json"
     linked_artifacts = sorted(
         path
@@ -415,43 +420,15 @@ def _add_re_topology(
         artifact_node = nodes.get(artifact_id)
         if artifact_node is None:
             continue
-        properties = dict(artifact_node.properties)
-        properties.update(
-            {
-                "re_artifact_kind": descriptor.kind,
-                "re_scope": descriptor.scope,
-            }
-        )
-        if descriptor.source_id is not None:
-            properties["re_source_id"] = descriptor.source_id
-        if artifact_id in stored_artifacts:
-            properties["mining_status"] = "mined"
-        elif descriptor.kind != "re-decision":
-            properties["mining_status"] = "eligible"
-        nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
+        nodes[artifact_id] = _annotate_artifact(artifact_id, artifact_node, descriptor, stored_artifacts)
 
         if descriptor.scope != "workspace" or descriptor.kind != "re-decision":
             continue
-        relative_path = descriptor.path.removeprefix("re/workspace/")
-        decision_id = f"decision:workspace:{relative_path}"
-        nodes[decision_id] = GraphNode(
-            decision_id,
-            "Decision",
-            {
-                "scope": "workspace",
-                "path": _workspace_path(root, path),
-                "title": _adr_title(path),
-            },
+        decision_id = _decision_id(None, descriptor.path)
+        _add_decision(
+            spec_dir.name, None, decision_id, _workspace_path(root, path),
+            _adr_title(path), artifact_id, nodes, edges,
         )
-        edges.append(
-            GraphEdge(
-                f"spec:{spec_dir.name}",
-                "INFORMED_BY_DECISION",
-                decision_id,
-                {},
-            )
-        )
-        edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
 
     if not descriptors:
         return
@@ -483,14 +460,10 @@ def _add_re_topology(
             raise SpecGraphError(
                 f"canonical source identity conflict: {source_node_id}"
             )
-        source_properties: dict[str, object] = {
-            "source_id": source_id,
-            "path": workspace_source,
-            "publication_status": semantic_source.status,
-            "semantic_generation": re_index.generation,
-            "semantic_fingerprint": semantic_source.fingerprint,
-            "semantic_receipt_path": semantic_source.manifest,
-        }
+        source_properties = _source_properties(
+            source_id, workspace_source, semantic_source.status,
+            re_index.generation, semantic_source.fingerprint, semantic_source.manifest,
+        )
 
         topology_source = (
             topology_index.sources.get(source_id)
@@ -513,11 +486,10 @@ def _add_re_topology(
                 )
             topology_receipt_path = topology_source.receipt.path
             source_properties.update(
-                {
-                    "topology_generation": topology_index.generation,
-                    "topology_fingerprint": topology_source.source_fingerprint.value,
-                    "topology_receipt_path": topology_receipt_path,
-                }
+                _topology_properties(
+                    topology_index.generation, topology_source.source_fingerprint.value,
+                    topology_receipt_path,
+                )
             )
             topology_receipt_id = _add_artifact(
                 root,
@@ -527,48 +499,22 @@ def _add_re_topology(
                 inputs,
                 role="topology-receipt",
             )
-        nodes[source_node_id] = GraphNode(
-            source_node_id,
-            "SourceRoot",
-            source_properties,
+        _add_source(
+            spec_dir.name, source_id, source_properties, topology_receipt_id, nodes, edges,
         )
-        edges.append(
-            GraphEdge(f"spec:{spec_dir.name}", "USES_SOURCE", source_node_id, {})
-        )
-        if topology_receipt_id is not None:
-            edges.append(
-                GraphEdge(
-                    source_node_id,
-                    "HAS_TOPOLOGY_RECEIPT",
-                    topology_receipt_id,
-                    {},
-                )
-            )
 
         for path, descriptor in source_artifacts:
             artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
             if artifact_id not in nodes:
                 continue
             if descriptor.kind != "re-decision":
-                edges.append(
-                    GraphEdge(source_node_id, "DESCRIBED_BY", artifact_id, {})
-                )
+                _add_described_by(source_id, artifact_id, edges)
                 continue
-            source_relative_path = descriptor.path.removeprefix(
-                f"re/sources/{source_id}/"
+            decision_id = _decision_id(source_id, descriptor.path)
+            _add_decision(
+                spec_dir.name, source_id, decision_id, _workspace_path(root, path),
+                _adr_title(path), artifact_id, nodes, edges,
             )
-            decision_id = f"decision:{source_id}:{source_relative_path}"
-            nodes[decision_id] = GraphNode(
-                decision_id,
-                "Decision",
-                {
-                    "source_id": source_id,
-                    "path": _workspace_path(root, path),
-                    "title": _adr_title(path),
-                },
-            )
-            edges.append(GraphEdge(source_node_id, "HAS_DECISION", decision_id, {}))
-            edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
 
 
 def _canonical_workspace_sources(root: Path) -> dict[str, str]:
@@ -616,13 +562,10 @@ def _canonical_source_path(root: Path, value: object, subject_id: str) -> str:
 
 
 def _adr_title(path: Path) -> str:
+    from echelon.spec_graph_re import _title_from_text
+
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                title = stripped.lstrip("#").strip()
-                if title:
-                    return title
+        return _title_from_text(path.read_text(encoding="utf-8"), path.stem)
     except (OSError, UnicodeError):
         pass
     return path.stem

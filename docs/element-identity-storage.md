@@ -1972,6 +1972,60 @@ identity projection. Captured acquisition/reconciliation, full composition and
 sealing, managed source/runtime/producer/semantic/completion, and bounded-repair
 integration remain required. No publication or runtime path is activated here.
 
+## Captured linked RE graph contribution (inactive)
+
+`echelon.spec_graph_re.build_re_graph_contribution` accepts selected
+`GraphReArtifact` records (native `ReArtifactDescriptor` plus exact bytes),
+`GraphReSource` observations, optional `GraphReTopology` observations (native
+`TopologyArtifactReceipt` plus receipt bytes), preceding Artifact nodes, and
+observed preceding `STORED_AS` source IDs. It returns only replaced/contributed
+nodes, edges, and topology-receipt inputs. It does not select sources, load a
+catalog, parse provider payloads, authenticate receipts, or publish a graph.
+
+The boundary validates exact types, UTF-8 metadata, SHA-256 values against
+supplied bytes, canonical relative paths, unique observations, source ownership,
+and matching workspace/semantic/topology source paths. Source root paths alone
+may be exactly `.`; this preserves native monorepo-root observations without
+checking that a directory exists. Artifact and receipt paths remain non-dot.
+Source IDs retain the RE catalog policy, which excludes `.` even though the
+topology model separately supports that logical ID. Topology receipt ownership
+uses the actual `source_storage_key` helper, not an assumption that every
+topology display ID equals its directory component. Generations are positive
+exact integers; semantic and topology generations observe their respective
+indexes. They are not per-source receipt generations. Status and fingerprint
+strings remain observations rather than new acceptance policies.
+
+Shared pure transformations preserve selected-path/source ordering, decision
+keys and ADR titles, existing artifact properties, mining annotations, source
+roots, and relationship order. Missing Artifact nodes retain the legacy skip
+behavior, including source grouping; a selected source still requires an
+explicit observation. Extra valid observations do not produce unrelated nodes.
+The new boundary owns all returned records and nested JSON properties through
+the existing property-tree copier, narrowly shared in `spec_graph_values`;
+identity projection retains its `_copy_tree` compatibility wrapper. Ordinary
+invalid inputs raise one bounded `SpecGraphError` without a retained exception
+cause/context, while process-control exceptions propagate.
+
+The live `_add_re_topology` helper still owns selection, physical registry/path
+validation, and each actual read. It delegates transformations at the existing
+interleaving points, preserving early returns and partial contributions before
+later source conflicts or receipt read failures. It keeps duck typing and
+shallow artifact replacement. Strict captured validation does not run there.
+
+Offline tests compose real local structure, captured memory contributions,
+captured RE, and retained identity history. Original requirement/task/decision/
+source keys and historical revision evidence remain intact. Requirement memory
+and verification edges retain the projection's explicit `unassessed` status;
+RE artifact memory edges retain their original properties. Native registry
+fixtures exercise actual typed catalog validation and topology receipt loading,
+including index generations that differ from source receipt generations.
+
+Consistent supplied values do not establish complete source selection, accepted
+registry provenance, a fresh memory audit, publication, or semantic acceptance.
+Authenticated joint dependency capture, complete graph composition/sealing,
+managed source/runtime/producer/semantic/completion enforcement, and bounded
+repair remain separate integration work. No live caller uses this entry point.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
