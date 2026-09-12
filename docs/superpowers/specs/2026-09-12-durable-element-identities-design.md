@@ -5,8 +5,23 @@
 The user approved fixing the browser-game smoke-test findings and requested
 at least six numeric digits, with capacity for millions of identifiers over
 years. This document makes the migration and enforcement contract explicit
-before implementation. It is the design review checkpoint, not a claim that
-the fixes are implemented.
+before implementation. The user approved this design. Implementation progress
+is tracked below; approval is not a claim that all enforcement is implemented.
+
+### Implementation checkpoints
+
+- Numeric compatibility: implemented and independently reviewed in
+  `6230eb97` and `841743fc`. Focused compatibility suites passed 239 tests;
+  internalization integration passed 34 checks; review fixes passed 59 focused
+  tests. Existing labels remain unchanged; new numeric labels use six digits
+  minimum and readers accept wider values.
+- Wider regression check: 9,139 passed and one earlier-branch prompt-contract
+  failure. The four missing delivery rule headings were corrected in
+  `8a6cc1b9`, with 89 covering tests passing and a clean independent review.
+  This does not relabel the original full-suite result as an all-pass run.
+- Durable allocation authority: implementation in progress, not active.
+- Lifecycle, reference/publication enforcement, targeted repair, and new live
+  verification: outstanding. No global installation or stopped-run mutation.
 
 The work covers AC, FR, NFR, ISS, U, A, and T identities; their readers,
 producers, references, evidence lineage; and the failed Phase A discovery
