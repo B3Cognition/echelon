@@ -169,12 +169,19 @@ def _render_prompt(
     return (
         body
         + ("" if body.endswith("\n") else "\n")
-        + f"\nWrite exactly `{filename}` and the required trailing `echelon_result`.\n"
+        + f"\nWrite exactly `{filename}` and complete the transport as instructed below.\n"
         + "Do not read any live workspace path; the canonical context below is complete.\n"
         + "## Frozen slice context (canonical JSON)\n"
         + context
         + "\n## Exact response schema authority (canonical JSON)\n"
         + schema
+        + "\n## Transport completion\n"
+        + f"Write the JSON result only to `{filename}`; do not print it in the assistant response.\n"
+        + "After writing the file, return only this bare YAML transport envelope, "
+        + "with no prose or Markdown fences:\n"
+        + "echelon_result:\n"
+        + "  verdict: DONE\n"
+        + "  state_updates: {}\n"
     )
 
 

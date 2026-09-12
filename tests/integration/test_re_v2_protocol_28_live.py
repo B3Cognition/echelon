@@ -10,7 +10,10 @@ from harness.re_v2.protocol_22.provider import (
     DispatchReservationV1,
     canonical_prosaic_agent_bytes,
 )
-from harness.re_v2.protocol_28.cli_provider import SquadCliProtocol28Backend
+from harness.re_v2.protocol_28.cli_provider import (
+    SquadCliProtocol28Backend,
+    _render_prompt,
+)
 from harness.squad_provider import SquadAgentResult
 
 
@@ -125,3 +128,27 @@ def test_shared_cli_backend_uses_reconciliation_specific_result_files() -> None:
         "knowledge-reconciliation-candidate.json",
         "knowledge-reconciliation-review.json",
     ]
+
+
+@pytest.mark.integration
+def test_shared_cli_prompt_ends_with_unambiguous_file_and_transport_boundary() -> None:
+    prompt = _render_prompt(
+        "Produce the exact result.",
+        "producer",
+        '{"kind":"knowledge-reconciliation","role":"producer"}',
+        '{"type":"object"}',
+        "knowledge-reconciliation-candidate.json",
+    )
+
+    assert prompt.endswith(
+        "Write the JSON result only to `knowledge-reconciliation-candidate.json`; "
+        "do not print it in the assistant response.\n"
+        "After writing the file, return only this bare YAML transport envelope, "
+        "with no prose or Markdown fences:\n"
+        "echelon_result:\n"
+        "  verdict: DONE\n"
+        "  state_updates: {}\n"
+    )
+    assert prompt.index("## Exact response schema authority") < prompt.index(
+        "## Transport completion"
+    )

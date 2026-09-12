@@ -88,8 +88,10 @@ NEVER derive content identities yourself, cite only a subset of
 
 ## Output Block
 
-Return the exact JSON object required by the supplied response schema, then the
-minimal transport envelope where the provider adapter requires it:
+Write the exact JSON object required by the supplied response schema only to the
+named result file. Do not print that JSON in the assistant response. After writing
+the file, return only the bare transport envelope below with no prose or Markdown
+fences:
 
 ```yaml
 echelon_result:
