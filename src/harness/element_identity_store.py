@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from kernel.element_ids import decimal_to_int, format_element_id, int_to_decimal
 from harness import element_identity_schema as schema
 from harness import element_identity_lifecycle as lifecycle
+from harness import element_identity_lifecycle_store as lifecycle_store
 from harness import element_identity_bindings as bindings
 from harness import element_identity_binding_store as binding_store
 
@@ -599,27 +600,7 @@ class IdentityStore:
                 self._high_water(connection, spec_id, kind)
             if self._operation(connection, operation_id, "lifecycle", spec_id, digest):
                 return self._receipt(connection, operation_id, spec_id)
-            planned, links = [], []
-            for change in changes:
-                if type(change) is lifecycle.ElementCreate:
-                    planned.append(self._creation(connection, spec_id, change))
-                elif type(change) is lifecycle.ElementAdopt:
-                    planned.append(self._existing_change(connection, spec_id, change.element_id, None,
-                        subject=change.subject, content=change.content, adopt=True))
-                elif type(change) is lifecycle.ElementRevision:
-                    planned.append(self._existing_change(connection, spec_id, change.element_id, change.expected_revision,
-                        subject=change.subject, content=change.content))
-                elif type(change) is lifecycle.ElementRetirement:
-                    planned.append(self._existing_change(connection, spec_id, change.element_id, change.expected_revision,
-                        status="retired", reason=change.reason))
-                else:
-                    for label, expected in change.predecessors:
-                        planned.append(self._existing_change(connection, spec_id, label, expected,
-                            status="superseded", reason=change.reason))
-                    for successor in change.successors:
-                        planned.append(self._creation(connection, spec_id, successor))
-                    links.extend((spec_id, label, expected, successor.element_id, "1", change.kind, change.reason, operation_id)
-                                 for label, expected in change.predecessors for successor in change.successors)
+            planned, links = lifecycle_store.plan_changes(connection, self, spec_id, changes)
             for label, revision, subject, content, status, reason, kind, ordinal in planned:
                 if kind is not None:
                     connection.execute("INSERT INTO entities (spec_id,element_id,kind,subject,ordinal) VALUES (?,?,?,?,?)",
@@ -632,13 +613,35 @@ class IdentityStore:
                     (spec_id, label, status, revision))
             connection.executemany("INSERT INTO lifecycle_lineage "
                 "(spec_id,predecessor_id,predecessor_revision,successor_id,successor_revision,kind,reason,operation_id) "
-                "VALUES (?,?,?,?,?,?,?,?)", links)
+                "VALUES (?,?,?,?,?,?,?,?)", ((*link, operation_id) for link in links))
             result = [{"element_id": row[0], "revision": row[1], "status": row[4],
                        "lineage": [link for link in self._lineage(connection, spec_id, row[0])
                                    if link["operation_id"] == operation_id]} for row in planned]
             receipt = _json(result)
             connection.execute("INSERT INTO lifecycle_receipts (operation_id,receipt,receipt_sha256) VALUES (?,?,?)",
                                (operation_id, receipt, hashlib.sha256(receipt.encode("ascii")).hexdigest()))
+            return tuple(result)
+
+    @_public
+    def preview_lifecycle(self, *, spec_id: str,
+                          changes: Sequence[lifecycle.LifecycleChange]) -> tuple[dict, ...]:
+        """Project validated lifecycle heads from one read snapshot without writes."""
+        _identifier(spec_id, "spec_id")
+        with self._transaction() as connection:
+            planned, _ = lifecycle_store.plan_changes(connection, self, spec_id, changes)
+            result = []
+            for label, revision, subject, content, status, _, _, _ in planned:
+                head = self._head(connection, spec_id, label)
+                result.append({
+                    "element_id": label,
+                    "expected_status": head["status"] if head is not None else None,
+                    "expected_revision": head["revision"] if head is not None else None,
+                    "subject": subject,
+                    "content": content,
+                    "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    "revision": revision,
+                    "status": status,
+                })
             return tuple(result)
 
     @staticmethod

@@ -111,6 +111,27 @@ fresh dictionaries containing `element_id`, `revision`, `status`, and `lineage`.
 An identical retry returns the original durable receipt even after later changes.
 Conflicting reuse of the global operation ID fails across all record APIs.
 
+Use `store.preview_lifecycle(spec_id=..., changes=(...))` to validate and project
+the same batch against one current read snapshot without applying it. Application
+and preview share the same connection-owned planner and namespace high-water
+integrity checks. Preview returns one detached dictionary per planned head, in
+input order and, within a transition, predecessor order followed by successor
+order. Every dictionary has exactly `element_id`, `expected_status`,
+`expected_revision`, `subject`, `content`, `content_sha256`, `revision`, and
+`status`. The expected fields describe the actual head in that snapshot:
+`None`/`None` for an unused reserved identity and `imported`/`None` for an
+adoption. The remaining fields describe the proposed head. Terminal projections
+retain the predecessor's content and digest.
+
+A preview is advisory current-prestate information, not an authorization,
+accepted candidate, or publication result. It has no operation ID and creates no
+operation, revision, entity, head, lineage, or receipt record. Another connection
+may commit after the preview ends. Applying the earlier proposal still performs
+the normal expected-revision compare-and-swap validation in a new write
+transaction and rejects a stale proposal; the detached preview is not updated or
+replayed. Only `apply_lifecycle` owns global operation binding, durable receipts,
+and matching-retry behavior.
+
 First assessed revision is the decimal string `"1"`. Revision arithmetic uses the
 same unbounded Python integer conversion as allocation, storing canonical decimal
 TEXT without fixed-width casts. Content edits and status changes never allocate
