@@ -142,6 +142,18 @@ def _producer_contract_failure_codes(
     )
 
 
+def _repair_permitted_evidence_ids(entry: SlicePlanEntryV1) -> tuple[str, ...]:
+    """Return every frozen evidence ID a repaired producer may cite."""
+    return tuple(
+        sorted(
+            set(
+                entry.primary_snapshot_evidence_ids
+                + entry.supporting_snapshot_evidence_ids
+            )
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _VerifierRetryBlocked:
     reason_code: str
@@ -869,7 +881,7 @@ def _execute_slice(
             slice_spec.identity,
             candidate.identity,
             diagnostic_ids,
-            candidate.covered_primary_evidence_ids,
+            _repair_permitted_evidence_ids(entry),
             min(producer_attempt + 1, policy.producer_attempt_limit),
         )
         packet_id = context.objects.put_blob(

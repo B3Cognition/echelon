@@ -55,6 +55,21 @@ def test_dispatch_time_reservation_scales_with_bounded_context(
 
 
 @pytest.mark.unit
+def test_repair_packet_uses_supporting_evidence_when_primary_set_is_empty() -> None:
+    from harness.re_v2.protocol_28.lifecycle import _repair_permitted_evidence_ids
+
+    entry, *_ = _candidate_fixture()
+    expected = entry.primary_snapshot_evidence_ids
+    support_only = replace(
+        entry,
+        primary_snapshot_evidence_ids=(),
+        supporting_snapshot_evidence_ids=expected,
+    )
+
+    assert _repair_permitted_evidence_ids(support_only) == expected
+
+
+@pytest.mark.unit
 def test_large_slice_time_is_reserved_before_dispatch_within_existing_budget(tmp_path: Path) -> None:
     from harness.re_v2.protocol_28.lifecycle import _reservation
     _, inputs = _fixture()
