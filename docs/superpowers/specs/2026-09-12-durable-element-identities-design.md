@@ -139,6 +139,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   remain unassessed; historical active issue occurrences retain their original
   meaning after a projected retirement. This does not reserve a baseline,
   authenticate evidence or authorize publication.
+- Joint publication/source capture: implemented in `ef44b0ec` and independently
+  reviewed with no findings. Exact four-module compatibility suite: 411 passed.
+  Sealed operations, complete selected trees and external selected files now
+  share one descriptor-bound lock and joint before-yield/normal-exit checks.
+  Stable hard-linked reads preserve existing behavior, with link/content drift
+  rejected. Source selection still requires controller-owned complete dependency
+  coverage, and current bytes are not invented historical preimages.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
