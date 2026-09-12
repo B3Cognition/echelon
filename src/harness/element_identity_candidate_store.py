@@ -1,4 +1,4 @@
-"""Discovery checks on one caller-owned read transaction; no writes or verdicts."""
+"""Identity checks on one caller-owned read transaction; no writes or verdicts."""
 
 from harness import element_identity_binding_store as binding_store
 from harness import element_identity_lifecycle as lifecycle
@@ -7,7 +7,8 @@ from harness import element_identity_store as authority
 from harness.element_artifacts import parse_identity_artifact
 from harness.element_identity_candidate import (
     CandidateDiagnostic, CandidateReferenceState, DiscoveryCandidateCheck,
-    SUPPORTED_ROLES, scope_diagnostics,
+    IdentityCandidateCheck, _DISCOVERY_POLICY, _IDENTITY_POLICY,
+    _identity_scope_diagnostics, scope_diagnostics,
 )
 
 
@@ -22,7 +23,8 @@ def _head(connection, store, spec_id, label):
     return head
 
 
-def check(connection, store, spec_id, artifacts, scope, changes, affected):
+def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
+          policy=_DISCOVERY_POLICY, result_factory=DiscoveryCandidateCheck):
     diagnostics, references, images = [], [], []
     definitions = {"before": {}, "after": {}}
     ordinals = {"before": {}, "after": {}}
@@ -32,11 +34,12 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
 
     def result():
         ordered = sorted(set(diagnostics), key=lambda row: (row.path or "", row.element_id or "", row.code, row.detail))
-        return DiscoveryCandidateCheck(tuple(ordered), tuple(references))
+        return result_factory(tuple(ordered), tuple(references))
 
     for artifact in sorted(artifacts, key=lambda item: item.path):
-        if artifact.role not in SUPPORTED_ROLES:
-            diagnose("unsupported_role", artifact.path, None, f"unsupported discovery role: {artifact.role}")
+        if artifact.role not in policy.supported_roles:
+            diagnose("unsupported_role", artifact.path, None,
+                     f"unsupported {policy.name} role: {artifact.role}")
             if artifact.before_text != artifact.after_text and artifact.path not in scope.writable_paths:
                 diagnose("artifact_out_of_scope", artifact.path, None, "changed artifact is not writable")
             continue
@@ -57,7 +60,8 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
                 if ordinal is not None:
                     ordinals[image].setdefault((kind, ordinal), set()).add(entry.element_id)
         before, after = parsed_images
-        diagnostics.extend(scope_diagnostics(artifact, before, after, scope))
+        scope_checker = _identity_scope_diagnostics if policy.nested_requirement_spans else scope_diagnostics
+        diagnostics.extend(scope_checker(artifact, before, after, scope))
         images.append((artifact, before, after))
 
     for image in ("before", "after"):
@@ -112,7 +116,8 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
     for label, entries in definitions["after"].items():
         before_entries = definitions["before"].get(label, ())
         for path, entry in entries:
-            if any(entry.caption != old.caption for _, old in before_entries):
+            if entry.kind in policy.preserve_caption_kinds and any(
+                    entry.caption != old.caption for _, old in before_entries):
                 diagnose("subject_changed", path, label,
                          "caption change requires a new identity through an explicit transition")
 
@@ -120,8 +125,10 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
     for label in affected:
         entries = definitions["before"].get(label, ()) or definitions["after"].get(label, ())
         path = entries[0][0] if entries else None
-        if label.split("-", 1)[0] not in {"U", "A"}:
-            diagnose("unsupported_lifecycle_kind", path, label, "discovery lifecycle changes support only U/A identities")
+        if label.split("-", 1)[0] not in policy.supported_kinds:
+            diagnose("unsupported_lifecycle_kind", path, label,
+                     f"{policy.name} lifecycle changes support only "
+                     f"{'/'.join(policy.supported_kinds)} identities")
             proposal_invalid = True
         if label not in scope.element_ids:
             diagnose("element_out_of_scope", path, label, "lifecycle identity is outside element scope")
@@ -186,8 +193,9 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
                 diagnose("reference_identity_mismatch", artifact.path, ref.target_id,
                          "reference target must exist by exact label in the same spec")
                 continue
-            if ref.relation in {"requires", "depends"} and head["status"] in {"retired", "superseded"}:
-                diagnose("inactive_dependency", artifact.path, ref.target_id, "required dependency is terminal")
+            if ref.relation in {"requires", "depends"} and head["status"] != "active":
+                diagnose("inactive_dependency", artifact.path, ref.target_id,
+                         "required dependency is not active")
             revisions = tuple(claim["target_revision"] for claim in claims if (
                 claim["source_anchor"] == f"span:{ref.span.start}:{ref.span.end}"
                 and claim["target_id"] == ref.target_id and claim["relation"] == ref.relation
@@ -198,3 +206,8 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
             references.append(CandidateReferenceState(artifact.path, after.content_sha256,
                 ref.span.start, ref.span.end, ref.target_id, ref.relation, revisions, state))
     return result()
+
+
+def check_identity(connection, store, spec_id, artifacts, scope, changes, affected):
+    return check(connection, store, spec_id, artifacts, scope, changes, affected,
+                 policy=_IDENTITY_POLICY, result_factory=IdentityCandidateCheck)
