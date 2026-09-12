@@ -177,6 +177,64 @@ provider routing, promotion/discard behavior or activation. Existing Phase A
 completion transactions, candidate isolation and repair remain the owners, and
 published labels and string IDs retain their exact spelling.
 
+## Initial source-baseline recovery codec
+
+`harness.squad_source_baseline_codec` is a pure, inactive codec for losslessly
+retaining a successful joint observation before any target is promoted.
+`encode_initial_publication_sources(snapshot)` accepts only the exact frozen
+snapshot, publication, marker, operation, image, tree, directory and file value
+types with exact tuple sequences. The publication prefix must be the exact integer
+zero, and every operation's current descriptor and actual bytes must independently
+match its preimage. Zero alone is not evidence that original bytes remain. Writes
+must carry a present file postimage and exact staged bytes; deletes must carry the
+missing postimage. Empty and exact no-op operations remain valid.
+
+The version-1 payload is canonical ASCII JSON with sorted object keys, compact
+separators and no trailing newline. Its root contains only string `version="1"`,
+`publication`, `trees`, and `files`. Publication contains only `marker` and
+`operations`; the marker contains string `schema_version="1"`, transaction ID and
+manifest SHA-256. The zero prefix is implicit and is not serialized. Each operation
+contains only `action`, `target`, `preimage`, and `postimage`. Each image contains
+only `kind`, `sha256`, `mode`, and `content_base64`: missing images use `"missing"`
+and three JSON nulls, while files use their lowercase digest, canonical decimal
+permission-mode string, and canonical ASCII base64 of the exact bytes. Empty files
+therefore use an empty base64 string rather than null.
+
+Each tree contains only `path`, string `exists` (`"true"` or `"false"`),
+`directories`, and `files`. Directory entries contain only `path` and canonical
+decimal `mode`; tree and selected-file entries contain only `path` and an image.
+Paths preserve exact valid UTF-8 code points and use the existing canonical
+project-relative grammar. Trees and selected paths retain complete sorted,
+non-overlapping membership, including hidden and binary files, CRLF, Unicode,
+empty/missing files, nested empty directories and permission distinctions. A
+target represented by that complete selection must agree with the selected
+original observation. Selection does not grant write scope, and operations outside
+the selection remain fully retained.
+
+`decode_initial_publication_sources(payload)` uses strict duplicate- and
+number-rejecting JSON parsing, exact closed key sets and exact scalar types. It
+reconstructs every operation's `current` descriptor and bytes from the retained
+preimage, never from a live target, and returns detached tuples, frozen values and
+bytes. Re-encoding must equal the supplied payload byte-for-byte, so alternate
+whitespace, key order, escaping, base64 spelling and decimal padding are rejected.
+Both functions raise only bounded `PublicationError("manifest_invalid")` for
+malformed input and perform no filesystem, database, clock, randomness, network,
+provider or store access.
+
+This format retains claims; it does not authenticate them. It lacks manifest stage
+filenames and therefore cannot recompute the sealed manifest digest. A
+self-consistent altered payload can decode. A future completion owner must compare
+the value with its intended authority, accepted baseline and authenticated sealed
+publication, then validate unchanged dependencies under the existing publication
+lock before promotion. Decoding, digest equality or round-trip success does not
+authorize publication. The codec does not select dependencies, infer artifact
+roles or source associations, enroll namespaces, reserve or allocate identities,
+persist a recovery packet, publish, update graphs or memory, or activate any
+controller/provider/producer path. Historical evidence remains retained evidence;
+it is not relabeled as proof of new content. Complete crash recovery across artifact
+promotion, ledger publication and graph projection remains future completion-owner
+integration and must prevent duplicate allocation and false completion.
+
 ## Strict request recovery codec
 
 `harness.element_identity_request_codec` is a pure, inactive compatibility helper
