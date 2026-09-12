@@ -17459,7 +17459,7 @@ def _run_re_knowledge_refresh_action(
     token_limit: int,
     active_ms_limit: int,
 ) -> None:
-    """Execute the M3 reviewed refresh path for an already prepared analysis."""
+    """Create or resume changed-source analysis and publish one refresh."""
     from harness.config import load_config
     from harness.re_lifecycle import resolve_current_re_run
     from harness.re_registry import load_published_index
@@ -17514,16 +17514,100 @@ def _run_re_knowledge_refresh_action(
         explicit_depth=explicit_depth,
         workspace_default=configured_workspace_depth(workspace),
     )
+    config = load_config(workspace, squad_only=True)
     analysis_run_id: str | None = None
     if plan.reanalyze_source_ids:
+        from harness.re_v2.knowledge_creation import (
+            ReviewedAnalysisCreationOptions,
+            create_or_resume_reviewed_analysis,
+            load_reviewed_analysis_creation_intent,
+        )
+        from harness.re_v2.protocol_24.model import SelectionScopeV1
+
+        depth_by_source = {
+            item.source_id: item.depth
+            for item in plan.sources
+            if item.source_id in set(plan.reanalyze_source_ids)
+        }
+        if set(depth_by_source) != set(plan.reanalyze_source_ids):
+            raise ValueError("refresh analysis depth closure is incomplete")
+        selection = SelectionScopeV1(
+            1,
+            False,
+            plan.reanalyze_source_ids,
+            (),
+        )
         active = resolve_current_re_run(workspace)
-        if active is None:
-            raise ValueError(
-                "needs attention: changed sources require a prepared repaired analysis; "
-                "ordinary analysis creation remains release-gated"
+        intent = (
+            load_reviewed_analysis_creation_intent(active)
+            if active is not None
+            else None
+        )
+        if intent is not None and (
+            intent.get("snapshot_id") != snapshot.snapshot_id
+            or intent.get("workspace_partition_id") != partition.identity
+            or intent.get("selection")
+            != {
+                "schema_version": 1,
+                "all_sources": False,
+                "source_ids": list(plan.reanalyze_source_ids),
+                "domain_keys": [],
+            }
+            or tuple(_resume_creation_depths(intent))
+            != tuple(sorted(depth_by_source.items()))
+        ):
+            intent = None
+        if intent is None:
+            request_run_id = _new_re_v2_run_id(workspace)
+            analysis_run_id = f"{request_run_id}-analysis"
+            created_at = _re_v2_now()
+            analysis_token_limit = token_limit
+            analysis_active_ms_limit = active_ms_limit
+            _activate_re_v2_run(workspace, request_run_id)
+        else:
+            request_run_id = str(intent.get("request_run_id", ""))
+            analysis_run_id = str(intent.get("analysis_run_id", ""))
+            created_at = str(intent.get("created_at", ""))
+            analysis_token_limit = intent.get("token_limit")
+            analysis_active_ms_limit = intent.get("active_ms_limit")
+            if (
+                active is None
+                or request_run_id != active.name
+                or not analysis_run_id.startswith("re-")
+                or type(analysis_token_limit) is not int
+                or type(analysis_active_ms_limit) is not int
+            ):
+                raise ValueError("invalid active refresh analysis creation intent")
+        provider_id = str(getattr(getattr(config, "llm", None), "cli", "configured"))
+        print(
+            f"[re] refresh analysis starting · provider {provider_id} · "
+            f"{len(plan.reanalyze_source_ids)} source(s)",
+            flush=True,
+        )
+        creation = create_or_resume_reviewed_analysis(
+            workspace,
+            ReviewedAnalysisCreationOptions(
+                request_run_id=request_run_id,
+                analysis_run_id=analysis_run_id,
+                created_at=created_at,
+                snapshot=snapshot,
+                workspace_partition=partition,
+                selection=selection,
+                source_depths=tuple(sorted(depth_by_source.items())),
+                token_limit=analysis_token_limit,
+                active_ms_limit=analysis_active_ms_limit,
+                config=config,
+            ),
+        )
+        if creation.state != "ready" or creation.analysis_run_id is None:
+            _render_re_knowledge_result(
+                "refresh",
+                explicit_depth or "established",
+                creation,
             )
-        analysis_run_id = active.name
-    config = load_config(workspace, squad_only=True)
+            raise SystemExit(2)
+        analysis_run_id = creation.analysis_run_id
+        _activate_re_v2_run(workspace, analysis_run_id)
     result = run_knowledge_refresh(
         workspace,
         plan,

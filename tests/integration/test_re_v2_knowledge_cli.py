@@ -207,3 +207,139 @@ def test_normal_refresh_rejects_duplicate_source_before_execution(
         )
 
     assert failure.value.code == 2
+
+
+@pytest.mark.integration
+def test_depth_refresh_creates_fresh_reviewed_analysis_instead_of_using_published_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.cli as cli
+    import harness.config
+    import harness.re_registry as registry
+    import harness.re_v2.knowledge_creation as creation
+    import harness.re_v2.knowledge_workflow as workflow
+    import harness.re_v2.protocol_22.partition as partition_module
+    import harness.re_v2.workspace_snapshot as snapshot_module
+    import harness.squad_provider
+    from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.partition import (
+        ImplementationAuthorityV1,
+        PartitionAuthoritiesV1,
+        build_workspace_partition_catalog,
+    )
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+    from tests.unit.test_re_v2_protocol_28_evidence import _git
+
+    workspace = tmp_path / "workspace"
+    source_root = workspace / "sources" / "api"
+    source_root.mkdir(parents=True)
+    _git(source_root, "init")
+    (source_root / "README.md").write_text("API service\n", encoding="utf-8")
+    _git(source_root, "add", ".")
+    _git(source_root, "commit", "-m", "fixture")
+    source = SourceRoot(id="api", path="sources/api", git_present=True)
+    manifest = WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(
+            root=workspace.resolve(), git_role="orchestration", git_present=False
+        ),
+        sources=(source,),
+    )
+    snapshot = capture_workspace_snapshot(workspace, (source,), tmp_path / "snapshots")
+    partition = build_workspace_partition_catalog(
+        snapshot,
+        manifest,
+        PartitionAuthoritiesV1(
+            ImplementationAuthorityV1(
+                "existing-domain-partitioner", "5", content_digest(b"partitioner")
+            ),
+            ImplementationAuthorityV1(
+                "explicit-domain-ownership", "1", content_digest(b"ownership")
+            ),
+        ),
+    )
+    published_run = workspace / "runs" / "re-published-synthesis"
+    published_run.mkdir(parents=True)
+    published = registry.PublishedReIndex(
+        schema_version=1,
+        generation=1,
+        publication_status="complete",
+        published_at="2026-09-12T12:00:00Z",
+        published_from_run=published_run.name,
+        sources={
+            "api": registry.PublishedSource(
+                source_id="api",
+                source_path="sources/api",
+                published_path="re/sources/api",
+                fingerprint=partition.sources[0].source_content_id,
+                profile_hash=content_digest(b"profile"),
+                status="complete",
+                manifest="re/sources/api/manifest.json",
+                depth="quick",
+            )
+        },
+        workspace=registry.PublishedWorkspace(
+            manifest="re/workspace/manifest.json",
+            overview="re/workspace/overview.md",
+            relationships="re/workspace/relationships.md",
+            contracts="re/workspace/contracts.md",
+        ),
+        warnings=(),
+    )
+    captured: dict[str, object] = {}
+    config = object()
+
+    monkeypatch.setattr(cli, "discover_workspace", lambda _root: manifest)
+    monkeypatch.setattr(registry, "load_published_index", lambda _root: published)
+    monkeypatch.setattr(snapshot_module, "capture_workspace_snapshot", lambda *_a: snapshot)
+    monkeypatch.setattr(
+        partition_module, "build_workspace_partition_catalog", lambda *_a: partition
+    )
+    monkeypatch.setattr(harness.config, "load_config", lambda *_a, **_k: config)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run", lambda _root: published_run
+    )
+    monkeypatch.setattr(cli, "_new_re_v2_run_id", lambda _root: "re-refresh-request")
+    monkeypatch.setattr(cli, "_re_v2_now", lambda: "2026-09-12T12:30:00Z")
+    monkeypatch.setattr(cli, "_activate_re_v2_run", lambda *_a: None)
+
+    def create(_root, options):  # type: ignore[no-untyped-def]
+        captured["creation"] = options
+        return creation.KnowledgeCreationResultV1(
+            options.request_run_id, "ready", options.analysis_run_id
+        )
+
+    monkeypatch.setattr(creation, "create_or_resume_reviewed_analysis", create)
+    monkeypatch.setattr(harness.squad_provider, "SquadCliProvider", lambda _c: object())
+
+    def refresh(_root, plan, analysis_run_id, _provider_factory, **_limits):  # type: ignore[no-untyped-def]
+        captured["plan"] = plan
+        captured["analysis_run_id"] = analysis_run_id
+        return workflow.KnowledgeRefreshResultV1(
+            plan.identity,
+            analysis_run_id,
+            "complete",
+            "re-refresh-synthesis",
+            2,
+            None,
+            "runs/re-refresh/result.json",
+        )
+
+    monkeypatch.setattr(workflow, "run_knowledge_refresh", refresh)
+
+    cli._run_re_knowledge_refresh_action(
+        workspace,
+        (),
+        "standard",
+        8_000_000,
+        10_800_000,
+    )
+
+    options = captured["creation"]
+    assert options.request_run_id == "re-refresh-request"
+    assert options.analysis_run_id == "re-refresh-request-analysis"
+    assert options.selection.source_ids == ("api",)
+    assert options.source_depths == (("api", "standard"),)
+    assert captured["analysis_run_id"] == "re-refresh-request-analysis"
