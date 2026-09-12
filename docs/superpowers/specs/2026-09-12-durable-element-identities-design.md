@@ -241,6 +241,17 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   the existing canonical metadata format and shares tree-layout rules with
   the original-byte codec. Self-consistent changed metadata remains a claim,
   not provenance, accepted-source authority or a publication receipt.
+- Durable accepted source contexts: implemented in `f8911aef`, corrected in
+  `7e7a177a`, and independently reviewed with no findings. Eleven-module
+  checkpoint: 668 passed; final amended source/publication modules: 208 passed.
+  The checkpoint imported one million IDs in 14.496 seconds using 168,914,944
+  database bytes, with next allocation taking 0.016208 seconds. Source heads
+  advance atomically with the existing publication journal, retain original
+  receipts, and reject stale predecessors or damaged history without fallback.
+  Current source reads avoid identity-history scans; full audits retain deeper
+  checks. Real interrupted promotion and commit uncertainty are tested. These
+  are explicit observation contexts, not managed-run/namespace authentication,
+  dependency completeness, semantic approval or live completion enforcement.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
