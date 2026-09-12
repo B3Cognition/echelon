@@ -756,6 +756,50 @@ retain source/identity/graph recovery. Retarget, replay, manual and historical
 enrollment transitions require separate retained protocols. This task does not
 choose provider proposal formats, graph staging, or later run transitions.
 
+### Opt-in managed context authentication
+
+`check_managed_context(spec_id=..., run_id=..., record=...)` is the read-only
+authority association for one explicitly selected managed context. The caller
+supplies the selected spec and run independently of the record. The method first
+applies the exact lifecycle string rules and the closed ten-string record
+validator, then requires the independently supplied identifiers and the complete
+record to equal the retained managed genesis. It does not derive selection from
+mutable state or provider output, fill missing values, normalize labels, or treat
+a structurally valid state record as durable provenance.
+
+One existing query-only identity transaction reads the retained genesis and its
+source context. The result is a detached dictionary with exactly
+`managed_identity` and `source_context`: the former is the unchanged original
+ten-string genesis, while the latter is the full current retained source receipt,
+including namespace, spec/context/registration/operation identifiers, sequence,
+and manifest payload/hash. The source receipt must remain associated with the
+matched genesis namespace, spec, context, and original source-registration
+operation. Existing managed and source readers continue to own row, digest,
+operation, parent, head, and immediate-predecessor integrity validation. The
+checker adds no schema, files, locks, writes, enrollment, recovery, or child-history
+scan, and a missing genesis is an error rather than a legacy result.
+
+Original genesis and current source observation are intentionally different
+facts. Later accepted source publication changes only the returned current head;
+it does not copy the new operation or manifest hash into immutable genesis.
+A prepared publication still exposes the old accepted head, while applied and
+released publications expose the newly accepted head. Release is not certified
+by this check, and neither a pending nor a released journal proves coordinated
+completion. The returned head is only a coherent transaction snapshot: it is not
+a reservation or freshness guarantee after return, and a later publisher must
+still compare-and-swap that exact head and authenticate newly captured bytes.
+
+The checker observes registry metadata, not current source files. Physical files
+may differ after capture without changing the retained result; trusted runtime
+owners must separately validate state before calling, authenticate current
+physical source scope and bytes, and keep state reads outside the identity
+transaction. Missing or damaged authority, changed handle namespace, orphaned
+managed/source ownership, and unsupported old schema reject without initialize,
+upgrade, repair, or a legacy fallback. This bounded association check is not a
+full authority audit and does not certify arbitrary identity child history,
+semantic assessment, graph publication, recovery, or completion. No controller,
+provider, CLI, startup path, or producer invokes it in this phase.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.

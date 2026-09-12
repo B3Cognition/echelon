@@ -730,6 +730,40 @@ class IdentityStore:
         except Exception:
             raise IdentityStoreError("invalid managed identity authority or request") from None
 
+    def check_managed_context(self, *, spec_id: str, run_id: str,
+                              record: object) -> dict:
+        """Check explicit genesis ownership and observe its current source, read-only."""
+        from harness import element_identity_managed_store as managed_store
+        from harness import element_identity_source_store as source_store
+        from harness.element_identity_state import validate_managed_identity_record
+
+        try:
+            lifecycle.text(spec_id, "spec_id")
+            lifecycle.text(run_id, "run_id")
+            supplied = validate_managed_identity_record(record)
+            if supplied["spec_id"] != spec_id or supplied["run_id"] != run_id:
+                raise ValueError("selected identifiers differ from supplied genesis")
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                retained = managed_store.read(connection, self, spec_id)
+                if retained is None or retained != supplied:
+                    raise ValueError("supplied genesis differs from retained authority")
+                source = source_store.read(connection, self, spec_id, retained["context_id"])
+                if source is None or (
+                    source["workspace_uuid"], source["epoch_uuid"],
+                    source["spec_id"], source["context_id"],
+                    source["registration_operation_id"],
+                ) != (
+                    retained["workspace_uuid"], retained["epoch_uuid"],
+                    retained["spec_id"], retained["context_id"],
+                    retained["source_registration_operation_id"],
+                ):
+                    raise ValueError("current source differs from managed genesis")
+                return {"managed_identity": retained, "source_context": source}
+        except Exception:
+            pass
+        raise IdentityStoreError("invalid managed identity context") from None
+
     @_public
     def register_source_context(self, *, spec_id: str, context_id: str, operation_id: str,
                                 manifest: SourceManifestSnapshot) -> dict:
