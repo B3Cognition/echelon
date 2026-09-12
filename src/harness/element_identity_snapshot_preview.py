@@ -15,8 +15,14 @@ def preview(connection, store, spec_id, operations):
         raise ValueError("spec has a pending identity publication")
     children = publication_store.operation_children(operations, spec_id)
     publication_store.require_new_children(connection, children)
-    value = json.loads(capture(connection, store, spec_id).payload)
+    retained = capture(connection, store, spec_id)
     plan = publication_store.planned_effects(connection, store, spec_id, children)
+    return _overlay(retained, spec_id, children, plan)
+
+
+def _overlay(retained, spec_id, children, plan):
+    """Pure overlay for public preview or an already validated prepared owner."""
+    value = json.loads(retained.payload)
     entities = {row["element_id"]: row for row in value["entities"]}
     for operation, _, payloads, _ in children:
         if operation.method == "lifecycle":

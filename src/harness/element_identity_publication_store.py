@@ -14,6 +14,7 @@ from harness import element_identity_lifecycle_store as lifecycle_store
 from harness.element_identity_json import strict_json
 from harness.element_identity_publication import (
     encode_publication_request, decode_publication_request,
+    application_metadata,
 )
 from harness.element_identity_request_codec import decode_request
 from harness import element_identity_store as authority
@@ -188,10 +189,20 @@ def _application(connection, store, row, plan, children, *, source_receipt=None)
             _absent_rows(connection, operation.operation_id, (operation.method, "binding_receipts"))
             receipt = binding_store.receipt(connection, store, operation.method, row["spec_id"], operation.operation_id)
         results.append({"method": operation.method, "operation_id": operation.operation_id, "receipt": list(receipt)})
-    result = {"version": "1", "publication": _preparation(connection, row), "operations": results}
+    result = {**application_metadata(decode_publication_request(row["request"])),
+              "publication": _preparation(connection, row), "operations": results}
     if source_receipt is not None:
-        result.update(version="2", sources=source_receipt)
+        result["sources"] = source_receipt
     return result
+
+
+def _check_proposed_history(connection, store, spec_id, request, children, plan):
+    if request.proposed_history_sha256 is not None:
+        from harness.element_identity_snapshot import capture
+        from harness.element_identity_snapshot_preview import _overlay
+        proposed = _overlay(capture(connection, store, spec_id), spec_id, children, plan)
+        if proposed.sha256 != request.proposed_history_sha256:
+            raise ValueError("proposed complete identity history differs from publication claim")
 
 
 def _load(connection, store, spec_id, operation_id, *, effects=True, source_state=True):
@@ -324,7 +335,10 @@ def prepare(connection, store, spec_id, operation_id, request):
         return _preparation(connection, loaded[0])
     children = _children(request, spec_id)
     require_new_children(connection, children)
+    if connection.execute(_PENDING, (spec_id,)).fetchone():
+        raise ValueError("spec has a pending identity publication")
     plan = _plan(connection, store, spec_id, children)
+    _check_proposed_history(connection, store, spec_id, request, children, _stored_json(plan))
     digest = authority._digest(["identity_publication", spec_id, operation_id, request_json, _hash(plan)])
     store._operation(connection, operation_id, "identity_publication", spec_id, digest)
     connection.execute("INSERT INTO publication_intents "
@@ -347,6 +361,7 @@ def apply(connection, store, spec_id, operation_id):
     row, request, plan, children = loaded
     if row["state"] != "prepared":
         return _stored_json(row["application_receipt"])
+    _check_proposed_history(connection, store, spec_id, request, children, plan)
     adapter = _ApplicationStore(store, operation_id)
     for op, entries, payload, _ in children:
         if op.method == "lifecycle":
@@ -360,6 +375,10 @@ def apply(connection, store, spec_id, operation_id):
     sources.accept(connection, store, spec_id, operation_id, request, receipt)
     connection.execute("UPDATE publication_intents SET state='applied',application_receipt=?,application_receipt_sha256=? WHERE operation_id=?",
                        (encoded, _hash(encoded), operation_id))
+    if request.proposed_history_sha256 is not None:
+        from harness.element_identity_snapshot import capture
+        if capture(connection, store, spec_id).sha256 != request.proposed_history_sha256:
+            raise ValueError("applied complete identity history differs from publication claim")
     return receipt
 
 

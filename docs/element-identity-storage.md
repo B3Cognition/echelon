@@ -484,14 +484,14 @@ authority.
 
 `harness.element_identity_publication` defines exact frozen, slotted request types:
 `PublicationOperation(method, operation_id, payload)` and
-`PublicationIntentRequest(manifest_sha256, recovery_payload, operations=(), sources=None)`.
+`PublicationIntentRequest(manifest_sha256, recovery_payload, operations=(), sources=None, proposed_history_sha256=None)`.
 The operations tuple contains at most one operation for each of `lifecycle`,
 `reference_claims`, and `issue_occurrences`, in that order; any subset, including
 the empty tuple, is valid. Child IDs are unique, exact nonblank UTF-8 strings
 without NUL and cannot equal the parent ID. Each child payload must already be
 the canonical ASCII output of the existing method-specific request codec.
 
-`encode_publication_request` produces canonical ASCII JSON with exactly `version`
+Without optional source/history claims, `encode_publication_request` produces canonical ASCII JSON with exactly `version`
 (string `"1"`), `manifest_sha256`, `recovery_payload`, and `operations`; every
 operation contains exactly `method`, `operation_id`, and `payload`.
 `decode_publication_request` accepts that closed shape, rejects duplicate keys at
@@ -639,10 +639,11 @@ all original prefix-zero images and complete selected bytes. Its marker hash mus
 equal the enclosing request's manifest hash. Codecs revalidate intact exact types
 at every boundary, reject malformed/deep/Unicode inputs with bounded errors, and
 perform no I/O. Recovery and completion payloads retain their existing opaque
-contracts. A source-bearing request has string version `"2"` and exactly the
+contracts. A source-bearing request without a history claim has string version `"2"` and exactly the
 version-1 root fields plus `sources`, whose only fields are the three claim fields.
 There is no `sources:null` wire variant. Source-less requests retain their exact
-version-1 bytes, decoded defaults, child codecs, operation order, and receipts.
+version-1 bytes, decoded defaults, child codecs, operation order, and receipts
+when no history claim is supplied. History-bound version `"3"` is described below.
 
 First prepare requires the exact current predecessor and the exact before manifest
 derived from the retained source trees/files. Ordered selected tree roots and
@@ -652,7 +653,7 @@ an arbitrary after hash. The next sequence, predecessor and projected source pla
 are retained atomically with the existing parent/child claims. Prepared rows have
 no application digest and do not advance the head. Apply uses the existing three
 child writers, then atomically accepts that plan and advances the independent
-context pointer from its exact predecessor. Its closed version-2 application
+context pointer from its exact predecessor. Without a history claim, its closed version-2 application
 receipt contains exactly `version`, `publication`, `operations`, and `sources`
 (the full new source-head receipt). The canonical application hash is stored in
 both the parent and source row, without a circular self-hash. Release retains its
@@ -1051,6 +1052,76 @@ selection, semantic evidence, publication freshness or runtime metadata. A
 captured-source graph builder, source/semantic authorization, complete staged
 producer scope, coordinated completion/recovery and bounded repair still require
 integration. This API activates no controller, runtime or provider path.
+
+### Optional complete proposed-history binding
+
+`PublicationIntentRequest.proposed_history_sha256` is an optional exact lowercase
+SHA-256 string, appended after `sources`; existing positional arguments retain
+their meaning. Supply the `sha256` from the proposed complete history preview to
+bind that exact materialized result to the journal. It accepts no snapshot object,
+numeric conversion, or fallback digest. Namespace and spec are already included
+in the snapshot hash.
+
+Without the claim, request bytes remain exactly version `"1"` (no sources) or
+`"2"` (sources). A history-bound request uses version `"3"`, the original root
+fields, mandatory `proposed_history_sha256`, and `sources` only when supplied.
+These are two closed shapes: absent/null history, null sources, duplicate or
+extra keys, invalid hashes and damaged frozen values reject. Versions 1/2 reject
+the history field. This changes the stored payload version only; no database
+migration or schema change is needed. Older binaries reject unsupported version 3
+when interpreting it, so matching code remains a rollout requirement. Decoding
+alone grants no execution or semantic authority.
+
+For a new preparation, the journal plans the detached ordered operations and
+overlays the shared planned rows on actual fully audited retained history inside
+its existing write transaction. It checks equality before inserting any parent,
+child claims or source plan. An intervening legitimate same-spec entity revision,
+reference or issue occurrence invalidates a stale hash even if the child proposal
+still validates and the source head is unchanged. Unused reservations and valid
+other-spec changes do not alter this spec's materialized digest. Existing global
+child ownership and pending guards still apply, including empty publications.
+An exact prior preparation retry returns the original preparation before a fresh
+history comparison; changing only the claim under the same parent ID conflicts.
+
+Application first validates the retained prepared parent, plan and child claims,
+then checks the exact overlay on current complete history before any child writer.
+Public preview continues to reject pending publications; only the validated
+prepared owner reuses the small private pure overlay. After existing child writers,
+source acceptance and the parent applied-state/receipt update, the journal captures
+actual complete history again inside the same uncommitted transaction. A mismatch
+or ordinary failure rolls back child rows, source heads and parent application
+state together. No additional transaction, savepoint, database copy, filesystem
+write or callback is used by this check.
+
+A history-bound application receipt uses version `"3"`, retains complete
+`publication` and `operations`, adds `identity_history_sha256` equal to the request
+claim, and includes the existing exact `sources` receipt when present. Preparation
+and release formats are unchanged; their request/application hashes transitively
+bind the history claim. Retained receipt reconstruction and source envelope checks
+validate that association without recapturing today's history. Reads, exact retries,
+reopen, full audit, backup and restore retain the original claim and receipt after
+later history and source-head advances. Rehashing only a request or receipt cannot
+hide disagreements in retained associations; a coherent malicious rewrite of all
+authority rows is outside this integrity guarantee.
+
+The complete-history work is intentionally expensive: each new bound preparation
+captures once, and each still-prepared bound application captures before and after
+effects. Each capture runs the existing full-authority audit, potentially scanning
+history from every spec, then captures the selected spec. Prepared reads remain
+retained-intent observations, not complete-history freshness checks. No capture is
+added to the journal loader, receipt reconstruction, common child/allocator guard,
+or indexed source/managed-context reads. There is no recursive capture or
+millions-of-writes throughput claim.
+
+This establishes materialized-history equality only. It does not prove that graph
+bytes were rendered from that history, authenticate complete physical source
+selection, approve semantics or historical adoption, or select a runtime namespace.
+The graph rendering test demonstrates byte equality and old evidence revision
+bindings; it does not authenticate graph/source provenance. Captured-source graph
+construction, producer proposals/reservations, managed runtime selection, semantic
+authorization, coordinated completion/recovery, lifecycle-aware memory and bounded
+repair remain separate work. No live caller supplies the new field; all producer,
+runtime and live integrations remain off.
 
 ### Canonical materialized identity history observation
 

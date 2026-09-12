@@ -10,7 +10,7 @@ import hashlib
 from harness import element_identity_store as authority
 from harness.element_identity_lifecycle import text
 from harness.element_identity_json import strict_json
-from harness.element_identity_publication import encode_publication_request, decode_publication_request, _source_baseline
+from harness.element_identity_publication import encode_publication_request, decode_publication_request, _source_baseline, application_metadata
 from harness.squad_publication import PublicationError
 from harness.squad_source_manifest import snapshot_source_manifest
 from harness.squad_source_manifest_codec import decode_source_manifest, validate_source_manifest
@@ -171,9 +171,10 @@ def _parent(connection, publication_id):
             raise ValueError("source parent has premature receipts")
     elif parent["state"] in {"applied", "released"}:
         application = publications._stored_json(parent["application_receipt"])
-        keys = {"version", "publication", "operations"} | ({"sources"} if request.sources is not None else set())
+        metadata = application_metadata(request)
+        keys = {"publication", "operations"} | set(metadata) | ({"sources"} if request.sources is not None else set())
         if (type(application) is not dict or set(application) != keys
-                or application["version"] != ("2" if request.sources is not None else "1")
+                or any(application[key] != value for key, value in metadata.items())
                 or application["publication"] != preparation or type(application["operations"]) is not list
                 or len(application["operations"]) != len(request.operations)
                 or _hash(parent["application_receipt"]) != parent["application_receipt_sha256"]):
@@ -225,8 +226,7 @@ def _bound_row(connection, context, publication_id):
             raise ValueError("source plan was prematurely accepted")
     elif parent["state"] in {"applied", "released"}:
         application = strict_json(parent["application_receipt"])
-        if (type(application) is not dict or set(application) != {"version", "publication", "operations", "sources"}
-                or application["version"] != "2" or application["sources"] != _receipt(connection, context, row)
+        if (application["sources"] != _receipt(connection, context, row)
                 or authority._json(application) != parent["application_receipt"]
                 or _hash(parent["application_receipt"]) != parent["application_receipt_sha256"]
                 or row["application_sha256"] != parent["application_receipt_sha256"]):

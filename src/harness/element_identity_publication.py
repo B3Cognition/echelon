@@ -67,6 +67,7 @@ class PublicationIntentRequest:
     recovery_payload: str
     operations: tuple[PublicationOperation, ...] = ()
     sources: PublicationSourceClaim | None = None
+    proposed_history_sha256: str | None = None
 
     def __post_init__(self):
         _validate(self)
@@ -97,6 +98,8 @@ def _validate(request):
         sha256(request.manifest_sha256)
         text(request.recovery_payload, "recovery_payload")
         validated_operations(request.operations)
+        if request.proposed_history_sha256 is not None:
+            sha256(request.proposed_history_sha256)
         if request.sources is not None:
             baseline = _source_baseline(request.sources)
             if baseline.publication.marker.manifest_sha256 != request.manifest_sha256:
@@ -116,6 +119,8 @@ def encode_publication_request(request: PublicationIntentRequest) -> str:
         value["sources"] = {"context_id": request.sources.context_id,
                             "expected_operation_id": request.sources.expected_operation_id,
                             "baseline_payload": request.sources.baseline_payload}
+    if request.proposed_history_sha256 is not None:
+        value.update(version="3", proposed_history_sha256=request.proposed_history_sha256)
     return json.dumps(value,
                       sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -123,9 +128,10 @@ def encode_publication_request(request: PublicationIntentRequest) -> str:
 def decode_publication_request(payload: str) -> PublicationIntentRequest:
     try:
         value = strict_json(payload)
-        if (type(value) is not dict or type(value.get("version")) is not str or value["version"] not in {"1", "2"}
+        if (type(value) is not dict or type(value.get("version")) is not str or value["version"] not in {"1", "2", "3"}
                 or set(value) != ({"version", "manifest_sha256", "recovery_payload", "operations"}
-                                  | ({"sources"} if value["version"] == "2" else set()))
+                                  | ({"sources"} if value["version"] == "2" or (value["version"] == "3" and "sources" in value) else set())
+                                  | ({"proposed_history_sha256"} if value["version"] == "3" else set()))
                 or type(value["operations"]) is not list):
             raise ValueError("invalid publication shape/version")
         operations = []
@@ -134,10 +140,20 @@ def decode_publication_request(payload: str) -> PublicationIntentRequest:
                 raise ValueError("invalid operation shape")
             operations.append(PublicationOperation(**operation))
         sources = None
-        if value["version"] == "2":
+        if "sources" in value:
             if type(value["sources"]) is not dict or set(value["sources"]) != {"context_id", "expected_operation_id", "baseline_payload"}:
                 raise ValueError("invalid source claim shape")
             sources = PublicationSourceClaim(**value["sources"])
-        return PublicationIntentRequest(value["manifest_sha256"], value["recovery_payload"], tuple(operations), sources)
+        if value["version"] == "3":
+            sha256(value["proposed_history_sha256"])
+        return PublicationIntentRequest(value["manifest_sha256"], value["recovery_payload"], tuple(operations), sources,
+                                        value.get("proposed_history_sha256"))
     except (ValueError, TypeError, AttributeError, KeyError, RecursionError, OverflowError):
         raise PublicationIntentError("malformed serialized publication intent") from None
+
+
+def application_metadata(request):
+    """Pure retained request/receipt association, without observing current history."""
+    if request.proposed_history_sha256 is not None:
+        return {"version": "3", "identity_history_sha256": request.proposed_history_sha256}
+    return {"version": "2" if request.sources is not None else "1"}
