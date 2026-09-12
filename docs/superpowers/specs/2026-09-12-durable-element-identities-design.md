@@ -163,6 +163,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   occurrence bindings. Unused reservations and publication release do not alter
   this history digest. It is not a restore backup, cheap per-ID lookup, source
   authentication or graph/semantic completion; live consumers remain unwired.
+- Pure retained-history graph projection: implemented in `ec3cc4cf` and
+  independently reviewed with no findings. Exact six-module suite: 198 passed.
+  Published entity keys remain stable; separate immutable revision, reference,
+  occurrence and provenance nodes preserve historical bindings. Legacy complete
+  verification edges remain explicitly unassessed. Canonical history validation
+  and detached ownership do not authenticate the caller's source/namespace or
+  activate any live graph builder, audit, publisher or memory consumer.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
