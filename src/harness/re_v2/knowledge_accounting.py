@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
-from harness.re_v2.knowledge_discovery import DiscoveryError, _closed_errors, _load, _obj
+from harness.re_v2.knowledge_discovery import (
+    DISCOVERY_REPAIRABLE_REASONS,
+    DiscoveryError,
+    _closed_errors,
+    _load,
+    _obj,
+)
 from harness.re_v2.knowledge_discovery_review import _overlap_pairs
 from harness.re_v2.ledger import DurableLedger, ObjectStore
 from harness.re_v2.protocol_22.budget import conservative_charge
@@ -30,10 +36,33 @@ class KnowledgeDispatchPolicy:
     token_limit: int
     active_ms_limit: int
     max_source_turns: int
+    max_discovery_repairs: int | None = None
 
     def __post_init__(self):
-        for value in asdict(self).values():
+        for value in (
+            self.token_limit, self.active_ms_limit, self.max_source_turns
+        ):
             _positive(value)
+        if (
+            self.max_discovery_repairs is not None
+            and (
+                type(self.max_discovery_repairs) is not int
+                or self.max_discovery_repairs < 0
+                or self.max_discovery_repairs >= self.max_source_turns
+            )
+        ):
+            raise DiscoveryError("invalid-discovery-repair-limit")
+
+
+def _policy_dict(policy: KnowledgeDispatchPolicy) -> dict[str, int]:
+    result = {
+        "token_limit": policy.token_limit,
+        "active_ms_limit": policy.active_ms_limit,
+        "max_source_turns": policy.max_source_turns,
+    }
+    if policy.max_discovery_repairs is not None:
+        result["max_discovery_repairs"] = policy.max_discovery_repairs
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,8 +191,17 @@ class _DispatchState:
             first, last = self.dispatches[previous[0]], self.applied.get(previous[-1])
             if any(request[key] != first[key] for key in ("scope_id", "agent_id", "reservation")):
                 return "discovery-dispatch-authority-mismatch"
-            if last is None or last["state"] != "evidence_ready":
+            if last is None or last["state"] not in {"evidence_ready", "repair_ready"}:
                 return "discovery-dispatch-not-ready"
+            if last["state"] == "repair_ready":
+                repairs = sum(
+                    self.applied.get(item, {}).get("state") == "repair_ready"
+                    for item in previous
+                )
+                if repairs > self.opening["policy"].get(
+                    "max_discovery_repairs", 0
+                ):
+                    return "discovery-repair-limit"
             if request["revision_id"] != last["revision_id"]:
                 return "stale-discovery-revision"
         return None
@@ -279,7 +317,9 @@ class _DispatchState:
             if self.dispatch_kinds.get(key) != expected_kind:
                 raise DiscoveryError("invalid-discovery-application")
             allowed = ({"review_ready", "revision_required", "blocked"}
-                       if expected_kind == "review" else {"proposal_ready", "evidence_ready", "blocked"})
+                       if expected_kind == "review" else {
+                           "proposal_ready", "evidence_ready", "repair_ready", "blocked"
+                       })
             if row["state"] not in allowed:
                 raise DiscoveryError("invalid-discovery-application")
             if expected_kind == "review":
@@ -429,6 +469,22 @@ class _DispatchState:
             intent = _load(objects.read_blob(revision["intent_id"]))
             if intent.get("batch_id") != row["receipt_id"]:
                 raise DiscoveryError("invalid-discovery-application")
+        elif row["state"] == "repair_ready":
+            _obj(receipt, (
+                "schema_version", "kind", "binding_id", "revision_id",
+                "context_id", "authorial_response_id", "reason_code",
+            ))
+            if (
+                receipt["schema_version"] != 1
+                or receipt["kind"] != "discovery_repair_feedback"
+                or receipt["binding_id"] != request["binding_id"]
+                or receipt["revision_id"] != request["revision_id"]
+                or receipt["context_id"] != request["context_id"]
+                or receipt["authorial_response_id"] != capture["output_id"]
+                or receipt["reason_code"] not in DISCOVERY_REPAIRABLE_REASONS
+                or capture["reason_code"] is not None
+            ):
+                raise DiscoveryError("invalid-discovery-application")
 
 
 class KnowledgeDispatchAccount:
@@ -444,7 +500,7 @@ class KnowledgeDispatchAccount:
         self.contract = provider_contract
         self.paths = paths
         self.opening = {"schema_version": 1, "kind": "knowledge_execution_account",
-                        "logical_run_id": paths.root.parent.name, "policy": asdict(policy),
+                        "logical_run_id": paths.root.parent.name, "policy": _policy_dict(policy),
                         "provider_contract_id": provider_contract.identity,
                         "run_authority": _run_authority(_load(canonical_json_bytes(run_authority)))}
         with protocol_22_run_lock(paths):

@@ -148,7 +148,7 @@ class DiscoveryReviewController:
                 or request["reservation"] != asdict(self.producer.reservation)
                 or self.account.objects.read_blob(request["agent_id"]) != self.producer.agent_bytes):
             raise DiscoveryError("discovery-review-producer-authority-mismatch")
-        self.producer._authenticate_request(request)
+        self.producer._authenticate_request(state, request)
         application = state.applied.get(dispatch_id)
         if application is None or application["state"] != "proposal_ready":
             return None

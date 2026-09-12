@@ -59,7 +59,8 @@ from harness.re_v2.snapshot import CapturedSnapshot
 _NON_BEHAVIORAL_SUFFIXES = (".gif", ".ico", ".jpeg", ".jpg", ".mp4", ".png")
 _DISCOVERY_RESERVATION_TOKENS = 262_144
 _DISCOVERY_RESERVATION_ACTIVE_MS = 1_800_000
-_DISCOVERY_MAX_SOURCE_TURNS = 4
+_DISCOVERY_MAX_SOURCE_TURNS = 6
+_DISCOVERY_MAX_REPAIRS = 2
 
 
 class KnowledgeCreationError(RuntimeError):
@@ -371,6 +372,7 @@ def create_or_resume_reviewed_analysis(
             options.token_limit,
             options.active_ms_limit,
             _DISCOVERY_MAX_SOURCE_TURNS,
+            _DISCOVERY_MAX_REPAIRS,
         ),
         contract,
         authority,
@@ -387,7 +389,7 @@ def create_or_resume_reviewed_analysis(
         )
         while True:
             produced = producer.step()
-            if produced.state == "evidence_ready":
+            if produced.state in {"evidence_ready", "repair_ready"}:
                 continue
             if produced.state != "proposal_ready":
                 return KnowledgeCreationResultV1(

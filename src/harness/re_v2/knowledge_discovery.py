@@ -31,6 +31,44 @@ from harness.re_v2.snapshot import CapturedSnapshot
 
 _AUTHORIAL_BYTE_LIMIT = 262_144
 
+# Only admission failures caused by screened authorial bytes may be reflected
+# back to a producer. Storage, binding and replay failures remain terminal and
+# never become model-visible diagnostics.
+DISCOVERY_REPAIRABLE_REASONS = frozenset({
+    "discovery-context-bound",
+    "discovery-normalized-bound",
+    "discovery-receipt-bound",
+    "discovery-row-bound",
+    "discovery-source-mismatch",
+    "duplicate-discovery-domain",
+    "duplicate-discovery-field",
+    "duplicate-discovery-obligation",
+    "duplicate-evidence-request",
+    "empty-evidence-request-batch",
+    "incomplete-discovery-inventory",
+    "incomplete-discovery-obligations",
+    "invalid-discovery-disposition",
+    "invalid-discovery-evidence",
+    "invalid-discovery-fields",
+    "invalid-discovery-input",
+    "invalid-discovery-obligation",
+    "invalid-discovery-obligation-membership",
+    "invalid-discovery-obligation-subject",
+    "invalid-discovery-ownership",
+    "invalid-discovery-question",
+    "invalid-discovery-response",
+    "invalid-discovery-subject",
+    "invalid-discovery-subject-category",
+    "invalid-discovery-text",
+    "invalid-evidence-request-authority",
+    "invalid-outside-depth-obligation",
+    "nonfinite-discovery-value",
+    "subjectless-discovery-domain",
+    "unattempted-discovery-obligation",
+    "unsupported-discovery-obligation",
+    "unsupported-not-applicable-obligation",
+})
+
 
 def categories_for_depth(depth: str, target_kind: str) -> frozenset[str]:
     """Canonical protocol-2.8 depth/category applicability for discovery.

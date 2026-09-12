@@ -17,13 +17,19 @@ def _contract(name="scripted"):
     return KnowledgeProviderContract(name, "offline-fixture", content_digest({"adapter": name}))
 
 
-def _controller(tmp_path, *, tokens=500_000, turns=3, backend=None, fault=None):
+def _controller(
+    tmp_path, *, tokens=500_000, turns=3, repairs=None, backend=None, fault=None
+):
     from harness.re_v2.knowledge_dispatch import (
         DiscoveryController, KnowledgeDispatchAccount, KnowledgeDispatchPolicy, ProviderReply,
     )
     phase, paths, boundary, binding, objects, _ = _phase_setup(tmp_path)
-    account = KnowledgeDispatchAccount(paths, KnowledgeDispatchPolicy(tokens, 100_000, turns),
-                                       _contract(), boundary.run_authority())
+    account = KnowledgeDispatchAccount(
+        paths,
+        KnowledgeDispatchPolicy(tokens, 100_000, turns, repairs),
+        _contract(),
+        boundary.run_authority(),
+    )
     calls = []
 
     def execute(agent, context, reservation):
@@ -234,6 +240,51 @@ def test_invalid_output_is_retained_safely_and_charged_not_retried(tmp_path):
     assert result.state == "blocked"
     assert controller.step() == result and len(calls) == 1
     assert account.status().charged_tokens == 100_000
+
+
+@pytest.mark.unit
+def test_opted_in_invalid_proposal_gets_bounded_deterministic_repair_context(tmp_path):
+    replies = iter((b'{"not":"a proposal"}', None))
+
+    def backend(context):
+        reply = next(replies)
+        if reply is not None:
+            return reply
+        repair = json.loads(context)
+        assert repair["kind"] == "untrusted_discovery_repair_context"
+        assert repair["deterministic_feedback"]["reason_code"] == "invalid-discovery-response"
+        assert repair["previous_candidate"] == {"not": "a proposal"}
+        return canonical_json_bytes(_proposal(repair["safe_discovery_context"]))
+
+    controller, account, _phase, calls = _controller(
+        tmp_path, turns=4, repairs=1, backend=backend
+    )
+
+    first = controller.step()
+    assert first.state == "repair_ready" and first.reason_code is None
+    assert controller.step().state == "proposal_ready"
+    assert len(calls) == 2
+    assert account.status().charged_tokens == 200_000
+
+
+@pytest.mark.unit
+def test_invalid_proposal_repair_limit_is_finite_and_durable(tmp_path):
+    controller, account, _phase, calls = _controller(
+        tmp_path,
+        turns=5,
+        repairs=1,
+        backend=lambda _context: b'{"not":"a proposal"}',
+    )
+
+    assert controller.step().state == "repair_ready"
+    assert controller.step().state == "repair_ready"
+    stopped = controller.step()
+
+    assert stopped.state == "blocked"
+    assert stopped.reason_code == "discovery-repair-limit"
+    assert controller.step() == stopped
+    assert len(calls) == 2
+    assert account.status().charged_tokens == 200_000
 
 
 def _two_phases(tmp_path):

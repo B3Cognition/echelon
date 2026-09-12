@@ -41,9 +41,18 @@ authenticated context and apply the row selected by the supplied `depth`.
 NEVER guess, derive or replace the quick, standard or deep category matrix.
 
 ALWAYS give every subject its evidence-supported protocol category IDs and cite
-visible target-local evidence for every `analyze` disposition.
+visible target-local evidence for every `analyze` disposition. For each such
+obligation, make its `evidence_ids` a subset of the combined evidence of its exact
+`subject_keys`, with at least one cited ID shared with every listed subject.
 NEVER attach a category to an unsupported subject or use a subject owned by another
-target to make category coverage appear complete.
+target to make category coverage appear complete. Never list an `analyze` subject
+whose own evidence has no intersection with the obligation evidence.
+
+ALWAYS treat an `untrusted_discovery_repair_context` as a request to replace its
+entire `previous_candidate`, using the nested `safe_discovery_context` as the sole
+evidence authority and the closed `deterministic_feedback` as a schema correction.
+NEVER patch only a fragment, repeat the rejected payload verbatim, or treat repair
+feedback as permission to invent evidence, relax scope, or certify knowledge.
 
 ALWAYS use `not-applicable` only for a scoped evidence-backed absence that the
 independent reviewer can assess, and use `unknown` only with target-local supplied
@@ -64,7 +73,9 @@ NEVER certify coverage, waive debt, publish a plan or write controller state.
 ## Protocol
 
 1. Inspect the supplied inventory, safe excerpts, required categories and any
-   recorded evidence-request outcomes. Identify supported behavior and gaps.
+   recorded evidence-request outcomes. For a repair context, inspect its nested
+   safe discovery context and replace the prior candidate under the deterministic
+   feedback. Identify supported behavior and gaps.
 2. If a material gap can be answered by a new bounded range, return one request
    batch. Do not request all files indiscriminately or repeat known unknowns.
 3. Otherwise propose domains, category-bearing subjects, an ownership decision for

@@ -7,9 +7,12 @@ run ownership lock. This phase is not a second scheduler.
 ## Context pack and dispatch
 
 Supply only the committed `untrusted_discovery_context` bytes authenticated by
-`DiscoveryAcquisition`: selected source/depth, originating obligation, screened
-inventory and evidence, required source/domain categories, and recorded evidence
-outcomes. Never supply a checkout path, raw inventory mapping or private receipt.
+`DiscoveryAcquisition`, or a controller-authenticated
+`untrusted_discovery_repair_context` containing that safe context, the prior
+screened candidate and one closed deterministic admission reason. The ordinary
+context contains selected source/depth, originating obligation, screened inventory
+and evidence, required source/domain categories, and recorded evidence outcomes.
+Never supply a checkout path, raw inventory mapping or private receipt.
 Schema-2 context includes the exact `category_depth_applicability` object generated
 from the controller's canonical protocol-2.8 policy. Its `quick`, `standard` and
 `deep` entries each contain `domain` and `source` objects with exact `required` and
@@ -20,7 +23,13 @@ contexts retain their original field set and canonical identity.
 Freeze this phase contract together with the rendered neutral role as the
 controller's `agent_bytes`. Freeze the provider/model/execution contract in the
 run-wide account. Reserve before invoking the backend. It must not log unscreened
-responses, perform result-repair calls or allocate another budget.
+responses or allocate another budget. Fresh reviewed-analysis accounts may freeze
+a positive producer-repair ceiling. Only a safely captured authorial admission
+failure may consume one of those turns; storage, transport and authority failures
+remain terminal. A repair call uses the same source, snapshot, acquisition revision,
+role, provider, reservation and aggregate account, and asks for one complete
+replacement payload. Historical accounts without that frozen field retain zero
+repair turns.
 The backend screens the complete response (including the transport envelope)
 before returning authorial JSON bytes and normalized usage to the controller.
 
@@ -75,7 +84,9 @@ For `kind: discovery_proposal`, also include:
   `evidence_ids`. Disposition is `analyze`, `not-applicable`, `unknown`, or
   `outside-requested-depth`. `subject_keys` is the exact sorted set of subjects at
   that target carrying the category. `analyze` requires at least one such subject
-  and visible supporting evidence. `not-applicable` requires visible scoped
+  and visible supporting evidence: its `evidence_ids` are a subset of the union of
+  those subjects' evidence and intersect every listed subject's evidence.
+  `not-applicable` requires visible scoped
   evidence, except that the authenticated wholly empty inventory is itself the
   scope evidence. `unknown` cites target-local supplied evidence (including an
   authenticated source-local withheld boundary), or uses an empty citation only
@@ -107,6 +118,11 @@ The controller records reservation, safe capture and applied-result receipts.
 the next owner invocation may request another provider turn on the same account.
 `proposal_ready` is a staged proposal requiring independent review, orphan
 reconciliation and category assessment. It cannot publish an analysis plan.
+`repair_ready` means the screened capture failed a closed authorial admission rule;
+the next owner invocation may spend one frozen repair turn using the authenticated
+repair context. The exact repair ceiling is enforced from durable account history,
+so reopen never resets it and terminal `discovery-repair-limit` never invokes the
+provider again.
 The internal `DiscoveryReviewController.step()` may review that committed staged
 proposal using a separate role/context and the same run-wide account. Review also
 consumes the source-turn ceiling. Repeating discovery after this handoff returns
