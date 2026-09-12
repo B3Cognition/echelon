@@ -286,6 +286,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and no pending same-spec publication; it reserves no baseline and does not
   authenticate graph sources or authorize publication. Graph/source/runtime
   composition remains required before live activation.
+- Complete-history publication binding: implemented in `554f83c9` and
+  independently reviewed with no findings. Eight-module covering suite: 576
+  passed. Opt-in request/application v3 binds the exact proposed materialized
+  history digest; stale unrelated history rejects before new preparation and
+  prepared application, with an actual post-effect check before commit. Real
+  guarded-source interruption/recovery, complete rollback, later-history retries
+  and restore retain original receipt associations. Existing v1/v2 bytes and
+  schema6 remain unchanged. This equality check does not authenticate graph
+  derivation or activate a source/semantic/runtime/completion consumer.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
