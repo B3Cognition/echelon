@@ -24,6 +24,7 @@ from harness import element_identity_lifecycle as lifecycle
 from harness import element_identity_lifecycle_store as lifecycle_store
 from harness import element_identity_bindings as bindings
 from harness import element_identity_binding_store as binding_store
+from harness.element_identity_candidate import CandidateArtifact, DiscoveryEditScope, DiscoveryCandidateCheck
 
 
 _VERSION = 1
@@ -643,6 +644,19 @@ class IdentityStore:
                     "status": status,
                 })
             return tuple(result)
+
+    @_public
+    def check_discovery_candidate(self, *, spec_id: str,
+                                  artifacts: Sequence[CandidateArtifact],
+                                  scope: DiscoveryEditScope,
+                                  changes: Sequence[lifecycle.LifecycleChange] = ()) -> DiscoveryCandidateCheck:
+        """Check explicit captured discovery structure without publication effects."""
+        from harness import element_identity_candidate as candidate
+        from harness import element_identity_candidate_store as candidate_store
+
+        artifacts, scope, changes, affected = candidate.request(spec_id, artifacts, scope, changes)
+        with self._transaction() as connection:
+            return candidate_store.check(connection, self, spec_id, artifacts, scope, changes, affected)
 
     @staticmethod
     def _validate_reservation(connection, row):
