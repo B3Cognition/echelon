@@ -328,6 +328,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   fields or audit policy. Real native-planner parity and retained-history
   composition are tested. Supplied observations are not authenticated current
   storage; complete external selection, acquisition and sealing remain required.
+- Captured linked RE graph contribution: implemented in `b70dfa9c`, corrected
+  in `7cf1b313`, and independently reviewed. Eight-module checkpoint: 681
+  passed; component-order fix covering modules: 144 passed. Shared transforms
+  retain typed artifact/decision/source/topology records, native generation
+  meaning, root-source paths and legacy partial mutations/read order. New
+  observations are detached and byte-coherent, with real native-registry and
+  retained-history composition fixtures. Physical registry admission and source
+  selection remain outside the pure function; no live publication is enabled.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
