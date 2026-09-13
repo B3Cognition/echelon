@@ -2326,6 +2326,58 @@ operation retained also blocks. It does not scan identity child history or all
 general operations. Other legacy ownership can proceed, and nonselected damaged
 payloads are not certified by this bounded negative query.
 
+The same query accepts `run_ids=()` only with a valid non-None exact spec ID.
+`require_legacy_identity_spec(project_root=..., spec_id=...)` validates that
+identifier before authority access, then uses this spec-only query. It shares
+the execution adapter's existing-authority observation and never invents a run
+selector, initializes authority, infers ownership from Markdown, or normalizes
+the selected identifier.
+
+Native source-transition owners also use negative admission. Confirmed retarget
+apply and prepared-checkpoint adoption check the selected canonical spec and
+fresh original baseline state after the existing leases and locked preflight.
+Active retarget resume additionally checks the actual replacement run and its
+fresh state, including the rebuilding/finalizing return. Refusal precedes
+revision/checkpoint writes, checkpoint callbacks, bootstrap, memory purges,
+graph/artifact invalidation, failed-state recording and pointer publication.
+The preview-only retarget path retains its existing behavior.
+
+Retarget recovery checks checkpoint ownership and validated runtime state inside
+`_require_recovery_revision`, before captured receipt reconciliation can advance
+history. It independently checks the retained baseline run. Optional baseline
+state uses strict object reads after checking real parent directories and a
+regular state file; a truly missing state supplies only an empty negative-query
+carrier for that retained run ID. This check creates no baseline directory,
+staging area or state lock. Present malformed, unreadable or symlink state cannot
+stand for absence. Committed recovery probes that reach this owner are protected;
+their earlier native no-op for non-recovered history still returns `None`.
+
+Public CLI rewind checks selected spec and original run ownership after its
+fresh locked state load, for both confirmation and nominal preview. The native
+same-head result can be `applied=True` even without confirmation, so this command
+must reject before consuming failed-gate authority, recovery, ledger trimming,
+cleanup, state CAS or a completion banner. Earlier read-only syntax, checkpoint
+and failed-gate preflight keep their native precedence. Malformed managed state
+rejected by the native state reader gets the same bounded unsuccessful CLI
+diagnostic; unrelated state-read errors retain their native behavior. Cold CLI
+loads may still create their existing staging directory and empty state lock;
+these are native read/lease bookkeeping, not transition effects.
+
+Standalone `rewind.prepare_rewind(confirm=True)` separately checks the actual
+selected directory name and `checkpoint.spec_id` before even its same-head
+success return, backup creation, recovery-file discard or Git reset. Its
+`confirm=False` library behavior stays unchanged. With no supplied runtime state,
+this lower-level API cannot detect a removed declaration that also lacks a
+retained ownership witness; the CLI supplies its actual state context.
+
+These checks preserve native busy-lease outcomes and release acquired leases on
+refusal. They add neither a managed retarget/rewind transition nor an enrollment
+lease. Positive managed source/run transitions, durable identity-history rewind
+semantics, every direct graph/memory/checkpoint writer, graph-mining integration
+and the final offline/rollout gates remain separate work. Existing ownership,
+journal schemas, string IDs, graph keys, historical evidence and banzai integrity
+policy do not change.
+
 The four public human-input methods check at their existing state-load boundary,
 before answer/decision writes or completion recovery. They raise the existing
 handled `HumanInputPolicyError` with `identity authority does not permit legacy

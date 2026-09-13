@@ -62,6 +62,12 @@ from harness.phase_checkpoints import (
     resolve_checkpoint,
 )
 from harness.spec_frontmatter import read_frontmatter
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_execution,
+    require_legacy_identity_spec,
+)
+from harness.element_identity_store import IdentityStoreError
 
 
 class RetargetError(RuntimeError):
@@ -1481,6 +1487,18 @@ def _finish_retarget_invalidation(
         raise RetargetDestructiveError(checkpoint, exc) from exc
 
 
+def _require_legacy_retarget_identity(
+    root: Path, selected_spec_id: str, run_dir: Path, state: dict,
+) -> None:
+    try:
+        require_legacy_identity_spec(project_root=root, spec_id=selected_spec_id)
+        require_legacy_identity_execution(project_root=root, run_dir=run_dir, state=state)
+        return
+    except IdentityStoreError:
+        pass
+    raise RetargetEligibilityError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
+
+
 def _apply_retarget(
     preview: RetargetPreview,
     *,
@@ -1491,6 +1509,10 @@ def _apply_retarget(
         with PhaseAExecutionLock.acquire(preview.project_root, operation_id):
             with SpecRunExecutionLock.acquire(preview.baseline.run_dir, operation_id):
                 rechecked = require_same_retarget_preflight(preview)
+                _require_legacy_retarget_identity(
+                    rechecked.project_root, rechecked.spec_id, rechecked.baseline.run_dir,
+                    _read_json_object(rechecked.baseline.run_dir / "state.json"),
+                )
                 revision = append_prepared_revision_from_preview(rechecked)
                 try:
                     checkpoint = commit_retarget_checkpoint(
@@ -1720,6 +1742,11 @@ def _resume_existing_retarget(
                     )
                 active = resolve_active_spec_run(root)
                 state = _read_json_object(active.run_dir / "state.json")
+                _require_legacy_retarget_identity(
+                    root, result.spec_id, baseline.run_dir,
+                    _read_json_object(baseline.run_dir / "state.json"),
+                )
+                _require_legacy_retarget_identity(root, result.spec_id, active.run_dir, state)
                 retarget = state.get("retarget")
                 if type(retarget) is not dict:
                     raise RetargetEligibilityError("active retarget state is corrupt")
@@ -1897,6 +1924,10 @@ def _adopt_prepared_retarget(
                     raise RetargetEligibilityError(
                         "prepared retarget evidence changed while locking"
                     )
+                _require_legacy_retarget_identity(
+                    preview.project_root, preview.spec_id, preview.baseline.run_dir,
+                    _read_json_object(preview.baseline.run_dir / "state.json"),
+                )
                 if checkpoint_created is not None:
                     checkpoint_created(checkpoint)
                 try:

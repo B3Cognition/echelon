@@ -11292,8 +11292,25 @@ def _cmd_rewind(
 
     from harness.squad_state import SquadStateStore
 
+    from harness.element_identity_legacy_guard import (
+        LEGACY_IDENTITY_EXECUTION_BLOCKED,
+        require_legacy_identity_execution,
+        require_legacy_identity_spec,
+    )
+    from harness.element_identity_store import IdentityStoreError
+    from harness.squad_state import StateAdvanceError
+
     store = SquadStateStore(squad_dir)
-    state = store.load()
+    invalid_managed_state = False
+    try:
+        state = store.load()
+    except StateAdvanceError as exc:
+        if exc.validator != "managed_identity":
+            raise
+        invalid_managed_state = True
+    if invalid_managed_state:
+        print(f"✗ Cannot rewind to {target}.\n  {LEGACY_IDENTITY_EXECUTION_BLOCKED}", file=sys.stderr)
+        raise SystemExit(1)
     spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
     if spec_dir is None or spec_dir_ref is None:
         print(
@@ -11384,7 +11401,15 @@ def _cmd_rewind(
                         raise SystemExit(1)
 
                     store = SquadStateStore(locked_squad_dir)
-                    state = store.load()
+                    invalid_managed_state = False
+                    try:
+                        state = store.load()
+                    except StateAdvanceError as exc:
+                        if exc.validator != "managed_identity":
+                            raise
+                        invalid_managed_state = True
+                    if invalid_managed_state:
+                        raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                     spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(
                         project_root,
                         state,
@@ -11401,6 +11426,19 @@ def _cmd_rewind(
                             file=sys.stderr,
                         )
                         raise SystemExit(1)
+                    admitted = False
+                    try:
+                        require_legacy_identity_spec(
+                            project_root=project_root, spec_id=spec_dir.name,
+                        )
+                        require_legacy_identity_execution(
+                            project_root=project_root, run_dir=locked_squad_dir, state=state,
+                        )
+                        admitted = True
+                    except IdentityStoreError:
+                        pass
+                    if not admitted:
+                        raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                     ledger = load_checkpoint_ledger(spec_dir)
                     try:
                         checkpoint = _resolve_rewind_checkpoint(

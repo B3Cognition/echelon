@@ -241,6 +241,10 @@ def test_apply_retarget_holds_locks_revalidates_and_orders_destructive_effects(
         spec_dir=spec_dir,
         published_spec_dir=spec_dir,
     )
+    baseline.run_dir.mkdir(parents=True)
+    (baseline.run_dir / "state.json").write_text(
+        json.dumps({"run_id": "squad-base", "spec_id": "001-demo"}), encoding="utf-8"
+    )
     preview = subject.RetargetPreview(
         project_root=tmp_path,
         spec_id="001-demo",
@@ -1052,6 +1056,10 @@ def test_destructive_failure_marks_failed_and_keeps_recovery_visible(
         spec_dir,
         spec_dir,
     )
+    baseline.run_dir.mkdir(parents=True)
+    (baseline.run_dir / "state.json").write_text(
+        json.dumps({"run_id": "squad-base", "spec_id": "001-demo"}), encoding="utf-8"
+    )
     preview = subject.RetargetPreview(
         tmp_path,
         "001-demo",
@@ -1190,6 +1198,10 @@ def test_bootstrap_failure_after_checkpoint_records_failure_and_recovery(
         "001-demo",
         spec_dir,
         spec_dir,
+    )
+    baseline.run_dir.mkdir(parents=True)
+    (baseline.run_dir / "state.json").write_text(
+        json.dumps({"run_id": "squad-base", "spec_id": "001-demo"}), encoding="utf-8"
     )
     preview = subject.RetargetPreview(
         tmp_path,

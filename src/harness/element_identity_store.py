@@ -759,8 +759,8 @@ class IdentityStore:
         try:
             if spec_id is not None:
                 lifecycle.text(spec_id, "spec_id")
-            if type(run_ids) is not tuple or not run_ids:
-                raise ValueError("run_ids must be a nonempty exact tuple")
+            if type(run_ids) is not tuple or (not run_ids and spec_id is None):
+                raise ValueError("run_ids must be an exact tuple with a spec or run selector")
             for run_id in run_ids:
                 lifecycle.text(run_id, "run_id")
             if len(set(run_ids)) != len(run_ids):
