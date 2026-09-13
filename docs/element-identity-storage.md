@@ -1,5 +1,10 @@
 # Element identity allocation, lifecycle, binding, and publication journal storage
 
+For current execution scope and how to resume existing work without introducing
+competing designs, see the [deferred-scope and decision record](element-identity-deferred-scope.md).
+The integration details below describe implementation boundaries, not permission
+to activate or complete every capability.
+
 `harness.element_identity_store.IdentityStore` remains inactive except for the
 narrow selected-spec legacy memory/evidence and named projection-output
 exclusions documented below. It is not wired into managed spec producers,

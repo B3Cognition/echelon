@@ -2,6 +2,15 @@
 
 ## Status and scope
 
+**Convergence checkpoint (2026-09-13):** consult the
+[deferred-scope and decision record](../../element-identity-deferred-scope.md)
+before resuming this work. It distinguishes unfinished release requirements from
+proposed deferred capabilities and preserves decisions and existing owners.
+The [dependency boundary](../../element-identity-convergence-boundary.md) records
+the completed read-only scope check. Necessary deferred dependencies are now
+approved for convergence; the historical plan does not authorize unrelated
+capabilities or materially different designs.
+
 The user approved fixing the browser-game smoke-test findings and requested
 at least six numeric digits, with capacity for millions of identifiers over
 years. This document makes the migration and enforcement contract explicit
