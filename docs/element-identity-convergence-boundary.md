@@ -257,3 +257,84 @@ Controller-owned documentation production/repair, report publication/recovery,
 native entry/prose migration, default rollout and bundle smoke checks still
 remain before original phase 4 can close. No installation, live execution,
 identity activation or cross-platform expansion is included.
+
+## Documentation execution helper checkpoint (2026-09-13)
+
+Commits `b7e9967a` and `f3146044` add the bounded documentation helper beneath
+Ralph. TECH WRITER may edit only candidate README/CHANGELOG; DOCS VERIFIER has
+read-only scope. Both return dispatch-bound report values. Python runs existing
+deterministic validation and publishes the canonical report pair only after
+independent review passes. The helper reuses delivery journal locking and atomic
+storage, persists the three-author-attempt ceiling, rejects unknown dispatch
+completion, and recovers partial publication from exact before/after images.
+It returns no completed task IDs and does not authorize delivery acceptance.
+
+Independent review found and fixed two defects before integration: ignored,
+untracked documentation now participates explicitly in candidate identity, and
+canonical task/report inventories no longer inherit a 50-finding array limit.
+The focused re-review approved both fixes with no remaining findings.
+
+Evidence: one surrounding regression batch passed 242 tests across documentation,
+durability, delivery selection/runner/recovery and both provider boundaries.
+Subsequent validator and reviewed fixes passed 67 documentation cases; their
+RED tests reproduced the defects before the corrections. No full-unit run,
+installation or live provider execution is claimed. Full-tree streamed hashing
+adds filesystem cost on dependency-heavy candidates; publication uses pinned
+atomic replacement with before-image checks, not a kernel-level compare-and-swap
+against an uncooperative concurrent writer.
+
+Ralph routing/report-preservation integration follows in the
+[documentation checkpoint plan](superpowers/plans/2026-09-13-delivery-documentation-controller.md).
+This helper alone does not close original phase 4 or activate identity features.
+
+## Documentation operation integration checkpoint (2026-09-13)
+
+Commit `9c474d63` routes a nonempty documentation-only failure set to the helper.
+Source and mixed failures retain implementation repair. The existing operation
+pointer distinguishes documentation from task work; restart dispatches its saved
+kind and original inputs before selecting new work. Unknown completion and
+changed failure evidence require reconciliation rather than fresh attempt
+budgets. Accepted documentation does not complete task IDs or replace the last
+real implementation task used for source repairs. Cumulative usage is charged
+only as an unseen delta.
+
+Controlled documentation gates now require an independent report even for a
+no-impact declaration and never rewrite the independently reviewed report pair.
+Legacy default-false behavior remains unchanged. Runnability selection checks
+the current stack/contract and immutable receipt; the runner owns initial
+candidate validation and subsequent exact-content replay checks, so the author's
+own documentation edits do not incorrectly invalidate recovery.
+
+Consuming tests cover all modes, complete and partial task scopes, source/mixed
+routing, internal/external specs, publication/progress crashes, changed inputs,
+receipt-backed reconstruction, token accounting, and the real inner verification
+loop. Initial integration RED was 25 failures; later RED cases caught changed
+feedback, recomputed changed-file inputs and overstrict receipt replay.
+
+The surrounding batch had 761 passing tests and two existing test-double
+signature failures. After those narrow fixture corrections and the receipt
+recovery fix, the affected-file run passed 438 tests, including all 41 new
+integration cases. Unaffected passing files were not rerun; this is not a
+repository-wide test or live-provider claim.
+
+**Independent integration review: needs fixes; this checkpoint is not accepted.**
+The real post-verification chain reruns runnability after documentation authoring.
+README/CHANGELOG changes alter the product fingerprint and therefore the new
+runnability evidence digest. The independent docs report still cites pre-authoring
+evidence, so the gate correctly rejects it and the accepted-operation guard
+correctly refuses to reuse its approval. The passing inner-loop fixture has no
+enabled runnability contract; the receipt-backed recovery fixture deliberately
+ends at the repair limit. Neither proves this positive convergence path.
+
+Proposed next correction, requiring user approval before implementation: add a
+controller-owned checkpoint after authoring and before independent docs review
+to obtain current runnability evidence. Preserve Ralph ownership, the existing
+operation and attempt ceiling, and exact evidence comparison. Do not weaken
+digest comparison, silently refresh canonical report hashes, reuse stale approval,
+or redefine product/evidence identity to ignore documentation changes. A positive
+real-loop regression with runnability enabled is required for acceptance.
+
+Remaining original delivery work: public/native entry routing, active
+prose/companion migration, default rollout decisions, and installed-bundle
+acceptance. Deferred identity integration is still a separate milestone.
+No installation, live execution, migration, push or default activation occurred.
