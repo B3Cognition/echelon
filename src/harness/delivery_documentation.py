@@ -38,6 +38,12 @@ def _images(root, names):
     return result
 
 
+def _documentation_candidate_fingerprint(worktree, spec):
+    """Bind both documents even when the shared Git inventory omits them."""
+    return _digest({"candidate": _candidate_fingerprint(worktree, spec),
+                    "documents": _images(worktree, DOCS)})
+
+
 def _source_fingerprint(worktree, spec):
     reports = tuple(spec / name for name in REPORTS)
     controls = {name: _images(worktree, (name,))[name]
@@ -170,7 +176,7 @@ class DeliveryDocumentationRunner:
                     if not validation.valid:
                         raise DeliverySliceError("documentation_runnability_evidence_stale: " + validation.reason)
                 data = {"schema_version": 1, "run_id": uuid4().hex, "binding": binding, "input_fingerprint": fingerprint,
-                        "source_fingerprint": source, "candidate_fingerprint": _candidate_fingerprint(worktree, spec_dir),
+                        "source_fingerprint": source, "candidate_fingerprint": _documentation_candidate_fingerprint(worktree, spec_dir),
                         "budget_limit": token_budget, "task_ids": scope, "records": [], "publication": None,
                         "reports_before": _images(spec_dir, REPORTS), "docs_before": _images(worktree, DOCS)}
                 journal.save(data)
@@ -198,7 +204,7 @@ class DeliveryDocumentationRunner:
                     if current[name] not in allowed:
                         raise DeliverySliceError("delivery_reconciliation_required: canonical documentation report changed")
                 _images(worktree, DOCS)
-                if expected_candidate is not None and _candidate_fingerprint(worktree, spec_dir) != expected_candidate:
+                if expected_candidate is not None and _documentation_candidate_fingerprint(worktree, spec_dir) != expected_candidate:
                     raise DeliverySliceError("delivery_reconciliation_required: documentation candidate changed")
                 if check_budget and token_budget is not None:
                     if any(record["token_usage"] is None for record in records):
@@ -253,7 +259,7 @@ class DeliveryDocumentationRunner:
                             if _tree_fingerprint(evidence_root) != evidence_before:
                                 raise DeliverySliceError("delivery_documentation_evidence_mutated")
                             # Writer changes are allowed only at the two exact document paths.
-                            after = _candidate_fingerprint(worktree, spec_dir)
+                            after = _documentation_candidate_fingerprint(worktree, spec_dir)
                             previous = expected_candidate
                             if step == "tech_writer": expected_candidate = after
                             guard(check_budget=False)

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -409,3 +410,54 @@ def test_report_frontmatter_requires_exact_types(documentation_project, fault):
     runner, provider, paths = documentation_project(script=script)
     result = runner.run(**paths)
     assert result.status == "blocked" and len(provider.calls) == 2
+
+
+@pytest.mark.parametrize("document", ["README.md", "CHANGELOG.md"])
+def test_ignored_document_mutation_during_review_blocks(documentation_project, document):
+    def script(assignment, payload, root):
+        if assignment["step"] == "docs_verifier":
+            (root / document).write_text("Unreviewed document mutation\n")
+    runner, provider, paths = documentation_project(script=script)
+    subprocess.run(["git", "init", "--quiet", str(paths["worktree"])], check=True)
+    (paths["worktree"] / ".gitignore").write_text("README.md\nCHANGELOG.md\n")
+    result = runner.run(**paths)
+    assert result.status == "blocked", result.reason
+    assert len(provider.calls) == 2
+    assert not (paths["spec_dir"] / "docs-verification-report.md").exists()
+
+
+@pytest.mark.parametrize("document", ["README.md", "CHANGELOG.md"])
+def test_changed_ignored_document_cannot_reuse_completed_review(documentation_project, document):
+    runner, provider, paths = documentation_project()
+    subprocess.run(["git", "init", "--quiet", str(paths["worktree"])], check=True)
+    (paths["worktree"] / ".gitignore").write_text("README.md\nCHANGELOG.md\n")
+    assert runner.run(**paths).succeeded
+    (paths["worktree"] / document).write_text("Changed after accepted review\n")
+    result = type(runner)(provider, runner._project_dir).run(**paths, journal_required=True)
+    assert result.status == "blocked", result.reason
+    assert "candidate changed" in result.reason
+    assert len(provider.calls) == 2 and result.token_usage == 14
+
+
+def test_scope_exceeding_fifty_tasks_is_documented_and_replayed(documentation_project):
+    task_ids = [f"T-{number:03d}" for number in range(1, 52)]
+    def script(assignment, payload, root):
+        metadata = yaml.safe_load(payload["report_markdown"].split("---", 2)[1])
+        if assignment["step"] == "tech_writer":
+            metadata["delivery_change_ids"] = task_ids
+            entry = metadata["documented_changes"][0]
+            metadata["documented_changes"] = [{**entry, "change_id": task_id} for task_id in task_ids]
+        else:
+            metadata["reviewed_change_ids"] = task_ids
+        payload["report_markdown"] = "---\n" + yaml.safe_dump(metadata) + "---\n# Documentation report\n"
+    runner, provider, paths = documentation_project(script=script)
+    (paths["spec_dir"] / "tasks.md").write_text("".join(
+        f"- [ ] {task_id} complexity=standard phase=build req=FR-1 depends=none\n" for task_id in task_ids))
+    paths["allowed_task_ids"] = set(task_ids)
+    result = runner.run(**paths)
+    assert result.succeeded, result.reason
+    assert result.task_ids == [] and result.token_usage == 14
+    assert all(assignment["task_ids"] == task_ids for assignment, _, _ in provider.calls)
+    replay = type(runner)(provider, runner._project_dir).run(**paths, journal_required=True)
+    assert replay.succeeded and replay.token_usage == 14
+    assert len(provider.calls) == 2

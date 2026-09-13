@@ -133,3 +133,47 @@ worktree. No repository-wide suite was run.
   is checked through neutral metadata and existing adapter regression suites.
 - No known planned Task 1 test category remains unimplemented. Parent review and
   Task 2 integration remain outstanding.
+
+## Review fix round 1
+
+Base: `b7e9967a`. Both review findings were reproduced against the committed
+implementation before changing production code.
+
+1. Documentation-specific candidate fingerprints now include the exact README.md
+   and CHANGELOG.md contents (or explicit absence) alongside the existing shared
+   candidate identity. Initial journal identity, author/reviewer receipts, current
+   candidate checks and reconstruction all use this fingerprint. Git-ignored and
+   untracked documents therefore cannot change during independent review or after
+   approval and retain the previous receipt. Four regression cases exercise both
+   document paths at reviewer entry and after completion in real temporary Git
+   repositories with both documents ignored.
+2. Canonical scope and report change-ID inventories now use inventory validation
+   independent of the 50-item findings limit. String validation, sorted/unique
+   canonical scope, complete assignment echo, report/JSON bounds and the overall
+   serialized journal bound remain enforced. A consuming 51-task case produces
+   the full impact/verification change inventory, publishes successfully and
+   reconstructs without duplicate dispatch or usage. The associated inventory
+   fields were also separated from findings limits because otherwise the same
+   valid 51-task operation would fail when its complete impact report returns.
+
+Exact command/results, using the same interpreter and worktree as above:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_delivery_documentation.py -k 'ignored_document or exceeding_fifty'
+RED:   5 failed, 62 deselected in 1.50s
+GREEN: 5 passed, 62 deselected in 1.52s
+
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_delivery_documentation.py
+GREEN: 67 passed in 10.93s
+
+git diff --check
+PASS: exit 0, no output
+```
+
+The RED failures were actual unexpected successful approvals/replays for the
+four ignored-document cases and `invalid documentation scope` for the valid
+51-task operation. Only the two documentation implementation modules, focused
+tests and this report changed. Shared primitives were untouched, so surrounding
+regression suites were not repeated as requested. Prior pre-fix documentation
+journals use a different candidate digest and fail closed under reconstruction;
+this unreleased implementation does not migrate old authority receipts.

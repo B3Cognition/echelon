@@ -37,7 +37,12 @@ def _require(condition, message):
 
 
 def _strings(value, maximum=50):
-    return isinstance(value, list) and len(value) <= maximum and all(
+    return _identifiers(value) and len(value) <= maximum
+
+
+def _identifiers(value):
+    """Inventories are bounded by serialized size, not a findings-count limit."""
+    return isinstance(value, list) and all(
         isinstance(item, str) and item.strip() and len(item) <= 8000 for item in value)
 
 
@@ -91,14 +96,15 @@ def validate_result(raw, assignment):
             _require(type(metadata.get("docs_required")) is bool, "invalid documentation impact decision")
             for key in ("readme_updated", "changelog_updated"):
                 _require(type(metadata.get(key)) is bool, "invalid documentation impact flag")
-            _require(_strings(metadata.get("delivery_change_ids")) and bool(metadata["delivery_change_ids"]),
+            _require(_identifiers(metadata.get("delivery_change_ids")) and bool(metadata["delivery_change_ids"]),
                      "invalid documentation change inventory")
         else:
             _require(metadata.get("verdict") == verdict, "documentation report verdict mismatch")
             _require(type(metadata.get("blocking_findings")) is int and metadata["blocking_findings"] >= 0,
                      "invalid report blocking findings")
-            for key in ("reviewed_change_ids", "uncovered_change_ids", "unsupported_claims"):
-                _require(_strings(metadata.get(key)), "invalid report findings inventory")
+            for key in ("reviewed_change_ids", "uncovered_change_ids"):
+                _require(_identifiers(metadata.get(key)), "invalid report change inventory")
+            _require(_strings(metadata.get("unsupported_claims")), "invalid report findings inventory")
             for key in ("readme_first_run_manual", "changelog_valid", "impact_report_valid", "project_evidence_checked", "runnability_commands_current"):
                 _require(type(metadata.get(key)) is bool, "invalid documentation review flag")
             _require(type(metadata.get("evidence_items_checked")) is int and metadata["evidence_items_checked"] >= 0,
@@ -126,7 +132,7 @@ def validate_journal(data):
     for field in ("binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint"):
         _require(_fingerprint(data[field]), "invalid documentation fingerprint")
     scope = data["task_ids"]
-    _require(_strings(scope) and bool(scope) and scope == sorted(set(scope)), "invalid documentation scope")
+    _require(_identifiers(scope) and bool(scope) and scope == sorted(set(scope)), "invalid documentation scope")
     budget = data["budget_limit"]
     _require(budget is None or type(budget) in (int, float) and math.isfinite(budget), "invalid documentation budget")
     for field, names in (("reports_before", REPORTS), ("docs_before", DOCS)):
