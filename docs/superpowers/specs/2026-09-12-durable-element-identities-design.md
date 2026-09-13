@@ -343,6 +343,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   old evidence revision bindings. Real guarded source publication matches the
   predicted images and derived graph, but the graph itself is not yet sealed or
   published by this function. Complete acquisition and publication remain required.
+- Coherent candidate/history preview: implemented in `24186d39` and independently
+  reviewed with no findings. Nine-module covering suite: 590 passed. Candidate
+  checks and exact decoded journal operations share one audited query-only
+  authority snapshot; rejected candidates receive no proposed history. Exact
+  issue occurrences must match captured after reports or retained provenance.
+  A real synchronized writer test proves coherent reads and subsequent v3
+  stale-history rejection. This remains pre-intent structural observation, not
+  semantic approval or physical publication authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
