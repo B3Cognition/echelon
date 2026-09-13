@@ -1913,6 +1913,39 @@ source-selection/logical-mapping ownership, identity overlay, graph sealing and
 managed producer/runtime/semantic/completion/bounded-repair integration remain
 required before activation.
 
+## Captured memory drawer reconciliation (inactive)
+
+`echelon.context_reconciliation.reconcile_captured_drawers` classifies supplied
+drawer observations against an exact, caller-supplied table of artifact images.
+The table is validated and copied in full before drawer iteration. Its keys are
+exact normalized project-relative POSIX paths; values distinguish an explicitly
+captured absence (`None`) from present content, including empty bytes. A canonical
+drawer path omitted from the table is unobserved rather than missing. Present
+bytes are hashed in memory and compared with the drawer's existing
+`sha256:`-prefixed artifact hash.
+
+Drawer paths must already use that canonical logical spelling and the existing
+`specs/{three-digits}-...` compatibility rule. This adapter has no project root
+and does not resolve filesystem aliases, absolute paths, traversal, dot
+components or symlink destinations. The existing disk-backed
+`reconcile_drawers` adapter is unchanged in authority and compatibility: it still
+resolves its project root and drawer paths, checks containment and canonical
+destinations, observes existence, and hashes the resolved file.
+
+The copied table owns lookup membership only; immutable byte values need no
+deeper copy. Accepted results deliberately retain the caller's original drawer
+objects, their ordering and duplicate occurrences. The report does not claim
+deep-detached drawer ownership, validate drawer identity or revisions, or grant
+lifecycle, publication or completion authority.
+
+This pure adapter does not acquire artifact images, inspect a memory collection,
+select complete dependencies, activate a managed runtime, publish graph or memory
+state, or repair stale rows. Existing graph APIs likewise consume supplied
+observations; they are not actual memory-audit authority. A future controller
+must truthfully capture the complete selected artifacts, audit the real
+collection, bind lifecycle and identity revisions, and coordinate publication and
+completion before treating reconciliation as an acceptance gate.
+
 ## Captured memory graph contributions
 
 `build_memory_graph_contribution(spec_id=..., lifecycle=..., domain=...,
