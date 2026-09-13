@@ -395,6 +395,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   to captured bytes without source rereads or storage writes. All three memory
   domains now have captured observation paths, not authenticated aggregate
   source/catalog/configuration ownership, revision approval or publication.
+- Managed retarget/rewind exclusion: implemented in `d57c3c59` and corrected in
+  `72af5b16` after independent review exposed baseline-only CLI ownership being
+  checked too late. Final focused rewind/recovery suite: 332 passed; fresh
+  re-review found the issue addressed with no new findings. Shared read-only
+  admission now precedes CLI Git/ledger effects while receipt reconciliation
+  remains at its existing later recovery owner. Actual selected/current/baseline
+  witnesses block legacy source-transition effects; unrelated legacy behavior
+  remains. This is not positive managed retarget/rewind, concurrent enrollment
+  exclusion or complete direct-writer coverage. Initial covering failures and
+  narrowly authorized fixture corrections remain documented in the phase report.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
