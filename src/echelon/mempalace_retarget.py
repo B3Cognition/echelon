@@ -30,6 +30,11 @@ from echelon.mempalace_requirements import (
     mine_spec_requirements,
 )
 from echelon.strict_json import loads_strict_json
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_spec,
+)
+from harness.element_identity_store import IdentityStoreError
 
 
 _CANONICAL_SPEC_ID = re.compile(
@@ -161,6 +166,22 @@ class RetargetMemoryError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.receipt = receipt
+
+
+def _require_legacy_retarget_memory(
+    project_root: Path, *, spec_id: str, selected_spec_id: str | None = None,
+) -> None:
+    try:
+        require_legacy_identity_spec(project_root=project_root, spec_id=spec_id)
+        if selected_spec_id is not None and selected_spec_id != spec_id:
+            require_legacy_identity_spec(
+                project_root=project_root,
+                spec_id=selected_spec_id,
+            )
+        return None
+    except IdentityStoreError:
+        pass
+    raise RetargetMemoryError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
 def _require_spec_id(spec_id: object) -> str:
@@ -516,6 +537,10 @@ def purge_retarget_spec_memory(
         checked_spec_id = _require_spec_id(spec_id)
     except ValueError as exc:
         raise RetargetMemoryError("invalid retarget spec identity") from exc
+    _require_legacy_retarget_memory(
+        project_root,
+        spec_id=checked_spec_id,
+    )
     configured_wing = _configured_mempalace_wing(project_root)
     if configured_wing is None:
         return _receipt(
@@ -2950,6 +2975,11 @@ def refresh_retarget_spec_memory(
         spec_id = _require_spec_id(relative.parts[1])
     except ValueError as exc:
         raise RetargetMemoryError("invalid retarget spec identity") from exc
+    _require_legacy_retarget_memory(
+        root,
+        spec_id=spec_id,
+        selected_spec_id=spec_dir.name or None,
+    )
     configured_wing = _configured_mempalace_wing(root)
     if configured_wing is None:
         return RetargetMemoryReceipt(

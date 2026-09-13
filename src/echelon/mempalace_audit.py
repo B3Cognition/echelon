@@ -14,6 +14,7 @@ from echelon.mempalace_requirements import (
     SpecMemoryError,
     CanonicalSpecSnapshot,
     PlannedRequirementDrawer,
+    _require_legacy_spec_memory,
     create_requirement_memory_adapter,
     load_canonical_spec_snapshot,
     load_supporting_artifact_snapshots,
@@ -470,6 +471,11 @@ def cleanup_stale_spec_memory(
 ) -> SpecMemoryCleanupReport:
     spec_dir = resolve_spec_dir(project_root, spec_selector)
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=snapshot.spec_id,
+    )
     adapter = create_requirement_memory_adapter(project_root, run_id="cleanup")
     expected_rows = _plan_expected_spec_memory_rows(
         project_root=project_root,

@@ -5,10 +5,31 @@ from pathlib import Path
 from typing import Any
 
 from echelon.context_metadata import artifact_hash
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_spec,
+)
+from harness.element_identity_store import IdentityStoreError
 
 
 class SpecMemoryError(RuntimeError):
     """Bounded operator-facing error for spec memory commands."""
+
+
+def _require_legacy_spec_memory(
+    project_root: Path, *, spec_id: str, resolved_spec_id: str | None = None,
+) -> None:
+    try:
+        require_legacy_identity_spec(project_root=project_root, spec_id=spec_id)
+        if resolved_spec_id is not None and resolved_spec_id != spec_id:
+            require_legacy_identity_spec(
+                project_root=project_root,
+                spec_id=resolved_spec_id,
+            )
+        return None
+    except IdentityStoreError:
+        pass
+    raise SpecMemoryError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
 @dataclass(frozen=True)
@@ -387,6 +408,11 @@ def mine_spec_requirements(
 ) -> SpecMemoryMineReport:
     spec_dir = resolve_spec_dir(project_root, spec_selector)
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=snapshot.spec_id,
+    )
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id)
     except SpecMemoryError:

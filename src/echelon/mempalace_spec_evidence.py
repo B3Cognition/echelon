@@ -13,6 +13,7 @@ from echelon.mempalace_requirements import (
     _read_int,
     _read_mempalace_wing,
     _read_str_list,
+    _require_legacy_spec_memory,
     resolve_spec_dir,
 )
 from echelon.mempalace_memory_audit import ArtifactMemoryAuditReport, audit_artifact_memory
@@ -312,6 +313,11 @@ def publish_spec_evidence_package(
     spec_dir = resolve_spec_dir(root, spec_selector)
     _require_landed_spec(spec_dir, allow_unlanded=allow_unlanded)
     source_run_dir = _resolve_verify_evidence_run_dir(root, spec_dir.name, run_id)
+    _require_legacy_spec_memory(
+        root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=spec_dir.resolve().name,
+    )
     evidence_dir = spec_dir / PUBLISHED_EVIDENCE_DIR
     evidence_dir.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
@@ -618,6 +624,11 @@ def mine_spec_evidence_memory(
         allow_unlanded=allow_unlanded,
     )
     spec_dir = resolve_spec_dir(project_root, spec_selector)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=spec_dir.resolve().name,
+    )
     try:
         adapter = create_spec_evidence_memory_adapter(project_root, run_id)
     except SpecMemoryError:

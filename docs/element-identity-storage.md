@@ -1,9 +1,11 @@
 # Element identity allocation, lifecycle, binding, and publication journal storage
 
-`harness.element_identity_store.IdentityStore` is an inactive library. It is not
-wired into spec producers, providers, artifact adapters, evidence, or squad
-publication. Existing authoring behavior remains in place. Importing this module
-does not activate identity management or create workspace state.
+`harness.element_identity_store.IdentityStore` remains inactive except for the
+narrow selected-spec legacy memory and evidence exclusion documented below. It
+is not wired into managed spec producers, providers, graph adapters, positive
+memory/evidence publication, or squad publication. Existing authoring behavior
+remains in place. Importing this module does not activate identity management or
+create workspace state.
 
 ## Sealed publication inspection boundary
 
@@ -816,6 +818,45 @@ upgrade, repair, or a legacy fallback. This bounded association check is not a
 full authority audit and does not certify arbitrary identity child history,
 semantic assessment, graph publication, recovery, or completion. No controller,
 provider, CLI, startup path, or producer invokes it in this phase.
+
+### Selected-spec legacy memory and evidence exclusion
+
+Six direct legacy mutation owners now consult retained selected-spec identity
+authority after their native selector, canonical snapshot, landed-status, or
+verify-source validation and before their first adapter or filesystem effect:
+`mine_spec_requirements`, `cleanup_stale_spec_memory`,
+`mine_spec_evidence_memory`, `publish_spec_evidence_package`,
+`purge_retarget_spec_memory`, and `refresh_retarget_spec_memory`. A retained
+matching managed spec, orphan managed genesis, or present invalid identity
+authority produces the bounded legacy-execution error. Retarget errors carry no
+pass, fail, or not-applicable receipt. Missing authority and valid authority for
+unrelated specs retain the legacy behavior without initializing, enrolling,
+repairing, or upgrading identity storage.
+
+Where native selection can retain a symlink spelling, admission checks both the
+selected directory name and the independently resolved physical canonical spec
+name when they differ. Neither identity is an alias search or normalized
+replacement for the other. Adapter `run_id` strings such as `manual`, `cleanup`,
+and `retarget-finalize` remain provenance labels; they are not queried as managed
+runtime owners, and admission does not scan current run state or infer ownership
+from documents or ancestors. A zero-row evidence selection does not bypass the
+selected-spec check.
+
+`publish_all_spec_evidence_packages` keeps its native per-spec aggregation: a
+managed package is reported as one bounded failure, valid legacy packages can
+still publish, and the aggregate can be partial. The rejected package is not
+created or overwritten. Read-only requirement, evidence, and captured audit APIs
+remain diagnostic and do not grant write admission merely because an audit
+passes.
+
+This is a narrow negative boundary, not a global RE or memory blockade and not a
+complete writer perimeter. Metadata-only managed declarations are not visible
+when every durable spec-ownership witness is absent; the check does not pin
+enrollment and cannot undo an upstream command's earlier independent effects.
+Direct graph and CLI effects, low-level and generic writers/miners, managed
+producers and runtime selection, positive managed memory/evidence publication,
+semantic authorization, coordinated completion, recovery, and bounded repair
+remain separate integration work.
 
 ## Authority and API
 
