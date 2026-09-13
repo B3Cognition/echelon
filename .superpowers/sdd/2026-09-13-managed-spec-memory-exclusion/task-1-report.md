@@ -220,3 +220,125 @@ mining/publication, managed producer/runtime selection, semantic authority,
 complete joint capture, coordinated completion/recovery, or bounded repair.
 Read-only audits remain diagnostic rather than admission. No live palace/backend
 success claim is made.
+
+## Round 1/5 test-coverage fix
+
+Reviewed starting HEAD:
+`26ab9ca9064a523dd3b70bfc1fde451dd6bcd66c`.
+
+Test amendment commit:
+`ac34c5996e6150a8547d6d9ae8ce9b97353fb346`
+(`test: cover managed memory alias boundaries`).
+
+### Findings addressed
+
+1. Replaced the two fabricated `SpecMemoryMiner.mine_*` results in the legacy
+   positive controls. Requirement and evidence owners now execute the real
+   native `mine_canonical_bytes` and
+   `mine_spec_evidence_artifact_bytes` methods, including byte validation,
+   parsing, deterministic planning, metadata assembly, exact writer calls and
+   readback. The only doubles are behind storage acquisition: collision lookup,
+   writer collection acquisition, and the in-memory collection itself.
+   Assertions fix the expected drawer keys, documents, requirement IDs, rooms,
+   artifact/content hashes, source paths, wing/run/phase/scope metadata, write
+   counts and complete report statuses.
+2. Added independent selected-alias and physical-canonical managed witnesses for
+   every applicable two-witness owner that was missing coverage:
+   `cleanup_stale_spec_memory`, `mine_spec_evidence_memory`,
+   `publish_spec_evidence_package`, and `refresh_retarget_spec_memory`.
+   Requirement mining retains its existing two-case coverage. Publication uses
+   a real completed verify-source candidate for the selected alias, so both
+   cases reach admission after native source discovery. Each case snapshots
+   filesystem/type/symlink/SQL state and trips the first post-admission boundary.
+
+No production or documentation file changed in this round. Review had already
+found the production placements correct, and no production defect or scope
+change became necessary.
+
+### Development commands, failures and corrections
+
+A one-off local calculation produced fixed literal drawer/hash expectations from
+the static native fixtures. It used the established virtual-environment Python
+and only `hashlib`/`json`; it did not read or write repository or backend state.
+The resulting literals are asserted independently in the tests rather than
+computed through production helpers.
+
+First focused amendment command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_managed_spec_memory_exclusion.py::test_cleanup_symlink_selector_checks_selected_and_physical_identities tests/unit/test_managed_spec_memory_exclusion.py::test_evidence_mining_symlink_selector_checks_selected_and_physical_identities tests/unit/test_managed_spec_memory_exclusion.py::test_evidence_publication_symlink_selector_checks_selected_and_physical_identities tests/unit/test_managed_spec_memory_exclusion.py::test_retarget_refresh_symlink_selector_checks_selected_and_physical_identities tests/unit/test_managed_spec_memory_exclusion.py::test_unrelated_authority_preserves_legacy_requirement_alias_mining tests/unit/test_managed_spec_memory_exclusion.py::test_legacy_evidence_mining_uses_native_adapter_and_local_collection_seam -q
+```
+
+Result: exit 1, `3 failed, 7 passed in 1.21s`.
+
+The failures were the selected-alias (`004-alias`) parameters for cleanup,
+evidence mining and evidence publication. They reached their tripwires instead
+of rejecting. Fixture diagnosis: those tests passed an absolute alias `Path` to
+the common selector resolver. Its native absolute-path branch resolves the
+symlink before returning the selected directory, so that spelling is not a
+supported retained alias witness. This was not a production defect. The tests
+were corrected to pass the native supported string selector `004-alias`.
+`refresh_retarget_spec_memory` continued to receive the alias `Path` because its
+distinct interface preserves `spec_dir.name` before using its independently
+resolved canonical path.
+
+The identical focused command after that fixture correction returned exit 0:
+`10 passed in 1.18s`.
+
+Pre-cover checks:
+
+- `git diff --check -- tests/unit/test_managed_spec_memory_exclusion.py`:
+  exit 0, no output.
+- `git diff --cached --check`: exit 0, no output.
+- `git diff --cached --name-only`: exactly
+  `tests/unit/test_managed_spec_memory_exclusion.py`.
+- Pre-cover `git write-tree`:
+  `d1288d919d402ec4f8081c2c1cfdc2c44d1966ec`.
+
+### Exact final covering run
+
+Per the round ruling, only the amended module was run:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_managed_spec_memory_exclusion.py -q
+```
+
+Result: exit 0, `29 passed in 2.13s`, with no warnings or stray output.
+
+The run used staged tree `d1288d919d402ec4f8081c2c1cfdc2c44d1966ec`.
+Commit `ac34c5996e6150a8547d6d9ae8ce9b97353fb346` has that identical tree.
+No post-cover test or production change was made, and the seven-module/native
+suites were not rerun.
+
+Exact round diff and tested path:
+
+```text
+M  tests/unit/test_managed_spec_memory_exclusion.py
+```
+
+Root-owned and unrelated paths remained excluded from the index:
+
+```text
+ M .superpowers/sdd/2026-09-13-managed-spec-memory-exclusion/progress.md
+?? docs/superpowers/plans/2026-09-13-managed-projection-write-exclusion.md
+```
+
+### Round self-review
+
+- Confirmed neither native miner method is patched; both positive controls use
+  real adapter, parser, planning and `MemPalaceWriter.write_exact` behavior.
+- Confirmed the storage double implements exact get/add/delete effects and
+  retains full emitted rows for independent literal assertions.
+- Confirmed the evidence positive fixture has one curated real artifact so its
+  one expected native row is unambiguous; cleanup of the prior selected-spec row
+  and preservation of an unrelated row remain observable.
+- Confirmed each two-witness case independently fails if the selected or
+  physical guard argument is removed from its owner, including refresh's
+  separately implemented retarget translation.
+- Confirmed the publication alias fixture passes real landed and completed
+  verify-source discovery before admission and cannot succeed by an earlier
+  source-selection failure.
+- Confirmed this round changes tests only, introduces no palace service, and
+  preserves the original genuine RED/GREEN chronology above.
+
+No remaining concern was found for the reviewed test-only gaps.
