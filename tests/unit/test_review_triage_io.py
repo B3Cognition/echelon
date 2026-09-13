@@ -281,6 +281,22 @@ def test_read_reports_oversized_source_and_output_as_unavailable(tmp_path: Path)
 
 
 @pytest.mark.unit
+def test_read_reports_json_expanded_output_as_unavailable(tmp_path: Path) -> None:
+    (tmp_path / "unicode").write_text("😀" * 10_000 + "\n", encoding="utf-8")
+    with ReviewReadChannel(tmp_path, tmp_path) as channel:
+        result = channel.request(
+            {
+                "op": "read_file",
+                "root": "worktree",
+                "path": "unicode",
+                "start_line": 1,
+                "line_count": 1,
+            }
+        )
+    assert result["status"] == "unavailable"
+
+
+@pytest.mark.unit
 def test_list_directory_returns_sorted_bounded_regular_entries(tmp_path: Path) -> None:
     (tmp_path / "z.txt").write_text("z")
     (tmp_path / "a-dir").mkdir()
@@ -316,6 +332,20 @@ def test_list_directory_rejects_symlink_and_special_entries(tmp_path: Path) -> N
 def test_list_directory_reports_more_than_500_entries_as_unavailable(tmp_path: Path) -> None:
     for index in range(501):
         (tmp_path / f"entry-{index:03d}").write_text("")
+    with ReviewReadChannel(tmp_path, tmp_path) as channel:
+        result = channel.request(
+            {"op": "list_directory", "root": "worktree", "path": "."}
+        )
+    assert result["status"] == "unavailable"
+
+
+@pytest.mark.unit
+def test_list_directory_reports_oversized_serialized_reply_as_unavailable(
+    tmp_path: Path,
+) -> None:
+    for index in range(500):
+        name = f"entry-{index:03d}-" + "x" * 190
+        (tmp_path / name).write_text("")
     with ReviewReadChannel(tmp_path, tmp_path) as channel:
         result = channel.request(
             {"op": "list_directory", "root": "worktree", "path": "."}

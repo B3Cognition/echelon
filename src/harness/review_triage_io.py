@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -282,12 +283,15 @@ def _read_file(
     selected = "".join(lines[start_line - 1 : start_line - 1 + line_count])
     if len(selected.encode("utf-8")) > _MAX_OUTPUT_BYTES:
         return _unavailable("requested text exceeds the 64 KiB output limit")
-    return {
+    response: dict[str, object] = {
         "status": "ok",
         "text": selected,
         "start_line": start_line,
         "total_lines": len(lines),
     }
+    if _encoded_output_size(response) > _MAX_OUTPUT_BYTES:
+        return _unavailable("requested reply exceeds the 64 KiB output limit")
+    return response
 
 
 def _list_directory(
@@ -301,6 +305,8 @@ def _list_directory(
         if len(names) > _MAX_DIRECTORY_ENTRIES:
             return _unavailable("directory exceeds the 500 entry limit")
         entries: list[dict[str, str]] = []
+        encoded_size = _encoded_output_size({"status": "ok", "entries": entries})
+        output_oversized = False
         for name in sorted(names):
             metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISDIR(metadata.st_mode):
@@ -309,9 +315,18 @@ def _list_directory(
                 entry_type = "file"
             else:
                 raise ReviewTriageError("directory contains an unsafe entry")
-            entries.append({"name": name, "type": entry_type})
+            entry = {"name": name, "type": entry_type}
+            if output_oversized:
+                continue
+            encoded_size += _encoded_output_size(entry) + (2 if entries else 0)
+            if encoded_size > _MAX_OUTPUT_BYTES:
+                output_oversized = True
+                continue
+            entries.append(entry)
         if _directory_identity(os.fstat(directory_fd)) != before:
             raise ReviewTriageError("review directory changed while listing")
+        if output_oversized:
+            return _unavailable("directory reply exceeds the 64 KiB output limit")
         return {"status": "ok", "entries": entries}
     except ReviewTriageError:
         raise
@@ -451,3 +466,7 @@ def _close_descriptors(descriptors: Iterable[int]) -> None:
 
 def _unavailable(reason: str) -> dict[str, object]:
     return {"status": "unavailable", "reason": reason}
+
+
+def _encoded_output_size(value: object) -> int:
+    return len(json.dumps(value).encode("utf-8"))
