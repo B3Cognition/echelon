@@ -414,6 +414,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   retarget-memory receipts. Native per-spec batch partial behavior and unrelated
   legacy writes remain. This is not managed mining/publication, an enrollment
   lease, complete command/low-level writer coverage or live activation.
+- Managed legacy projection write exclusion: implemented in `aef09ba9` and
+  independently reviewed with no blocking findings. Initial eight-module run:
+  264 passed and one outdated error-ordering expectation failed; the amended
+  audit module passed all 32 tests, with no subsequent production/test changes.
+  Rootful aggregate writers and refresh refuse any retained managed workspace
+  ownership; selected-spec graph/report commands check their actual targets.
+  Read-only diagnostics and unrelated legacy spec operations remain usable.
+  This is not positive managed projection/runtime, an enrollment lease or
+  arbitrary low-level writer confinement. One minor test-specificity finding
+  is retained for final review; final full-unit verification remains outstanding.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
