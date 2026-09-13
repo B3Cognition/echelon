@@ -13,7 +13,11 @@ from typing import Any, Mapping, Sequence
 
 from harness.ai_cli_backend import CliRunResult
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact
-from harness.review_artifacts import ReviewAllocation
+from harness.review_artifacts import (
+    ReviewAllocation,
+    ReviewArtifactError,
+    validate_review_tasks_append,
+)
 from harness.review_triage_io import ReviewReadChannel, ReviewTriageError
 
 
@@ -294,6 +298,14 @@ def parse_composer_reply(
             )
     if tasks != expected_tasks:
         raise ReviewTriageError("composer task mappings do not match the allocation")
+    try:
+        validate_review_tasks_append(
+            str(tasks_append).encode("utf-8"),
+            expected_task_ids,
+            [task["review_task_id"] for task in expected_tasks],
+        )
+    except (ReviewArtifactError, UnicodeEncodeError) as exc:
+        raise ReviewTriageError("composer tasks append is invalid") from exc
     return ComposerResult(
         manifest=dict(manifest),
         artifacts={name: str(artifacts[name]) for name in expected_names},

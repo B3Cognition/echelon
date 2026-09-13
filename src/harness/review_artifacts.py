@@ -394,7 +394,7 @@ class ReviewArtifactPublisher:
                 raise ReviewArtifactError("task IDs must be contiguous per artifact")
 
         append_bytes = append_path.read_bytes()
-        _validate_append_payload(append_bytes, task_ids, review_ids)
+        validate_review_tasks_append(append_bytes, task_ids, review_ids)
         allowed_names = set(artifacts) | {append_name}
         staged_names = {path.name for path in allocation.attempt_dir.iterdir()}
         if staged_names != allowed_names:
@@ -491,7 +491,7 @@ class ReviewArtifactPublisher:
         expected = _append_bytes(_decode(journal["tasks_before"]["content"]), _decode(journal["tasks_append"]["content"]))
         if not _is_regular_file(tasks_path) or tasks_path.read_bytes() != expected:
             raise ReviewArtifactError("published tasks.md does not match the journal")
-        _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
+        validate_review_tasks_append(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
     def _write_journal(self, journal: dict[str, Any]) -> None:
         _atomic_replace(self.journal_file, (json.dumps(journal, sort_keys=True, indent=2) + "\n").encode("utf-8"))
@@ -604,7 +604,7 @@ def _validate_journal_shape(journal: dict[str, Any]) -> None:
     all_artifacts_published = len(journal["published_artifacts"]) == len(artifact_names)
     if (journal["tasks_published"] and not all_artifacts_published) or (journal["complete"] and not (journal["tasks_published"] and all_artifacts_published)) or (journal["consumed"] and not journal["complete"]):
         raise ReviewArtifactError("review publication journal completion flags are invalid")
-    _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
+    validate_review_tasks_append(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
 
 def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedReviewBatch:
@@ -640,7 +640,11 @@ def _staged_regular_file(root: Path, name: str) -> Path:
     return path
 
 
-def _validate_append_payload(payload: bytes, task_ids: Sequence[str], review_ids: Sequence[str]) -> None:
+def validate_review_tasks_append(
+    payload: bytes,
+    task_ids: Sequence[str],
+    review_ids: Sequence[str],
+) -> None:
     """Require the canonical rows and title detail blocks consumed by Phase 1."""
     try:
         markdown = payload.decode("utf-8", errors="strict")

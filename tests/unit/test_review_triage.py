@@ -78,7 +78,16 @@ def _composer_envelope(*, artifact: str = "review-fix-1.md") -> dict[str, object
             "tasks_append": "tasks-append.md",
         },
         "artifacts": {artifact: "# Review Fix 1\n"},
-        "tasks_append": "tasks\n",
+        "tasks_append": (
+            "- [ ] T-000001 complexity=standard phase=review-fix req=FR-001 depends=none\n\n"
+            "  **Title:** RF1-T1 - Write failing test\n\n"
+            "- [ ] T-000002 complexity=standard phase=review-fix req=FR-001 "
+            "depends=T-000001\n\n"
+            "  **Title:** RF1-T2 - Implement review fix\n\n"
+            "- [ ] T-000003 complexity=standard phase=review-fix req=FR-001 "
+            "depends=T-000002\n\n"
+            "  **Title:** RF1-T3 - Verify review fix\n"
+        ),
     }
 
 
@@ -259,6 +268,20 @@ def test_composer_parser_rejects_model_selected_stage_paths(tmp_path: Path) -> N
         parse_composer_reply(json.dumps(envelope), allocation=allocation, group_count=1)
 
 
+def test_malformed_nonempty_tasks_append_is_rejected_before_any_staging_write(
+    tmp_path: Path,
+) -> None:
+    allocation = _allocation(tmp_path)
+    envelope = _composer_envelope()
+    envelope["tasks_append"] = "not a canonical task row\n"
+
+    with pytest.raises(ReviewTriageError):
+        parse_composer_reply(json.dumps(envelope), allocation=allocation, group_count=1)
+
+    assert list(allocation.attempt_dir.iterdir()) == []
+    assert not allocation.status_file.exists()
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -266,7 +289,7 @@ def test_composer_parser_rejects_model_selected_stage_paths(tmp_path: Path) -> N
         lambda text: text.replace('"groups": 1', '"groups": 1, "groups": 1'),
         lambda text: text.replace('"tasks_append": "tasks-append.md"', '"tasks_append": "other.md"', 1),
         lambda text: text.replace('"T-000003"', '"T-999999"'),
-        lambda text: text.replace('"tasks\\n"', '""'),
+        lambda text: json.dumps({**json.loads(text), "tasks_append": ""}),
     ],
 )
 def test_composer_parser_rejects_nonfinite_duplicate_or_partial_envelopes(
