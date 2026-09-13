@@ -365,6 +365,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   complete physical observation remains validated and unchanged. Real guarded
   run-local publication matches prediction while old evidence keeps revision1.
   This pure selector does not authenticate or activate managed runtime ownership.
+- Managed ownership exclusion from legacy execution: implemented in `9076350a`
+  and independently approved with no findings. Seven-module covering suite:
+  758 passed. Public execution and human-input paths refuse managed declarations,
+  retained matching ownership and malformed present authority before recovery,
+  decision claims or publication effects; rejected state and stages remain intact.
+  Unrelated legacy runs retain their existing behavior. This negative boundary
+  does not authorize managed execution or serialize concurrent enrollment.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
