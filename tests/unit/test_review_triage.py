@@ -260,6 +260,49 @@ def test_diagnostic_role_allows_a_result_after_32_reads_but_not_a_33rd(
     assert caught.value.usage.total_tokens == 33
 
 
+def test_diagnostic_role_accounts_usage_when_json_nesting_is_excessive(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    spec = tmp_path / "spec"
+    invocation = tmp_path / "invocation"
+    worktree.mkdir()
+    spec.mkdir()
+    invocation.mkdir()
+    nested_reply = (
+        '{"action":"result","analysis":'
+        + "[" * 1500
+        + "0"
+        + "]" * 1500
+        + "}"
+    )
+
+    class Provider:
+        def run_review_triage_turn(self, cwd, prompt, *, frontmatter, timeout_ms):
+            return CliRunResult(0, nested_reply, "", token_usage=17)
+
+    artifact = ProsaicCommandArtifact(
+        frontmatter={
+            "name": "echelon.review-debugger",
+            "model_tier": "strong",
+            "effort": "medium",
+        },
+        body="Diagnose root cause only.",
+    )
+    with ReviewReadChannel(worktree, spec) as channel:
+        with pytest.raises(ReviewTriageExecutionError) as caught:
+            run_diagnostic_role(
+                Provider(),
+                invocation,
+                artifact,
+                assignment={"group": [], "prior_results": {}},
+                read_channel=channel,
+                deadline=10**12,
+            )
+
+    assert caught.value.usage.total_tokens == 17
+
+
 def test_composer_parser_rejects_model_selected_stage_paths(tmp_path: Path) -> None:
     allocation = _allocation(tmp_path)
     envelope = _composer_envelope(artifact="../outside.md")

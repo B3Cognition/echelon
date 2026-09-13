@@ -308,6 +308,28 @@ class TestReviewLoopInvocation:
         ]
         assert "analysis-debugger" in calls[1][1]
         assert "analysis-sentinel" in calls[2][1]
+        composer_prompt = calls[3][1]
+        assert (
+            '"row_syntax":"- [ ] {task_id} complexity=standard phase=review-fix '
+            'req={requirement_ids} depends={depends}"'
+            in composer_prompt
+        )
+        assert (
+            '"title_syntax":"  **Title:** {review_task_id} - {nonempty title}"'
+            in composer_prompt
+        )
+        assert (
+            '"depends":"none","review_task_id":"RF1-T1","task_id":"T-000001"'
+            in composer_prompt
+        )
+        assert (
+            '"depends":"T-000001","review_task_id":"RF1-T2","task_id":"T-000002"'
+            in composer_prompt
+        )
+        assert (
+            '"depends":"T-000002","review_task_id":"RF1-T3","task_id":"T-000003"'
+            in composer_prompt
+        )
         assert (spec_dir / "review-fix-1.md").read_text() == "# Review Fix 1\n"
         assert "RF1-T3" in (spec_dir / "tasks.md").read_text()
 

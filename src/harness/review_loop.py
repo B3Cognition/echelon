@@ -950,14 +950,26 @@ class ReviewLoopController:
                 artifact_names = allocation.artifact_names[: len(groups)]
                 task_ids = allocation.task_ids[: len(groups) * 3]
                 manifest_tasks: list[dict[str, str]] = []
+                required_task_rows: list[dict[str, str]] = []
                 for group_index, artifact_name in enumerate(artifact_names):
                     suffix = artifact_name.removeprefix("review-fix-").removesuffix(".md")
                     for role_index in range(3):
+                        task_offset = group_index * 3 + role_index
+                        task_id = task_ids[task_offset]
+                        review_task_id = f"RF{suffix}-T{role_index + 1}"
                         manifest_tasks.append(
                             {
-                                "task_id": task_ids[group_index * 3 + role_index],
-                                "review_task_id": f"RF{suffix}-T{role_index + 1}",
+                                "task_id": task_id,
+                                "review_task_id": review_task_id,
                                 "artifact": artifact_name,
+                            }
+                        )
+                        required_task_rows.append(
+                            {
+                                "task_id": task_id,
+                                "review_task_id": review_task_id,
+                                "artifact": artifact_name,
+                                "depends": "none" if role_index == 0 else task_ids[task_offset - 1],
                             }
                         )
                 expected_manifest = {
@@ -979,6 +991,24 @@ class ReviewLoopController:
                             "allocated_artifact_names": list(artifact_names),
                             "allocated_task_ids": list(task_ids),
                             "required_manifest": expected_manifest,
+                            "tasks_append_contract": {
+                                "row_syntax": (
+                                    "- [ ] {task_id} complexity=standard phase=review-fix "
+                                    "req={requirement_ids} depends={depends}"
+                                ),
+                                "title_syntax": (
+                                    "  **Title:** {review_task_id} - {nonempty title}"
+                                ),
+                                "layout": (
+                                    "Emit every required row in order, followed after one blank "
+                                    "line by exactly one title line. Emit no other task rows."
+                                ),
+                                "requirement_ids": (
+                                    "Use one or more matching requirement IDs from the supplied "
+                                    "diagnostics, comma-separated without spaces."
+                                ),
+                                "required_rows": required_task_rows,
+                            },
                         },
                         allocation=allocation,
                         group_count=len(groups),

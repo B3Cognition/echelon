@@ -37,7 +37,8 @@ _DIAGNOSTIC_SCHEMA = (
 _COMPOSER_SCHEMA = (
     'Return exactly {"manifest":<the supplied manifest shape>,'
     '"artifacts":{<each supplied allocated basename>:"nonempty text"},'
-    '"tasks_append":"nonempty text"}. Use no markdown fence and add no other keys.'
+    '"tasks_append":"text matching the supplied tasks_append_contract exactly"}. '
+    "Use no markdown fence and add no other keys."
 )
 
 
@@ -466,7 +467,7 @@ def _strict_json_object(text: str) -> dict[str, object]:
         value = json.loads(text, object_pairs_hook=object_pairs, parse_constant=reject_constant)
     except ReviewTriageError:
         raise
-    except (json.JSONDecodeError, UnicodeError, TypeError, ValueError) as exc:
+    except (json.JSONDecodeError, RecursionError, UnicodeError, TypeError, ValueError) as exc:
         raise ReviewTriageError("review triage reply is not strict JSON") from exc
     if type(value) is not dict:
         raise ReviewTriageError("review triage reply must be an object")
