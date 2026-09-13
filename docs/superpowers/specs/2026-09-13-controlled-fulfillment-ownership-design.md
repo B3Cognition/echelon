@@ -1,6 +1,6 @@
 # Controlled fulfillment ownership: phased design
 
-Status: proposed design for user review; not implementation acceptance.
+Status: approved design; Phase 1 planning only, not implementation acceptance.
 Baseline: `bffbf46b` on `fix/delivery-controller-contract`.
 
 ## Purpose and authorization

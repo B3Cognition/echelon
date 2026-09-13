@@ -224,9 +224,11 @@ proposes four independently testable phases: deterministic preparation, neutral
 semantic full refresh, scoped completion/recovery, and Ralph integration. It
 reuses the existing runner, deterministic writers, validators and provider facade;
 there is no new COMMANDER or generic workflow engine. Legacy/direct-CLI behavior
-remains separate. The design is awaiting user review; no fulfillment runtime
-migration, rollout or implementation acceptance is claimed. Phase 1 is the next
-implementation checkpoint after design approval.
+remains separate. The user subsequently approved the design; the
+[Phase 1 implementation plan](superpowers/plans/2026-09-13-fulfillment-preparation.md)
+specifies shared preparation steps, explicit run binding and compatibility
+acceptance. No fulfillment runtime migration, rollout or implementation acceptance
+is claimed. Phase 1 is the next execution checkpoint.
 
 ## Verification and limits
 
