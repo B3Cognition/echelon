@@ -14,6 +14,10 @@ class DeliverySliceError(ValueError):
     """A slice cannot be dispatched or accepted under its declared contract."""
 
 
+class DeliveryTasksComplete(DeliverySliceError):
+    """No implementation remains in scope; authoritative verification is still owed."""
+
+
 STEP_VERDICTS = {
     "implementer": frozenset({"DONE", "BLOCKED", "NEEDS_CONTEXT"}),
     "spec_guard": frozenset({"PASS", "FAIL"}),
@@ -86,7 +90,17 @@ def select_delivery_task(
     for row in candidates:
         if all(dependency in done for dependency in row.dependencies):
             return row.task_id
-    raise DeliverySliceError("no dependency-ready task; finalization-only dispatch is not migrated")
+    if repair_task_id is None and scope <= done:
+        required = set(scope)
+        pending = list(scope)
+        while pending:
+            for dependency in by_id[pending.pop()].dependencies:
+                if dependency not in required:
+                    required.add(dependency)
+                    pending.append(dependency)
+        if required <= done:
+            raise DeliveryTasksComplete("delivery task scope is complete")
+    raise DeliverySliceError("no dependency-ready task in the permitted scope")
 
 
 def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, object]:

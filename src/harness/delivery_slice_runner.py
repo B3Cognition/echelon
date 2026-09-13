@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from harness.build_result import BuildResult
 from harness.delivery_slice import (
-    DeliveryAssignment, DeliverySliceError, PASSING_VERDICTS, STEP_VERDICTS,
+    DeliveryAssignment, DeliverySliceError, DeliveryTasksComplete, PASSING_VERDICTS, STEP_VERDICTS,
     select_delivery_task, validate_delivery_result,
 )
 from harness.durable_json import write_json_atomic
@@ -57,14 +57,15 @@ class DeliverySliceRunner:
         stack = ExitStack()
         data = None
 
-        def outcome(reason: str, task_id: str | None = None) -> BuildResult:
+        def outcome(reason: str, task_id: str | None = None, *, verification_only=False) -> BuildResult:
             known = usage_known
             total = tokens
             if data is not None:
                 total = sum(record["token_usage"] or 0 for record in data["records"])
                 known = all(record["token_usage"] is not None for record in data["records"])
             return BuildResult(
-                exit_code=0 if task_id else 1, status="done" if task_id else "blocked",
+                exit_code=0 if task_id or verification_only else 1,
+                status="done" if task_id or verification_only else "blocked",
                 impasse_file=None, stdout="", stderr="", reason=reason,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 token_usage=total if known else None,
@@ -112,7 +113,14 @@ class DeliverySliceRunner:
                           for step, role in roles.items()},
             })
             if data is None:
-                task_id = select_delivery_task(spec_dir, allowed_task_ids, repair_task_id)
+                try:
+                    task_id = select_delivery_task(spec_dir, allowed_task_ids, repair_task_id)
+                except DeliveryTasksComplete:
+                    # No provider intent or acceptance receipt is needed for a
+                    # read-only handoff. Ralph must still execute every gate.
+                    if stop_requested and stop_requested():
+                        raise DeliverySliceError("delivery_slice_cancelled")
+                    return outcome("delivery_tasks_complete_verification_required", verification_only=True)
                 tasks_path = spec_dir / "tasks.md"
                 progress_text = update_task_progress_markdown(inputs[str(tasks_path)], task_id, "DONE")
                 data = {

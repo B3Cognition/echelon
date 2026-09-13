@@ -76,7 +76,9 @@ The [original delivery design](superpowers/specs/2026-09-11-delivery-controller-
 has implemented opt-in command loading, sequential slice gates and durable
 recovery. Its original phase 4 remains necessary, not newly added scope:
 
-- `select_delivery_task` explicitly rejects finalization-only dispatch.
+- At the reviewed baseline, `select_delivery_task` explicitly rejected
+  finalization-only dispatch. The completed-scope handoff checkpoint below
+  removes that barrier without adding documentation production.
 - The generic build command remains a MANAGER orchestration recipe, including
   invocation-specific sequencing, finalization and state-machine continuity.
 - At the reviewed baseline, public build dispatch still resolves `echelon.build`
@@ -207,3 +209,51 @@ No global installation, workspace migration, provider configuration change or
 live provider execution occurred. Live Claude/Codex smoke verification and the
 remaining original phase-4 work are still outstanding; this does not close the
 overall convergence plan or add support on hosts without the enforced boundary.
+
+## Completed-scope verification handoff (2026-09-13)
+
+The user accepted macOS-only enforcement for now and requested continuation.
+Cross-platform enforcement remains deferred; both Claude and Codex are required
+within the current supported host boundary.
+
+The first finalization-routing checkpoint distinguishes a completed canonical
+task scope from a blocked/unready one. Only DONE/DONE_WITH_CONCERNS tasks qualify,
+and every dependency in their transitive closure must also be complete. Empty,
+unknown, malformed, cyclic, degraded, deferred and blocked scopes do not qualify.
+Other targets' unrelated open tasks are not silently selected.
+
+For a fresh completed scope, the existing delivery runner returns a zero-dispatch
+handoff to Ralph. It creates no fake task, updates no canonical progress and
+claims no reviewed implementation. Ralph still executes authoritative verification
+and its existing runnability, fulfillment, documentation and task gates. An
+invalid documentation report therefore remains a failure, not delivery success.
+
+Pending operation journals retain priority: editing task checkboxes cannot skip
+unresolved reviews. A previously accepted operation replays through the existing
+progress/checkpoint window; only an already-applied operation eligible for the
+next iteration is retired on handoff. Its journal remains evidence, its last task
+remains available for explicit repair, and replay does not double-charge tokens.
+Cancellation still blocks the handoff. No journal schema or provider contract
+changed, and the feature remains opt-in.
+
+Tests cover direct runner and Ralph consumers, target isolation, incomplete
+dependencies, cancellation, reconstruction, receipt retention and a full-loop
+handoff into the real documentation gate before publication. That full-loop
+fixture uses a scripted sandbox verifier and no Phase-A fulfillment service;
+it is not live-model or end-to-end fulfillment acceptance evidence. Independent
+read-only review found no actionable correctness or recovery findings.
+
+Verification after the cancellation correction: 458 passed in 54.69s across
+`test_delivery_slice`, `test_delivery_slice_runner`, `test_delivery_slice_recovery`,
+`test_delivery_controller_integration`, `test_delivery_finalization`,
+`test_ralph_inner`, `test_ralph_outer`, and `test_documentation_gate`.
+The 12 new finalization cases are included in that total. The baseline was
+125 passing delivery tests; six new handoff tests first failed on the missing
+route, and a separate cancellation regression failed before its guard was added.
+This is a focused regression gate, not a full-unit-suite or live smoke claim.
+
+This closes only verification-only routing for already-completed scopes.
+Controller-owned documentation production/repair, report publication/recovery,
+native entry/prose migration, default rollout and bundle smoke checks still
+remain before original phase 4 can close. No installation, live execution,
+identity activation or cross-platform expansion is included.

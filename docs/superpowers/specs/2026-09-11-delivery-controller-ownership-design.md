@@ -150,6 +150,15 @@ all-tasks-complete documentation repair, single-repo and external-spec delivery,
 and installed bundle smoke checks. A provider must receive one role and one
 step-specific output contract with no instruction-discovery dependency.
 
+Implemented first finalization-routing checkpoint (2026-09-13): an already
+completed canonical target scope and its dependency closure can hand off from
+the controlled runner to Ralph's existing authoritative verification gates
+without another implementation dispatch, fake task ID, or progress mutation.
+Pending receipt recovery still takes precedence; only an already-applied
+operation eligible for advancement can retire its pointer. A successful build
+handoff is not delivery acceptance. Missing/invalid documentation still fails
+its gate; documentation production and bounded repair remain unfinished.
+
 ## Rollout constraints
 
 - Keep each phase separately testable and do not label the full issue fixed

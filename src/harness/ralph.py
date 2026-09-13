@@ -2103,9 +2103,14 @@ class RalphController:
                 current["tokens_used"] = current.get("tokens_used", 0) + new_tokens
             if current.get("delivery_slice_operation", {}).get("id") == operation["id"]:
                 current["delivery_slice_operation"] = operation
-            if result.succeeded:
+            if result.succeeded and result.task_ids:
                 current["delivery_slice_task_id"] = result.task_ids[0]
                 operation["accepted_task_id"] = result.task_ids[0]
+            elif result.succeeded and not resuming:
+                # Completed-scope handoff has no new dispatch journal. Retire
+                # only the prior operation already eligible for advancement;
+                # preserve its receipts and last task for explicit repairs.
+                current.pop("delivery_slice_operation", None)
             self._state_store.write(current)
             return {
                 "exit_code": result.exit_code, "passed": result.succeeded,
