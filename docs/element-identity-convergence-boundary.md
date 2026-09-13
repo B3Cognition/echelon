@@ -171,10 +171,27 @@ passed 77 and then 78 tests. These are distinct runs, not a repository-wide
 success claim. The audit records the unchanged baseline policy-inventory failure
 and the final review corrections.
 
-Recommended next bounded correction is controlled source-feedback cleanup plus
-the narrow ownership-guidance update, pending approval of the reported changes.
-Do not claim all active delivery prompts are clean. No production/default/native
-entry behavior changed during this audit; no live provider or installation ran.
+### Controlled source-feedback checkpoint (2026-09-13)
+
+The subsequently approved source/mixed-feedback correction and narrow ownership
+guidance update are implemented locally and independently accepted after scoped
+re-review. Ralph
+replaces its generated legacy repair recipe with original context plus structured
+failure/evidence data before the source roles are dispatched. The controller
+contract retains execution restrictions and the single JSON result format.
+New snapshots replay exactly; old pending source-repair snapshots require
+reconciliation without rewriting their journal or resetting their allowance.
+Documentation-only and feature-off contracts remain unchanged.
+
+Verification and limits are recorded in the audit: 164 surrounding tests passed,
+then 22 source-feedback and 13 legacy-feedback tests passed after the
+coverage-contract refinement; the final reviewer-instruction correction passed
+49 affected tests. Direct downstream probes labeled visual/review do not establish
+production Phase 3 PR re-entry coverage. This is scripted-provider, bounded integration
+evidence, not full delivery convergence or installed/live acceptance. Fulfillment,
+remaining native-entry/prose work, rollout and installed-bundle acceptance remain
+separate; no deferred identity feature was activated. Do not claim all active
+delivery prompts are clean.
 
 ## Verification and limits
 

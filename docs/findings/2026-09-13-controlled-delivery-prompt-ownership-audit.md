@@ -158,7 +158,7 @@ commands. The audit targets currency of delivery ownership.
 | Currency | 5/15 | COMMANDER/state/result claims conflict with current controlled delivery. |
 | Actionability | 10/15 | Concrete commands, but applying the universal output/writer instructions to delivery is wrong. |
 
-## Proposed guidance edit, pending approval
+## Original proposed guidance edit (subsequently approved)
 
 Add the following narrow section to both root instruction files and qualify the
 existing universal COMMANDER/journal guidance as legacy/command-specific. Leave
@@ -185,7 +185,7 @@ work from reintroducing a second owner or the wrong result format.
 + do not alias, remove or rewrite them as part of controlled convergence.
 ```
 
-## Recommended next bounded correction
+## Original recommended bounded correction (subsequently approved)
 
 Correct controlled source-repair feedback at Ralph's producer boundary, using
 structured failure/context data as documentation repair already does. Preserve
@@ -201,3 +201,56 @@ documentation, both-provider and all-mode behavior. This is a bounded correction
 to existing feedback construction, not a new flow/controller. Apply the narrow
 guidance edit alongside it after approval. Fulfillment/PR migration, bundle/live
 acceptance, defaults and identity activation remain separate.
+
+## Controlled source-feedback checkpoint
+
+The user subsequently approved the bounded source/mixed feedback correction and
+narrow ownership-guidance update. The implementation is complete locally and
+independently accepted after scoped re-review; the earlier findings remain the historical audit of
+`b6bfceda`, not a claim about the corrected tree.
+
+Ralph now carries the original base context, strategy context, repair iteration,
+downstream phase and evidence paths separately from its legacy formatter. At the
+controlled feedback boundary it serializes those inputs with complete failure
+details and verification/coverage references. The existing operation stores that
+exact string. The four role requests have one controller-owned execution/output
+contract, including browser/fulfillment restrictions and coverage tag syntax;
+the legacy completion recipe is not forwarded to them. Documentation-only
+feedback and feature-off formatting retain their existing behavior.
+
+New source-repair snapshots resume from their original feedback, with existing
+attempt limits and cumulative accounting. A pre-format pending source-repair
+snapshot blocks for reconciliation before further dispatch; its operation and
+journal bytes are not rewritten, nor is its budget reset. This intentionally does
+not migrate old in-flight repairs. Initial-build and documentation recovery keep
+their existing contracts. AGENTS.md and CLAUDE.md now scope legacy COMMANDER and
+`echelon_result` guidance and describe the controlled and separate PR contracts.
+
+Verification: the new consuming tests first produced 21 failures and one passing
+legacy check, reproducing the marker conflict, missing evidence, and old-record
+replay. After correction, one surrounding batch passed 164 tests across source
+feedback, controller integration, slice runner/recovery, documentation integration
+and Ralph's inner loop. A focused test then exposed missing coverage-tag syntax
+in the new host contract; after supplying it, the final new test file passed 22
+tests and the legacy outer-feedback selection passed 13 (242 deselected).
+
+The route matrix covers Claude/Codex facades, all three modes, the real inner
+feedback entry, and direct `run_downstream_feedback` probes labeled visual/review,
+with four real role dispatches. Production currently wires this downstream
+method from visual feedback; these tests do not establish Phase 3 PR re-entry
+coverage. Prosaic
+inspection and the external coding backend are scripted; local Git checkpointing
+is real and remote push is stubbed. Inner-route tests stop before authoritative
+verification rather than claiming full delivery convergence. No installation,
+live model execution, push, merge, default change, fulfillment rewrite or identity
+activation occurred. The previously recorded policy-inventory failure is outside
+this checkpoint and unchanged.
+
+Independent review found a shared repair imperative still reaching read-only
+reviewers. A consuming regression failed on the actual reviewer request; the
+controller now supplies repair/reproduction instructions only to IMPLEMENTER and
+inspect/assess-only instructions to the three reviewers. The amended source
+feedback and slice-runner suites passed 49 tests in 15.50s. The review-route
+evidence claim above was also narrowed. Scoped re-review accepted both corrections
+with no remaining or newly introduced findings. This is bounded-checkpoint
+acceptance, not whole-branch merge or live-provider acceptance.

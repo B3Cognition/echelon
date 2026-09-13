@@ -1705,6 +1705,8 @@ class RalphController:
                 handle, current_verify, build_command, strategy_context,
                 worktree_path=worktree_path,
                 prompt=feedback_prompt,
+                repair_context={"base_prompt": build_prompt, "phase": "inner",
+                                "inner_iteration": inner_iter, "evidence_paths": []},
             )
             tokens_used += _known_token_count(fix_result.get("tokens"))
             self._enforce_completed_task_ids(fix_result, worktree_path)
@@ -2087,6 +2089,18 @@ class RalphController:
                 repair_task_id = operation.get("repair_task_id")
                 prompt = operation["feedback"]
                 documentation = operation.get("kind", "task") == "documentation"
+                if repair_task_id is not None and not documentation:
+                    # Old snapshots are immutable evidence. Never reinterpret a
+                    # saved legacy completion recipe as a new role assignment.
+                    try:
+                        saved_feedback = json.loads(prompt)
+                    except (ValueError, RecursionError):
+                        saved_feedback = None
+                    if (not isinstance(saved_feedback, dict)
+                            or saved_feedback.get("feedback_kind") != "controlled_source_repair_v1"):
+                        raise DeliverySliceError(
+                            "delivery_reconciliation_required: legacy source repair feedback"
+                        )
             elif repair and not documentation and (not isinstance(repair_task_id, str) or not repair_task_id):
                 raise DeliverySliceError("feedback requires a previously accepted delivery slice task")
             else:
@@ -4520,6 +4534,8 @@ class RalphController:
             strategy_context,
             worktree_path=worktree_path,
             prompt=prompt,
+            repair_context={"base_prompt": build_prompt, "phase": phase,
+                            "inner_iteration": 0, "evidence_paths": list(evidence_paths)},
         )
 
     def _exec_feedback(
@@ -4530,6 +4546,7 @@ class RalphController:
         strategy_context: str,
         worktree_path: str = "",
         prompt: str = "",
+        repair_context: Mapping[str, object] | None = None,
     ) -> Dict[str, Any]:
         """Execute feedback (fix) step in sandbox or via LLM build runner.
 
@@ -4551,6 +4568,24 @@ class RalphController:
                      "error": failure.error, "details": failure.details}
                     for failure in verify_result.failures
                 ], "verification_evidence": verify_result.verification_evidence}, sort_keys=True)
+            else:
+                # Use original context, not the legacy formatter's completion
+                # recipe. Keep the same immutable operation/journal boundary.
+                context = dict(repair_context) if repair_context is not None else {
+                    "base_prompt": prompt, "phase": "inner",
+                    "inner_iteration": 0, "evidence_paths": [],
+                }
+                context["strategy_context"] = strategy_context
+                prompt = json.dumps({
+                    "feedback_kind": "controlled_source_repair_v1",
+                    "context": context,
+                    "failures": [
+                        {"category": failure.category.value, "id": failure.id,
+                         "error": failure.error, "details": failure.details}
+                        for failure in verify_result.failures
+                    ],
+                    "verification_evidence": verify_result.verification_evidence,
+                }, sort_keys=True)
             return self._exec_controlled_slice(worktree_path, prompt, repair=True, documentation=documentation)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
