@@ -2026,6 +2026,77 @@ Authenticated joint dependency capture, complete graph composition/sealing,
 managed source/runtime/producer/semantic/completion enforcement, and bounded
 repair remain separate integration work. No live caller uses this entry point.
 
+## Captured identity graph assembly (inactive)
+
+`echelon.spec_graph_captured.build_captured_identity_graph` composes the existing
+local, memory, RE and retained-history projections into the existing
+`SpecArtifactGraph`. Its caller supplies an explicit generator version,
+lifecycle, `ProjectedPublicationSources`, policy paths, domain observations,
+selected RE descriptors/source observations and `IdentityHistorySnapshot`.
+`CapturedGraphMemory` only groups native sources, planned rows and an audit;
+it is not an additional audit, receipt or authority record. No live owner calls
+this assembler.
+
+The assembler recomputes the exact source manifest through its existing owner
+and requires equality to the supplied manifest. Every selected image, including
+hidden, binary and unreferenced files, participates in that validation. One
+selected tree must be exactly `specs/<spec_id>`; an empty or missing selected
+tree preserves its original observation. A broader tree or another physical
+root is not expanded or relabeled. Present bytes form one shared table; a
+missing selected file remains missing rather than becoming an empty file.
+
+Policy paths are explicit, unique canonical paths beneath this spec or `re`.
+Only selected present policy files are added, in component-wise path order.
+An existing local input retains its final local role and must have the same
+hash. Canonical-spec memory is required; evidence and published-RE observations
+are optional but require sources when supplied. Domains execute in that order
+regardless of caller tuple order, preserving native support/task overrides,
+drawer keys, partial rows and returned-versus-exception audit semantics.
+
+Every memory source and RE descriptor must match the captured bytes at its
+exact path. Supplied semantic receipt paths must be present, but their contents
+are not parsed or authenticated. Topology receipt bytes must match their
+captured image. Existing domain owners retain nested validation, source scope,
+hash, audit, endpoint, decision and topology semantics, including `.` source
+roots. At this full-assembly boundary an explicitly supplied RE descriptor must
+already have its Artifact node before annotation. The lower-level contribution
+still retains its compatible missing-node behavior.
+
+Retained identity projection runs last and detaches all output records and
+nested properties. The existing graph renderer validates the resulting view.
+The graph wire gains no manifest, capture, acceptance or timestamp fields.
+Ordinary failures leave a bounded `SpecGraphError` without a source-bearing
+exception cause or context; process-control exceptions propagate. Neither
+filesystem reads nor planning, audits, registry discovery, identity authority
+queries, version discovery or writes occur inside this assembly operation.
+
+The selected spec tree may retain an older or future root
+`spec-artifact-graph.json`. Its bytes still affect the selected source manifest,
+but are excluded from the derived graph inputs. Selecting it as policy or
+memory input is rejected, preventing a self-hash dependency. This exclusion
+does not exempt graph publication from future source guards or sealing.
+
+Tests compare every rendered record, field and digest with the real legacy
+builder followed by retained-history projection over stable files, typed RE
+catalogs, workspace configuration and topology. Native planners and source
+readers are real; external memory adapter construction and audit acquisition
+use deterministic fixtures. A separate real sealed temporary publication
+projects changed source bytes while historical evidence remains linked to its
+original identity revision. Guarded publication tests apply only non-graph
+source operations, then obtain a final capture whose manifest and derived graph
+match the retained projection. They do not seal, write or atomically publish
+the graph. Portable pure fixtures cover complete expected graph bytes,
+malformed observations, ownership, purity and import-order identities.
+
+Byte coherence does not prove complete dependency selection, authentic registry
+or memory observations, authentic selection of the identity ledger, semantic
+acceptance, or authority to publish. Graph sealing, durable joint identity/source
+publication, run enrollment and transitions, producer allocation, runtime/manual/
+CLI enforcement, semantic review and bounded repair remain separate required
+integration work before live activation. Imported identities and existing
+memory/verification edges remain unassessed; this function does not adopt or
+repair them.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
