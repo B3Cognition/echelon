@@ -263,6 +263,27 @@ class TestLlmBuildRunner:
         recovery_prompt = executor.run_prompt_result.call_args_list[1].args[1]
         assert str(tmp_path / ".harness-build-status.json") in recovery_prompt
 
+    def test_completion_metadata_recovery_is_one_status_only_attempt(self, tmp_path):
+        executor = _executor(returncode=0)
+        executor.last_stdout = (
+            '```json\n{"status":"done","completed_task_ids":["T-999"]}\n```'
+        )
+        status_file = tmp_path / ".harness-build-status.json"
+        status_file.write_text(
+            json.dumps({"status": "done", "completed_task_ids": []}),
+            encoding="utf-8",
+        )
+
+        result = LlmBuildRunner(executor).recover_completion_metadata(str(tmp_path))
+
+        assert result.status == "unknown"
+        assert result.task_ids is None
+        assert executor.exec_prompt.call_count == 1
+        assert not status_file.exists()
+        prompt = executor.exec_prompt.call_args.args[1]
+        assert "Do not begin new implementation" in prompt
+        assert "only permitted change" in prompt
+
     def test_exec_build_recovers_blocked_legacy_echelon_result_marker(self, tmp_path):
         executor = _executor()
 

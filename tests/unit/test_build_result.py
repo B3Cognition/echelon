@@ -51,6 +51,20 @@ class TestBuildResult:
         assert r.succeeded is True
         assert r.reason == "implemented verified subset"
 
+    def test_from_status_file_preserves_partial_progress_intent(self, tmp_path):
+        p = tmp_path / "status.json"
+        p.write_text(
+            '{"status": "progress", "completed_task_ids": [], '
+            '"reason": "useful partial slice"}'
+        )
+
+        result = BuildResult.from_status_file(
+            p, exit_code=0, stdout="", stderr="", duration_ms=50
+        )
+
+        assert result.status == "done"
+        assert result.partial_progress is True
+
     def test_from_status_file_reads_completed_task_ids(self, tmp_path):
         p = tmp_path / "status.json"
         p.write_text(
