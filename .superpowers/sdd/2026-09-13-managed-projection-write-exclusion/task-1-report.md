@@ -185,6 +185,24 @@ All read-only discovery commands exited 0 unless noted:
 
 ## Staged and tested implementation tree
 
+### Tested-tree identity clarification
+
+No contemporaneous Git tree hash was recorded for the original 264-pass/1-fail
+eight-module cover before the Ruling 46 amendment. No history is reconstructed or
+manufactured here. That original cover used the same production and test content
+as the final implementation except precisely these two later edits in
+`tests/unit/test_workspace_graph_audit.py`: importing
+`LEGACY_IDENTITY_EXECUTION_BLOCKED`, and changing the symlinked-ancestor
+expectation from the later output-path `OSError` to the earlier bounded
+`WorkspaceGraphError` identity refusal.
+
+The complete amended `tests/unit/test_workspace_graph_audit.py` verification
+(`32 passed in 0.31s`) exercised the final implementation/test content committed
+as `aef09ba9`; its exact committed tree is
+`1208e49596c8f39158729a38042a4e37ab47aee6` (`aef09ba9^{tree}`). There were no
+production or test edits after that 32-test amended pass. The only subsequent
+changes were this report and its report-only commits.
+
 ```text
 docs/element-identity-storage.md
 src/echelon/cli_app.py
