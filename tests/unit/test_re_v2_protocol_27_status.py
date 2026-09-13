@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shlex
 
 import pytest
 
@@ -115,6 +116,71 @@ def test_status_explains_insufficient_next_reservation(tmp_path: Path) -> None:
     assert isinstance(resources, dict)
     assert resources["insufficient_remaining_dimensions"] == ["tokens"]
     assert resources["next_reservation"]["fits"] is False
+    command = shlex.split(str(document["next_action"]))
+    assert command[:5] == [
+        "echelon",
+        "re",
+        "synthesize",
+        "--from-run",
+        "re-parent",
+    ]
+    assert command[command.index("--accept-partial") + 1] == "web"
+    recommended_tokens = int(command[command.index("--token-limit") + 1])
+    assert recommended_tokens >= (
+        resources["charged_tokens"]
+        + resources["next_reservation"]["billable_tokens"]
+    )
+    assert int(command[command.index("--active-ms-limit") + 1]) == 600_000
+    assert "continue" not in command
+
+
+@pytest.mark.unit
+def test_open_dispatch_status_is_in_progress_not_terminally_incomplete(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_27.controller import Protocol27Controller
+    from harness.re_v2.protocol_27.inputs import (
+        create_protocol_27_run_store,
+        load_protocol_27_inputs,
+    )
+    from harness.re_v2.protocol_27.status import (
+        protocol_27_status_document,
+        render_protocol_27_status,
+    )
+    from tests.unit.test_re_v2_protocol_27_controller import _ScriptedProvider
+    from tests.unit.test_re_v2_protocol_27_inputs import _input_set
+
+    run_dir = tmp_path / "runs/re-in-flight"
+    create_protocol_27_run_store(
+        run_dir,
+        _input_set(
+            run_dir.name,
+            token_limit=10_000_000,
+            active_ms_limit=10_000_000,
+        ),
+    )
+
+    def stop_after_reservation(boundary: str) -> None:
+        if boundary == "after_dispatch_reserved":
+            raise RuntimeError("simulated live dispatch")
+
+    with pytest.raises(RuntimeError, match="simulated live dispatch"):
+        Protocol27Controller(
+            load_protocol_27_inputs(run_dir),
+            provider_factory=lambda: _ScriptedProvider(),  # type: ignore[arg-type]
+            fault_hook=stop_after_reservation,
+        ).run_to_closure()
+
+    document = protocol_27_status_document(run_dir)
+    rendered = render_protocol_27_status(run_dir)
+
+    assert document["resources"]["open_token_reservations"] > 0
+    assert document["resources"]["open_active_ms_reservations"] > 0
+    assert document["synthesis_status"] == "in_progress"
+    assert document["stop_reason"] is None
+    assert document["next_action"] == "wait; synthesis dispatch is in progress"
+    assert "RE WORKSPACE SYNTHESIS — IN PROGRESS" in rendered
+    assert "stopped because:" not in rendered
 
 
 @pytest.mark.unit

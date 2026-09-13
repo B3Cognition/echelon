@@ -205,6 +205,36 @@ def test_read_blob_reopens_and_reverifies_immutable_bytes(tmp_path: Path) -> Non
         objects.read_blob(object_hash)
 
 
+def test_verify_caches_unchanged_blob_metadata_but_rechecks_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.re_v2 import ledger as ledger_module
+
+    objects = ObjectStore(tmp_path / "objects")
+    object_hash = objects.put_blob(b"large immutable artifact")
+    original_read = ledger_module._read_regular_file
+    reads = 0
+
+    def counted_read(path: Path, label: str) -> bytes:
+        nonlocal reads
+        reads += 1
+        return original_read(path, label)
+
+    monkeypatch.setattr(ledger_module, "_read_regular_file", counted_read)
+
+    assert objects.verify(object_hash) is True
+    assert objects.verify(object_hash) is True
+    assert reads == 1
+
+    path = object_path(objects, object_hash)
+    path.chmod(0o600)
+    path.write_bytes(b"corrupt")
+    with pytest.raises(ReV2LedgerError, match="hash mismatch"):
+        objects.verify(object_hash)
+    assert reads == 2
+
+
 def test_read_blob_rejects_tree_objects(tmp_path: Path) -> None:
     tree = tmp_path / "tree"
     tree.mkdir()

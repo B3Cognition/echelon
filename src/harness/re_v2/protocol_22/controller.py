@@ -128,7 +128,7 @@ class Protocol22Controller:
         # run lock itself is allowed to create a lock file.
         initial = recover_protocol_22_run(self.context, self.fault_hook)
         if initial.operational_state in {"paused", "terminal"}:
-            self._materialize_accepted_l1()
+            self._materialize_without_recovery_validator()
         stopped = _stopped_recovery(initial)
         if stopped is not None:
             return stopped
@@ -137,12 +137,13 @@ class Protocol22Controller:
             recovery = recover_protocol_22_run_locked(
                 self.context,
                 self.fault_hook,
+                validate_materialization=False,
             )
             maximum_steps = len(self.context.graph.templates) * 3 + 4
             for _step in range(maximum_steps):
-                self._materialize_accepted_l1()
                 stopped = _stopped_recovery(recovery)
                 if stopped is not None:
+                    self._materialize_current_state()
                     return stopped
                 if recovery.ledger is None or recovery.budget is None:
                     raise Protocol22ControllerError(
@@ -152,12 +153,14 @@ class Protocol22Controller:
                     recovery = recover_protocol_22_run_locked(
                         self.context,
                         self.fault_hook,
+                        validate_materialization=False,
                     )
                     continue
                 if self._record_exhausted_abandonment(recovery):
                     recovery = recover_protocol_22_run_locked(
                         self.context,
                         self.fault_hook,
+                        validate_materialization=False,
                     )
                     continue
                 decision = plan_next_v22(
@@ -171,6 +174,7 @@ class Protocol22Controller:
                     recovery = recover_protocol_22_run_locked(
                         self.context,
                         self.fault_hook,
+                        validate_materialization=False,
                     )
                     continue
                 terminal = _terminal_event_for_fixed_point(decision)
@@ -188,10 +192,23 @@ class Protocol22Controller:
                 recovery = recover_protocol_22_run_locked(
                     self.context,
                     self.fault_hook,
+                    validate_materialization=False,
                 )
             raise Protocol22ControllerError(
                 "protocol-2.2 controller exceeded its closed dispatch bound"
             )
+
+    def _materialize_without_recovery_validator(self) -> None:
+        """Materialize only when recovery is not already doing the same scan."""
+        if self.context.materialization_validator is None:
+            self._materialize_accepted_l1()
+
+    def _materialize_current_state(self) -> None:
+        """Validate disposable projections once at a durable stop boundary."""
+        if self.context.materialization_validator is not None:
+            self.context.materialization_validator()
+        else:
+            self._materialize_accepted_l1()
 
     def _materialize_accepted_l1(self) -> None:
         from .materialization import validate_or_repair_materialization
@@ -304,6 +321,20 @@ class Protocol22Controller:
         budget: BudgetDecisionV2,
         attempt_kind: str,
     ) -> bool:
+        raw_status = observation.payload["raw_result_contract_status"]
+        if raw_status == "execution_indeterminate":
+            if budget.item_attempt_available(item):
+                return False
+            self._retry_or_fail_work_item(
+                item,
+                committed,
+                candidate_id=None,
+                candidate_assessment_id=None,
+                failure_class="execution_indeterminate",
+                reason_code="execution_outcome_indeterminate",
+                diagnostics=("execution_outcome_indeterminate",),
+            )
+            return True
         candidate_event = next(
             (
                 event
@@ -558,11 +589,9 @@ class Protocol22Controller:
     ) -> None:
         payload = committed.closure.deterministic_artifact_bytes
         if payload is None:
-            self._record_executor_failure(
+            self._record_deterministic_work_failure(
                 item,
                 committed,
-                "deterministic_execution_failed",
-                ("deterministic_execution_failed",),
             )
             return
         accepted = accepted_dependencies_for(self.context, item)
@@ -662,6 +691,17 @@ class Protocol22Controller:
             self.fault_hook,
         )
         observation = self._append_provider_observation(committed, dependencies)
+        if observation["raw_result_contract_status"] == "execution_indeterminate":
+            self._retry_or_fail_work_item(
+                item,
+                committed,
+                candidate_id=None,
+                candidate_assessment_id=None,
+                failure_class="execution_indeterminate",
+                reason_code="execution_outcome_indeterminate",
+                diagnostics=("execution_outcome_indeterminate",),
+            )
+            return
         candidate = self.context.execution_store.persist_candidate(
             committed,
             self.fault_hook,
@@ -741,7 +781,11 @@ class Protocol22Controller:
             "execution_capture_hash": capture.identity,
             "observed_active_ms": capture.duration_ms,
             "raw_result_contract_status": (
-                "valid" if closure.stdout_bytes == _RESULT_STDOUT else "invalid"
+                "execution_indeterminate"
+                if capture.result_kind == "provider_failure"
+                else "valid"
+                if closure.stdout_bytes == _RESULT_STDOUT
+                else "invalid"
             ),
             "reported_token_usage": normalized.billable_tokens,
             "token_usage_status": normalized.status,
@@ -897,7 +941,12 @@ class Protocol22Controller:
         committed: Committed,
         candidate_id: str,
         reason_code: Literal["candidate_tree_invalid", "authorial_schema_invalid"],
+        *,
+        diagnostics: tuple[str, ...] | None = None,
     ) -> None:
+        normalized_diagnostics = tuple(
+            sorted({reason_code, *(diagnostics or ())})
+        )
         assessment = CandidateAssessmentReceiptV1(
             schema_version=1,
             candidate_id=candidate_id,
@@ -907,7 +956,7 @@ class Protocol22Controller:
             artifact_hash=None,
             certification_receipt_id=None,
             outcome="rejected_before_artifact",
-            normalized_diagnostics=(reason_code,),
+            normalized_diagnostics=normalized_diagnostics,
         )
         self.context.ledger.record_candidate_assessment(assessment)
         _fault(self.fault_hook, f"candidate_assessment:{assessment.identity}")
@@ -929,7 +978,7 @@ class Protocol22Controller:
             candidate_assessment_id=assessment.identity,
             failure_class="artifact_contract",
             reason_code=reason_code,
-            diagnostics=(reason_code,),
+            diagnostics=normalized_diagnostics,
         )
 
     def _retry_or_fail_work_item(
@@ -940,7 +989,10 @@ class Protocol22Controller:
         candidate_id: str | None,
         candidate_assessment_id: str | None,
         failure_class: Literal[
-            "result_contract", "artifact_contract", "minimum_utility"
+            "result_contract",
+            "artifact_contract",
+            "minimum_utility",
+            "execution_indeterminate",
         ],
         reason_code: str,
         diagnostics: tuple[str, ...],
@@ -1149,9 +1201,7 @@ class Protocol22Controller:
         self,
         item: WorkItemV2,
         committed: Committed,
-        reason_code: Literal[
-            "deterministic_execution_failed", "deterministic_artifact_invalid"
-        ],
+        reason_code: Literal["deterministic_artifact_invalid"],
         diagnostics: tuple[str, ...],
     ) -> None:
         receipt = ExecutorFailureReceiptV1(
@@ -1176,6 +1226,39 @@ class Protocol22Controller:
             occurred_at=self.context.clock(),
         )
         _fault(self.fault_hook, f"executor_failed:{receipt.identity}")
+
+    def _record_deterministic_work_failure(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+    ) -> None:
+        """Isolate an input-specific deterministic exception to its work item."""
+        reason_code = "deterministic_execution_failed"
+        receipt = WorkItemFailureReceiptV1(
+            schema_version=1,
+            work_item_id=item.work_item_id,
+            dispatch_id=committed.dispatch_id,
+            candidate_id=None,
+            candidate_assessment_id=None,
+            execution_capture_hash=committed.closure.capture.identity,
+            dispatch_abandonment_event_hash=None,
+            failure_class="deterministic_execution",
+            reason_code=reason_code,
+            normalized_diagnostics=(reason_code,),
+        )
+        self.context.ledger.record_work_item_failure(receipt)
+        _fault(self.fault_hook, f"work_item_failure_receipt:{receipt.identity}")
+        self.context.event_store.append(
+            "work_item_failed",
+            {
+                "failure_class": receipt.failure_class,
+                "failure_receipt_id": receipt.identity,
+                "reason_code": receipt.reason_code,
+                "work_item_id": receipt.work_item_id,
+            },
+            occurred_at=self.context.clock(),
+        )
+        _fault(self.fault_hook, f"work_item_failed:{receipt.identity}")
 
 
 def _result_from_recovery(

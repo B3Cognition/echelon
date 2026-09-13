@@ -9,6 +9,8 @@ import subprocess
 
 import pytest
 
+from tests.support.temp_storage import copy_package_build_tree
+
 from echelon.cli import _cmd_continue, _cmd_phase, _cmd_run
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
@@ -24,7 +26,7 @@ EXT_DIR = ROOT / "runtime"
 @pytest.fixture(autouse=True)
 def _deploy_workspace_bundles(tmp_path: Path) -> None:
     echelon_dir = tmp_path / ".echelon"
-    shutil.copytree(ROOT / "runtime", echelon_dir / "runtime")
+    copy_package_build_tree(ROOT / "runtime", echelon_dir / "runtime")
     shutil.copytree(ROOT / "prosaic", echelon_dir / "prosaic")
 
 

@@ -107,6 +107,9 @@ class ObjectStore:
         self.root = Path(root)
         _ensure_directory(self.root, "object store")
         _ensure_directory(self.root / "sha256", "object namespace")
+        self._verified_blob_metadata: dict[
+            str, tuple[int, int, int, int, int, int]
+        ] = {}
 
     def put_blob(self, payload: bytes) -> str:
         """Durably publish *payload* without replacing an existing object."""
@@ -152,23 +155,43 @@ class ObjectStore:
 
     def verify(self, object_hash: str) -> bool:
         """Verify an object and, for tree manifests, every referenced blob."""
-        self._verify(object_hash, set())
+        self._verify(object_hash, set(), allow_cached=True)
         return True
 
     def read_blob(self, object_hash: str) -> bytes:
         """Return one verified immutable blob, never a tree manifest."""
-        payload = self._verify(object_hash, set())
+        payload = self._verify(object_hash, set(), allow_cached=False)
         if _parse_tree_manifest(payload) is not None:
             raise ReV2LedgerError("object is a tree, not a blob")
         return payload
 
-    def _verify(self, object_hash: str, active: set[str]) -> bytes:
+    def _verify(
+        self,
+        object_hash: str,
+        active: set[str],
+        *,
+        allow_cached: bool,
+    ) -> bytes:
         path = self._path(object_hash)
+        if allow_cached:
+            cached = self._verified_blob_metadata.get(object_hash)
+            if cached is not None and _lstat_metadata(
+                path,
+                f"object {object_hash}",
+            ) == cached:
+                return b""
+        before = _lstat_metadata(path, f"object {object_hash}")
         payload = _read_regular_file(path, f"object {object_hash}")
+        after = _lstat_metadata(path, f"object {object_hash}")
+        if before != after:
+            raise ReV2LedgerError(
+                f"object {object_hash} identity changed while being verified"
+            )
         if content_digest(payload) != object_hash:
             raise ReV2LedgerError(f"object hash mismatch: {object_hash}")
         manifest = _parse_tree_manifest(payload)
         if manifest is None:
+            self._verified_blob_metadata[object_hash] = after
             return payload
         if object_hash in active:
             raise ReV2LedgerError("tree object contains a reference cycle")
@@ -182,8 +205,13 @@ class ObjectStore:
                 blob_hash = entry["blob_hash"]
                 if not isinstance(blob_hash, str):
                     raise ReV2LedgerError("tree manifest blob hash is invalid")
-                blob = self._verify(blob_hash, active)
-                if len(blob) != entry["size"]:
+                blob = self._verify(blob_hash, active, allow_cached=allow_cached)
+                del blob
+                blob_path = self._path(blob_hash)
+                if _lstat_metadata(
+                    blob_path,
+                    f"object {blob_hash}",
+                )[3] != entry["size"]:
                     raise ReV2LedgerError(
                         f"tree entry {entry['path']!r} has wrong blob size"
                     )
@@ -496,51 +524,76 @@ class DurableLedger(Generic[LedgerViewT]):
         record_type: str,
         value: object,
     ) -> LedgerRecord:
-        payload = self.protocol.canonical_payload(record_type, value)
+        return self._append_batch(((record_type, value),))[0]
+
+    def _append_batch(
+        self,
+        values: Iterable[tuple[str, object]],
+    ) -> tuple[LedgerRecord, ...]:
+        """Append a replay-valid sequence under one lock and one initial replay.
+
+        Every newly written record is still fsynced independently, so a crash
+        leaves a valid prefix that an idempotent retry can complete.
+        """
+        prepared = tuple(
+            (record_type, self.protocol.canonical_payload(record_type, value))
+            for record_type, value in values
+        )
+        if not prepared:
+            return ()
         self._validate_parent()
         lock_fd = self._open_lock()
+        ledger_fd: int | None = None
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            history, state = self._read_replay()
-            duplicate = state.idempotent_record(
-                history, record_type, payload
-            )
-            if duplicate is not None:
-                return duplicate
-
-            previous = history[-1].record_hash if history else None
-            identity: dict[str, object] = {
-                "payload": payload,
-                "previous_record_hash": previous,
-                "schema_version": LEDGER_SCHEMA_VERSION,
-                "seq": len(history) + 1,
-                "type": record_type,
-            }
-            record = LedgerRecord(
-                payload=_freeze_json(payload),  # type: ignore[arg-type]
-                previous_record_hash=previous,
-                record_hash=content_digest(identity),
-                schema_version=LEDGER_SCHEMA_VERSION,
-                seq=len(history) + 1,
-                type=record_type,
-            )
-            state.consume(record, self.object_store)
-
-            existed = self.path.exists()
-            fd = self._open_ledger_for_append()
-            try:
-                _write_all(fd, canonical_json_bytes(record.to_json_dict()))
-                _fsync(fd)
-            finally:
-                os.close(fd)
-            if not existed:
-                _fsync_directory(self.path.parent)
-            return record
+            replayed, state = self._read_replay()
+            history = list(replayed)
+            results: list[LedgerRecord] = []
+            directory_synced = self.path.exists()
+            for record_type, payload in prepared:
+                duplicate = state.idempotent_record(
+                    tuple(history), record_type, payload
+                )
+                if duplicate is not None:
+                    results.append(duplicate)
+                    continue
+                previous = history[-1].record_hash if history else None
+                identity: dict[str, object] = {
+                    "payload": payload,
+                    "previous_record_hash": previous,
+                    "schema_version": LEDGER_SCHEMA_VERSION,
+                    "seq": len(history) + 1,
+                    "type": record_type,
+                }
+                record = LedgerRecord(
+                    payload=_freeze_json(payload),  # type: ignore[arg-type]
+                    previous_record_hash=previous,
+                    record_hash=content_digest(identity),
+                    schema_version=LEDGER_SCHEMA_VERSION,
+                    seq=len(history) + 1,
+                    type=record_type,
+                )
+                state.consume(record, self.object_store)
+                if ledger_fd is None:
+                    ledger_fd = self._open_ledger_for_append()
+                _write_all(
+                    ledger_fd,
+                    canonical_json_bytes(record.to_json_dict()),
+                )
+                _fsync(ledger_fd)
+                if not directory_synced:
+                    _fsync_directory(self.path.parent)
+                    directory_synced = True
+                history.append(record)
+                results.append(record)
+            return tuple(results)
         except ReV2LedgerError:
             raise
         except OSError as exc:
             raise ReV2LedgerError(f"cannot append durable ledger record: {exc}") from exc
         finally:
+            if ledger_fd is not None:
+                os.close(ledger_fd)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
@@ -549,16 +602,30 @@ class DurableLedger(Generic[LedgerViewT]):
     def _read_replay(
         self,
     ) -> tuple[tuple[LedgerRecord, ...], LedgerReplayState[LedgerViewT]]:
+        records = self._read_records()
+        state = self.protocol.new_state()
+        for record in records:
+            try:
+                state.consume(record, self.object_store)
+            except ReV2LedgerError as exc:
+                raise ReV2LedgerError(f"ledger record {record.seq} is invalid: {exc}") from exc
+        return records, state
+
+    def _read_records(self) -> tuple[LedgerRecord, ...]:
+        """Read canonical envelopes only; callers must authenticate nested authority.
+
+        The reviewed revision verifier uses this to establish committed ancestors
+        before replaying their dependent receipts, without a recursive weaker reader.
+        """
         if not self.path.exists() and not self.path.is_symlink():
-            return (), self.protocol.new_state()
+            return ()
         payload = _read_regular_file(self.path, "ledger")
         if not payload:
-            return (), self.protocol.new_state()
+            return ()
         if not payload.endswith(b"\n"):
             raise ReV2LedgerError("partial final ledger record")
 
         records: list[LedgerRecord] = []
-        state = self.protocol.new_state()
         previous: str | None = None
         if b"\r" in payload:
             raise ReV2LedgerError("ledger record framing rejects carriage returns")
@@ -589,15 +656,9 @@ class DurableLedger(Generic[LedgerViewT]):
                 raise ReV2LedgerError(
                     f"ledger record {index} has wrong previous record hash"
                 )
-            try:
-                state.consume(record, self.object_store)
-            except ReV2LedgerError as exc:
-                raise ReV2LedgerError(
-                    f"ledger record {index} is invalid: {exc}"
-                ) from exc
             records.append(record)
             previous = record.record_hash
-        return tuple(records), state
+        return tuple(records)
 
     def _validate_parent(self) -> None:
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():

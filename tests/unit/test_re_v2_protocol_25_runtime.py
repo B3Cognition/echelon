@@ -18,8 +18,13 @@ from harness.re_v2.protocol_25.findings import (
     AuditTargetV1,
     AuditedArtifactAuthorityV1,
 )
+from harness.re_v2.protocol_25.guidance import (
+    build_guidance_directive,
+    custom_guidance_policy,
+)
 from harness.re_v2.protocol_25.runtime import (
     AuthorizedEvidenceRangeV1,
+    GuidanceProjectionV1,
     Protocol25DeterministicRuntime,
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
@@ -115,6 +120,7 @@ def _context(
     extra_authority=None,  # type: ignore[no-untyped-def]
     audit_epoch_id=None,  # type: ignore[no-untyped-def]
     semantic_round=None,  # type: ignore[no-untyped-def]
+    operator_guidance=None,  # type: ignore[no-untyped-def]
 ):
     authority_payloads = _base_authority_payloads()
     authority_payloads.update(extra_authority or {})
@@ -131,7 +137,74 @@ def _context(
         active_sibling_authority_hashes=tuple(active_siblings),
         audit_epoch_id=audit_epoch_id,
         semantic_round=semantic_round,
+        operator_guidance=operator_guidance,
     )
+
+
+def _guidance_projection() -> GuidanceProjectionV1:
+    finding = _certified_audit().normalized_findings[0]
+    directive = build_guidance_directive(
+        policy=custom_guidance_policy("Prefer the authenticated timeout contract."),
+        parent_manifest_hash=digest("guidance-parent-manifest"),
+        parent_terminal_event_hash=digest("guidance-parent-terminal"),
+        accepted_audit_candidate_hashes=(digest("guidance-candidate"),),
+        unresolved_audit_target_ids=(),
+        audit_epoch_id=digest("semantic-epoch"),
+        closure_root_hash=digest("guidance-closure-root"),
+        unresolved_finding_ids=(finding.finding_key_id,),
+    )
+    payload = canonical_json_bytes(directive.to_json_dict())
+    return GuidanceProjectionV1.from_payload_bytes(
+        directive_hash=content_digest(payload),
+        payload=payload,
+    )
+
+
+@pytest.mark.unit
+def test_unguided_context_preserves_frozen_identity() -> None:
+    context = _context()
+
+    assert context.operator_guidance is None
+    assert "operator_guidance" not in context.to_json_dict()
+    assert context.identity == (
+        "sha256:063e648d081174ccf20bc884bedb7fbdd5a3da6cd348cf969bc11e654bb20361"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mode",
+    ("SEMANTIC_RESOLUTION", "CLOSURE_RECHECK", "SOURCE_COMPOSITION_GUARD"),
+)
+def test_every_post_freeze_context_projects_exact_guidance_authority(mode: str) -> None:
+    projection = _guidance_projection()
+    context = _context(
+        mode=mode,
+        unresolved=(_certified_audit().normalized_findings[0],),
+        audit_epoch_id=digest("semantic-epoch"),
+        semantic_round=1,
+        operator_guidance=projection,
+    )
+
+    assert context.operator_guidance == projection
+    assert context.to_json_dict()["operator_guidance"] == projection.to_json_dict()
+    assert SemanticContextV1.from_json_dict(context.to_json_dict()) == context
+
+
+@pytest.mark.unit
+def test_guidance_projection_rejects_payload_hash_substitution() -> None:
+    projection = _guidance_projection()
+    tampered = projection.to_json_dict()
+    tampered["directive_hash"] = digest("substituted-guidance")
+
+    with pytest.raises(Protocol25RuntimeError, match="guidance.*hash"):
+        GuidanceProjectionV1.from_json_dict(tampered)
+
+
+@pytest.mark.unit
+def test_pre_freeze_audit_context_rejects_guidance() -> None:
+    with pytest.raises(Protocol25RuntimeError, match="pre-freeze.*guidance"):
+        _context(operator_guidance=_guidance_projection())
 
 
 @pytest.mark.unit
@@ -147,6 +220,23 @@ def test_post_freeze_context_exposes_exact_output_binding() -> None:
     assert context.semantic_round == 2
     assert context.to_json_dict()["audit_epoch_id"] == epoch_id
     assert context.to_json_dict()["semantic_round"] == 2
+
+
+@pytest.mark.unit
+def test_source_guard_accepts_realistic_aggregate_above_single_target_ceiling() -> None:
+    aggregate = b"x" * 200_000
+    aggregate_hash = content_digest(aggregate)
+    context = _context(
+        mode="SOURCE_COMPOSITION_GUARD",
+        overlays=(aggregate_hash,),
+        extra_authority={aggregate_hash: aggregate},
+        audit_epoch_id=digest("semantic-epoch"),
+        semantic_round=1,
+    )
+
+    measured = len(canonical_json_bytes(context.to_json_dict()))
+    assert 192 * 1024 < measured <= 512 * 1024
+    assert context.max_canonical_json_bytes == 512 * 1024
 
 
 @pytest.mark.unit
@@ -424,6 +514,17 @@ def test_audit_schema_exposes_the_closed_certifier_taxonomy(
 ) -> None:
     payload = _audit_payload()
     payload["findings"][0][field] = value  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        Draft202012Validator(
+            semantic_response_schema("semantic-audit-findings")
+        ).validate(payload)
+
+
+@pytest.mark.unit
+def test_audit_schema_binds_subject_kind_to_subject_ref_prefix() -> None:
+    payload = _audit_payload()
+    payload["findings"][0]["subject_kind"] = "surface"  # type: ignore[index]
 
     with pytest.raises(ValidationError):
         Draft202012Validator(

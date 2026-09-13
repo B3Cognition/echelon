@@ -14,12 +14,19 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_24.model import ParentAuthorityBundleV1
 from harness.re_v2.protocol_24.model import SelectionScopeV1
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_25.adoption import (
     ParentSemanticAuthorityV1,
     Protocol25ParentCandidateV1,
     validate_protocol_25_parent,
 )
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
+from harness.re_v2.protocol_25.guidance import (
+    GuidanceDirectiveV1,
+    custom_guidance_policy,
+)
 from harness.re_v2.protocol_25.lifecycle import (
     prepare_guided_successor,
     prepare_new_audit_epoch,
@@ -58,10 +65,13 @@ def test_new_audit_preparation_layers_schema4_over_authenticated_parent(
     )
     deepener = b"authenticated deepener role\n"
     semantic_objects[content_digest(deepener)] = deepener
-    l2_executor = build_deepening_executor_catalog(
-        parent.inputs.executor_contract,
-        content_digest(deepener),
-        content_digest(b"protocol-2.4 implementation"),
+    l2_executor = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent.inputs.executor_contract,
+            content_digest(deepener),
+            content_digest(b"protocol-2.4 implementation"),
+        ),
+        content_digest(b"protocol-2.4 source root v2 implementation"),
     )
     executor = build_semantic_executor_catalog(
         l2_executor,
@@ -97,7 +107,7 @@ def test_new_audit_preparation_layers_schema4_over_authenticated_parent(
     )
 
     assert first.manifest.schema_version == 4
-    assert first.manifest.engine_protocol_version == "2.5"
+    assert first.manifest.engine_protocol_version == "2.5.1"
     assert first.manifest.run_mode == "new-audit-epoch"
     assert first.manifest.parent_run_id == parent.manifest.run_id
     assert first.inputs.parent_authority_bundle.semantic_authority.is_empty
@@ -134,10 +144,13 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
     deepener = b"authenticated deepener role\n"
     semantic_objects[content_digest(deepener)] = deepener
     executor = build_semantic_executor_catalog(
-        build_deepening_executor_catalog(
-            parent.inputs.executor_contract,
-            content_digest(deepener),
-            content_digest(b"protocol-2.4 implementation"),
+        upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                parent.inputs.executor_contract,
+                content_digest(deepener),
+                content_digest(b"protocol-2.4 implementation"),
+            ),
+            content_digest(b"protocol-2.4 source root v2 implementation"),
         ),
         authorities,
         content_digest(b"protocol-2.5 semantic renderer"),
@@ -234,7 +247,9 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
             current_lower.source_ledger_chain_hash: ledger_bytes,
             candidate_hash: candidate_payload,
         },
-        answer="  Retry only the missing audit targets.\r\n",
+        guidance_policy=custom_guidance_policy(
+            "  Retry only the missing audit targets.\r\n"
+        ),
         created_at="2026-08-26T12:02:00Z",
         token_limit=5_000_000,
         active_ms_limit=10_800_000,
@@ -252,6 +267,11 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
     assert b'"answer":"Retry only the missing audit targets."' in (
         successor.inputs.human_guidance
     )
+    guidance = GuidanceDirectiveV1.from_json_dict(
+        json.loads(successor.inputs.human_guidance)
+    )
+    assert guidance.kind == "custom"
+    assert guidance.accept_residual_debt is False
     assert successor.graph.manifest == successor.manifest
 
 
@@ -344,6 +364,7 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
         "harness.re_v2.snapshot.validate_source_snapshot",
         lambda _snapshot: None,
     )
+    monkeypatch.setenv("ECHELON_LLM", "codex")
     rebuilt = legacy_cli._re_v25_context(workspace, first, manifest)
 
     assert rebuilt.semantic_graph.manifest == layer_manifest
@@ -390,6 +411,45 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
         semantic_time_limit_minutes=None,
     )
     assert continued == [rebuilt]
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "next semantic dispatch exceeds remaining authorization",
+            "reason_code": "semantic_budget_authorization_required",
+        },
+        occurred_at=manifest.created_at,
+    )
+    continued.clear()
+    legacy_cli._run_re_v25_continue(
+        rebuilt,
+        token_limit=None,
+        time_limit_minutes=None,
+        semantic_token_limit=None,
+        semantic_time_limit_minutes=None,
+    )
+    assert [event.type for event in rebuilt.event_store.replay()[-2:]] == [
+        "operator_pause_requested",
+        "run_resumed",
+    ]
+    assert continued == [rebuilt]
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "semantic tokens exhausted",
+            "reason_code": "semantic_tokens_exhausted",
+        },
+        occurred_at=manifest.created_at,
+    )
+    with pytest.raises(ValueError, match="strictly higher"):
+        legacy_cli._run_re_v25_continue(
+            rebuilt,
+            token_limit=None,
+            time_limit_minutes=None,
+            semantic_token_limit=None,
+            semantic_time_limit_minutes=None,
+        )
 
     from harness.re_v2.status import render_v2_status
 
@@ -463,11 +523,29 @@ def test_schema4_live_execution_uses_protocol25_controller(
         "harness.re_v2.protocol_25.materialization.materialize_accepted_l3",
         materialized.append,
     )
+    status_calls = 0
+
+    def status_document(run_dir: Path, *, context: object) -> dict[str, object]:
+        nonlocal status_calls
+        status_calls += 1
+        generated = 0 if status_calls == 1 else 1
+        return {
+            "engine_protocol_version": "2.5",
+            "run_id": run_dir.name,
+            "status": "in_progress" if generated == 0 else "paused",
+            "banner": (
+                "L3 SELECTED SCOPE IN PROGRESS"
+                if generated == 0
+                else "L3 PAUSED - CONTINUABLE"
+            ),
+            "selection": {"selected_sources": 1, "selected_domains": 1},
+            "artifact_counts": {"adopted": 0, "generated": generated},
+            "next_action": "run `echelon re continue run`",
+        }
+
     monkeypatch.setattr(
-        "harness.re_v2.protocol_25.status.render_protocol_25_status",
-        lambda run_dir, *, context: (
-            f"status for {run_dir.name}\nL3 PAUSED - CONTINUABLE\n"
-        ),
+        "harness.re_v2.protocol_25.status.protocol_25_status_document",
+        status_document,
     )
 
     legacy_cli._run_re_v2_live(context)
@@ -475,8 +553,10 @@ def test_schema4_live_execution_uses_protocol25_controller(
     assert calls == [context]
     assert materialized == [context]
     output = capsys.readouterr().out
-    assert "status for run" in output
-    assert output.endswith("L3 PAUSED - CONTINUABLE\n")
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in output
+    assert "[re] L3 · 0/1 accepted · controller started" in output
+    assert "L3 PAUSED - CONTINUABLE" in output
+    assert "protocol" not in output.lower()
 
 
 @pytest.mark.integration
@@ -557,7 +637,7 @@ def test_concurrent_identical_resume_creates_one_child_and_one_paid_run(
                 lambda _index: legacy_cli._run_re_v25_resume(
                     workspace,
                     parent_run,
-                    "Use retained evidence only.",
+                    custom_guidance_policy("Use retained evidence only."),
                     None,
                     None,
                 ),

@@ -10,6 +10,7 @@ import pytest
 from harness.re_v2.protocol_22.controller import Protocol22ControllerResult
 from harness.re_v2.protocol_24.controller import Protocol24Controller
 from harness.re_v2.protocol_24.status import (
+    _render_human,
     protocol_24_status_document,
     render_protocol_24_status,
 )
@@ -77,6 +78,11 @@ def test_complete_l2_status_reports_selected_scope_without_full_quality_claim(
     assert "full quality" not in human.lower()
     assert human.endswith("L2 SELECTED SCOPE COMPLETE\n")
 
+    delegated_human = _render_human(
+        {**document, "engine_protocol_version": "2.6"}
+    )
+    assert delegated_human.startswith("RE V2 — PROTOCOL 2.6\n")
+
 
 @pytest.mark.unit
 def test_paused_l2_status_is_explicitly_continuable(tmp_path: Path) -> None:
@@ -131,10 +137,12 @@ def test_failed_requested_l2_output_reports_blocked_not_partial_success(
         document["artifact_counts"]["selected_l2"]["required"]
     )
     assert document["failures"]["work_items"]
-    assert render_protocol_24_status(
+    human = render_protocol_24_status(
         context.paths.root.parent,
         context=context,
-    ).endswith("L2 BLOCKED - REQUESTED OUTPUTS INCOMPLETE\n")
+    )
+    assert "source root incomplete" in human
+    assert human.endswith("L2 BLOCKED - REQUESTED OUTPUTS INCOMPLETE\n")
 
 
 @pytest.mark.unit

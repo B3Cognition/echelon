@@ -8,10 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping
 
-from harness.re_v2.events import EventStore
+from harness.re_v2.canonical import content_digest
+from harness.re_v2.events import EventProtocol, EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.budget import evaluate_budget_v22
 from harness.re_v2.protocol_22.graph import plan_next_v2
+from harness.re_v2.protocol_22.model import ExecutionCaptureV1
 from harness.re_v2.protocol_22.status import (
     _budget_document,
     _open_dispatch_ids,
@@ -26,15 +28,24 @@ from .artifacts import AuditCandidateV1
 from .budget import evaluate_semantic_budget
 from .controller import Protocol25ControllerStateV1
 from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .findings import SemanticFindingV1
 from .graph import Protocol25Graph, build_protocol_25_graph
+from .guidance import GuidanceDirectiveV1
+from .guidance_status import (
+    RECOMMENDED_COMMAND,
+    all_selected_audits_accepted,
+    derive_guidance_summary,
+)
 from .inputs import ValidatedProtocol25Inputs, load_protocol_25_inputs
 from .ledger import Protocol25Ledger, Protocol25LedgerView
 from .model import RunManifestV4
+from .preflight import AuditContextPreflightFailureV1
 from .recovery import (
     Protocol25RunContext,
     _accepted_prerequisites,
     _source_cycle_states,
     _target_states,
+    _replay_protocol_25_events,
     recover_protocol_25_run,
 )
 from harness.re_v2.protocol_22.schema import load_canonical_object
@@ -63,6 +74,8 @@ class _StatusAuthority:
     ledger: Protocol25LedgerView
     objects: ObjectStore
     state: Protocol25ControllerStateV1
+    replay: Protocol25ReplayState
+    event_protocol: EventProtocol
 
 
 def render_protocol_25_status(
@@ -85,7 +98,8 @@ def protocol_25_status_document(
     run_path = Path(run_dir)
     try:
         authority = _authority(run_path, context)
-        return _document(authority)
+        debt = _load_debt_acceptance(run_path, authority)
+        return _document(authority, debt_acceptance=debt)
     except Protocol25StatusError:
         raise
     except Exception as exc:
@@ -112,6 +126,8 @@ def _authority(
             recovered.ledger,
             context.object_store,
             recovered.controller_state,
+            _replay_protocol_25_events(context, recovered.events),
+            context.event_store.protocol,
         )
 
     active_manifest = load_run_manifest(run_path)
@@ -203,7 +219,17 @@ def _authority(
         ),
         terminal_state=terminal,  # type: ignore[arg-type]
     )
-    return _StatusAuthority(manifest, inputs, graph, events, ledger, objects, state)
+    return _StatusAuthority(
+        manifest,
+        inputs,
+        graph,
+        events,
+        ledger,
+        objects,
+        state,
+        replay,
+        event_protocol,
+    )
 
 
 class _AvailableBudget:
@@ -212,14 +238,16 @@ class _AvailableBudget:
         return True
 
 
-def _document(authority: _StatusAuthority) -> dict[str, object]:
+def _document(
+    authority: _StatusAuthority,
+    *,
+    debt_acceptance: object | None = None,
+) -> dict[str, object]:
     manifest = authority.manifest
     state = authority.state
     events = authority.events
     ledger = authority.ledger
-    replay = Protocol25ReplayState()
-    for event in events:
-        replay.consume(event)  # type: ignore[arg-type]
+    replay = authority.replay
     if state.paused_resource:
         status = "paused"
     elif state.terminal_state is not None:
@@ -231,15 +259,28 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         events,  # type: ignore[arg-type]
         _open_dispatch_ids(events),  # type: ignore[arg-type]
         _utc_now(),
-        event_protocol=PROTOCOL_25_EVENTS,
+        event_protocol=authority.event_protocol,
     )
     semantic_budget = evaluate_semantic_budget(
         manifest.semantic_closure_policy,
         events,  # type: ignore[arg-type]
+        event_protocol=authority.event_protocol,
+    )
+    authorization_required = (
+        _authorization_required(authority, run_budget, semantic_budget)
+        if status == "paused"
+        else {}
+    )
+    authorization_recommended = _authorization_recommended(
+        authority,
+        run_budget,
+        semantic_budget,
+        authorization_required,
     )
     candidate_by_target = dict(replay.audit_candidates)
     targets = []
     finding_classes: dict[str, str] = {}
+    finding_authorities: dict[str, SemanticFindingV1] = {}
     for target in state.targets:
         candidate_hash = candidate_by_target.get(target.audit_target_id)
         if candidate_hash is not None:
@@ -250,6 +291,9 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             finding_classes.update(
                 (item.finding_key_id, item.finding_key.finding_class)
                 for item in candidate.findings
+            )
+            finding_authorities.update(
+                (item.finding_key_id, item) for item in candidate.findings
             )
         targets.append(
             {
@@ -268,10 +312,42 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
     frozen = {item for target in state.targets for item in target.frozen_finding_ids}
     unresolved = {item for target in state.targets for item in target.unresolved_finding_ids}
     closed = frozen - unresolved
+    source_by_target = {
+        item.audit_target_id: item.source_id for item in state.targets
+    }
+    accepted_closure_roots = {
+        item
+        for item in replay.audit_closure_roots
+        if item in ledger.audit_closure_roots
+        and ledger.audit_closure_roots[item].audit_epoch_id == state.audit_epoch_id
+    }
+    guidance = derive_guidance_summary(
+        run_id=manifest.run_id,
+        manifest_hash=manifest.run_manifest_id,
+        status=status,
+        frozen_finding_ids=tuple(sorted(frozen)),
+        unresolved_finding_ids=tuple(sorted(unresolved)),
+        findings=tuple(
+            finding_authorities[item] for item in sorted(finding_authorities)
+        ),
+        source_by_target=source_by_target,
+        all_selected_audits_accepted=all_selected_audits_accepted(
+            audit_states=tuple(item.audit_state for item in state.targets),
+            selected_target_count=len(authority.graph.audit_target_plans),
+        ),
+        has_frozen_epoch=(
+            state.audit_epoch_id is not None
+            and state.audit_epoch_id in ledger.audit_epochs
+        ),
+        has_final_closure_root=len(accepted_closure_roots) == 1,
+        all_selected_roots_accepted=(
+            set(ledger.l3_source_roots) == set(authority.graph.selected_source_ids)
+        ),
+    )
     adopted_work_ids = {
         str(event.payload["work_item_id"])
         for event in events  # type: ignore[union-attr]
-        if event.type == "artifact_adopted"
+        if event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}
     }
     accepted_lower = tuple(
         item
@@ -311,14 +387,40 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         operation = operation_by_event.get(event.type)
         if operation is not None:
             calls[operation] = calls.get(operation, 0) + 1
-    return {
+    cli_provider_ids = {
+        entry.provider_id
+        for entry in authority.inputs.executor_contract.entries
+        if entry.execution_mode == "cli" and entry.provider_id is not None
+    }
+    required_provider = (
+        next(iter(cli_provider_ids)) if len(cli_provider_ids) == 1 else None
+    )
+    last_provider_failure = _latest_provider_failure(
+        events,
+        authority.objects,
+        required_provider=required_provider,
+    )
+    preflight = _preflight_document(authority)
+    projection_failure = (
+        None
+        if replay.semantic_context_projection_failure is None
+        else dict(replay.semantic_context_projection_failure)
+    )
+    banner = (
+        "L3 BLOCKED - AUDIT CONTEXT PREFLIGHT FAILED"
+        if preflight["state"] == "failed"
+        else "L3 BLOCKED - SOURCE COMPOSITION CONTEXT FAILED"
+        if projection_failure is not None
+        else _BANNERS[status]
+    )
+    document = {
         "artifact_counts": {
             "adopted": len(adopted_work_ids),
             "generated_l2": generated_l2,
             "generated_l3": len(semantic_accepted),
             "retained_audit_candidates": len(candidate_by_target),
         },
-        "banner": _BANNERS[status],
+        "banner": banner,
         "budget": {
             "run_wide": _budget_document(run_budget),
             "semantic": {
@@ -334,16 +436,30 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             },
         },
         "completion_scope": "selected L3 scope only",
+        "context_projection_failure": projection_failure,
         "continuable": status == "paused",
         "engine": manifest.engine,
         "engine_protocol_version": manifest.engine_protocol_version,
+        "guidance": guidance.to_json_dict(),
+        "layer_protocol_version": manifest.engine_protocol_version,
         "lineage": manifest.parent_lineage.to_json_dict(),
-        "next_action": _next_action(status, manifest.run_id),
+        "last_provider_failure": last_provider_failure,
+        "authorization_required": authorization_required,
+        "authorization_recommended": authorization_recommended,
+        "next_action": _next_action(
+            status,
+            manifest,
+            authorization_recommended,
+            preflight_failed=preflight["state"] == "failed",
+            projection_failed=projection_failure is not None,
+        ),
         "not_run": {
             "exhaustive_re_l4": "not run",
             "workspace_synthesis": "not run",
         },
+        "operator_guidance": _operator_guidance_document(authority),
         "partition_manifest_id": manifest.partition_manifest_id,
+        "preflight": preflight,
         "run_id": manifest.run_id,
         "run_mode": manifest.run_mode,
         "selection": {
@@ -381,8 +497,229 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             # was originally created. Successor adoption is a separate fact.
             "zero_call_reuse": True,
             "successor_adoption": manifest.run_mode != "new-audit-epoch",
+            "provider_dispatches_avoided_by_preflight": (
+                max(
+                    0,
+                    len(authority.graph.audit_target_plans)
+                    - len(replay.audit_candidates),
+                )
+                if preflight["state"] == "failed"
+                else 0
+            ),
         },
     }
+    if debt_acceptance is not None:
+        return _apply_debt_status(document, debt_acceptance)
+    return document
+
+
+def _operator_guidance_document(authority: _StatusAuthority) -> dict[str, object]:
+    payload = authority.inputs.human_guidance
+    reference = authority.manifest.human_guidance
+    if payload is None and reference is None:
+        return {}
+    if payload is None or reference is None:
+        raise Protocol25StatusError("operator guidance authority is incomplete")
+    guidance = load_canonical_object(payload, GuidanceDirectiveV1.from_json_dict)
+    if content_digest(payload) != reference.object_hash:
+        raise Protocol25StatusError("operator guidance authority hash mismatch")
+    return {
+        "accept_residual_debt": guidance.accept_residual_debt,
+        "automatic_successor_limit": guidance.automatic_successor_limit,
+        "guidance_directive_hash": guidance.identity,
+        "kind": guidance.kind,
+        "successor_index": guidance.successor_index,
+    }
+
+
+def _load_debt_acceptance(run_path: Path, authority: _StatusAuthority) -> object | None:
+    from .debt import (
+        load_residual_debt_acceptance,
+        residual_debt_pointer_path,
+        validate_residual_debt_acceptance,
+    )
+
+    pointer = residual_debt_pointer_path(run_path)
+    if not pointer.exists() and not pointer.is_symlink():
+        return None
+    acceptance = load_residual_debt_acceptance(run_path)
+    validate_residual_debt_acceptance(authority, acceptance)
+    return acceptance
+
+
+def _apply_debt_status(
+    document: dict[str, object],
+    acceptance: object,
+) -> dict[str, object]:
+    unresolved_ids = tuple(getattr(acceptance, "unresolved_finding_ids"))
+    document["banner"] = "L3 COMPLETE WITH ACCEPTED RESIDUAL DEBT"
+    document["status"] = "complete_with_debt"
+    document["semantic_status"] = "blocked_plateau"
+    document["quality"] = "partial"
+    document["debt_manifest_hash"] = getattr(acceptance, "identity")
+    document["accepted_residual_findings"] = len(unresolved_ids)
+    document["continuable"] = False
+    document["next_action"] = "none — selected L3 scope is complete with accepted residual debt"
+    guidance = document.get("guidance")
+    if isinstance(guidance, dict):
+        guidance["recommended_eligible"] = False
+        guidance["banzai_eligible"] = False
+        actions = guidance.get("actions")
+        if isinstance(actions, list):
+            guidance["actions"] = [
+                {**item, "enabled": False} if isinstance(item, dict) else item
+                for item in actions
+            ]
+    return document
+
+
+def _preflight_document(authority: _StatusAuthority) -> dict[str, object]:
+    replay = authority.replay
+    selected = len(authority.graph.audit_target_plans)
+    target_ids = _preflight_target_ids(authority)
+    if replay.audit_context_preflight_failure_id is not None:
+        failure = authority.ledger.audit_context_preflight_failures.get(
+            replay.audit_context_preflight_failure_id
+        )
+        if failure is None:
+            raise Protocol25StatusError("preflight event has no failure receipt")
+        try:
+            checked = target_ids.index(failure.audit_target_id) + 1
+        except ValueError as exc:
+            raise Protocol25StatusError(
+                "preflight failure target is absent from the frozen graph"
+            ) from exc
+        return _failed_preflight_document(failure, checked, selected)
+    if authority.ledger.audit_context_preflight_failures:
+        if len(authority.ledger.audit_context_preflight_failures) != 1:
+            raise Protocol25StatusError("run has multiple preflight failure receipts")
+        failure = next(
+            iter(authority.ledger.audit_context_preflight_failures.values())
+        )
+        try:
+            checked = target_ids.index(failure.audit_target_id) + 1
+        except ValueError as exc:
+            raise Protocol25StatusError(
+                "preflight failure target is absent from the frozen graph"
+            ) from exc
+        return _failed_preflight_document(failure, checked, selected)
+    if replay.audit_context_preflight_entries:
+        entries = replay.audit_context_preflight_entries
+        return {
+            "state": "passed",
+            "checked_target_count": len(entries),
+            "selected_target_count": selected,
+            "max_measured_canonical_json_bytes": max(
+                item.canonical_json_bytes for item in entries
+            ),
+            "max_canonical_json_bytes": authority.inputs.artifact_policy.entry_for(
+                "L3", "semantic-audit-findings"
+            ).max_context_bundle_bytes,
+            "provider_dispatch_count": 0,
+            "failure": None,
+        }
+    return {
+        "state": "not_run",
+        "checked_target_count": 0,
+        "selected_target_count": selected,
+        "max_measured_canonical_json_bytes": None,
+        "max_canonical_json_bytes": authority.inputs.artifact_policy.entry_for(
+            "L3", "semantic-audit-findings"
+        ).max_context_bundle_bytes,
+        "provider_dispatch_count": 0,
+        "failure": None,
+    }
+
+
+def _preflight_target_ids(authority: _StatusAuthority) -> tuple[str, ...]:
+    facade = SimpleNamespace(
+        semantic_graph=authority.graph,
+        object_store=authority.objects,
+    )
+    accepted = _accepted_prerequisites(facade, authority.ledger)
+    return tuple(
+        item.audit_target_id
+        for item in authority.graph.ready_audit_targets(accepted)
+    )
+
+
+def _failed_preflight_document(
+    failure: AuditContextPreflightFailureV1,
+    checked: int,
+    selected: int,
+) -> dict[str, object]:
+    return {
+        "state": "failed",
+        "checked_target_count": checked,
+        "selected_target_count": selected,
+        "max_measured_canonical_json_bytes": (
+            failure.measured_canonical_json_bytes
+        ),
+        "max_canonical_json_bytes": failure.max_canonical_json_bytes,
+        "provider_dispatch_count": failure.provider_dispatch_count,
+        "failure": {
+            "audit_target_id": failure.audit_target_id,
+            "scope_kind": failure.scope_kind,
+            "source_id": failure.source_id,
+            "domain_key": failure.domain_key,
+            "reason_code": failure.reason_code,
+        },
+    }
+
+
+def _latest_provider_failure(
+    events: tuple[object, ...],
+    objects: ObjectStore,
+    *,
+    required_provider: str | None = None,
+) -> dict[str, object] | None:
+    """Describe the latest failed CLI capture without persisting provider stderr."""
+    for event in reversed(events):
+        if getattr(event, "type", None) != "dispatch_observed":
+            continue
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            continue
+        capture_hash = payload.get("execution_capture_hash")
+        if not isinstance(capture_hash, str):
+            continue
+        capture = load_canonical_object(
+            objects.read_blob(capture_hash),
+            ExecutionCaptureV1.from_json_dict,
+        )
+        failed = (
+            capture.execution_mode == "cli"
+            and (
+                capture.result_kind == "provider_failure"
+                or capture.timed_out
+                or capture.exit_code not in {None, 0}
+            )
+        )
+        if capture.execution_mode == "cli" and not failed:
+            return None
+        if not failed:
+            continue
+        reason = (
+            "timed_out"
+            if capture.timed_out
+            else "nonzero_exit"
+            if capture.exit_code not in {None, 0}
+            else "provider_failure"
+        )
+        return {
+            "dispatch_id": capture.dispatch_id,
+            "exit_code": capture.exit_code,
+            "provider": capture.provider_name,
+            "provider_contract_mismatch": bool(
+                required_provider is not None
+                and capture.provider_name != required_provider
+            ),
+            "reason": reason,
+            "required_provider": required_provider,
+            "timed_out": capture.timed_out,
+            "work_item_id": capture.work_item_id,
+        }
+    return None
 
 
 def _semantic_resource(used: int, authorized: int | None) -> dict[str, int | None]:
@@ -393,22 +730,169 @@ def _semantic_resource(used: int, authorized: int | None) -> dict[str, int | Non
     }
 
 
-def _next_action(status: str, run_id: str) -> str:
+def _authorization_required(
+    authority: _StatusAuthority,
+    run_budget: object,
+    semantic_budget: object,
+) -> dict[str, dict[str, int]]:
+    catalog = authority.inputs.executor_contract
+    entries = (
+        catalog.semantic_entries
+        if authority.state.prerequisites_complete
+        else catalog.inherited_catalog.entries
+    )
+    if not entries:
+        return {}
+    reservation_tokens = max(
+        entry.limits.max_billable_tokens_per_dispatch for entry in entries
+    )
+    reservation_active_ms = max(
+        entry.limits.max_active_ms_per_dispatch for entry in entries
+    )
+
+    def required(pool: object) -> dict[str, int]:
+        result: dict[str, int] = {}
+        dimensions = (
+            (
+                "tokens",
+                int(getattr(pool, "charged_tokens")),
+                getattr(pool, "token_limit"),
+                reservation_tokens,
+            ),
+            (
+                "active_ms",
+                int(getattr(pool, "charged_active_ms")),
+                getattr(pool, "active_ms_limit"),
+                reservation_active_ms,
+            ),
+        )
+        for name, charged, authorized, reservation in dimensions:
+            minimum = charged + reservation
+            if authorized is not None and minimum > int(authorized):
+                result[name] = minimum
+        return result
+
+    result: dict[str, dict[str, int]] = {}
+    run_required = required(run_budget)
+    if run_required:
+        result["run_wide"] = run_required
+    if authority.state.prerequisites_complete:
+        semantic_required = required(semantic_budget)
+        if semantic_required:
+            result["semantic"] = semantic_required
+    return result
+
+
+def _authorization_recommended(
+    authority: _StatusAuthority,
+    run_budget: object,
+    semantic_budget: object,
+    required: Mapping[str, Mapping[str, int]],
+) -> dict[str, dict[str, int]]:
+    """Add one full dispatch window so a continuation is not a one-call ratchet."""
+    if not required:
+        return {}
+    catalog = authority.inputs.executor_contract
+    entries = (
+        catalog.semantic_entries
+        if authority.state.prerequisites_complete
+        else catalog.inherited_catalog.entries
+    )
+    reservations = {
+        "tokens": max(
+            entry.limits.max_billable_tokens_per_dispatch for entry in entries
+        ),
+        "active_ms": max(
+            entry.limits.max_active_ms_per_dispatch for entry in entries
+        ),
+    }
+    pools = {"run_wide": run_budget, "semantic": semantic_budget}
+    result: dict[str, dict[str, int]] = {}
+    for pool_name, dimensions in required.items():
+        pool = pools[pool_name]
+        recommended: dict[str, int] = {}
+        for dimension, minimum in dimensions.items():
+            if dimension == "tokens":
+                authorized = getattr(pool, "token_limit")
+            else:
+                authorized = getattr(pool, "active_ms_limit")
+            if authorized is None:
+                continue
+            recommended[dimension] = max(
+                int(minimum),
+                int(authorized) + reservations[dimension],
+            )
+        if recommended:
+            result[pool_name] = recommended
+    return result
+
+
+def _minutes(active_ms: int) -> int:
+    return (active_ms + 59_999) // 60_000
+
+
+def _next_action(
+    status: str,
+    manifest: RunManifestV4,
+    authorization_required: Mapping[str, Mapping[str, int]],
+    *,
+    preflight_failed: bool = False,
+    projection_failed: bool = False,
+) -> str:
+    run_id = manifest.run_id
+    if preflight_failed or projection_failed:
+        return f"run `{_fresh_l3_command(manifest)}`"
     if status == "complete":
         return "none — selected L3 scope is complete"
     if status == "paused":
-        return "increase resource authorization, then run `echelon re continue`"
+        flags: list[str] = []
+        run_wide = authorization_required.get("run_wide", {})
+        semantic = authorization_required.get("semantic", {})
+        if "tokens" in run_wide:
+            flags.extend(("--re-token-limit", str(run_wide["tokens"])))
+        if "active_ms" in run_wide:
+            flags.extend(
+                (
+                    "--re-time-limit-minutes",
+                    str(_minutes(run_wide["active_ms"])),
+                )
+            )
+        if "tokens" in semantic:
+            flags.extend(
+                ("--re-semantic-token-limit", str(semantic["tokens"]))
+            )
+        if "active_ms" in semantic:
+            flags.extend(
+                (
+                    "--re-semantic-time-limit-minutes",
+                    str(_minutes(semantic["active_ms"])),
+                )
+            )
+        suffix = " " + " ".join(flags) if flags else ""
+        return f"run `echelon re continue {run_id}{suffix}`"
     if status == "next_epoch_required":
         return (
             f"run `echelon re deepen --to L3 --from-run {run_id} "
             "--new-audit-epoch --all`"
         )
     if status in {"blocked_incomplete", "blocked_plateau"}:
-        return (
-            "run `echelon re resume \"<guidance>\"`; identical guidance reuses "
-            "the existing successor with zero provider calls"
-        )
+        return f"run `{RECOMMENDED_COMMAND}`"
     return "run `echelon re continue`"
+
+
+def _fresh_l3_command(manifest: RunManifestV4) -> str:
+    command = ["echelon re deepen", "--to L3"]
+    if manifest.selection.all_sources:
+        command.append("--all")
+    else:
+        command.extend(
+            f"--source {source_id}" for source_id in manifest.selection.source_ids
+        )
+        command.extend(
+            f"--domain {domain_key}" for domain_key in manifest.selection.domain_keys
+        )
+    command.append(f"--from-run {manifest.parent_lineage.direct_parent_run_id}")
+    return " ".join(command)
 
 
 def _render_human(document: Mapping[str, object]) -> str:
@@ -416,7 +900,7 @@ def _render_human(document: Mapping[str, object]) -> str:
     semantic = document["semantic"]
     budget = document["budget"]
     lines = [
-        "RE V2 — PROTOCOL 2.5",
+        f"RE V2 — PROTOCOL {document['engine_protocol_version']}",
         f"run: {document['run_id']}",
         f"mode: {document['run_mode']}",
         f"status: {document['status']}",
@@ -442,10 +926,162 @@ def _render_human(document: Mapping[str, object]) -> str:
         "workspace synthesis: not run",
         "exhaustive RE L4: not run",
         f"completion scope: {document['completion_scope']}",
-        f"next action: {document['next_action']}",
-        "=" * 72,
-        str(document["banner"]),
     ]
+    guidance = document.get("guidance")
+    if isinstance(guidance, Mapping) and guidance.get("recommended_eligible") is True:
+        by_class = guidance.get("unresolved_by_class", [])
+        by_source = guidance.get("unresolved_by_source", [])
+        if isinstance(by_class, list) and by_class:
+            lines.append(
+                "unresolved by class: "
+                + ", ".join(
+                    f"{item['finding_class']}={item['count']}"
+                    for item in by_class
+                    if isinstance(item, Mapping)
+                )
+            )
+        if isinstance(by_source, list) and by_source:
+            lines.append(
+                "unresolved by source: "
+                + ", ".join(
+                    f"{item['source_id']}={item['count']}"
+                    for item in by_source
+                    if isinstance(item, Mapping)
+                )
+            )
+        actions = guidance.get("actions", [])
+        if isinstance(actions, list):
+            for action in actions:
+                if isinstance(action, Mapping) and action.get("enabled") is True:
+                    lines.append(
+                        f"guidance option ({action['action_id']}): "
+                        f"`{action['command']}`"
+                    )
+    operator_guidance = document.get("operator_guidance")
+    if isinstance(operator_guidance, Mapping) and operator_guidance:
+        lines.append(
+            "operator guidance: "
+            f"{operator_guidance.get('kind')} / "
+            f"{operator_guidance.get('guidance_directive_hash')}"
+        )
+        lines.append(
+            "automatic successor: "
+            f"{operator_guidance.get('successor_index', 0)}/"
+            f"{operator_guidance.get('automatic_successor_limit', 0)}"
+        )
+    preflight = document.get("preflight")
+    if isinstance(preflight, Mapping) and preflight.get("state") != "not_run":
+        lines.append(
+            "preflight: "
+            f"{preflight['state']} after {preflight['checked_target_count']}/"
+            f"{preflight['selected_target_count']} target(s)"
+        )
+        measured = preflight.get("max_measured_canonical_json_bytes")
+        ceiling = preflight.get("max_canonical_json_bytes")
+        if isinstance(measured, int) and isinstance(ceiling, int):
+            relation = "exceeds" if measured > ceiling else "within"
+            lines.append(
+                f"preflight context: {measured} bytes {relation} {ceiling}"
+            )
+        lines.append(
+            "provider calls made by preflight: "
+            f"{preflight.get('provider_dispatch_count', 0)}"
+        )
+    projection_failure = document.get("context_projection_failure")
+    if isinstance(projection_failure, Mapping):
+        measured = projection_failure.get("measured_canonical_json_bytes")
+        ceiling = projection_failure.get("max_canonical_json_bytes")
+        lines.append(
+            "source composition context: "
+            f"{measured if isinstance(measured, int) else 'unmeasured'} bytes; "
+            f"limit {ceiling}"
+        )
+        lines.append("provider calls made after projection failure: 0")
+    provider_failure = document.get("last_provider_failure")
+    if isinstance(provider_failure, Mapping):
+        provider = provider_failure.get("provider", "unknown")
+        if provider_failure.get("timed_out") is True:
+            summary = f"{provider} CLI timed out"
+        else:
+            summary = (
+                f"{provider} CLI exited with code "
+                f"{provider_failure.get('exit_code', 'unknown')}"
+            )
+        required_provider = provider_failure.get("required_provider")
+        mismatch = provider_failure.get("provider_contract_mismatch") is True
+        if mismatch and isinstance(required_provider, str):
+            lines.append(
+                f"last provider failure: {summary}; frozen run provider is "
+                f"{required_provider}"
+            )
+            lines.append(
+                f"action required: configure/authenticate {required_provider} "
+                "before retrying"
+            )
+        else:
+            lines.append(f"last provider failure: {summary}")
+            lines.append(
+                "action required: resolve provider authentication/connectivity "
+                "before retrying"
+            )
+    authorization = document.get("authorization_required")
+    if isinstance(authorization, Mapping) and authorization:
+        descriptions = []
+        labels = {"run_wide": "run", "semantic": "semantic"}
+        for pool_name in ("run_wide", "semantic"):
+            required = authorization.get(pool_name)
+            if not isinstance(required, Mapping):
+                continue
+            current_pool = budget[pool_name]
+            if "tokens" in required:
+                descriptions.append(
+                    f"{labels[pool_name]} tokens={required['tokens']} "
+                    f"(currently {current_pool['tokens']['authorized']})"
+                )
+            if "active_ms" in required:
+                descriptions.append(
+                    f"{labels[pool_name]} active time="
+                    f"{_minutes(required['active_ms'])} min "
+                    f"(currently "
+                    f"{_minutes(current_pool['active_ms']['authorized'])})"
+                )
+        lines.append(
+            "authorization required (absolute totals): " + "; ".join(descriptions)
+        )
+    recommended = document.get("authorization_recommended")
+    if isinstance(recommended, Mapping) and recommended:
+        descriptions = []
+        labels = {"run_wide": "run", "semantic": "semantic"}
+        for pool_name in ("run_wide", "semantic"):
+            values = recommended.get(pool_name)
+            if not isinstance(values, Mapping):
+                continue
+            if "tokens" in values:
+                descriptions.append(
+                    f"{labels[pool_name]} tokens={values['tokens']}"
+                )
+            if "active_ms" in values:
+                descriptions.append(
+                    f"{labels[pool_name]} active time="
+                    f"{_minutes(values['active_ms'])} min"
+                )
+        lines.append(
+            "recommended continuation ceiling: " + "; ".join(descriptions)
+        )
+    if document.get("status") == "complete_with_debt":
+        lines.append(
+            "accepted residual findings: "
+            f"{document.get('accepted_residual_findings', 0)}"
+        )
+        lines.append(f"quality: {document.get('quality', 'partial')}")
+        lines.append(f"debt manifest: {document.get('debt_manifest_hash')}")
+    lines.extend(
+        (
+            f"next action: {document['next_action']}",
+            "=" * 72,
+            str(document["banner"]),
+        )
+    )
     return "\n".join(lines) + "\n"
 
 

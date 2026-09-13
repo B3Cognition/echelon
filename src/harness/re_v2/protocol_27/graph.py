@@ -318,6 +318,8 @@ class WorkspaceSynthesisTopologyV1:
 
 def build_workspace_synthesis_topology(
     partition: WorkspacePartitionCatalogV1,
+    *,
+    partition_manifest_id: str,
 ) -> WorkspaceSynthesisTopologyV1:
     if not isinstance(partition, WorkspacePartitionCatalogV1):
         raise Protocol27GraphError("workspace topology requires partition authority")
@@ -356,7 +358,7 @@ def build_workspace_synthesis_topology(
     )
     return WorkspaceSynthesisTopologyV1(
         1,
-        partition.identity,
+        partition_manifest_id,
         sources,
         tuple(sorted(domains, key=lambda item: item.workspace_domain_id)),
     )
@@ -370,6 +372,7 @@ class SynthesisGraphInputsV1:
     policy_catalog: SynthesisPolicyCatalogV1
     response_schema_hashes: Mapping[str, str]
     context_policy_hash: str
+    workspace_executor_contract_hash: str | None = None
 
     def __post_init__(self) -> None:
         sources = _typed_tuple(
@@ -411,6 +414,12 @@ class SynthesisGraphInputsV1:
             _schema(safe_id, kind, "response schema kind")
             _schema(digest_value, schema_hash, "response schema hash")
         _schema(digest_value, self.context_policy_hash, "context policy hash")
+        if self.workspace_executor_contract_hash is not None:
+            _schema(
+                digest_value,
+                self.workspace_executor_contract_hash,
+                "workspace executor contract hash",
+            )
         object.__setattr__(self, "accepted_sources", sources)
         object.__setattr__(
             self, "response_schema_hashes", MappingProxyType(schemas)
@@ -910,10 +919,12 @@ def build_synthesis_graph(inputs: SynthesisGraphInputsV1) -> SynthesisGraph:
         )
         debts = tuple(
             sorted(
-                source.debt_manifest_hash
-                for source_id in participant_source_ids
-                for source in (sources[source_id],)
-                if source.debt_manifest_hash is not None
+                {
+                    source.debt_manifest_hash
+                    for source_id in participant_source_ids
+                    for source in (sources[source_id],)
+                    if source.debt_manifest_hash is not None
+                }
             )
         )
         node = SynthesisGraphNodeV1(
@@ -944,9 +955,11 @@ def build_synthesis_graph(inputs: SynthesisGraphInputsV1) -> SynthesisGraph:
     workspace_participants = tuple(sorted(sources))
     all_debts = tuple(
         sorted(
-            source.debt_manifest_hash
-            for source in sources.values()
-            if source.debt_manifest_hash is not None
+            {
+                source.debt_manifest_hash
+                for source in sources.values()
+                if source.debt_manifest_hash is not None
+            }
         )
     )
     domain_dependency_ids = tuple(
@@ -1076,6 +1089,12 @@ def _template(
 ) -> SynthesisWorkTemplateV1:
     policy = inputs.policy_catalog.entry_for(kind)
     authority = inputs.policy_catalog.implementation_authority
+    executor_contract_hash = (
+        inputs.workspace_executor_contract_hash
+        if policy.scope_kind == "workspace"
+        and inputs.workspace_executor_contract_hash is not None
+        else authority.executor_contract_hash
+    )
     return SynthesisWorkTemplateV1(
         schema_version=1,
         artifact_kind=kind,
@@ -1083,7 +1102,7 @@ def _template(
         producer_id=inputs.policy_catalog.producer_id,
         producer_protocol_version=inputs.policy_catalog.producer_protocol_version,
         producer_authority_hash=authority.producer_authority_hash,
-        executor_contract_hash=authority.executor_contract_hash,
+        executor_contract_hash=executor_contract_hash,
         verifier_id=inputs.policy_catalog.verifier_id,
         verifier_version=inputs.policy_catalog.verifier_version,
         verifier_authority_hash=authority.verifier_authority_hash,
@@ -1124,6 +1143,15 @@ def _validate_templates(
     context_policy_hash: str,
 ) -> None:
     authority = catalog.implementation_authority
+    workspace_executor_hashes = {
+        template.executor_contract_hash
+        for template in templates.values()
+        if template.scope_kind == "workspace"
+    }
+    if len(workspace_executor_hashes) != 1:
+        raise Protocol27GraphError(
+            "workspace synthesis templates must share one executor contract"
+        )
     for kind, template in templates.items():
         policy = catalog.entry_for(kind)
         observed = (
@@ -1149,7 +1177,11 @@ def _validate_templates(
             catalog.producer_id,
             catalog.producer_protocol_version,
             authority.producer_authority_hash,
-            authority.executor_contract_hash,
+            (
+                template.executor_contract_hash
+                if policy.scope_kind == "workspace"
+                else authority.executor_contract_hash
+            ),
             catalog.verifier_id,
             catalog.verifier_version,
             authority.verifier_authority_hash,

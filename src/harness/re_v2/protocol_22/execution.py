@@ -1183,7 +1183,11 @@ class Protocol22ExecutionStore:
                 execution_mode=(
                     "api" if prepared.provider_envelope is not None else "cli"
                 ),
-                result_kind="provider_candidate",
+                result_kind=(
+                    "provider_failure"
+                    if result.outcome in {"http_error", "transport_error", "timed_out"}
+                    else "provider_candidate"
+                ),
                 candidate_inventory_hash=inventory_hash,
                 deterministic_artifact_hash=None,
                 stdout_digest=stdout.digest,

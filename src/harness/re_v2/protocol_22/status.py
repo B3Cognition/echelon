@@ -263,8 +263,10 @@ def _status_document(
         objects,
         executor_catalog,
     )
+    active_work = _active_work_document(events, plan_items)
     roots = _source_root_documents(paths, partition, ledger)
     return {
+        "active_work": active_work,
         "artifact_counts": {
             "by_kind": dict(sorted(by_kind.items())),
             "total": {
@@ -286,7 +288,11 @@ def _status_document(
         ),
         "engine": manifest.engine,
         "engine_protocol_version": manifest.engine_protocol_version,
-        "failures": _failure_documents(ledger, plan_items),
+        "failures": _failure_documents(
+            ledger,
+            plan_items,
+            include_plan_blockers=active_work is None,
+        ),
         "materialization": _materialization_document(paths),
         "next_work": next_work,
         "not_run": dict(_NOT_RUN),
@@ -565,6 +571,8 @@ def _context_estimates(
 def _failure_documents(
     ledger: Protocol22LedgerView,
     plan_items: list[dict[str, object]],
+    *,
+    include_plan_blockers: bool = True,
 ) -> dict[str, object]:
     scope_by_work = {
         item["work_item_id"]: item
@@ -599,7 +607,8 @@ def _failure_documents(
     blocked = [
         item
         for item in plan_items
-        if item["action"]
+        if include_plan_blockers
+        and item["action"]
         in {"blocked_executor", "blocked_dependency", "blocked_attempts"}
     ]
     return {
@@ -1152,6 +1161,50 @@ def _open_dispatch_ids(events: tuple[EventRecord, ...]) -> frozenset[str]:
     return frozenset(started - closed)
 
 
+def _active_work_document(
+    events: tuple[EventRecord, ...],
+    plan_items: list[dict[str, object]],
+) -> dict[str, object] | None:
+    open_dispatches = _open_dispatch_ids(events)
+    if not open_dispatches:
+        return None
+    started = next(
+        (
+            event
+            for event in reversed(events)
+            if event.type == "dispatch_started"
+            and str(event.payload["dispatch_id"]) in open_dispatches
+        ),
+        None,
+    )
+    if started is None:
+        raise Protocol22StatusError("open dispatch has no dispatch_started event")
+    work_item_id = str(started.payload["work_item_id"])
+    scope = next(
+        (
+            item
+            for item in plan_items
+            if item["work_item_id"] == work_item_id
+        ),
+        None,
+    )
+    if scope is None:
+        raise Protocol22StatusError("active dispatch has no graph work item")
+    return {
+        "artifact_kind": scope["artifact_kind"],
+        "attempt_kind": started.payload["attempt_kind"],
+        "dispatch_id": started.payload["dispatch_id"],
+        "domain_key": scope["domain_key"],
+        "reservation": {
+            "active_ms": started.payload["active_ms_reservation"],
+            "billable_tokens": started.payload["billable_token_reservation"],
+        },
+        "source_id": scope["source_id"],
+        "state": "in_progress",
+        "work_item_id": work_item_id,
+    }
+
+
 def _render_human(document: Mapping[str, object]) -> str:
     lines = [
         f"run: {document['run_id']}",
@@ -1186,6 +1239,14 @@ def _render_human(document: Mapping[str, object]) -> str:
                 f"tokens={reservation['billable_tokens']} "
                 f"active_ms={reservation['active_ms']}"
             )
+    active_work = document.get("active_work")
+    if isinstance(active_work, Mapping):
+        lines.append(
+            "active work: "
+            f"{active_work['work_item_id']} "
+            f"({active_work['source_id']}/{active_work['artifact_kind']}) "
+            f"dispatch={active_work['dispatch_id']}"
+        )
     telemetry = document.get("telemetry")
     if isinstance(telemetry, Mapping):
         for observation in telemetry.get("provider_observations", []):

@@ -41,12 +41,80 @@ def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
 
     assert help_result.exit_code == 0
-    assert "--engine" in help_result.output
-    assert "v1" in help_result.output
-    assert "v2" in help_result.output
-    assert "--shadow" in help_result.output
+    assert "--engine" not in help_result.output
+    assert "--shadow" not in help_result.output
     assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
     assert invalid.exit_code == 2
+
+
+@pytest.mark.unit
+def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch):
+    from echelon.cli_app import app, run
+
+    run_calls: list[list[str]] = []
+    refresh_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_run",
+        lambda args: run_calls.append(args),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda args: refresh_calls.append(args),
+        raising=False,
+    )
+
+    run_help = CliRunner().invoke(app, ["re", "run", "--help"])
+    refresh_help = CliRunner().invoke(app, ["re", "refresh", "--help"])
+    run(["re", "run", "--depth", "deep"])
+    run(
+        [
+            "re",
+            "refresh",
+            "--source",
+            "api",
+            "--source",
+            "worker",
+            "--depth",
+            "quick",
+        ]
+    )
+
+    assert run_help.exit_code == refresh_help.exit_code == 0
+    assert "--depth" in run_help.output
+    assert "quick" in run_help.output
+    assert "standard" in run_help.output
+    assert "deep" in run_help.output
+    assert "--source" in refresh_help.output
+    assert "--depth" in refresh_help.output
+    assert run_calls == [["--depth", "deep"]]
+    assert refresh_calls == [
+        ["--source", "api", "--source", "worker", "--depth", "quick"]
+    ]
+
+
+@pytest.mark.unit
+def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch):
+    from echelon.cli_app import app
+
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_run",
+        lambda _args: pytest.fail("invalid depth dispatched"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda _args: pytest.fail("invalid depth dispatched"),
+        raising=False,
+    )
+    runner = CliRunner()
+
+    run_result = runner.invoke(app, ["re", "run", "--depth", "future"])
+    refresh_result = runner.invoke(
+        app, ["re", "refresh", "--depth", "future"]
+    )
+
+    assert run_result.exit_code == refresh_result.exit_code == 2
 
 
 @pytest.mark.unit
@@ -60,6 +128,110 @@ def test_re_status_json_option_routes_without_changing_default(monkeypatch):
     run(["re", "status", "--json"])
 
     assert calls == [[], ["--json"]]
+
+
+@pytest.mark.unit
+def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_resume", lambda args: calls.append(args))
+    runner = CliRunner()
+
+    custom = runner.invoke(app, ["re", "resume", "Use accepted timeout evidence."])
+    recommended = runner.invoke(app, ["re", "resume", "--recommended"])
+    banzai = runner.invoke(
+        app,
+        [
+            "re",
+            "resume",
+            "--banzai",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ],
+    )
+
+    assert custom.exit_code == recommended.exit_code == banzai.exit_code == 0
+    assert calls == [
+        ["Use accepted timeout evidence."],
+        ["--recommended"],
+        [
+            "--banzai",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ],
+    ]
+
+
+@pytest.mark.unit
+def test_re_resume_help_explains_bounded_debt_acceptance() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "resume", "--help"],
+        env={"COLUMNS": "200"},
+    )
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "--recommended" in result.output
+    assert "--banzai" in result.output
+    assert "one automatic successor" in normalized
+    assert "documented residual debt" in normalized
+    assert "absolute L3 semantic token ceiling" in normalized
+    assert "absolute L3 semantic active-time ceiling" in normalized
+    assert "--re-semantic-token-limit" in result.output
+
+
+@pytest.mark.unit
+def test_quiet_is_accepted_after_a_nested_command_and_scoped_to_that_invocation(
+    monkeypatch,
+):
+    """Removing --quiet during dispatch would leave provider diagnostics enabled."""
+    from echelon.cli_app import run
+    from harness.verbosity import is_verbose
+
+    observed: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_spec_run",
+        lambda args: observed.append((args, is_verbose())),
+    )
+
+    run(["spec", "run", "Describe the feature", "--quiet"])
+
+    assert observed == [(["Describe the feature"], False)]
+    assert is_verbose() is False
+
+
+@pytest.mark.unit
+def test_provider_diagnostics_are_enabled_by_default(monkeypatch):
+    """An ordinary command should enable provider diagnostics."""
+    from echelon.cli_app import run
+    from harness.verbosity import is_verbose
+
+    observed: list[bool] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_status", lambda args: observed.append(is_verbose())
+    )
+
+    run(["re", "status"])
+
+    assert observed == [True]
+
+
+@pytest.mark.unit
+def test_root_help_documents_common_quiet_option() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--quiet" in result.output
 
 
 @pytest.mark.unit
@@ -795,12 +967,13 @@ def test_spec_help_uses_typer_front_door():
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["spec", "--help"])
+    normalized = " ".join(result.output.split())
 
     assert result.exit_code == 0
     assert "Usage: root spec [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase A/spec lifecycle commands" in result.output
     assert "Common forms:" in result.output
-    assert "run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]" in result.output
+    assert "run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]" in normalized
     assert "run" in result.output
     assert "status" in result.output
     assert "Usage: echelon spec <subcommand>" not in result.output

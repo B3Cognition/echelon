@@ -87,13 +87,14 @@ def test_re_runtime_resolution_rejects_legacy_extension_only_workspace(
 
 
 @pytest.mark.unit
-def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
+def test_re_run_help_keeps_legacy_reconstruction_out_of_normal_choices() -> None:
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["re", "run", "--help"])
 
     assert result.exit_code == 0
-    assert "--no-reuse" in result.output
+    assert "--depth" in result.output
+    assert "--no-reuse" not in result.output
 
 
 @pytest.mark.unit
@@ -613,7 +614,8 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         "echelon.cli._cmd_re_resume", lambda args: calls.append(("resume", args))
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_refresh", lambda args: calls.append(("refresh", args))
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda args: calls.append(("refresh", args)),
     )
     runner = CliRunner()
 
@@ -1001,6 +1003,42 @@ def test_re_status_routes_pinned_v2_without_reading_outer_state(
 
     assert calls == [(run_dir.resolve(), True)]
     assert capsys.readouterr().out == '{"engine":"re-v2"}\n'
+
+
+@pytest.mark.unit
+def test_re_status_human_uses_shared_branded_card(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_status
+
+    run_dir = _create_pinned_v2_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    document = {
+        "engine_protocol_version": "2.5",
+        "run_id": run_dir.name,
+        "status": "paused",
+        "banner": "L3 PAUSED - CONTINUABLE",
+        "selection": {"selected_sources": 7, "selected_domains": 74},
+        "artifact_counts": {"adopted": 243, "generated": 2},
+        "next_action": "run `echelon re continue re-test`",
+    }
+
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run, *, as_json=False: (
+            json.dumps(document) + "\n" if as_json else "legacy protocol text\n"
+        ),
+    )
+
+    _cmd_re_status([])
+
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in output
+    assert "protocol" not in output.lower()
+    assert "L3 PAUSED - CONTINUABLE" in output
+    assert "legacy protocol text" not in output
 
 
 @pytest.mark.unit

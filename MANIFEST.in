@@ -1,3 +1,6 @@
 recursive-include prosaic *
 recursive-include runtime *
+prune runtime/scripts/node/codegraph/node_modules
+prune runtime/scripts/node/context7/node_modules
+prune runtime/scripts/node/perlgraph/node_modules
 global-exclude .DS_Store *.py[cod]

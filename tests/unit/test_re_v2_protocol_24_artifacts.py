@@ -36,10 +36,18 @@ from harness.re_v2.protocol_24.artifacts import (
     build_l2_domain_context_bundle,
     build_l2_domain_evidence_pack,
     build_l2_source_baseline_root,
+    build_l2_source_overview_context_bundle,
     certify_l2_compact_candidate,
+    normalize_l2_authorial_candidate,
     parse_l2_authorial_candidate,
 )
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    L2SourceBaselineRootV2,
+    Protocol24SourceRootRuntimeV2,
+    build_l2_source_baseline_root_v2,
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_24_fixtures import manifest_v3
@@ -50,6 +58,7 @@ from tests.unit.test_re_v2_protocol_22_certification import (
 from tests.unit.test_re_v2_protocol_22_context import (
     _domain_baseline_bytes,
     _domain_fixture,
+    _source_fixture,
 )
 
 
@@ -63,13 +72,17 @@ class _LooseSnapshot:
 
 
 def _l2_inputs(fixture: object) -> ValidatedProtocol22Inputs:
+    implementation = digest("deepening-implementation")
     return ValidatedProtocol22Inputs(
         workspace_partition=fixture.inputs.workspace_partition,
         artifact_policy=build_deepening_v1_policy_catalog(),
-        executor_contract=build_deepening_executor_catalog(
-            fixture.inputs.executor_contract,
-            digest("deepener-agent"),
-            digest("deepening-implementation"),
+        executor_contract=upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                fixture.inputs.executor_contract,
+                digest("deepener-agent"),
+                implementation,
+            ),
+            digest("source-root-v2-implementation"),
         ),
         immutable_objects={},
     )
@@ -187,6 +200,100 @@ def test_l2_candidate_reuses_compact_receipts_and_remains_unaudited() -> None:
     assert artifact.artifact.context_bundle_hash == content_digest(
         context.to_json_dict()
     )
+
+
+@pytest.mark.unit
+def test_l2_candidate_canonicalizes_unique_evidence_hash_alias() -> None:
+    (
+        _fixture,
+        _l1_item,
+        _l1_context,
+        item,
+        context,
+        candidate,
+        snapshot,
+        verifier,
+    ) = _l2_fixture()
+    raw = candidate.authorial_payload.to_json_dict()
+    alias = context.evidence[0].source_blob_hash
+    for surface in raw["surfaces"].values():
+        for claim in surface["items"]:
+            for reference in claim["evidence"]:
+                reference["evidence_authority_id"] = alias
+    aliased = replace(
+        candidate,
+        authorial_payload=parse_l2_authorial_candidate(
+            canonical_json_bytes(raw),
+            "domain-baseline",
+            context.target_artifact_policy,
+        ),
+    )
+
+    result = certify_l2_compact_candidate(
+        aliased,
+        item,
+        context,
+        snapshot,
+        verifier,
+    )
+    artifact = load_canonical_object(
+        result.artifact_bytes,
+        L2CompactBaselineArtifactV1.from_json_dict,
+    )
+
+    assert result.certification.verdict == "accepted"
+    assert {
+        reference.evidence_authority_id
+        for surface in artifact.surfaces.values()
+        for claim in surface.items
+        for reference in claim.evidence
+    } == {context.evidence[0].evidence_authority_id}
+
+
+@pytest.mark.unit
+def test_l2_candidate_canonicalizes_unambiguous_mispaired_authority() -> None:
+    (
+        _fixture,
+        _l1_item,
+        _l1_context,
+        _item,
+        context,
+        candidate,
+        _snapshot,
+        _verifier,
+    ) = _l2_fixture()
+    intended = context.evidence[0]
+    other = replace(
+        intended,
+        evidence_authority_id=digest("other-evidence-authority"),
+        source_relative_path="orders/other.py",
+        source_blob_hash=digest("other-source-blob"),
+        raw_excerpt_hash=digest("other-raw-excerpt"),
+    )
+    expanded_context = replace(context, evidence=(intended, other))
+    raw = candidate.authorial_payload.to_json_dict()
+    for surface in raw["surfaces"].values():
+        for claim in surface["items"]:
+            for reference in claim["evidence"]:
+                reference["evidence_authority_id"] = other.evidence_authority_id
+    mispaired = parse_l2_authorial_candidate(
+        canonical_json_bytes(raw),
+        "domain-baseline",
+        context.target_artifact_policy,
+    )
+
+    normalized = normalize_l2_authorial_candidate(
+        mispaired,
+        expanded_context,
+        context.target_artifact_policy,
+    )
+
+    assert {
+        reference.evidence_authority_id
+        for surface in normalized.surfaces.values()
+        for claim in surface.items
+        for reference in claim.evidence
+    } == {intended.evidence_authority_id}
 
 
 @pytest.mark.unit
@@ -409,6 +516,45 @@ def test_l2_domain_context_binds_only_targeted_evidence() -> None:
 
 
 @pytest.mark.unit
+def test_l2_source_context_supports_selection_with_no_domains() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    source_roles = (
+        "source_inventory",
+        "source_partition",
+        "source_evidence_pack",
+    )
+    payloads = tuple(
+        (role, parent.dependencies.payload_for_role(role)) for role in source_roles
+    )
+    item, accepted = _l2_item(
+        inputs,
+        "source-overview-context-bundle",
+        payloads,
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={role: accepted[digest(role)] for role in source_roles},
+        payloads_by_hash={content_digest(payload): payload for _role, payload in payloads},
+    )
+
+    bundle = load_canonical_object(
+        build_l2_source_overview_context_bundle(
+            item,
+            dependencies,
+            inputs.artifact_policy,
+        ),
+        ContextBundleV1.from_json_dict,
+    )
+
+    assert bundle.scope == item.output_key.scope
+    assert bundle.domain_projections == ()
+    assert bundle.depth_debt.domain_depth_debt_rollup is not None
+    assert bundle.depth_debt.domain_depth_debt_rollup.domain_count == 0
+
+
+@pytest.mark.unit
 def test_l2_source_root_binds_only_selected_domain_baselines() -> None:
     fixture = _domain_fixture()
     inputs = _l2_inputs(fixture)
@@ -432,14 +578,102 @@ def test_l2_source_root_binds_only_selected_domain_baselines() -> None:
     )
 
     root = load_canonical_object(
-        build_l2_source_baseline_root(
+        build_l2_source_baseline_root_v2(
             item,
             dependencies,
             inputs.workspace_partition,
         ),
-        L2SourceBaselineRootV1.from_json_dict,
+        L2SourceBaselineRootV2.from_json_dict,
     )
 
     assert root.artifact.layer == "L2"
     assert root.overview_artifact_hash == content_digest(overview)
     assert [entry.domain_key for entry in root.domains] == [domain_key]
+
+
+@pytest.mark.unit
+def test_l2_source_root_supports_selection_with_no_domains() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    overview = b'{"selected":"overview"}'
+    item, accepted = _l2_item(
+        inputs,
+        "source-baseline-root",
+        (("source-overview", overview),),
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={
+            "source_overview": accepted[digest("source-overview")],
+        },
+        payloads_by_hash={content_digest(overview): overview},
+    )
+
+    root = load_canonical_object(
+        build_l2_source_baseline_root_v2(
+            item,
+            dependencies,
+            inputs.workspace_partition,
+        ),
+        L2SourceBaselineRootV2.from_json_dict,
+    )
+
+    assert root.overview_artifact_hash == content_digest(overview)
+    assert root.domains == ()
+
+
+@pytest.mark.unit
+def test_source_root_v2_upgrade_preserves_every_other_executor_authority() -> None:
+    parent = _domain_fixture()
+    legacy = build_deepening_executor_catalog(
+        parent.inputs.executor_contract,
+        digest("deepener-agent"),
+        digest("deepening-implementation"),
+    )
+
+    upgraded = upgrade_source_root_executor_catalog_v2(
+        legacy,
+        digest("source-root-v2-implementation"),
+    )
+
+    for family in (
+        "compact-deepening",
+        "targeted-evidence-pack",
+        "deepening-context-bundle",
+    ):
+        assert upgraded.entry_for(family) == legacy.entry_for(family)
+    root = upgraded.entry_for("deepening-source-root")
+    assert root != legacy.entry_for("deepening-source-root")
+    assert root.producer_protocol_version == "source-baseline-root-v2"
+    assert root.executor_implementation_digest == digest(
+        "source-root-v2-implementation"
+    )
+    assert root.verifier.implementation_digest == digest(
+        "source-root-v2-implementation"
+    )
+
+
+@pytest.mark.unit
+def test_source_root_v2_runtime_produces_and_certifies_empty_domain_root() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    overview = b'{"selected":"overview"}'
+    item, accepted = _l2_item(
+        inputs,
+        "source-baseline-root",
+        (("source-overview", overview),),
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={"source_overview": accepted[digest("source-overview")]},
+        payloads_by_hash={content_digest(overview): overview},
+    )
+    runtime = Protocol24SourceRootRuntimeV2(inputs)
+
+    payload = runtime.produce(item, dependencies)
+    receipt = runtime.certify_deterministic(item, payload, dependencies)
+
+    assert receipt.verdict == "accepted"
+    assert receipt.certification_key.artifact_hash == content_digest(payload)

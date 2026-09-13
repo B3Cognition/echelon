@@ -1434,6 +1434,10 @@ harness:
 # ─────────────────────────────────────────────────────────────────────────────
 
 re:
+  # Ordinary `echelon re run` / `refresh` depth for sources without a prior
+  # publication. Existing per-source depths take precedence on later runs.
+  default_depth: standard
+
   # End-to-end execution goal. Resolved values are frozen into each run so
   # continue/resume cannot reset accounting or silently change policy.
   default_profile: balanced

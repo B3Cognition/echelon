@@ -36,6 +36,7 @@ from .model import (
     Protocol25SchemaError,
     RunManifestV4,
     RunModeV1,
+    SemanticLayerProtocolV1,
     SemanticClosurePolicyV1,
 )
 from .policies import (
@@ -54,6 +55,9 @@ __all__ = (
     "PROTOCOL_VERSION",
     "RUN_MANIFEST_SCHEMA_VERSION",
     "AuditCandidateV1",
+    "AuditContextPreflightEntryV1",
+    "AuditContextPreflightFailureV1",
+    "AuditContextPreflightResultV1",
     "AuditClosureRootV1",
     "AuditEpochV1",
     "AuditTargetV1",
@@ -98,9 +102,11 @@ __all__ = (
     "Protocol25GraphInputsV1",
     "Protocol25AdoptionError",
     "Protocol25ParentCandidateV1",
+    "Protocol25PreflightError",
     "PreparedProtocol25Creation",
     "RunManifestV4",
     "RunModeV1",
+    "SemanticLayerProtocolV1",
     "ResolutionEntryV1",
     "SUBJECT_KINDS",
     "SemanticFindingV1",
@@ -130,6 +136,7 @@ __all__ = (
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
     "evaluate_semantic_budget",
+    "ensure_audit_context_preflight",
     "export_protocol_25_parent",
     "ExportedProtocol25Parent",
     "find_exact_protocol_25_child",
@@ -147,6 +154,7 @@ __all__ = (
     "reconstruct_accepted_audit_results",
     "semantic_response_schema",
     "semantic_request_id_v2",
+    "semantic_request_id_v3",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
@@ -219,6 +227,14 @@ _LAZY_RUNTIME_EXPORTS = frozenset(
         "semantic_response_schema",
     }
 )
+_LAZY_PREFLIGHT_EXPORTS = frozenset(
+    {
+        "AuditContextPreflightEntryV1",
+        "AuditContextPreflightFailureV1",
+        "AuditContextPreflightResultV1",
+        "Protocol25PreflightError",
+    }
+)
 _LAZY_CONTROLLER_EXPORTS = frozenset(
     {
         "Protocol25Controller",
@@ -237,6 +253,7 @@ _LAZY_RECOVERY_EXPORTS = frozenset(
         "Protocol25RecoveryError",
         "Protocol25RecoveryResult",
         "Protocol25RunContext",
+        "ensure_audit_context_preflight",
         "publish_audit_epoch",
         "reconstruct_accepted_audit_results",
         "recover_protocol_25_run",
@@ -256,6 +273,7 @@ _LAZY_LIFECYCLE_EXPORTS = frozenset(
         "prepare_next_audit_epoch",
         "PreparedProtocol25Creation",
         "semantic_request_id_v2",
+        "semantic_request_id_v3",
     }
 )
 
@@ -275,6 +293,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import budget as module
     elif name in _LAZY_RUNTIME_EXPORTS:
         from . import runtime as module
+    elif name in _LAZY_PREFLIGHT_EXPORTS:
+        from . import preflight as module
     elif name in _LAZY_CONTROLLER_EXPORTS:
         from . import controller as module
     elif name in _LAZY_RECOVERY_EXPORTS:

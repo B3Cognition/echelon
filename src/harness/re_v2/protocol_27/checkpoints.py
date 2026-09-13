@@ -339,6 +339,27 @@ def reconstruct_synthesis_checkpoints(
     by_origin: dict[str, tuple[SynthesisCheckpointManifestV1, ...]] = {}
     objects: dict[str, Mapping[str, bytes]] = {}
     rejections: list[SynthesisCheckpointRejectionV1] = []
+    forwarded_work_cache: dict[str, frozenset[str]] = {}
+
+    def forwarded_origin_has_work(origin_run_id: str, work_item_id: str) -> bool:
+        if origin_run_id not in forwarded_work_cache:
+            origin = runs / origin_run_id
+            try:
+                confined = _confined_origin(workspace, origin)
+                manifest = load_run_manifest(confined)
+                if not isinstance(manifest, RunManifestV6):
+                    raise Protocol27CheckpointError("forward origin is not synthesis")
+                from .inputs import load_protocol_27_inputs
+
+                origin_inputs = load_protocol_27_inputs(confined)
+                origin_ledger = Protocol27Ledger(origin_inputs).replay()
+                forwarded_work_cache[origin_run_id] = frozenset(
+                    item.work_item_id
+                    for item in origin_ledger.accepted_work_items.values()
+                )
+            except Exception:
+                forwarded_work_cache[origin_run_id] = frozenset()
+        return work_item_id in forwarded_work_cache[origin_run_id]
     try:
         candidates = tuple(sorted(runs.iterdir(), key=lambda path: path.name))
     except OSError as exc:
@@ -347,7 +368,12 @@ def reconstruct_synthesis_checkpoints(
         if not run_dir.name.startswith("re-"):
             continue
         try:
-            result = _reconstruct_origin(workspace, run_dir, max_stability_attempts)
+            result = _reconstruct_origin(
+                workspace,
+                run_dir,
+                max_stability_attempts,
+                forwarded_origin_has_work,
+            )
         except Exception as exc:
             rejections.append(
                 SynthesisCheckpointRejectionV1(run_dir.name, _controlled_reason(exc))
@@ -369,6 +395,7 @@ def _reconstruct_origin(
     workspace: Path,
     run_dir: Path,
     max_stability_attempts: int,
+    forwarded_origin_has_work: Callable[[str, str], bool],
 ) -> tuple[
     tuple[SynthesisCheckpointManifestV1, ...],
     Mapping[str, Mapping[str, bytes]],
@@ -399,8 +426,22 @@ def _reconstruct_origin(
         store = ObjectStore(paths.objects)
         manifests: list[SynthesisCheckpointManifestV1] = []
         objects_by_manifest: dict[str, Mapping[str, bytes]] = {}
+        forwarded_origins = {
+            entry.work_item_id: entry.origin_run_id
+            for entry in inputs.checkpoint_selection.entries
+        }
         for key_id, acceptance in sorted(ledger.accepted_artifacts.items()):
             work_item = ledger.accepted_work_items[key_id]
+            forwarded_origin = forwarded_origins.get(work_item.work_item_id)
+            if (
+                forwarded_origin is not None
+                and work_item.work_item_id in ledger.checkpoint_adoptions
+                and forwarded_origin_has_work(
+                    forwarded_origin,
+                    work_item.work_item_id,
+                )
+            ):
+                continue
             assessment = ledger.candidate_assessments[work_item.work_item_id]
             certification = ledger.certifications[key_id]
             acceptance_record = ledger.records[("synthesis_artifact_acceptance_v1", key_id)]

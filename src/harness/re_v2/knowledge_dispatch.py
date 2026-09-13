@@ -1,0 +1,501 @@
+"""Single-step versioned discovery execution under the existing RE controller lock.
+
+The backend seam is intentionally not installed routing. A production backend
+must enforce a tools-free, bounded, non-logging request before it can be enabled.
+Only screened bytes cross the seam; schema-2 category proposals remain passive
+and provider output has no ledger or plan-activation authority.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import time
+from typing import Callable, Protocol
+
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.knowledge_accounting import KnowledgeDispatchAccount, KnowledgeDispatchPolicy, KnowledgeProviderContract
+from harness.re_v2.knowledge_acquisition import DiscoveryAcquisition
+from harness.re_v2.knowledge_discovery import (
+    DISCOVERY_REPAIRABLE_REASONS,
+    DiscoveryAdmissionError,
+    DiscoveryError,
+    _closed_errors,
+    _load,
+)
+from harness.re_v2.knowledge_evidence import KnowledgeEvidenceError
+from harness.re_v2.protocol_22.provider import (
+    DispatchReservationV1, NormalizedUsageV1, canonical_normalized_usage_bytes,
+)
+from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderReply:
+    output: bytes
+    usage: NormalizedUsageV1
+    reason_code: str | None = None
+
+
+class DiscoveryBackend(Protocol):
+    """Accounted transport only: no ordinary logs, artifacts, tools or retries.
+
+    Implementations must count the entire request (including wrappers) against
+    initial_input_tokens and honor the capture/deadline controls. Billable token
+    reservations are charged observations, not a hard native in-flight ceiling.
+    """
+
+    contract_id: str
+
+    def __call__(self, agent: bytes, context: bytes, reservation: DispatchReservationV1) -> ProviderReply: ...
+
+
+def _repair_requirement(reason_code: str) -> str:
+    requirements = {
+        "invalid-discovery-subject-category": (
+            "Every subject category_ids array must be nonempty, unique, and contain "
+            "only categories from the selected depth's required array for that "
+            "subject target kind. Never put an outside_requested_depth category on "
+            "a subject; its obligation must instead have outside-requested-depth "
+            "disposition and empty subject_keys."
+        ),
+        "duplicate-discovery-field": (
+            "Return strict JSON in which every object key occurs exactly once. "
+            "Replace the entire payload instead of appending corrected duplicate keys."
+        ),
+        "unsupported-discovery-obligation": (
+            "For every analyze obligation, evidence_ids must be visible, be a subset "
+            "of the listed subjects' combined evidence, and intersect every listed "
+            "subject's evidence_ids."
+        ),
+        "invalid-discovery-domain-target-closure": (
+            "The domains array must contain every analysis_domain_targets key "
+            "exactly once and no other key. When analysis_domain_targets is empty, "
+            "return an empty domains array and attach behavioral subjects to source."
+        ),
+        "invalid-discovery-domain-target-evidence": (
+            "Each domain and its subjects must cite only evidence inside that exact "
+            "analysis target, and each domain row must cite primary target evidence."
+        ),
+        "invalid-discovery-target-ownership": (
+            "Each owned inventory path must be assigned to a subject on its frozen "
+            "primary analysis target; source-supporting paths use source subjects."
+        ),
+        "unsupported-discovery-inventory-ownership": (
+            "Every non-null inventory owner must cite visible evidence from that "
+            "exact path in the named subject. Otherwise leave owner null for review."
+        ),
+    }
+    return requirements.get(
+        reason_code,
+        "Return one complete replacement payload satisfying the exact authorial "
+        "response contract; do not patch or extend the rejected payload.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryStep:
+    state: str
+    receipt_id: str | None = None
+    reason_code: str | None = None
+
+
+def build_review_revision_context(boundary, objects, state, review_dispatch_id):
+    """Rebuild the only producer context authorized by a revise receipt."""
+    from harness.re_v2.knowledge_discovery_review import DiscoveryReviewBoundary
+
+    review_request = state.dispatches[review_dispatch_id]
+    review_application = state.applied[review_dispatch_id]
+    producer_id = review_request["producer_dispatch_id"]
+    producer_request = state.dispatches[producer_id]
+    producer_application = state.applied[producer_id]
+    if (
+        state.dispatch_kinds.get(review_dispatch_id) != "review"
+        or review_application["state"] != "revision_required"
+        or producer_application["state"] != "proposal_ready"
+        or review_request["proposal_receipt_id"]
+        != producer_application["receipt_id"]
+    ):
+        raise DiscoveryError("invalid-discovery-review-revision")
+    review_boundary = DiscoveryReviewBoundary(boundary)
+    review = review_boundary.read_review(
+        producer_request["binding_id"],
+        producer_application["receipt_id"],
+        review_application["receipt_id"],
+    )
+    if review["outcome"] != "revision_required":
+        raise DiscoveryError("invalid-discovery-review-revision")
+    proposal = boundary.read_proposal(
+        producer_request["binding_id"], producer_application["receipt_id"]
+    )
+    revision = _load(objects.read_blob(producer_request["revision_id"]))
+    safe_context = _load(objects.read_blob(revision["context_id"]))
+    return canonical_json_bytes({
+        "schema_version": 1,
+        "kind": "untrusted_discovery_review_revision_context",
+        "safe_discovery_context": safe_context,
+        "previous_candidate": proposal,
+        "independent_review_feedback": {
+            "outcome": review["outcome"],
+            "findings": review["findings"],
+        },
+        "revision_requirement": (
+            "Return one complete replacement discovery proposal that addresses "
+            "every independent review finding and still satisfies the original "
+            "safe discovery context. Do not return a patch or commentary."
+        ),
+    })
+
+
+def build_discovery_repair_context(
+    boundary, objects, state, dispatch_id, *, schema_version=2
+):
+    """Rebuild one deterministic producer-admission repair context."""
+    request = state.dispatches[dispatch_id]
+    capture = state.captures[dispatch_id]
+    applied = state.applied[dispatch_id]
+    feedback = _load(objects.read_blob(applied["receipt_id"]))
+    if (
+        applied["state"] != "repair_ready"
+        or feedback.get("kind") != "discovery_repair_feedback"
+        or feedback.get("binding_id") != request["binding_id"]
+        or feedback.get("revision_id") != request["revision_id"]
+        or feedback.get("context_id") != request["context_id"]
+        or feedback.get("authorial_response_id") != capture["output_id"]
+        or feedback.get("reason_code") not in DISCOVERY_REPAIRABLE_REASONS
+    ):
+        raise DiscoveryError("invalid-discovery-repair-feedback")
+    revision = _load(objects.read_blob(request["revision_id"]))
+    boundary.provider_bytes(request["binding_id"])
+    base = _load(objects.read_blob(revision["context_id"]))
+    governing = _load(objects.read_blob(request["context_id"]))
+    review_fields = {}
+    if governing.get("kind") == "untrusted_discovery_review_revision_context":
+        if governing.get("safe_discovery_context") != base:
+            raise DiscoveryError("invalid-discovery-repair-feedback")
+        review_fields = {
+            "independent_review_feedback": governing[
+                "independent_review_feedback"
+            ],
+            "revision_requirement": governing["revision_requirement"],
+        }
+    candidate_bytes = objects.read_blob(capture["output_id"])
+    if schema_version == 1:
+        candidate_field = {"previous_candidate": _load(candidate_bytes)}
+    elif schema_version == 2:
+        try:
+            candidate_text = candidate_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise DiscoveryError("invalid-discovery-repair-feedback") from None
+        candidate_field = {"previous_candidate_text": candidate_text}
+    else:
+        raise DiscoveryError("invalid-discovery-repair-feedback")
+    return canonical_json_bytes({
+        "schema_version": schema_version,
+        "kind": "untrusted_discovery_repair_context",
+        "safe_discovery_context": base,
+        **candidate_field,
+        **review_fields,
+        "deterministic_feedback": {
+            "reason_code": feedback["reason_code"],
+            "requirement": _repair_requirement(feedback["reason_code"]),
+        },
+    })
+
+
+def _capture_dispatch(account, screen_output, backend, agent_bytes, context,
+                      reservation, dispatch_id):
+    """Invoke one already-reserved dispatch and durably capture its outcome."""
+    usage = NormalizedUsageV1("unavailable", None, {})
+    output_id, reason = None, None
+    active_ms, active_status = None, "unavailable"
+    started = time.monotonic_ns()
+    try:
+        reply = backend(agent_bytes, context, reservation)
+    except Exception:
+        # The call may have spent resources before failing. Never refund it
+        # or expose exception text (which can contain source/provider data).
+        reason = "provider-failed"
+    else:
+        active_ms = max(0, (time.monotonic_ns() - started + 999_999) // 1_000_000)
+        active_status = "trusted_exact"
+        if (not isinstance(reply, ProviderReply) or not isinstance(reply.usage, NormalizedUsageV1)
+                or not isinstance(reply.output, bytes)
+                or reply.reason_code not in {
+                    None, "provider-failed", "unsafe-provider-output",
+                    "invalid-provider-result",
+                }):
+            reason = "invalid-provider-result"
+            active_ms, active_status = None, "unavailable"
+        else:
+            usage = reply.usage
+            reason = reply.reason_code
+            if reason is None:
+                try:
+                    output = screen_output(reply.output)
+                except KnowledgeEvidenceError as exc:
+                    if str(exc) == "unsafe-quarantine-store":
+                        raise
+                    reason = "unsafe-provider-output"
+                else:
+                    output_id = account.objects.put_blob(output)
+    account._record("dispatch_captured", {
+        "dispatch_id": dispatch_id, "output_id": output_id, "reason_code": reason,
+        "usage": _load(canonical_normalized_usage_bytes(usage)),
+        "active_ms": active_ms, "active_status": active_status,
+    })
+
+
+class DiscoveryController:
+    @staticmethod
+    def _matches_run(acquisition, account):
+        declared = acquisition.boundary.run_authority()
+        selected = account.opening["run_authority"]
+        source_id = acquisition.opening["evidence_scope"]["source_id"]
+        return (all(selected[key] == declared[key] for key in ("snapshot_id", "partition_id", "security_policy_id"))
+                and set(selected["source_ids"]).issubset(declared["source_ids"])
+                and source_id in selected["source_ids"])
+
+    @_closed_errors
+    def __init__(self, acquisition: DiscoveryAcquisition, account: KnowledgeDispatchAccount,
+                 agent_bytes: bytes, backend: DiscoveryBackend, reservation: DispatchReservationV1,
+                 *, fault_hook: Callable[[str], None] | None = None):
+        if acquisition.paths.root.resolve() != account.paths.root.resolve():
+            raise DiscoveryError("discovery-account-run-mismatch")
+        if not self._matches_run(acquisition, account):
+            raise DiscoveryError("knowledge-run-authority-mismatch")
+        if not isinstance(agent_bytes, bytes) or not agent_bytes or len(agent_bytes) > 65_536:
+            raise DiscoveryError("invalid-discovery-agent")
+        if not callable(backend) or not isinstance(reservation, DispatchReservationV1):
+            raise DiscoveryError("invalid-discovery-backend")
+        if getattr(backend, "contract_id", None) != account.opening["provider_contract_id"]:
+            raise DiscoveryError("discovery-provider-contract-mismatch")
+        self.acquisition, self.account = acquisition, account
+        self.agent_bytes, self.backend, self.reservation = agent_bytes, backend, reservation
+        self.fault_hook = fault_hook
+
+    def _fault(self, point):
+        if self.fault_hook is not None:
+            self.fault_hook(point)
+
+    def _repair_context(self, state, dispatch_id, *, schema_version=2):
+        return build_discovery_repair_context(
+            self.acquisition.boundary,
+            self.account.objects,
+            state,
+            dispatch_id,
+            schema_version=schema_version,
+        )
+
+    def _review_revision_context(self, state, review_dispatch_id):
+        return build_review_revision_context(
+            self.acquisition.boundary,
+            self.account.objects,
+            state,
+            review_dispatch_id,
+        )
+
+    @_closed_errors
+    def step(self) -> DiscoveryStep:
+        """One provider turn, or recovery of one recorded turn. Never a retry loop."""
+        with protocol_22_run_lock(self.acquisition.paths):
+            self.account._require_new_knowledge_store()
+            if not self._matches_run(self.acquisition, self.account):
+                raise DiscoveryError("knowledge-run-authority-mismatch")
+            if getattr(self.backend, "contract_id", None) != self.account.opening["provider_contract_id"]:
+                raise DiscoveryError("discovery-provider-contract-mismatch")
+            state = self.account._state()
+            source = self.acquisition.opening["evidence_scope"]["source_id"]
+            history = state.discovery_sources.get(source, [])
+            repair_parent = None
+            review_revision_parent = None
+            if history:
+                first = state.dispatches[history[0]]
+                if (first["scope_id"] != content_digest(self.acquisition.opening)
+                        or first["agent_id"] != content_digest(self.agent_bytes)
+                        or first["reservation"] != asdict(self.reservation)):
+                    raise DiscoveryError("discovery-dispatch-authority-mismatch")
+                last = history[-1]
+                self._authenticate_request(state, state.dispatches[last])
+                if last not in state.captures:
+                    return DiscoveryStep("blocked", reason_code="dispatch-outcome-indeterminate")
+                if last not in state.applied:
+                    return self._apply(last)
+                applied = state.applied[last]
+                if applied["state"] == "repair_ready":
+                    repair_parent = last
+                elif applied["state"] == "proposal_ready":
+                    source_history = state.sources.get(source, [])
+                    candidate = source_history[-1] if source_history else None
+                    review = state.applied.get(candidate)
+                    review_request = state.dispatches.get(candidate, {})
+                    if (
+                        state.dispatch_kinds.get(candidate) == "review"
+                        and review is not None
+                        and review["state"] == "revision_required"
+                        and review_request.get("producer_dispatch_id") == last
+                        and self.account.opening["policy"].get(
+                            "max_review_revisions", 0
+                        ) > 0
+                    ):
+                        review_revision_parent = candidate
+                    else:
+                        return self._result(applied)
+                elif applied["state"] != "evidence_ready":
+                    return self._result(applied)
+            self.acquisition._recover_locked()
+            progress = self.acquisition.status()
+            context = self.acquisition._provider_bytes_locked()
+            if repair_parent is not None:
+                context = self._repair_context(state, repair_parent)
+                if len(context) > self.reservation.initial_input_tokens:
+                    return DiscoveryStep(
+                        "blocked", reason_code="discovery-repair-context-bound"
+                    )
+            elif review_revision_parent is not None:
+                context = self._review_revision_context(
+                    state, review_revision_parent
+                )
+                if len(context) > self.reservation.initial_input_tokens:
+                    return DiscoveryStep(
+                        "blocked",
+                        reason_code="discovery-review-revision-context-bound",
+                    )
+            # This offline contract freezes byte-upper-bound accounting, not an
+            # exact tokenizer. This is a necessary lower bound; the backend must
+            # additionally fit its complete framing in that same reservation.
+            if len(self.agent_bytes) + len(context) > self.reservation.initial_input_tokens:
+                return DiscoveryStep("blocked", reason_code="discovery-input-reservation-exceeded")
+            request = {"source_id": source, "scope_id": content_digest(self.acquisition.opening),
+                       "agent_id": content_digest(self.agent_bytes), "binding_id": progress.binding_id,
+                       "revision_id": progress.revision_id, "context_id": content_digest(context),
+                       "reservation": asdict(self.reservation),
+                       "turn": len(state.sources.get(source, [])) + 1}
+            refusal = state.refusal(request)
+            if refusal:
+                return DiscoveryStep("blocked", reason_code=refusal)
+            self.account.objects.put_blob(self.agent_bytes)
+            self.account.objects.put_blob(context)
+            dispatch_id = self.account._record("dispatch_reserved", request)
+            self._fault("dispatch_reserved")
+            self._invoke(dispatch_id, context)
+            self._fault("dispatch_captured")
+            return self._apply(dispatch_id)
+
+    def _authenticate_request(self, state, request):
+        # Reusing a captured/completed turn is read-only but still authenticates
+        # its actual committed input, not merely the existence of hashed blobs.
+        history, _ = self.acquisition.ledger.replay_with_history()
+        committed = {r.payload["receipt_id"] for r in history
+                     if r.type in {"discovery_opened", "context_committed"}}
+        if request["revision_id"] not in committed:
+            raise DiscoveryError("uncommitted-discovery-dispatch")
+        revision = _load(self.account.objects.read_blob(request["revision_id"]))
+        binding = revision.get("binding_id", revision.get("initial_binding_id"))
+        if request["binding_id"] != binding:
+            raise DiscoveryError("discovery-dispatch-context-mismatch")
+        self.acquisition.boundary.provider_bytes(binding)
+        if request["context_id"] == revision["context_id"]:
+            expected = self.account.objects.read_blob(revision["context_id"])
+        else:
+            source_history = state.discovery_sources.get(request["source_id"], [])
+            index = next(
+                (i for i, item in enumerate(source_history)
+                 if state.dispatches[item] is request),
+                None,
+            )
+            if index is None or index == 0:
+                raise DiscoveryError("discovery-dispatch-context-mismatch")
+            previous = source_history[index - 1]
+            previous_application = state.applied.get(previous)
+            if previous_application is not None and previous_application["state"] == "repair_ready":
+                expected = self._repair_context(state, previous)
+                if request["context_id"] != content_digest(expected):
+                    # Compatibility for repair requests reserved before schema 2
+                    # made rejected JSON opaque instead of reparsing it.
+                    expected = self._repair_context(state, previous, schema_version=1)
+            elif previous_application is not None and previous_application["state"] == "proposal_ready":
+                review_id = next(
+                    (
+                        item
+                        for item in reversed(state.sources.get(request["source_id"], []))
+                        if state.dispatch_kinds.get(item) == "review"
+                        and state.dispatches[item].get("producer_dispatch_id") == previous
+                    ),
+                    None,
+                )
+                if review_id is None:
+                    raise DiscoveryError("discovery-dispatch-context-mismatch")
+                expected = self._review_revision_context(state, review_id)
+            else:
+                raise DiscoveryError("discovery-dispatch-context-mismatch")
+        if (
+            request["context_id"] != content_digest(expected)
+            or self.account.objects.read_blob(request["context_id"]) != expected
+        ):
+            raise DiscoveryError("discovery-dispatch-context-mismatch")
+
+    def _invoke(self, dispatch_id, context):
+        _capture_dispatch(
+            self.account, self.acquisition.boundary.screen_output, self.backend,
+            self.agent_bytes, context, self.reservation, dispatch_id,
+        )
+
+    def _apply(self, dispatch_id):
+        state = self.account._state()
+        request, capture = state.dispatches[dispatch_id], state.captures[dispatch_id]
+        if dispatch_id in state.applied:
+            return self._result(state.applied[dispatch_id])
+        reason, receipt_id, result_state = capture["reason_code"], None, "blocked"
+        if state.dispatch_breached(dispatch_id):
+            reason = "reservation-exceeded"
+        if reason is None:
+            try:
+                receipt_id = self.acquisition.boundary.admit(
+                    request["binding_id"], self.account.objects.read_blob(capture["output_id"]), capture_bound=True)
+            except DiscoveryAdmissionError as exc:
+                admission_reason = str(exc)
+                if (
+                    admission_reason in DISCOVERY_REPAIRABLE_REASONS
+                    and self.account.opening["policy"].get(
+                        "max_discovery_repairs", 0
+                    ) > 0
+                ):
+                    receipt_id = self.account.objects.put_blob(canonical_json_bytes({
+                        "schema_version": 1,
+                        "kind": "discovery_repair_feedback",
+                        "binding_id": request["binding_id"],
+                        "revision_id": request["revision_id"],
+                        "context_id": request["context_id"],
+                        "authorial_response_id": capture["output_id"],
+                        "reason_code": admission_reason,
+                    }))
+                    result_state = "repair_ready"
+                else:
+                    reason = "discovery-result-invalid"
+            if receipt_id is not None and result_state != "repair_ready":
+                receipt = _load(self.account.objects.read_blob(receipt_id))
+                if receipt["state"] == "proposal_validated":
+                    # Every proposal version is staged only. Schema 2 adds
+                    # category-aware input for independent review; it does not
+                    # add plan-activation authority at this boundary.
+                    result_state = "proposal_ready"
+                else:
+                    try:
+                        progress = self.acquisition._resolve_locked(request["binding_id"], receipt_id)
+                    except DiscoveryError as exc:
+                        if str(exc) not in {"evidence-expansion-limit", "discovery-context-bound"}:
+                            raise
+                        reason = str(exc)
+                    else:
+                        if progress.revision_id == request["revision_id"]:
+                            reason = "discovery-no-new-evidence"
+                        else:
+                            result_state = "evidence_ready"
+        applied = {"dispatch_id": dispatch_id, "state": result_state, "receipt_id": receipt_id,
+                   "reason_code": reason, "revision_id": self.acquisition.status().revision_id}
+        self.account._record("discovery_applied", applied)
+        self._fault("discovery_applied")
+        return self._result(applied)
+
+    @staticmethod
+    def _result(applied):
+        return DiscoveryStep(applied["state"], applied["receipt_id"], applied["reason_code"])

@@ -18,6 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from tests.support.temp_storage import copy_package_build_tree
+
 import harness.squad as squad_module
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
 from harness.blocked_decision import (
@@ -2527,7 +2529,7 @@ def _cli_awaiting_human_controller(
     tmp_path: Path,
 ) -> tuple[SquadController, SquadStateStore, object, str]:
     echelon_dir = tmp_path / ".echelon"
-    shutil.copytree(ROOT / "runtime", echelon_dir / "runtime")
+    copy_package_build_tree(ROOT / "runtime", echelon_dir / "runtime")
     shutil.copytree(ROOT / "prosaic", echelon_dir / "prosaic")
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(

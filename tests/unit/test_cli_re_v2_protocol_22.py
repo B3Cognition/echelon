@@ -78,25 +78,31 @@ def test_goal_is_closed_unique_creation_only_option(args: list[str]) -> None:
 
 
 @pytest.mark.unit
-def test_typer_routes_goal_without_changing_v1_default(
+def test_typer_routes_normal_run_to_reviewed_knowledge_and_explicit_v2_to_legacy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+    knowledge_calls: list[list[str]] = []
+    legacy_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_run", lambda args: knowledge_calls.append(args)
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_run", lambda args: legacy_calls.append(args)
+    )
     runner = CliRunner()
 
-    v1 = runner.invoke(app, ["re", "run"])
+    normal = runner.invoke(app, ["re", "run"])
     v2 = runner.invoke(
         app,
         ["re", "run", "--engine", "v2", "--goal", "inventory"],
     )
 
-    assert v1.exit_code == 0, v1.output
+    assert normal.exit_code == 0, normal.output
     assert v2.exit_code == 0, v2.output
-    assert calls == [
-        ["--re-policy", "changed"],
+    assert knowledge_calls == [[]]
+    assert legacy_calls == [
         [
             "--re-policy",
             "changed",
@@ -696,5 +702,5 @@ def test_terminal_protocol_22_run_rejects_budget_authorization_without_mutation(
     )
 
     assert result.exit_code == 2
-    assert "terminal protocol-2.2" in result.output
+    assert "terminal RE v2" in result.output
     assert paths.events.read_bytes() == before

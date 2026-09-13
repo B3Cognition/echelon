@@ -149,6 +149,8 @@ def execute_protocol_27_request(
     workspace_root: Path,
     options: object,
     provider_factory: Callable[[], SquadCliProvider],
+    *,
+    fault_hook: Callable[[str], None] | None = None,
 ) -> "Protocol27ControllerResult":
     """Find or create the exact immutable child, activate it, and run it."""
     from echelon.cli import _activate_re_v2_run, _new_re_v2_run_id, _re_v2_now
@@ -170,6 +172,34 @@ def execute_protocol_27_request(
         result_contract_retry_limit=1,
         artifact_contract_retry_limit=1,
     )
+    return execute_protocol_27_parent(
+        root,
+        parent,
+        budget,
+        provider_factory,
+        fault_hook=fault_hook,
+    )
+
+
+def execute_protocol_27_parent(
+    workspace_root: Path,
+    parent: ResolvedSynthesisParentV1,
+    budget: SynthesisBudgetPolicyV1,
+    provider_factory: Callable[[], SquadCliProvider],
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> "Protocol27ControllerResult":
+    """Execute an already-authenticated ordinary or refresh synthesis parent."""
+
+    from echelon.cli import _activate_re_v2_run, _new_re_v2_run_id, _re_v2_now
+    from harness.re_registry import load_published_index
+    from harness.re_v2.publication import current_index_hash, load_published_v2_index
+
+    root = Path(workspace_root).resolve()
+    if not isinstance(parent, ResolvedSynthesisParentV1):
+        raise Protocol27LifecycleError("synthesis requires resolved parent authority")
+    if not isinstance(budget, SynthesisBudgetPolicyV1):
+        raise Protocol27LifecycleError("synthesis requires a budget policy")
     published = load_published_index(root)
     published_v2 = load_published_v2_index(root)
     request = synthesis_request(
@@ -201,9 +231,14 @@ def execute_protocol_27_request(
         )
         from .inputs import prepare_protocol_27_child
 
-        existing = prepare_protocol_27_child(root, run_id, inputs).run_dir
+        existing = prepare_protocol_27_child(
+            root,
+            run_id,
+            inputs,
+            fault_hook=fault_hook,
+        ).run_dir
     _activate_re_v2_run(root, existing.name)
-    return run_protocol_27_synthesis(existing, provider_factory)
+    return run_protocol_27_synthesis(existing, provider_factory, fault_hook)
 
 
 def _published_equivalent_child(
@@ -270,7 +305,14 @@ def _protocol_27_input_set(
         stage_synthesis_checkpoint_selection,
     )
     from .context import default_synthesis_context_policy
-    from .execution import compose_synthesis_executor
+    from .execution import (
+        compose_configured_provider_synthesis_executor,
+        compose_synthesis_executor,
+    )
+    from .execution_v2 import (
+        compose_synthesis_executor_v2,
+        promote_synthesis_executor_v2,
+    )
     from .graph import (
         SynthesisGraphInputsV1,
         build_synthesis_graph,
@@ -289,7 +331,8 @@ def _protocol_27_input_set(
     overviews = freeze_accepted_source_overviews(parent)
     overview_payloads = frozen_overview_payloads(parent)
     parent_run_dir = workspace_root / "runs" / parent.parent_run_id
-    parent_manifest = load_run_manifest(parent_run_dir)
+    refresh_parent = parent._refresh_authority is not None
+    parent_manifest = None if refresh_parent else load_run_manifest(parent_run_dir)
     if isinstance(parent_manifest, RunManifestV6):
         inherited = load_protocol_27_inputs(parent_run_dir)
         graph = inherited.graph
@@ -309,7 +352,7 @@ def _protocol_27_input_set(
             *graph.response_schema_hashes.values(),
             graph.context_policy_hash,
             implementation.producer_authority_hash,
-            implementation.executor_contract_hash,
+            *(item.executor_contract_hash for item in graph.templates),
             implementation.verifier_authority_hash,
         }
         old_objects = ObjectStore(inherited.paths.objects)
@@ -326,12 +369,45 @@ def _protocol_27_input_set(
             ProsaicPromptLoadError,
             ProsaicPromptLoader,
         )
-        from harness.re_v2.protocol_26.authority import resolve_run_authority
+        reviewed_parent = frozenset(parent.selected_layers.values()) == {"reviewed"}
+        configured_provider = None
+        if reviewed_parent:
+            partition, inherited_entries, configured_provider = _reviewed_synthesis_dependencies(
+                parent._context
+            )
+        else:
+            from harness.re_v2.protocol_26.authority import resolve_run_authority
 
-        resolved = resolve_run_authority(parent._context)  # type: ignore[arg-type]
+            resolved = resolve_run_authority(parent._context)  # type: ignore[arg-type]
+            partition = resolved.shared_inputs.workspace_partition
+            inherited_entries = resolved.shared_inputs.executor_contract.entries
         topology = build_workspace_synthesis_topology(
-            resolved.shared_inputs.workspace_partition
+            partition,
+            partition_manifest_id=parent.partition_manifest_id,
         )
+        if refresh_parent:
+            prior_run = workspace_root / "runs" / parent.checkpoint_origin_run_id
+            prior_inputs = load_protocol_27_inputs(prior_run)
+            topology = _merge_refresh_topology(
+                prior_inputs.graph.topology,
+                topology,
+                replaced_source_ids=frozenset(parent.refresh_dispositions),
+                partition_manifest_id=parent.partition_manifest_id,
+                accepted_source_ids=frozenset(parent.selected_layers),
+                fresh_source_ids=frozenset(
+                    source_id
+                    for source_id, disposition in parent.refresh_dispositions.items()
+                    if disposition == "reanalyzed"
+                ),
+            )
+        if {item.source_id for item in topology.sources} != set(
+            parent.selected_layers
+        ):
+            raise Protocol27LifecycleError(
+                "reviewed synthesis requires exact frozen workspace source coverage"
+                if reviewed_parent
+                else "synthesis parent and workspace partition source coverage differ"
+            )
         try:
             artifact = ProsaicPromptLoader(workspace_root).load_subagent(
                 "echelon.re-synthesizer"
@@ -355,31 +431,69 @@ def _protocol_27_input_set(
             "harness.re_v2.protocol_27.context",
             "harness.re_v2.protocol_27.schemas",
         )
+        workspace_renderer_bytes = _implementation_authority_payload(
+            "harness.re_v2.protocol_27.execution_v2",
+            "harness.re_v2.protocol_27.context_v2",
+            "harness.re_v2.protocol_27.schemas",
+        )
         verifier_bytes = _implementation_authority_payload(
             "harness.re_v2.protocol_27.runtime",
             "harness.re_v2.protocol_27.schemas",
         )
-        cli_entries = tuple(
-            entry
-            for entry in resolved.shared_inputs.executor_contract.entries
-            if entry.execution_mode == "cli"
-            and entry.adapter_id == SHARED_AI_CLI_ADAPTER_ID
-        )
-        if not cli_entries:
-            raise Protocol27LifecycleError(
-                "synthesis parent has no pinned shared CLI executor"
+        response_schema_hashes = {
+            kind: content_digest(payload) for kind, payload in response_bytes.items()
+        }
+        if configured_provider is not None:
+            provider_bytes = _implementation_authority_payload(
+                "harness.re_v2.protocol_22.cli_provider",
+                "harness.re_v2.protocol_22.provider",
+                "harness.squad_provider",
+                "harness.re_v2.knowledge_llm",
             )
-        inherited_cli = sorted(cli_entries, key=lambda item: item.producer_family)[0]
-        executor = compose_synthesis_executor(
-            inherited_cli,
-            agent_contract_hash=content_digest(prosaic),
-            response_schema_hashes={
-                kind: content_digest(payload)
-                for kind, payload in response_bytes.items()
-            },
-            renderer_implementation_digest=content_digest(renderer_bytes),
-            verifier_implementation_digest=content_digest(verifier_bytes),
-        )
+            executor = compose_configured_provider_synthesis_executor(
+                configured_provider,
+                agent_contract_hash=content_digest(prosaic),
+                response_schema_hashes=response_schema_hashes,
+                renderer_implementation_digest=content_digest(renderer_bytes),
+                verifier_implementation_digest=content_digest(verifier_bytes),
+                provider_implementation_digest=content_digest(provider_bytes),
+            )
+            workspace_executor = promote_synthesis_executor_v2(
+                executor,
+                renderer_implementation_digest=content_digest(
+                    workspace_renderer_bytes
+                ),
+            )
+        else:
+            cli_entries = tuple(
+                entry
+                for entry in inherited_entries
+                if entry.execution_mode == "cli"
+                and entry.adapter_id == SHARED_AI_CLI_ADAPTER_ID
+            )
+            if not cli_entries:
+                raise Protocol27LifecycleError(
+                    "synthesis parent has no pinned shared CLI executor"
+                )
+            inherited_cli = sorted(
+                cli_entries, key=lambda item: item.producer_family
+            )[0]
+            executor = compose_synthesis_executor(
+                inherited_cli,
+                agent_contract_hash=content_digest(prosaic),
+                response_schema_hashes=response_schema_hashes,
+                renderer_implementation_digest=content_digest(renderer_bytes),
+                verifier_implementation_digest=content_digest(verifier_bytes),
+            )
+            workspace_executor = compose_synthesis_executor_v2(
+                inherited_cli,
+                agent_contract_hash=content_digest(prosaic),
+                response_schema_hashes=response_schema_hashes,
+                renderer_implementation_digest=content_digest(
+                    workspace_renderer_bytes
+                ),
+                verifier_implementation_digest=content_digest(verifier_bytes),
+            )
         implementation = SynthesisImplementationAuthorityV1(
             schema_version=1,
             producer_authority_hash=content_digest(prosaic),
@@ -397,6 +511,9 @@ def _protocol_27_input_set(
                     for kind, payload in response_bytes.items()
                 },
                 context_policy_hash=context_policy.identity,
+                workspace_executor_contract_hash=(
+                    workspace_executor.executor_contract_hash
+                ),
             )
         )
         authority_objects = dict(parent.authority_objects)
@@ -410,13 +527,16 @@ def _protocol_27_input_set(
                 executor.executor_contract_hash: canonical_json_bytes(
                     executor.to_json_dict()
                 ),
+                workspace_executor.executor_contract_hash: canonical_json_bytes(
+                    workspace_executor.to_json_dict()
+                ),
                 content_digest(verifier_bytes): verifier_bytes,
             }
         )
     inventory = reconstruct_synthesis_checkpoints(workspace_root)
     selection = select_synthesis_checkpoints(
         graph,
-        inventory.only_origin(parent.parent_run_id),
+        inventory.only_origin(parent.checkpoint_origin_run_id),
         inventory,
     )
     checkpoint_objects = stage_synthesis_checkpoint_selection(
@@ -437,6 +557,137 @@ def _protocol_27_input_set(
         checkpoint_selection_bytes=canonical_json_bytes(selection.to_json_dict()),
         authority_objects=authority_objects,
         checkpoint_objects=checkpoint_objects,
+    )
+
+
+def _reviewed_synthesis_dependencies(context: object):  # type: ignore[no-untyped-def]
+    """Recover the exact partition and configured provider contract frozen by L4."""
+    import json
+
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.executors import ExecutorContractCatalogV1
+    from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
+    from harness.re_v2.knowledge_accounting import KnowledgeProviderContract
+    from harness.re_v2.protocol_22.schema import exact_object, load_canonical_object
+    from harness.re_v2.protocol_28.context import Protocol28RunContext
+
+    if not isinstance(context, Protocol28RunContext):
+        raise Protocol27LifecycleError(
+            "reviewed synthesis parent has no protocol-2.8 context"
+        )
+    inputs = context.inputs
+    partition_id = inputs.manifest.workspace_partition_catalog_id
+    try:
+        partition_payload = inputs.authority_objects[partition_id]
+        partition = load_canonical_object(
+            partition_payload,
+            WorkspacePartitionCatalogV1.from_json_dict,
+        )
+        inherited_hashes = {
+            entry.inherited_executor_contract_hash
+            for entry in inputs.executor_catalog.entries
+        }
+        if len(inherited_hashes) != 1:
+            raise Protocol27LifecycleError(
+                "reviewed synthesis parent has ambiguous configured provider authority"
+            )
+        inherited_hash = next(iter(inherited_hashes))
+        executor_payload = inputs.authority_objects[inherited_hash]
+        raw_executor = json.loads(executor_payload)
+        configured_provider = None
+        if isinstance(raw_executor, dict) and raw_executor.get("kind") == (
+            "reviewed_analysis_configured_provider"
+        ):
+            binding = exact_object(
+                raw_executor,
+                {"schema_version", "kind", "provider_contract_id"},
+                "reviewed analysis provider binding",
+            )
+            if binding["schema_version"] != 1:
+                raise ValueError("unsupported reviewed analysis provider binding")
+            provider_contract_id = binding["provider_contract_id"]
+            provider_raw = json.loads(inputs.authority_objects[provider_contract_id])
+            provider_fields = {
+                "provider_id",
+                "model_id",
+                "adapter_digest",
+                "execution_mode",
+                "input_accounting",
+            }
+            provider = exact_object(
+                provider_raw, provider_fields, "knowledge provider contract"
+            )
+            configured_provider = KnowledgeProviderContract(**provider)
+            if configured_provider.identity != provider_contract_id:
+                raise Protocol27LifecycleError(
+                    "reviewed synthesis provider contract identity mismatch"
+                )
+            entries = ()
+        else:
+            executor = load_canonical_object(
+                executor_payload,
+                ExecutorContractCatalogV1.from_json_dict,
+            )
+            entries = executor.entries
+    except Protocol27LifecycleError:
+        raise
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise Protocol27LifecycleError(
+            "reviewed synthesis parent has invalid frozen partition or provider authority"
+        ) from exc
+    if partition.identity != partition_id or content_digest(executor_payload) != inherited_hash:
+        raise Protocol27LifecycleError(
+            "reviewed synthesis dependency identity mismatch"
+        )
+    return partition, entries, configured_provider
+
+
+def _merge_refresh_topology(
+    prior,
+    fresh,
+    *,
+    replaced_source_ids: frozenset[str],
+    partition_manifest_id: str,
+    accepted_source_ids: frozenset[str],
+    fresh_source_ids: frozenset[str],
+):  # type: ignore[no-untyped-def]
+    """Merge exact per-source topology while invalidating workspace derivations."""
+
+    from .graph import WorkspaceSynthesisTopologyV1
+
+    if fresh_source_ids != {item.source_id for item in fresh.sources}:
+        raise Protocol27LifecycleError(
+            "refresh topology differs from freshly reviewed source coverage"
+        )
+    if not fresh_source_ids <= replaced_source_ids:
+        raise Protocol27LifecycleError("refresh topology source disposition mismatch")
+    prior_sources = {
+        item.source_id: item
+        for item in prior.sources
+        if item.source_id in accepted_source_ids and item.source_id not in fresh_source_ids
+    }
+    fresh_sources = {item.source_id: item for item in fresh.sources}
+    sources = {**prior_sources, **fresh_sources}
+    if set(sources) != accepted_source_ids:
+        raise Protocol27LifecycleError("refresh topology does not cover accepted sources")
+    retained_domains = tuple(
+        domain
+        for domain in prior.workspace_domains
+        if all(
+            participant.source_id in prior_sources
+            for participant in domain.participants
+        )
+    )
+    return WorkspaceSynthesisTopologyV1(
+        schema_version=1,
+        partition_manifest_id=partition_manifest_id,
+        sources=tuple(sorted(sources.values(), key=lambda item: item.source_id)),
+        workspace_domains=tuple(
+            sorted(
+                (*retained_domains, *fresh.workspace_domains),
+                key=lambda item: item.workspace_domain_id,
+            )
+        ),
     )
 
 
@@ -514,6 +765,7 @@ def run_protocol_27_synthesis(
 __all__ = (
     "Protocol27LifecycleError",
     "execute_protocol_27_request",
+    "execute_protocol_27_parent",
     "find_exact_protocol_27_child",
     "partial_acceptance_for",
     "partial_acceptances_for",

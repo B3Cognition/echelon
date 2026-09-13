@@ -7,6 +7,8 @@ from shutil import copytree
 import pytest
 import yaml
 
+from tests.support.temp_storage import copy_package_build_tree
+
 from echelon.cli import _sync_polyrepo_runtime_extension
 from harness.runtime_surface import (
     DELIVERY_BASH_FILES,
@@ -541,7 +543,7 @@ def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
     repo_root = Path(__file__).resolve().parents[2]
     workspace = tmp_path / "workspace"
     source = workspace / ".echelon" / "runtime"
-    copytree(repo_root / "runtime", source)
+    copy_package_build_tree(repo_root / "runtime", source)
     copytree(
         repo_root / "prosaic",
         workspace / ".echelon" / "prosaic",

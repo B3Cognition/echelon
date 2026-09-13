@@ -5,11 +5,14 @@ import importlib
 
 import pytest
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.executors import ExecutorContractCatalogV1
 from harness.re_v2.protocol_22.graph import AcceptedArtifactV2, plan_next_v2
 from harness.re_v2.protocol_22.model import CatalogReferenceV1
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_25.policies import (
     SemanticExecutorContractCatalogV1,
     build_semantic_executor_catalog,
@@ -33,9 +36,19 @@ def _graph_module():  # type: ignore[no-untyped-def]
         pytest.fail("protocol 2.5 ascending graph is not registered")
 
 
-def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
+def _fixture(
+    *,
+    all_domains: bool = False,
+    all_sources: bool = False,
+    source_ids: tuple[str, ...] = ("api",),
+    engine_protocol_version: str = "2.5",
+):  # type: ignore[no-untyped-def]
     module = _graph_module()
-    parent_inputs, accepted_parent, authority, _work = _accepted_parent_fixture()
+    parent_inputs, accepted_parent, authority, _work = _accepted_parent_fixture(
+        {"api": ("orders", "users"), "deployment": ()}
+        if all_sources or source_ids == ("deployment",)
+        else None
+    )
     shared_parent = ExecutorContractCatalogV1(
         schema_version=1,
         entries=tuple(
@@ -52,10 +65,13 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
             )
         ),
     )
-    deepening = build_deepening_executor_catalog(
-        parent_inputs.executor_contract,
-        digest("deepener-agent"),
-        digest("deepening-implementation"),
+    deepening = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            digest("deepener-agent"),
+            digest("deepening-implementation"),
+        ),
+        digest("source-root-v2-implementation"),
     )
     policies = build_semantic_v1_policy_catalog()
     semantic = build_semantic_executor_catalog(
@@ -81,11 +97,17 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
     )
     selection = replace(
         manifest_v4().selection,
-        source_ids=("api",),
-        domain_keys=(() if all_domains else (orders.domain_key,)),
+        all_sources=all_sources,
+        source_ids=(() if all_sources else source_ids),
+        domain_keys=(
+            ()
+            if all_domains or all_sources or source_ids == ("deployment",)
+            else (orders.domain_key,)
+        ),
     )
     manifest = replace(
         manifest_v4(),
+        engine_protocol_version=engine_protocol_version,
         source_snapshot_id=inputs.workspace_partition.snapshot_id,
         workspace_partition_catalog=CatalogReferenceV1(
             inputs.workspace_partition.identity,
@@ -110,6 +132,21 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
         template_id: pair[1] for template_id, pair in accepted_parent.items()
     }
     return graph, inputs, authority, accepted_parent, accepted_by_template
+
+
+def _audit_items(graph, accepted):  # type: ignore[no-untyped-def]
+    targets = graph.ready_audit_targets(accepted)
+    return tuple(
+        graph.instantiate_audit_item(
+            template,
+            target,
+            {
+                dependency: accepted[dependency]
+                for dependency in template.required_template_ids
+            },
+        )
+        for target, template in zip(targets, graph.audit_templates, strict=True)
+    )
 
 
 def _complete_l2(graph, authority, accepted_by_template):  # type: ignore[no-untyped-def]
@@ -164,6 +201,36 @@ def test_all_source_selection_adds_every_nonempty_domain_and_full_source_target(
     assert len([item for item in targets if item.target_kind == "source"]) == 1
     assert graph.source_target("api").coverage == "full-source"
     assert graph.not_requested_domain_keys == ()
+
+
+def test_all_source_selection_keeps_zero_domain_source_as_source_audit() -> None:
+    graph, _inputs, authority, _parent, accepted = _fixture(all_sources=True)
+    _complete_l2(graph, authority, accepted)
+
+    targets = graph.ready_audit_targets(accepted)
+
+    assert graph.selected_source_ids == ("api", "deployment")
+    assert len([item for item in targets if item.target_kind == "domain"]) == 2
+    assert {
+        item.scope.source_id
+        for item in targets
+        if item.target_kind == "source"
+    } == {"api", "deployment"}
+    assert graph.source_target("deployment").coverage == "full-source"
+
+
+def test_zero_domain_only_selection_builds_source_audit_without_domain_targets() -> None:
+    graph, _inputs, authority, _parent, accepted = _fixture(
+        source_ids=("deployment",)
+    )
+    _complete_l2(graph, authority, accepted)
+
+    targets = graph.ready_audit_targets(accepted)
+
+    assert graph.selected_source_ids == ("deployment",)
+    assert graph.selected_domain_keys == ()
+    assert tuple(item.target_kind for item in targets) == ("source",)
+    assert graph.source_target("deployment").coverage == "full-source"
 
 
 def test_next_epoch_audit_targets_include_retained_l3_semantic_authority() -> None:
@@ -240,6 +307,91 @@ def test_source_target_binds_selected_domain_and_cross_domain_l2_authority() -> 
         for item in required
         if item.layer == "L2" and item.scope.domain_key is None
     } >= {"source-overview", "source-baseline-root"}
+
+
+def test_protocol_2_5_1_preserves_exact_domain_authority_and_bounds_source_audit() -> None:
+    legacy, _inputs, legacy_authority, _parent, legacy_accepted = _fixture(
+        all_domains=True,
+        engine_protocol_version="2.5",
+    )
+    corrected, _inputs2, corrected_authority, _parent2, corrected_accepted = _fixture(
+        all_domains=True,
+        engine_protocol_version="2.5.1",
+    )
+    _complete_l2(legacy, legacy_authority, legacy_accepted)
+    _complete_l2(corrected, corrected_authority, corrected_accepted)
+
+    legacy_domain_plans = tuple(
+        item for item in legacy.audit_target_plans if item.target_kind == "domain"
+    )
+    corrected_domain_plans = tuple(
+        item for item in corrected.audit_target_plans if item.target_kind == "domain"
+    )
+    legacy_targets = legacy.ready_audit_targets(legacy_accepted)
+    corrected_targets = corrected.ready_audit_targets(corrected_accepted)
+    legacy_domain_targets = tuple(
+        item for item in legacy_targets if item.target_kind == "domain"
+    )
+    corrected_domain_targets = tuple(
+        item for item in corrected_targets if item.target_kind == "domain"
+    )
+    legacy_domain_templates = tuple(
+        template
+        for plan, template in zip(
+            legacy.audit_target_plans, legacy.audit_templates, strict=True
+        )
+        if plan.target_kind == "domain"
+    )
+    corrected_domain_templates = tuple(
+        template
+        for plan, template in zip(
+            corrected.audit_target_plans, corrected.audit_templates, strict=True
+        )
+        if plan.target_kind == "domain"
+    )
+    legacy_domain_items = tuple(
+        item for item in _audit_items(legacy, legacy_accepted) if item.output_key.scope.is_domain
+    )
+    corrected_domain_items = tuple(
+        item
+        for item in _audit_items(corrected, corrected_accepted)
+        if item.output_key.scope.is_domain
+    )
+
+    for left, right in (
+        (legacy_domain_plans, corrected_domain_plans),
+        (legacy_domain_targets, corrected_domain_targets),
+        (legacy_domain_templates, corrected_domain_templates),
+        (legacy_domain_items, corrected_domain_items),
+    ):
+        assert tuple(canonical_json_bytes(item.to_json_dict()) for item in left) == tuple(
+            canonical_json_bytes(item.to_json_dict()) for item in right
+        )
+
+    legacy_source = legacy.source_target("api")
+    corrected_source = corrected.source_target("api")
+    source_overview_id = next(
+        template_id
+        for template_id in corrected_source.required_template_ids
+        if corrected.template_by_id[template_id].artifact_kind == "source-overview"
+        and corrected.template_by_id[template_id].layer == "L2"
+    )
+    assert corrected_source.audited_template_ids == (source_overview_id,)
+    assert len(legacy_source.audited_template_ids) == 3
+    assert corrected_source.required_template_ids == legacy_source.required_template_ids
+    assert corrected_source.coverage == legacy_source.coverage == "full-source"
+    assert next(item for item in corrected_targets if item.target_kind == "source") != next(
+        item for item in legacy_targets if item.target_kind == "source"
+    )
+
+
+def test_protocol_2_5_1_partial_source_selection_does_not_claim_full_coverage() -> None:
+    graph, _inputs, authority, _parent, accepted = _fixture(
+        engine_protocol_version="2.5.1"
+    )
+    _complete_l2(graph, authority, accepted)
+
+    assert graph.source_target("api").coverage == "selected-domains"
 
 
 def test_target_plan_and_materialized_target_are_deterministic() -> None:

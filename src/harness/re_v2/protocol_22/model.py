@@ -1027,7 +1027,9 @@ class ExecutionCaptureV1(_CanonicalIdentity):
     execution_input_hash: str
     executor_contract_hash: str
     execution_mode: Literal["in_process", "api", "cli"]
-    result_kind: Literal["provider_candidate", "deterministic_artifact", "none"]
+    result_kind: Literal[
+        "provider_candidate", "provider_failure", "deterministic_artifact", "none"
+    ]
     candidate_inventory_hash: str | None
     deterministic_artifact_hash: str | None
     stdout_digest: str
@@ -1091,7 +1093,14 @@ class ExecutionCaptureV1(_CanonicalIdentity):
         )
         one_of(
             self.result_kind,
-            frozenset({"provider_candidate", "deterministic_artifact", "none"}),
+            frozenset(
+                {
+                    "provider_candidate",
+                    "provider_failure",
+                    "deterministic_artifact",
+                    "none",
+                }
+            ),
             "ExecutionCaptureV1.result_kind",
         )
         optional_digest(
@@ -1148,7 +1157,7 @@ class ExecutionCaptureV1(_CanonicalIdentity):
         )
         if self.execution_mode in {"api", "cli"}:
             if (
-                self.result_kind != "provider_candidate"
+                self.result_kind not in {"provider_candidate", "provider_failure"}
                 or self.candidate_inventory_hash is None
                 or self.deterministic_artifact_hash is not None
             ):

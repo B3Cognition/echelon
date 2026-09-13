@@ -15,6 +15,15 @@ from harness.banzai_protocol import (
 
 
 _CONFIG_FILENAMES = ("prosaic.config.yaml", "prosaic.config.yml", ".prosaic.yaml")
+_BUNDLE_COPY_EXCLUDED_NAMES = (
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "*.egg-info",
+    "*.pyc",
+    ".DS_Store",
+    "node_modules",
+)
 
 
 class ProsaicBundleInstallError(RuntimeError):
@@ -59,7 +68,11 @@ def install_prosaic_bundle(
 
     prose_source = project_root / ".echelon" / "packages" / "echelon-prose"
     runtime_source = project_root / ".echelon" / "packages" / "echelon-runtime"
+    prose_destination = project_root / ".echelon" / "prosaic"
+    runtime_destination = project_root / ".echelon" / "runtime"
     config_path = project_root / "prosaic.config.yaml"
+    manifest_path = project_root / ".prosaic-manifest.json"
+    legacy_destinations: dict[Path, Path | None] = {}
     try:
         # The controller holds the shared side of this lock while it
         # fingerprints a candidate bundle and consumes the upgrade retry.
@@ -68,6 +81,10 @@ def install_prosaic_bundle(
             try:
                 _replace_managed_tree(source_root / "prosaic", prose_source)
                 _replace_managed_tree(source_root / "runtime", runtime_source)
+                if not manifest_path.exists():
+                    legacy_destinations = _quarantine_legacy_destinations(
+                        (prose_destination, runtime_destination)
+                    )
                 config_path.write_text(_package_config(), encoding="utf-8")
                 _run(
                     run,
@@ -79,6 +96,16 @@ def install_prosaic_bundle(
                     ["prosaic", "package", "deploy", "echelon-runtime"],
                     project_root,
                 )
+                _carry_forward_lifecycle_state(
+                    legacy_destinations,
+                    runtime_destination,
+                )
+                _discard_legacy_destinations(legacy_destinations)
+            except (OSError, subprocess.CalledProcessError):
+                _restore_legacy_destinations(legacy_destinations)
+                if legacy_destinations:
+                    manifest_path.unlink(missing_ok=True)
+                raise
             finally:
                 config_path.unlink(missing_ok=True)
                 _remove_install_staging(prose_source, runtime_source)
@@ -88,8 +115,8 @@ def install_prosaic_bundle(
         ) from exc
 
     return ProsaicBundleInstallReport(
-        prose_root=project_root / ".echelon" / "prosaic",
-        runtime_root=project_root / ".echelon" / "runtime",
+        prose_root=prose_destination,
+        runtime_root=runtime_destination,
     )
 
 
@@ -119,7 +146,12 @@ def _replace_managed_tree(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = destination.with_name(f".{destination.name}.staging")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(source, staging, copy_function=shutil.copy2)
+    shutil.copytree(
+        source,
+        staging,
+        copy_function=shutil.copy2,
+        ignore=shutil.ignore_patterns(*_BUNDLE_COPY_EXCLUDED_NAMES),
+    )
     shutil.rmtree(destination, ignore_errors=True)
     staging.replace(destination)
 
@@ -138,6 +170,96 @@ def _remove_install_staging(*destinations: Path) -> None:
             parent.rmdir()
         except OSError:
             pass
+
+
+def _quarantine_legacy_destinations(
+    destinations: Sequence[Path],
+) -> dict[Path, Path | None]:
+    quarantined: dict[Path, Path | None] = {}
+    for destination in destinations:
+        backup = destination.with_name(f".{destination.name}.pre-prosaic-migration")
+        if backup.exists() or backup.is_symlink():
+            raise OSError(f"legacy Prosaic migration backup already exists: {backup}")
+    try:
+        for destination in destinations:
+            if destination.exists() or destination.is_symlink():
+                backup = destination.with_name(
+                    f".{destination.name}.pre-prosaic-migration"
+                )
+                destination.replace(backup)
+                quarantined[destination] = backup
+            else:
+                quarantined[destination] = None
+    except OSError:
+        _restore_legacy_destinations(quarantined)
+        raise
+    return quarantined
+
+
+def _restore_legacy_destinations(
+    destinations: dict[Path, Path | None],
+) -> None:
+    for destination, backup in destinations.items():
+        _remove_path(destination)
+        if backup is not None and (backup.exists() or backup.is_symlink()):
+            backup.replace(destination)
+
+
+def _discard_legacy_destinations(
+    destinations: dict[Path, Path | None],
+) -> None:
+    for backup in destinations.values():
+        if backup is not None:
+            _remove_path(backup)
+
+
+# Lifecycle leases and switch intent live under ``.echelon/runtime`` but are
+# workspace state, not deployed bundle content. Quarantining the legacy tree
+# would strand a lease an in-flight operation still owns -- a delivery run that
+# refreshes the bundle would silently drop its own spec mutation lock -- so this
+# state moves onto the freshly deployed tree before the backup is discarded.
+_LIFECYCLE_STATE_ENTRIES = (
+    "spec-lifecycle.lock",
+    "spec-mutations",
+    "phase-a-execution.lock",
+    "spec-switch-intent.json",
+    "amend-worktrees",
+)
+
+
+def _carry_forward_lifecycle_state(
+    quarantined: dict[Path, Path | None],
+    destination: Path,
+    *,
+    entries: Sequence[str] = _LIFECYCLE_STATE_ENTRIES,
+) -> None:
+    backup = quarantined.get(destination)
+    if backup is None or not backup.is_dir():
+        return
+    for entry in entries:
+        _move_preserved_entry(backup / entry, destination / entry)
+
+
+def _move_preserved_entry(source: Path, target: Path) -> None:
+    """Move retained state onto the deployed tree without clobbering it."""
+    if not (source.exists() or source.is_symlink()):
+        return
+    if not (target.exists() or target.is_symlink()):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(target)
+        return
+    # A deployed entry of the same name wins; recurse so sibling state below a
+    # shared directory still survives.
+    if source.is_dir() and not source.is_symlink() and target.is_dir():
+        for child in source.iterdir():
+            _move_preserved_entry(child, target / child.name)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
 
 
 def _package_config() -> str:

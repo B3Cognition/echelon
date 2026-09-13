@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.support.temp_storage import copy_package_build_tree
+
 from harness.config import HarnessConfig, LlmConfig
 
 
@@ -81,7 +83,7 @@ def test_delivery_stack_contract_refreshes_stale_runtime_before_resolving_covera
 
     current_runtime = Path(__file__).resolve().parents[2] / "runtime"
     deployed_runtime = workspace / ".echelon" / "runtime"
-    shutil.copytree(current_runtime, deployed_runtime)
+    copy_package_build_tree(current_runtime, deployed_runtime)
     stale_stack = deployed_runtime / "stacks" / "browser-3d-game" / "stack.yml"
     stale_text = stale_stack.read_text(encoding="utf-8")
     stale_stack.write_text(
@@ -95,7 +97,10 @@ def test_delivery_stack_contract_refreshes_stale_runtime_before_resolving_covera
 
     def deploy_current_bundle(project_root: Path) -> object:
         shutil.rmtree(project_root / ".echelon" / "runtime")
-        shutil.copytree(current_runtime, project_root / ".echelon" / "runtime")
+        copy_package_build_tree(
+            current_runtime,
+            project_root / ".echelon" / "runtime",
+        )
         return object()
 
     monkeypatch.setattr(

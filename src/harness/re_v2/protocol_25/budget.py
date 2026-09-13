@@ -83,6 +83,24 @@ class _Started:
     active_ms: int
 
 
+def _semantic_replay(
+    history: tuple[EventRecord, ...],
+    event_protocol: object,
+) -> Protocol25ReplayState:
+    new_state = getattr(event_protocol, "new_state", None)
+    if not callable(new_state):
+        raise ReV2SemanticBudgetError("event protocol has no replay state")
+    state = new_state()
+    for event in history:
+        state.consume(event)
+    replay = getattr(state, "delegate", state)
+    if not isinstance(replay, Protocol25ReplayState):
+        raise ReV2SemanticBudgetError(
+            "event protocol has no protocol-2.5 replay delegate"
+        )
+    return replay
+
+
 def evaluate_semantic_budget(
     policy: SemanticClosurePolicyV1,
     events: Iterable[EventRecord],
@@ -167,10 +185,12 @@ def evaluate_semantic_budget(
             else:
                 unknown_active = _add(unknown_active, 1, "unknown active dispatches")
             if (
-                payload["reported_token_usage"] is not None
+                payload["token_usage_status"] == "trusted_exact"
+                and payload["reported_token_usage"] is not None
                 and int(payload["reported_token_usage"]) > reservation.tokens
             ) or (
-                payload["observed_active_ms"] is not None
+                payload["active_usage_status"] == "trusted_exact"
+                and payload["observed_active_ms"] is not None
                 and int(payload["observed_active_ms"]) > reservation.active_ms
             ):
                 breaches.add(dispatch_id)
@@ -211,9 +231,7 @@ def evaluate_semantic_budget(
         unknown_tokens = _add(unknown_tokens, 1, "unknown token dispatches")
         unknown_active = _add(unknown_active, 1, "unknown active dispatches")
 
-    replay = Protocol25ReplayState()
-    for event in history:
-        replay.consume(event)
+    replay = _semantic_replay(history, event_protocol)
     exhausted: list[str] = []
     if token_limit is not None and charged_tokens >= token_limit:
         exhausted.append("tokens")
@@ -254,17 +272,19 @@ def evaluate_semantic_budget(
     )
 
 
-def replay_target_progress(events: Iterable[EventRecord]) -> TargetProgressReplayV1:
+def replay_target_progress(
+    events: Iterable[EventRecord],
+    *,
+    event_protocol: object = PROTOCOL_25_EVENTS,
+) -> TargetProgressReplayV1:
     """Replay source-cycle progress without deriving provider resource charges."""
     try:
-        history = validate_event_history(tuple(events), protocol=PROTOCOL_25_EVENTS)
+        history = validate_event_history(tuple(events), protocol=event_protocol)
     except ReV2EventError as exc:
         raise ReV2SemanticBudgetError(
             f"validated protocol-2.5 EventRecord history required: {exc}"
         ) from exc
-    replay = Protocol25ReplayState()
-    for event in history:
-        replay.consume(event)
+    replay = _semantic_replay(history, event_protocol)
     return TargetProgressReplayV1(
         rounds_by_target=_freeze_ints(replay.rounds_by_target),
         no_reduction_rounds_by_target=_freeze_ints(

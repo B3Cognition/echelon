@@ -33,6 +33,31 @@ schema_version: 1
 controller_runtime_compatibility_version: 3
 controller_state_contracts_file: controller-state-contracts.yaml
 
+# Internal knowledge-repair contract. Not a transition from installed RE routes.
+# Production transport isolation and the remaining M2/M3 gates must pass first.
+re_knowledge_discovery:
+  enabled: false
+  agent: echelon.re-discoverer
+  phase_contract: phases/re-knowledge-discovery.md
+  controller: harness.re_v2.knowledge_dispatch.DiscoveryController
+  resource_account: same_logical_run
+
+# Passive review admission only; independent dispatch certification is pending.
+re_knowledge_discovery_review:
+  enabled: false
+  agent: echelon.re-discovery-reviewer
+  phase_contract: phases/re-knowledge-discovery-review.md
+  admission: harness.re_v2.knowledge_discovery_review.DiscoveryReviewBoundary
+  resource_account: same_logical_run
+
+# Explicit reviewed-authority work items; installed routing remains disabled.
+re_knowledge_reconciliation:
+  enabled: false
+  agent: echelon.re-knowledge-reconciler
+  phase_contract: phases/re-knowledge-reconciliation.md
+  controller: harness.re_v2.protocol_28.lifecycle.run_protocol_28_exhaustive
+  resource_account: same_logical_run
+
 # =============================================================================
 # GLOSSARY
 # Ambiguous terms used across agents. prompt_lint.py uses this to detect

@@ -33,6 +33,10 @@ from .execution import (
     prepare_synthesis_execution,
     synthesis_candidate_bytes,
 )
+from .execution_v2 import (
+    build_synthesis_provider_dependencies_v2,
+    uses_synthesis_renderer_v2,
+)
 from .graph import SynthesisGraph
 from .inputs import ValidatedProtocol27Inputs
 from .ledger import Protocol27Ledger, Protocol27LedgerView
@@ -241,7 +245,7 @@ class Protocol27Controller:
             lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
         self.fault_hook = fault_hook
-        self._renderer: SquadCliSynthesisRenderer | None = None
+        self._renderers: dict[str, SquadCliSynthesisRenderer] = {}
 
     def run_to_closure(self) -> Protocol27ControllerResult:
         self._initialize_authority()
@@ -380,9 +384,18 @@ class Protocol27Controller:
         item = action.work_item
         assert item is not None and action.attempt_kind is not None
         self._ensure_work_planned(item)
-        dependencies = build_synthesis_provider_dependencies(
-            self.inputs, item, action.retry_diagnostics
-        )
+        try:
+            dependencies = (
+                build_synthesis_provider_dependencies_v2(
+                    self.inputs, item, action.retry_diagnostics
+                )
+                if uses_synthesis_renderer_v2(self.inputs, item)
+                else build_synthesis_provider_dependencies(
+                    self.inputs, item, action.retry_diagnostics
+                )
+            )
+        except Protocol27ExecutionError:
+            return "synthesis-provider-authority-unavailable"
         prepared = prepare_synthesis_execution(
             self.execution, item, dependencies, action.attempt_kind
         )
@@ -620,11 +633,12 @@ class Protocol27Controller:
     def _synthesis_renderer(
         self, executor
     ) -> SquadCliSynthesisRenderer:  # type: ignore[no-untyped-def]
-        if self._renderer is None:
-            self._renderer = SquadCliSynthesisRenderer(
+        contract_hash = executor.executor_contract_hash
+        if contract_hash not in self._renderers:
+            self._renderers[contract_hash] = SquadCliSynthesisRenderer(
                 (executor,), provider_factory=self.provider_factory
             )
-        return self._renderer
+        return self._renderers[contract_hash]
 
 
 def _generated_dependency_key_ids(

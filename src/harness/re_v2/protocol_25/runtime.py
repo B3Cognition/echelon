@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+from types import MappingProxyType
 from typing import Mapping
 import unicodedata
 
@@ -60,6 +61,7 @@ from .findings import (
     SUBJECT_KINDS,
     normalize_finding_key,
 )
+from .guidance import GuidanceDirectiveV1
 from .model import Protocol25SchemaError
 from .policies import (
     AUDIT_RULE_IDS,
@@ -154,7 +156,22 @@ def _finding_schema(*, deferred: bool = False) -> dict[str, object]:
             }
         )
         required = tuple(properties)
-    return _closed(required, properties)
+    schema = _closed(required, properties)
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"subject_kind": {"const": subject_kind}},
+                "required": ["subject_kind"],
+            },
+            "then": {
+                "properties": {
+                    "subject_ref": {"pattern": f"^{subject_kind}:"},
+                }
+            },
+        }
+        for subject_kind in sorted(SUBJECT_KINDS)
+    ]
+    return schema
 
 
 def _audit_schema() -> dict[str, object]:
@@ -522,6 +539,94 @@ class BoundedAuthorityObjectV1:
             raise Protocol25RuntimeError(str(exc)) from exc
 
 
+def _freeze_guidance_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_guidance_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_guidance_json(item) for item in value)
+    return value
+
+
+def _thaw_guidance_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _thaw_guidance_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_thaw_guidance_json(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class GuidanceProjectionV1:
+    """Exact immutable guidance object plus its typed interpretation."""
+
+    directive_hash: str
+    directive_payload: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        try:
+            digest_value(self.directive_hash, "operator guidance hash")
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(str(exc)) from exc
+        if not isinstance(self.directive_payload, Mapping):
+            raise Protocol25RuntimeError("operator guidance payload must be an object")
+        payload = dict(self.directive_payload)
+        if content_digest(payload) != self.directive_hash:
+            raise Protocol25RuntimeError("operator guidance payload hash mismatch")
+        try:
+            GuidanceDirectiveV1.from_json_dict(payload)
+        except ValueError as exc:
+            raise Protocol25RuntimeError(f"operator guidance is invalid: {exc}") from exc
+        object.__setattr__(
+            self,
+            "directive_payload",
+            _freeze_guidance_json(payload),
+        )
+
+    @property
+    def directive(self) -> GuidanceDirectiveV1:
+        return GuidanceDirectiveV1.from_json_dict(
+            _thaw_guidance_json(self.directive_payload)
+        )
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "directive_hash": self.directive_hash,
+            "directive_payload": _thaw_guidance_json(self.directive_payload),
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "GuidanceProjectionV1":
+        try:
+            raw = exact_object(
+                value,
+                frozenset({"directive_hash", "directive_payload"}),
+                cls.__name__,
+            )
+            return cls(
+                directive_hash=raw["directive_hash"],
+                directive_payload=raw["directive_payload"],
+            )
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(str(exc)) from exc
+
+    @classmethod
+    def from_payload_bytes(
+        cls,
+        *,
+        directive_hash: str,
+        payload: bytes,
+    ) -> "GuidanceProjectionV1":
+        try:
+            decoded = load_canonical_object(payload, lambda value: value)
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError("operator guidance bytes are invalid") from exc
+        return cls(directive_hash=directive_hash, directive_payload=decoded)
+
+
 @dataclass(frozen=True, slots=True)
 class SemanticContextV1:
     schema_version: int
@@ -539,6 +644,7 @@ class SemanticContextV1:
     max_canonical_json_bytes: int
     audit_epoch_id: str | None = None
     semantic_round: int | None = None
+    operator_guidance: GuidanceProjectionV1 | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or self.mode not in _MODES:
@@ -563,10 +669,19 @@ class SemanticContextV1:
                 raise Protocol25RuntimeError(
                     "pre-freeze audit context cannot bind an epoch or round"
                 )
+            if self.operator_guidance is not None:
+                raise Protocol25RuntimeError(
+                    "pre-freeze audit context cannot bind operator guidance"
+                )
         elif self.audit_epoch_id is None or self.semantic_round is None:
             raise Protocol25RuntimeError(
                 "post-freeze semantic context requires an exact epoch and round"
             )
+        if self.operator_guidance is not None and not isinstance(
+            self.operator_guidance,
+            GuidanceProjectionV1,
+        ):
+            raise Protocol25RuntimeError("semantic context operator guidance is invalid")
         if not isinstance(self.audit_target, AuditTargetV1) or not isinstance(
             self.vocabulary, FindingAuthorityVocabularyV1
         ):
@@ -676,7 +791,7 @@ class SemanticContextV1:
         return content_digest(self.to_json_dict())
 
     def to_json_dict(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "mode": self.mode,
             "audit_target": self.audit_target.to_json_dict(),
@@ -705,6 +820,9 @@ class SemanticContextV1:
             "audit_epoch_id": self.audit_epoch_id,
             "semantic_round": self.semantic_round,
         }
+        if self.operator_guidance is not None:
+            payload["operator_guidance"] = self.operator_guidance.to_json_dict()
+        return payload
 
     @classmethod
     def from_json_dict(cls, value: object) -> "SemanticContextV1":
@@ -728,7 +846,14 @@ class SemanticContextV1:
             }
         )
         try:
-            raw = exact_object(value, fields, cls.__name__)
+            if not isinstance(value, Mapping):
+                raise Protocol22SchemaError("SemanticContextV1 must be an object")
+            has_guidance = "operator_guidance" in value
+            raw = exact_object(
+                value,
+                fields | ({"operator_guidance"} if has_guidance else set()),
+                cls.__name__,
+            )
             arrays = (
                 "authorized_evidence",
                 "authority_objects",
@@ -785,6 +910,11 @@ class SemanticContextV1:
                 max_canonical_json_bytes=raw["max_canonical_json_bytes"],
                 audit_epoch_id=raw["audit_epoch_id"],
                 semantic_round=raw["semantic_round"],
+                operator_guidance=(
+                    GuidanceProjectionV1.from_json_dict(raw["operator_guidance"])
+                    if has_guidance
+                    else None
+                ),
             )
         except Protocol22SchemaError as exc:
             raise Protocol25RuntimeError(str(exc)) from exc
@@ -1176,7 +1306,8 @@ class Protocol25DeterministicRuntime:
         active_sibling_authority_hashes: tuple[str, ...],
         audit_epoch_id: str | None = None,
         semantic_round: int | None = None,
-        ) -> SemanticContextV1:
+        operator_guidance: GuidanceProjectionV1 | None = None,
+    ) -> SemanticContextV1:
         if not isinstance(authority_payloads, Mapping):
             raise Protocol25RuntimeError("semantic context authority payloads are invalid")
         authority_objects: list[BoundedAuthorityObjectV1] = []
@@ -1274,6 +1405,7 @@ class Protocol25DeterministicRuntime:
             max_canonical_json_bytes=policy.max_context_bundle_bytes,
             audit_epoch_id=audit_epoch_id,
             semantic_round=semantic_round,
+            operator_guidance=operator_guidance,
         )
 
     def certify_audit(
@@ -2080,6 +2212,7 @@ __all__ = (
     "AuthorizedEvidenceRangeV1",
     "BoundedAuthorityObjectV1",
     "ComposedSemanticViewV1",
+    "GuidanceProjectionV1",
     "Protocol25DeterministicRuntime",
     "Protocol25RuntimeError",
     "SemanticCandidateInputV1",

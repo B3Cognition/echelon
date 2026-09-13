@@ -131,7 +131,7 @@ def test_protocol_22_pinned_executor_module_bytes_remain_frozen() -> None:
             "sha256:7f6632a922ec91dd7d18825208e8b107405d137ad0555ccbef44579bbeb5b405"
         ),
         controller_module: (
-            "sha256:0ab9dc425245bbd43e20d713742d32216988afd46416bc71061d687aa28587d2"
+            "sha256:91ee273d34bdef90c0d31bde157926a17310a3edf282b20bb906c291dd0ba50d"
         ),
     }
 

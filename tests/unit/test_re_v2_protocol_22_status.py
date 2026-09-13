@@ -246,6 +246,35 @@ def test_pristine_status_is_read_only_and_does_not_create_ledger_lock(
     assert after == before
 
 
+@pytest.mark.unit
+def test_open_dispatch_status_reports_active_work_without_false_blockers(
+    tmp_path: Path,
+) -> None:
+    context, provider = _baseline_context(tmp_path)
+
+    def stop_after_dispatch_started(boundary: str) -> None:
+        if boundary.startswith("dispatch_started:"):
+            raise RuntimeError("simulated live dispatch")
+
+    with pytest.raises(RuntimeError, match="simulated live dispatch"):
+        Protocol22Controller(
+            context,
+            fault_hook=stop_after_dispatch_started,
+        ).run_until_stopped()
+
+    document = protocol_22_status_document(context.paths.root.parent)
+    human = render_protocol_22_status(context.paths.root.parent)
+
+    assert provider.calls == 0
+    assert document["status"] == "in_progress"
+    assert document["active_work"]["work_item_id"]
+    assert document["active_work"]["dispatch_id"].startswith("dispatch-")
+    assert document["active_work"]["state"] == "in_progress"
+    assert document["failures"]["blocked"] == []
+    assert "active work:" in human
+    assert "L1 COMPACT BASELINE IN PROGRESS" in human
+
+
 @pytest.mark.parametrize("provider_mode", ["api", "cli"])
 @pytest.mark.unit
 def test_provider_budget_pause_status_reconstructs_conservative_reservation(

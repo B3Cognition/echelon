@@ -34,7 +34,7 @@ SynthesisCheckpointDispositionKindV1 = Literal[
 _SOURCE_OUTCOMES = frozenset({"complete", "partial"})
 _SCOPE_KINDS = frozenset({"source", "workspace-domain", "workspace"})
 _INPUT_QUALITIES = frozenset({"complete", "partial"})
-_LAYERS = frozenset({"L1", "L2", "L3"})
+_LAYERS = frozenset({"L1", "L2", "L3", "reviewed"})
 _CHECKPOINT_SOURCE_KINDS = frozenset({"direct_parent", "workspace_checkpoint"})
 _CHECKPOINT_DISPOSITIONS = frozenset({"not_selected", "rejected", "quarantined"})
 
@@ -176,7 +176,7 @@ class AcceptedSourceOutcomeV1:
 class AcceptedSourceOverviewProjectionV1:
     schema_version: int
     source_id: str
-    selected_layer: Literal["L1", "L2", "L3"]
+    selected_layer: Literal["L1", "L2", "L3", "reviewed"]
     source_root_key_id: str
     source_root_hash: str
     materializer_protocol_version: str

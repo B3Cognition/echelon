@@ -514,11 +514,13 @@ class _ScriptedProvider:
                 if context.target_artifact_kind == "domain-baseline"
                 else _valid_source_candidate(context)
             )
-        if mode != "missing_result":
+        if mode not in {"missing_result", "transport_error", "timed_out"}:
             (candidate_root / "baseline.json").write_bytes(canonical_json_bytes(raw))
         invalid_result = mode in {"missing_result", "malformed_valid_candidate"}
         stdout = (
-            b"malformed\n"
+            b""
+            if mode in {"transport_error", "timed_out"}
+            else b"malformed\n"
             if invalid_result
             else b"echelon_result:\n  schema_version: 1\n  outcome: candidate_ready\n"
         )
@@ -561,10 +563,22 @@ class _ScriptedProvider:
             )
         return RawExecutionResultV1(
             stdout=stdout,
-            stderr=b"",
+            stderr=(
+                b"provider transport failed"
+                if mode == "transport_error"
+                else b"provider timed out"
+                if mode == "timed_out"
+                else b""
+            ),
             provider_usage=usage,
             timing=RawExecutionTimingV1(NOW, NOW, 0),
-            outcome=("invalid_response" if invalid_result else "candidate_ready"),
+            outcome=(
+                mode
+                if mode in {"transport_error", "timed_out"}
+                else "invalid_response"
+                if invalid_result
+                else "candidate_ready"
+            ),
             provider_name="codex" if cli_mode else None,
             resolved_model_revision="gpt-5.6-codex" if cli_mode else None,
         )
@@ -953,6 +967,16 @@ def test_minimum_utility_retry_exposes_exact_failed_requirements(
         ("invalid_candidate", "artifact_contract", "authorial_schema_invalid"),
         ("minimum_utility", "minimum_utility", "minimum_utility_not_met"),
         ("missing_result", "result_contract", "result_unrecoverable"),
+        (
+            "transport_error",
+            "execution_indeterminate",
+            "execution_outcome_indeterminate",
+        ),
+        (
+            "timed_out",
+            "execution_indeterminate",
+            "execution_outcome_indeterminate",
+        ),
     ),
 )
 def test_second_provider_failure_is_terminal_but_keeps_independent_acceptance(
@@ -980,6 +1004,9 @@ def test_second_provider_failure_is_terminal_but_keeps_independent_acceptance(
     if failure_class == "result_contract":
         assert failure.candidate_id is not None
         assert failure.candidate_assessment_id is None
+    elif failure_class == "execution_indeterminate":
+        assert failure.candidate_id is None
+        assert failure.execution_capture_hash is not None
     assert result.ledger.accepted_artifacts
     assert result.events[-1].type == "run_failed"
     assert [event.type for event in result.events].count("run_failed") == 1
@@ -1220,7 +1247,7 @@ class _BrokenDeterministicRuntime:
         ("invalid", "deterministic_artifact_invalid"),
     ),
 )
-def test_deterministic_executor_breach_preserves_independent_siblings(
+def test_deterministic_failure_preserves_independent_siblings(
     tmp_path: Path,
     mode: str,
     reason_code: str,
@@ -1239,8 +1266,14 @@ def test_deterministic_executor_breach_preserves_independent_siblings(
 
     assert result.status == "failed"
     assert result.ledger is not None
-    failure = next(iter(result.ledger.executor_failures.values()))
-    assert failure.reason_code == reason_code
+    if mode == "exception":
+        assert not result.ledger.executor_failures
+        failure = next(iter(result.ledger.work_item_failures.values()))
+        assert failure.failure_class == "deterministic_execution"
+        assert failure.reason_code == reason_code
+    else:
+        failure = next(iter(result.ledger.executor_failures.values()))
+        assert failure.reason_code == reason_code
     assert result.ledger.accepted_artifacts
     accepted_kinds = {
         result.ledger.certification_work_items[

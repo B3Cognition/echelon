@@ -32,6 +32,9 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             context.inputs, ledger, events, budget
         )
         action = plan_next_synthesis(state)
+        in_flight = bool(
+            budget.open_token_reservations or budget.open_active_ms_reservations
+        )
         next_reservation: dict[str, object] | None = None
         insufficient_dimensions: list[str] = []
         if action.kind == "dispatch" and action.work_item is not None:
@@ -181,6 +184,21 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             synthesis_complete,
             publication_status,
             action.kind,
+            in_flight=in_flight,
+            budget_successor=(
+                _budget_successor_action(
+                    manifest.parent_run_id,
+                    partial_sources,
+                    budget.token_limit,
+                    budget.active_ms_limit,
+                    budget.charged_tokens,
+                    budget.charged_active_ms,
+                    next_reservation,
+                    insufficient_dimensions,
+                )
+                if insufficient_dimensions and next_reservation is not None
+                else None
+            ),
         )
         return {
             "schema_version": manifest.schema_version,
@@ -243,7 +261,13 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             },
             "avoided_provider_calls": len(ledger.checkpoint_adoptions),
             "avoided_reservations": len(ledger.checkpoint_adoptions),
-            "synthesis_status": "complete" if synthesis_complete else "incomplete",
+            "synthesis_status": (
+                "complete"
+                if synthesis_complete
+                else "in_progress"
+                if in_flight
+                else "incomplete"
+            ),
             "input_quality": manifest.input_quality,
             "publication_status": publication_status,
             "full_quality_claim": (
@@ -270,7 +294,9 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             "v2_generation_id": None if current_v2 is None else current_v2.generation_id,
             "next_action": next_action,
             "stop_reason": (
-                "synthesis-reservation-exceeds-remaining-budget"
+                None
+                if in_flight
+                else "synthesis-reservation-exceeds-remaining-budget"
                 if insufficient_dimensions
                 else action.reason
             ),
@@ -290,7 +316,9 @@ def render_protocol_27_status(run_dir: Path, *, as_json: bool = False) -> str:
     synthesis = str(document["synthesis_status"])
     quality = str(document["input_quality"])
     publication = str(document["publication_status"])
-    if synthesis != "complete":
+    if synthesis == "in_progress":
+        title = "RE WORKSPACE SYNTHESIS — IN PROGRESS"
+    elif synthesis != "complete":
         title = "RE WORKSPACE SYNTHESIS — INCOMPLETE"
     elif publication == "conflict":
         title = "RE WORKSPACE SYNTHESIS — COMPLETE, PUBLICATION CONFLICT"
@@ -334,10 +362,17 @@ def _next_action(
     synthesis_complete: bool,
     publication_status: str,
     planner_action: str,
+    *,
+    in_flight: bool,
+    budget_successor: str | None,
 ) -> str:
     if synthesis_complete and publication_status.startswith("published_"):
         return "none; synthesis and publication are complete"
+    if in_flight:
+        return "wait; synthesis dispatch is in progress"
     if not synthesis_complete:
+        if budget_successor is not None:
+            return budget_successor
         return f"echelon re continue {run_id}"
     if publication_status == "conflict":
         flags = " ".join(
@@ -350,6 +385,30 @@ def _next_action(
     if planner_action == "publish":
         return f"echelon re continue {run_id}"
     return f"echelon re continue {run_id}"
+
+
+def _budget_successor_action(
+    parent_run_id: str,
+    partial_sources: tuple[str, ...],
+    token_limit: int | None,
+    active_ms_limit: int | None,
+    charged_tokens: int,
+    charged_active_ms: int,
+    next_reservation: dict[str, object],
+    insufficient_dimensions: list[str],
+) -> str:
+    if "tokens" in insufficient_dimensions:
+        token_limit = charged_tokens + int(next_reservation["billable_tokens"])
+    if "active_ms" in insufficient_dimensions:
+        active_ms_limit = charged_active_ms + int(next_reservation["active_ms"])
+    command = ["echelon", "re", "synthesize", "--from-run", parent_run_id]
+    for source_id in partial_sources:
+        command.extend(("--accept-partial", source_id))
+    if token_limit is not None:
+        command.extend(("--token-limit", str(token_limit)))
+    if active_ms_limit is not None:
+        command.extend(("--active-ms-limit", str(active_ms_limit)))
+    return " ".join(command)
 
 
 __all__ = (

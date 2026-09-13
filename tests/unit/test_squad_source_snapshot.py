@@ -49,7 +49,7 @@ def _inspect(project, path="specs"):
 
 
 def _tree(tmp_path):
-    project = tmp_path.resolve()
+    project = (tmp_path / "project").resolve()
     tree = project / "specs"
     (tree / "empty").mkdir(parents=True)
     (tree / "file").write_bytes(b"before")

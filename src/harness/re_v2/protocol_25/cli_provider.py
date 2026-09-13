@@ -46,7 +46,11 @@ from .policies import (
     SEMANTIC_EXECUTOR_FAMILIES,
     SEMANTIC_RENDERER_ID,
 )
-from .runtime import Protocol25RuntimeError, SemanticContextV1
+from .runtime import (
+    GuidanceProjectionV1,
+    Protocol25RuntimeError,
+    SemanticContextV1,
+)
 
 
 _RESULT_CONTRACT = EchelonResultContract(
@@ -257,12 +261,12 @@ class SquadCliSemanticRenderer:
         self._executors = {
             item.executor_contract_hash: item for item in executors
         }
-        self._provider_factory = provider_factory
-        self._provider: SquadCliProvider | None = None
+        self._provider = provider_factory()
+        _validate_pinned_provider(executors, self._provider)
         self._inherited = {
             item.executor_contract_hash: SquadCliBaselineExecutor(
                 item,
-                provider_factory=self._shared_provider,
+                provider=self._provider,
             )
             for item in executors
             if item.producer_family not in SEMANTIC_EXECUTOR_FAMILIES
@@ -376,13 +380,34 @@ class SquadCliSemanticRenderer:
             or result.verdict != "DONE"
             or result.state_updates
         )
+        recoverable_missing_result = bool(
+            result.echelon_result_validation_reason
+            and result.echelon_result is None
+            and not result.state_updates
+            and _has_exact_semantic_candidate(root, execution_input, executor)
+        )
+        if result.exit_code != 0:
+            if recoverable_missing_result:
+                return RawExecutionResultV1(
+                    _RESULT_STDOUT,
+                    stderr,
+                    usage,
+                    timing,
+                    "candidate_ready",
+                    provider_name,
+                    model_name,
+                )
+            return RawExecutionResultV1(
+                b"",
+                stderr or b"transport_error\n",
+                usage,
+                timing,
+                "transport_error",
+                provider_name,
+                model_name,
+            )
         if result_invalid:
-            if (
-                result.echelon_result_validation_reason
-                and result.echelon_result is None
-                and not result.state_updates
-                and _has_exact_semantic_candidate(root, execution_input, executor)
-            ):
+            if recoverable_missing_result:
                 return RawExecutionResultV1(
                     _RESULT_STDOUT,
                     stderr,
@@ -401,16 +426,6 @@ class SquadCliSemanticRenderer:
                 provider_name,
                 model_name,
             )
-        if result.exit_code != 0:
-            return RawExecutionResultV1(
-                b"",
-                stderr or b"transport_error\n",
-                usage,
-                timing,
-                "transport_error",
-                provider_name,
-                model_name,
-            )
         return RawExecutionResultV1(
             _RESULT_STDOUT,
             stderr,
@@ -422,9 +437,26 @@ class SquadCliSemanticRenderer:
         )
 
     def _shared_provider(self) -> SquadCliProvider:
-        if self._provider is None:
-            self._provider = self._provider_factory()
         return self._provider
+
+
+def _validate_pinned_provider(
+    executors: tuple[ExecutorContractEntryV1, ...],
+    provider: SquadCliProvider,
+) -> None:
+    """Reject mutable CLI routing that differs from frozen L3 authority."""
+    expected = {item.provider_id for item in executors}
+    if len(expected) != 1 or None in expected:
+        raise Protocol22ProviderError(
+            "semantic shared CLI contracts must pin exactly one provider"
+        )
+    expected_name = next(iter(expected))
+    if provider.cli != expected_name:
+        raise Protocol22ProviderError(
+            f'RE run requires provider "{expected_name}", but the effective provider '
+            f'is "{provider.cli}"; set harness.llm.cli or ECHELON_LLM to '
+            f'"{expected_name}" before continuing'
+        )
 
 
 def _validate_semantic_inputs(
@@ -489,6 +521,7 @@ def _render_semantic_prompt(
     retry_diagnostics: tuple[str, ...] = (),
 ) -> str:
     binding = ""
+    guidance = ""
     try:
         raw_context = load_canonical_object(
             context.encode("utf-8"),
@@ -510,11 +543,26 @@ def _render_semantic_prompt(
                 ).decode("utf-8")
                 + "\n"
             )
+        raw_guidance = raw_context.get("operator_guidance")
+        if raw_guidance is not None:
+            try:
+                projection = GuidanceProjectionV1.from_json_dict(raw_guidance)
+            except Protocol25RuntimeError as exc:
+                raise Protocol22ProviderError(
+                    "semantic prompt operator guidance is invalid"
+                ) from exc
+            guidance = (
+                "## Operator guidance (authenticated; obey within the bounded "
+                "authority below)\n"
+                + projection.directive.answer
+                + "\n\n"
+            )
     return (
         body
         + ("" if body.endswith("\n") else "\n")
         + "\nWrite the role-required candidate JSON and required `echelon_result`.\n"
         + binding
+        + guidance
         + "## Bounded context (canonical JSON)\n"
         + context
         + "\n\n## Authorial response schema (canonical JSON)\n"

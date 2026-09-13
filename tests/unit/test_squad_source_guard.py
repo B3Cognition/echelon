@@ -53,7 +53,7 @@ def test_changed_unbound_evidence_blocks_before_any_promotion(tmp_path):
 
 
 def _prepared(tmp_path, *, nested=False):
-    project = tmp_path.resolve()
+    project = (tmp_path / "project").resolve()
     squad = project / "runs/spec-test"
     squad.mkdir(parents=True)
     (project / "specs/empty").mkdir(parents=True)

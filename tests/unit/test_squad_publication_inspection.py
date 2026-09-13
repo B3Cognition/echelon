@@ -48,7 +48,7 @@ def test_inspection_returns_original_and_sealed_bytes_without_publication(tmp_pa
 
 
 def _prepared(tmp_path, entries=(("spec.md", b"before", b"after"),)):
-    project = tmp_path.resolve()
+    project = (tmp_path / "project").resolve()
     squad = project / "runs/spec-test"
     squad.mkdir(parents=True)
     transaction = SquadPublicationTransaction.begin(project, squad, "1" * 32)

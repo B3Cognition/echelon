@@ -583,16 +583,18 @@ class Protocol27DeterministicRuntime:
             raise Protocol27RuntimeError("synthesis candidate input quality mismatch")
         if candidate.debt_refs != context.debt_refs:
             raise Protocol27RuntimeError("synthesis candidate debt references mismatch")
-        authority = {
-            ("authority-object", item.object_hash): set(item.source_ids)
-            for item in context.authorized_objects
-        }
-        authority.update(
-            {
-                ("dependency-artifact", item.artifact_hash): set(item.source_ids)
+        authority: dict[tuple[str, str], set[str]] = {}
+        for kind, object_id, source_ids in (
+            *(
+                ("authority-object", item.object_hash, item.source_ids)
+                for item in context.authorized_objects
+            ),
+            *(
+                ("dependency-artifact", item.artifact_hash, item.source_ids)
                 for item in context.dependency_artifacts
-            }
-        )
+            ),
+        ):
+            authority.setdefault((kind, object_id), set()).update(source_ids)
         for claim in candidate.claims:
             for reference in claim.evidence:
                 sources = authority.get((reference.authority_kind, reference.authority_id))

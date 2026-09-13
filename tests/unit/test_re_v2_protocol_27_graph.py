@@ -23,6 +23,8 @@ def _inputs(
     partial_sources: frozenset[str] = frozenset(),
     policy_seed: str = "policy",
     source_ids: tuple[str, ...] = ("api", "web"),
+    workspace_executor_contract_hash: str | None = None,
+    shared_debt_hash: str | None = None,
 ):
     from harness.re_v2.protocol_27.graph import (
         SynthesisGraphInputsV1,
@@ -53,6 +55,8 @@ def _inputs(
             source_id,
             outcome="partial" if source_id in partial_sources else "complete",
         )
+        if source_id in partial_sources and shared_debt_hash is not None:
+            base = replace(base, debt_manifest_hash=shared_debt_hash)
         if source_id in hashes:
             base = replace(base, source_root_hash=hashes[source_id])
         sources.append(base)
@@ -78,11 +82,31 @@ def _inputs(
     return SynthesisGraphInputsV1(
         accepted_sources=tuple(sources),
         source_overviews=AcceptedSourceOverviewCatalogV1(1, tuple(projections)),
-        topology=build_workspace_synthesis_topology(partition),
+        topology=build_workspace_synthesis_topology(
+            partition,
+            partition_manifest_id=partition.identity,
+        ),
         policy_catalog=policy,
         response_schema_hashes=response_hashes,
         context_policy_hash=digest("context-policy"),
+        workspace_executor_contract_hash=workspace_executor_contract_hash,
     )
+
+
+@pytest.mark.unit
+def test_topology_preserves_explicit_run_partition_authority() -> None:
+    from harness.re_v2.protocol_27.graph import build_workspace_synthesis_topology
+
+    partition = _partition({"api": ("api-core",)})
+    run_partition_manifest_id = digest("run-partition-manifest")
+
+    topology = build_workspace_synthesis_topology(
+        partition,
+        partition_manifest_id=run_partition_manifest_id,
+    )
+
+    assert run_partition_manifest_id != partition.identity
+    assert topology.partition_manifest_id == run_partition_manifest_id
 
 
 def _node(graph, kind: str, *, source: str | None = None, domain: str | None = None):
@@ -112,6 +136,61 @@ def test_graph_has_granular_source_domain_and_workspace_nodes() -> None:
     assert "workspace-relationships" in kinds
     assert "workspace-contracts" in kinds
     assert len(graph.public_paths) == len(graph.required_nodes) + 2
+
+
+@pytest.mark.unit
+def test_graph_deduplicates_one_global_debt_acceptance_across_partial_sources() -> None:
+    from harness.re_v2.protocol_27.graph import build_synthesis_graph
+
+    debt_hash = digest("global-residual-debt-acceptance")
+    graph = build_synthesis_graph(
+        _inputs(
+            partial_sources=frozenset({"api", "web"}),
+            shared_debt_hash=debt_hash,
+        )
+    )
+
+    assert graph.root_specification.debt_manifest_hashes == (debt_hash,)
+    assert graph.root_specification.input_quality == "partial"
+    assert all(
+        node.debt_manifest_hashes == (debt_hash,)
+        for node in graph.required_nodes
+    )
+
+
+@pytest.mark.unit
+def test_workspace_renderer_upgrade_preserves_all_lower_work_items() -> None:
+    from harness.re_v2.protocol_27.graph import build_synthesis_graph
+
+    before = build_synthesis_graph(_inputs())
+    workspace_executor = digest("workspace-renderer-v2")
+    after = build_synthesis_graph(
+        _inputs(workspace_executor_contract_hash=workspace_executor)
+    )
+
+    before_by_scope = {
+        (node.artifact_kind, node.scope.kind, node.scope.source_id, node.scope.workspace_domain_id): node
+        for node in before.required_nodes
+    }
+    after_by_scope = {
+        (node.artifact_kind, node.scope.kind, node.scope.source_id, node.scope.workspace_domain_id): node
+        for node in after.required_nodes
+    }
+    lower_keys = {
+        key for key in before_by_scope if key[1] != "workspace"
+    }
+    assert all(before_by_scope[key] == after_by_scope[key] for key in lower_keys)
+    assert all(
+        template.executor_contract_hash == workspace_executor
+        for template in after.templates
+        if template.scope_kind == "workspace"
+    )
+    assert all(
+        template.executor_contract_hash
+        == after.policy_catalog.implementation_authority.executor_contract_hash
+        for template in after.templates
+        if template.scope_kind != "workspace"
+    )
 
 
 @pytest.mark.unit
@@ -284,7 +363,10 @@ def test_one_source_without_domains_has_closed_workspace_graph() -> None:
         SynthesisGraphInputsV1(
             accepted_sources=(source,),
             source_overviews=AcceptedSourceOverviewCatalogV1(1, (projection,)),
-            topology=build_workspace_synthesis_topology(partition),
+            topology=build_workspace_synthesis_topology(
+                partition,
+                partition_manifest_id=partition.identity,
+            ),
             policy_catalog=inputs.policy_catalog,
             response_schema_hashes=inputs.response_schema_hashes,
             context_policy_hash=inputs.context_policy_hash,

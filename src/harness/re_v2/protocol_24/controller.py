@@ -22,7 +22,10 @@ from harness.re_v2.protocol_22.materialization import materialize_accepted_l2
 from harness.re_v2.protocol_22.policies import policy_for
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 
-from .artifacts import parse_l2_authorial_candidate
+from .artifacts import (
+    normalize_l2_authorial_candidate,
+    parse_l2_authorial_candidate,
+)
 
 
 class Protocol24Controller(Protocol22Controller):
@@ -58,6 +61,15 @@ class Protocol24Controller(Protocol22Controller):
             )
             return
         raw = self.context.object_store.read_blob(entry.content_hash)
+        context_hash = committed.closure.execution_input.context_bundle_hash
+        if context_hash is None:
+            raise Protocol22ControllerError(
+                "provider candidate has no pinned context bundle"
+            )
+        context = load_canonical_object(
+            self.context.object_store.read_blob(context_hash),
+            ContextBundleV1.from_json_dict,
+        )
         try:
             policy = policy_for(
                 self.context.inputs.artifact_policy,
@@ -67,6 +79,11 @@ class Protocol24Controller(Protocol22Controller):
             authorial = parse_l2_authorial_candidate(
                 raw,
                 item.output_key.artifact_kind,
+                policy,
+            )
+            authorial = normalize_l2_authorial_candidate(
+                authorial,
+                context,
                 policy,
             )
         except (Protocol22CertificationError, Protocol22SchemaError):
@@ -94,15 +111,6 @@ class Protocol24Controller(Protocol22Controller):
             raise Protocol22ControllerError(
                 f"verifier {item.verifier_id} has no certify_candidate method"
             )
-        context_hash = committed.closure.execution_input.context_bundle_hash
-        if context_hash is None:
-            raise Protocol22ControllerError(
-                "provider candidate has no pinned context bundle"
-            )
-        context = load_canonical_object(
-            self.context.object_store.read_blob(context_hash),
-            ContextBundleV1.from_json_dict,
-        )
         result = certify(candidate_input, item, context)
         if not isinstance(result, CompactCertificationResultV2):
             raise Protocol22ControllerError(

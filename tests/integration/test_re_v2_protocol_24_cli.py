@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
+import shutil
 
 import pytest
 
 from harness.re_v2.events import EventStore
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.ledger import ObjectStore
-from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+from harness.re_v2.protocol_22.ledger import (
+    ExecutorFailureReceiptV1,
+    Protocol22Ledger,
+)
+from harness.re_v2.protocol_22.executors import (
+    IN_PROCESS_ADAPTER_ID,
+    IN_PROCESS_CALCULATOR_ID,
+    ZERO_USAGE_NORMALIZER_ID,
+)
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
 from harness.re_v2.protocol_24.model import RunManifestV3
 from harness.re_v2.protocol_26.events import protocol_26_events_for
@@ -23,6 +33,7 @@ from tests.integration.test_re_v2_protocol_24_controller import (
 )
 from tests.unit.test_re_v2_protocol_24_prosaic import _role_artifact
 from tests.unit.test_re_v2_protocol_22_controller import _SnapshotReader
+from tests.re_v2_protocol_22_fixtures import digest
 
 
 @pytest.mark.integration
@@ -35,6 +46,10 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
     workspace = tmp_path / "workspace"
     (workspace / "runs").mkdir(parents=True)
+    shutil.copytree(
+        parent.run_dir,
+        workspace / "runs" / parent.manifest.run_id,
+    )
     monkeypatch.setattr(
         "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
         lambda _run, _workspace: parent,
@@ -63,19 +78,36 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
         lambda context: contexts.append(context.run_dir),
     )
     options = legacy_cli._parse_re_deepen_options(
-        ["--to", "L2", "--source", "api", "--from-run", "re-parent"]
+        [
+            "--to",
+            "L2",
+            "--source",
+            "api",
+            "--from-run",
+            parent.manifest.run_id,
+        ]
     )
 
     first = legacy_cli._run_re_v24_deepen(workspace, options)
     second = legacy_cli._run_re_v24_deepen(workspace, options)
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v22_implementation_digest",
+        lambda *_modules: digest("upgraded-protocol-2.4-runtime"),
+    )
+    upgraded = legacy_cli._run_re_v24_deepen(workspace, options)
 
     children = tuple(
         path
         for path in (workspace / "runs").iterdir()
-        if path.is_dir() and (path / "v2" / "run.json").is_file()
+        if path.name != parent.manifest.run_id
+        and path.is_dir()
+        and (path / "v2" / "run.json").is_file()
     )
     assert first == second
-    assert children == (first,)
+    assert upgraded != first
+    assert len(children) == 2
+    assert set(children) == {first, upgraded}
     manifest = load_run_manifest(first)
     assert isinstance(manifest, RunManifestV5)
     outer_inputs = load_protocol_26_inputs(ReV2Paths.for_run(first), manifest)
@@ -83,7 +115,7 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     assert isinstance(layer_manifest, RunManifestV3)
     assert layer_manifest.parent_run_id == parent.manifest.run_id
     assert layer_manifest.selection.source_ids == ("api",)
-    assert (workspace / "runs" / ".current-re").read_text() == first.name + "\n"
+    assert (workspace / "runs" / ".current-re").read_text() == upgraded.name + "\n"
     paths = ReV2Paths.for_run(first)
     events = EventStore(paths, protocol=protocol_26_events_for("L2")).replay()
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
@@ -94,7 +126,165 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
         else parent.ledger.accepted_artifacts
     )
     assert ledger.accepted_artifacts == parent.ledger.accepted_artifacts
-    assert contexts == [first, first]
+    assert contexts == [first, first, upgraded]
+
+
+@pytest.mark.integration
+def test_deepen_preserves_pinned_in_process_accounting_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
+    workspace = tmp_path / "workspace"
+    (workspace / "runs").mkdir(parents=True)
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
+        lambda _run, _workspace: parent,
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "ProsaicPromptLoader",
+        lambda _workspace: SimpleNamespace(
+            load_subagent=lambda _agent_id: _role_artifact()
+        ),
+    )
+    installed = _registry(parent)
+    drifted = replace(
+        installed,
+        executor_implementations={
+            **dict(installed.executor_implementations),
+            IN_PROCESS_ADAPTER_ID: digest("current-in-process-executor"),
+        },
+        calculator_implementations={
+            **dict(installed.calculator_implementations),
+            IN_PROCESS_CALCULATOR_ID: digest("current-in-process-calculator"),
+        },
+        normalizer_implementations={
+            **dict(installed.normalizer_implementations),
+            ZERO_USAGE_NORMALIZER_ID: digest("current-zero-usage-normalizer"),
+        },
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_schema2_installed_registry",
+        lambda agent, *, provider_mode: (drifted, agent, {}),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v2_context",
+        lambda _workspace, run_dir: SimpleNamespace(run_dir=run_dir),
+    )
+    monkeypatch.setattr(legacy_cli, "_run_re_v2_live", lambda _context: None)
+    options = legacy_cli._parse_re_deepen_options(
+        ["--to", "L2", "--source", "api", "--from-run", "re-parent"]
+    )
+
+    child = legacy_cli._run_re_v24_deepen(workspace, options)
+
+    assert child.is_dir()
+
+
+@pytest.mark.integration
+def test_deepen_creates_repair_generation_after_exact_child_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
+    workspace = tmp_path / "workspace"
+    (workspace / "runs").mkdir(parents=True)
+    shutil.copytree(
+        parent.run_dir,
+        workspace / "runs" / parent.manifest.run_id,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
+        lambda _run, _workspace: parent,
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "ProsaicPromptLoader",
+        lambda _workspace: SimpleNamespace(
+            load_subagent=lambda _agent_id: _role_artifact()
+        ),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_schema2_installed_registry",
+        lambda agent, *, provider_mode: (_registry(parent), agent, {}),
+    )
+    contexts: list[Path] = []
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v2_context",
+        lambda _workspace, run_dir: SimpleNamespace(run_dir=run_dir),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_run_re_v2_live",
+        lambda context: contexts.append(context.run_dir),
+    )
+    options = legacy_cli._parse_re_deepen_options(
+        [
+            "--to",
+            "L2",
+            "--source",
+            "api",
+            "--from-run",
+            parent.manifest.run_id,
+        ]
+    )
+    failed = legacy_cli._run_re_v24_deepen(workspace, options)
+    failed_manifest = load_run_manifest(failed)
+    assert isinstance(failed_manifest, RunManifestV5)
+    failed_paths = ReV2Paths.for_run(failed)
+    failure = ExecutorFailureReceiptV1(
+        schema_version=1,
+        executor_contract_hash=digest("failed-executor"),
+        trigger_work_item_id=digest("failed-work-item"),
+        dispatch_id=None,
+        candidate_id=None,
+        execution_capture_hash=None,
+        reason_code="reservation_mismatch",
+        normalized_diagnostics=("reservation_mismatch",),
+    )
+    Protocol22Ledger(
+        failed_paths,
+        ObjectStore(failed_paths.objects),
+    ).record_executor_failure(failure)
+    failed_events = EventStore(
+        failed_paths,
+        protocol=protocol_26_events_for("L2"),
+    )
+    failed_events.append(
+        "executor_failed",
+        {
+            "executor_contract_hash": failure.executor_contract_hash,
+            "executor_failure_receipt_id": failure.identity,
+            "trigger_work_item_id": failure.trigger_work_item_id,
+        },
+        occurred_at=failed_manifest.created_at,
+    )
+    failed_events.append(
+        "run_failed",
+        {"reason": "failed"},
+        occurred_at=failed_manifest.created_at,
+    )
+
+    repair = legacy_cli._run_re_v24_deepen(workspace, options)
+
+    assert repair != failed
+    assert len(
+        [
+            path
+            for path in (workspace / "runs").iterdir()
+            if path.is_dir() and (path / "v2" / "run.json").is_file()
+        ]
+    ) == 3  # completed parent plus failed and repair L2 children
+    assert contexts == [failed, repair]
 
 
 @pytest.mark.integration
@@ -260,7 +450,10 @@ def test_schema3_live_execution_uses_protocol24_controller(
     legacy_cli._run_re_v2_live(context)
 
     assert calls == [context]
-    assert "PROTOCOL 2.4" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE v2 · L2 BEHAVIORAL DEEPENING" in output
+    assert "[re] L2" in output and "controller started" in output
+    assert "protocol" not in output.lower()
 
 
 @pytest.mark.integration

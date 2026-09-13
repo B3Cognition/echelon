@@ -2,9 +2,121 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
+
+
+@pytest.mark.unit
+def test_finalize_routes_l3_to_exact_banzai_debt_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_re_finalize
+    # Import before patching run_store so this module never captures the test double.
+    import harness.re_v2.protocol_25.status  # noqa: F401
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    run_dir = tmp_path / "runs" / "re-l3"
+    run_dir.mkdir(parents=True)
+    calls: list[tuple[Path, Path, bool]] = []
+    rendered: list[dict[str, object]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._detect_re_engine_for_cli", lambda _path: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _path: replace(manifest_v4(), run_id="re-l3"),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.debt.finalize_protocol_25_debt",
+        lambda *, project_root, run_dir, require_banzai: (
+            calls.append((project_root, run_dir, require_banzai))
+            or SimpleNamespace(identity="sha256:" + "d" * 64)
+        ),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.status.protocol_25_status_document",
+        lambda _path: {"debt_manifest_hash": "sha256:" + "d" * 64},
+    )
+    monkeypatch.setattr(
+        "echelon.re_ui.print_re_status_card",
+        lambda document, **_kwargs: rendered.append(document),
+    )
+
+    _cmd_re_finalize(["re-l3", "--allow-partial"])
+
+    assert calls == [(tmp_path, run_dir, True)]
+    assert rendered == [{"debt_manifest_hash": "sha256:" + "d" * 64}]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("args", "guidance", "recommended", "banzai"),
+    (
+        (["Use accepted evidence."], "Use accepted evidence.", False, False),
+        (["--recommended"], None, True, False),
+        (["--banzai"], None, False, True),
+    ),
+)
+def test_resume_parser_requires_exactly_one_guidance_mode(
+    args: list[str],
+    guidance: str | None,
+    recommended: bool,
+    banzai: bool,
+) -> None:
+    from echelon.cli import _parse_re_resume_options
+
+    options, re_max_inner = _parse_re_resume_options(args)
+
+    assert options.guidance == guidance
+    assert options.recommended is recommended
+    assert options.banzai is banzai
+    assert re_max_inner is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    (
+        [],
+        ["answer", "second"],
+        ["answer", "--recommended"],
+        ["answer", "--banzai"],
+        ["--recommended", "--banzai"],
+    ),
+)
+def test_resume_parser_rejects_missing_or_conflicting_guidance_modes(
+    args: list[str],
+) -> None:
+    from echelon.cli import _parse_re_resume_options
+
+    with pytest.raises(ValueError, match="exactly one"):
+        _parse_re_resume_options(args)
+
+
+@pytest.mark.unit
+def test_l3_authority_mismatch_explains_how_to_create_a_compatible_successor(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _re_l3_authority_mismatch_message
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    manifest = manifest_v4()
+    message = _re_l3_authority_mismatch_message(
+        tmp_path / "runs" / "re-l3-child",
+        manifest,
+    )
+
+    assert "different RE implementation" in message
+    assert "accepted artifacts remain unchanged" in message
+    assert (
+        "echelon re deepen --to L3 --source api "
+        f"--domain {manifest.selection.domain_keys[0]} --from-run re-parent"
+    ) in message
+    assert "echelon re status re-l3-child --json" in message
+    assert "protocol-2.5" not in message
+    assert "verifier:" not in message
 
 
 @pytest.mark.unit
@@ -89,6 +201,104 @@ def test_legacy_deepen_parser_keeps_runwide_and_semantic_limits_distinct() -> No
 
 
 @pytest.mark.unit
+def test_re_v2_cli_dispatch_deadline_is_bounded_independently_of_run_budget() -> None:
+    from echelon.cli import _bound_re_v2_executor_active_ms
+    from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+
+    catalog, _objects = _executor_fixture()
+    catalog = replace(
+        catalog,
+        inherited_catalog=replace(
+            catalog.inherited_catalog,
+            entries=tuple(
+                replace(
+                    entry,
+                    limits=replace(
+                        entry.limits,
+                        max_active_ms_per_dispatch=43_200_000,
+                    ),
+                )
+                for entry in catalog.inherited_catalog.entries
+            ),
+        ),
+        semantic_entries=tuple(
+            replace(
+                entry,
+                limits=replace(
+                    entry.limits,
+                    max_active_ms_per_dispatch=43_200_000,
+                ),
+            )
+            for entry in catalog.semantic_entries
+        ),
+    )
+    baseline_before = catalog.inherited_catalog.entry_for("compact-baseline")
+    assert baseline_before.limits.max_active_ms_per_dispatch == 43_200_000
+
+    bounded = _bound_re_v2_executor_active_ms(catalog)
+
+    assert (
+        bounded.inherited_catalog.entry_for(
+            "compact-baseline"
+        ).limits.max_active_ms_per_dispatch
+        == 1_800_000
+    )
+    assert {
+        entry.limits.max_active_ms_per_dispatch
+        for entry in bounded.semantic_entries
+    } == {1_800_000}
+
+
+@pytest.mark.unit
+def test_re_v2_cli_dispatch_bound_preserves_inherited_contract_identity() -> None:
+    from echelon.cli import _bound_re_v2_executor_active_ms
+    from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+
+    catalog, _objects = _executor_fixture()
+    inherited = catalog.inherited_catalog.entry_for("compact-baseline")
+    oversized = replace(
+        catalog,
+        inherited_catalog=replace(
+            catalog.inherited_catalog,
+            entries=tuple(
+                replace(
+                    entry,
+                    limits=replace(
+                        entry.limits,
+                        max_active_ms_per_dispatch=43_200_000,
+                    ),
+                )
+                if entry == inherited
+                else entry
+                for entry in catalog.inherited_catalog.entries
+            ),
+        ),
+        semantic_entries=tuple(
+            replace(
+                entry,
+                limits=replace(
+                    entry.limits,
+                    max_active_ms_per_dispatch=43_200_000,
+                ),
+            )
+            for entry in catalog.semantic_entries
+        ),
+    )
+    frozen = oversized.inherited_catalog.entry_for("compact-baseline")
+
+    bounded = _bound_re_v2_executor_active_ms(
+        oversized,
+        preserve_contract_hashes={frozen.executor_contract_hash},
+    )
+
+    assert bounded.inherited_catalog.entry_for("compact-baseline") == frozen
+    assert {
+        entry.limits.max_active_ms_per_dispatch
+        for entry in bounded.semantic_entries
+    } == {1_800_000}
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "args",
     (
@@ -156,6 +366,72 @@ def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
 
 
 @pytest.mark.unit
+def test_corrected_l3_checkpoint_authority_reuses_domains_but_not_legacy_sources() -> None:
+    from types import SimpleNamespace
+
+    from echelon.cli import _re_v25_expected_checkpoint_work_items
+    from tests.unit.test_re_v2_protocol_25_graph import (
+        _audit_items,
+        _complete_l2,
+        _fixture,
+    )
+
+    legacy, _inputs, legacy_authority, parent, legacy_accepted = _fixture(
+        all_sources=True,
+        engine_protocol_version="2.5",
+    )
+    corrected, corrected_inputs, corrected_authority, corrected_parent, corrected_accepted = _fixture(
+        all_sources=True,
+        engine_protocol_version="2.5.1",
+    )
+    _complete_l2(legacy, legacy_authority, legacy_accepted)
+    _complete_l2(corrected, corrected_authority, corrected_accepted)
+    legacy_items = _audit_items(legacy, legacy_accepted)
+    corrected_items = _re_v25_expected_checkpoint_work_items(
+        corrected,
+        SimpleNamespace(
+            accepted_parent={
+                template_id: (
+                    corrected.template_by_id[template_id],
+                    artifact,
+                )
+                for template_id, artifact in corrected_accepted.items()
+            }
+        ),
+        (),
+    )
+    expected_ids = {item.output_key.identity: item.work_item_id for item in corrected_items}
+
+    legacy_domains = tuple(
+        item for item in legacy_items if item.output_key.scope.domain_key is not None
+    )
+    legacy_sources = tuple(
+        item for item in legacy_items if item.output_key.scope.domain_key is None
+    )
+    assert legacy_domains
+    assert legacy_sources
+    assert all(
+        expected_ids[item.output_key.identity] == item.work_item_id
+        for item in legacy_domains
+    )
+    changed_sources = tuple(
+        item
+        for item in legacy_sources
+        if expected_ids.get(item.output_key.identity) != item.work_item_id
+    )
+    unchanged_sources = tuple(set(legacy_sources) - set(changed_sources))
+    domain_count_by_source = {
+        source.source_id: len(source.domains)
+        for source in corrected_inputs.workspace_partition.sources
+    }
+    assert changed_sources
+    assert all(
+        domain_count_by_source[item.output_key.scope.source_id] == 0
+        for item in unchanged_sources
+    )
+
+
+@pytest.mark.unit
 def test_reused_protocol_25_child_is_reported_without_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -180,6 +456,29 @@ def test_reused_protocol_25_child_is_reported_without_execution(
 
     assert calls == []
     assert capsys.readouterr().out == "EXACT CHILD REUSED\n"
+
+
+@pytest.mark.unit
+def test_reused_protocol_25_child_can_be_silent_for_l4_prerequisite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run: pytest.fail("internal prerequisite rendered operator status"),
+    )
+
+    cli._run_or_report_re_v25_child(
+        tmp_path,
+        tmp_path / "runs" / "re-existing",
+        execute=False,
+        report_existing=False,
+    )
+
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.unit
@@ -309,6 +608,68 @@ def test_continue_routes_distinct_runwide_and_semantic_authorization(
 
 
 @pytest.mark.unit
+def test_re_continue_validation_error_uses_shared_branded_card(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_re_continue(["re-one", "re-two"])
+
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert "✈ echelon · RE v2 · ERROR" in error
+    assert "echelon re continue" in error
+    assert "usage: echelon re continue [<run-id>]" in error
+
+
+@pytest.mark.unit
+def test_continue_accepts_explicit_schema5_l3_run_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli
+    from tests.re_v2_protocol_26_fixtures import manifest_v5
+
+    run_id = "re-schema5-l3"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest_v5("L3", run_id=run_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v2_continue",
+        lambda received, **options: calls.append((received, options)),
+    )
+
+    cli._cmd_re_continue(
+        [
+            run_id,
+            "--re-time-limit-minutes",
+            "720",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ]
+    )
+
+    assert calls == [
+        (
+            run_dir,
+            {
+                "token_limit": None,
+                "time_limit_minutes": 720,
+                "semantic_time_limit_minutes": 720,
+            },
+        )
+    ]
+
+
+@pytest.mark.unit
 def test_typer_continue_forwards_semantic_authorization_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -339,6 +700,39 @@ def test_typer_continue_forwards_semantic_authorization_flags(
 
 
 @pytest.mark.unit
+def test_typer_continue_help_says_resource_limits_are_absolute_totals() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "continue", "--help"],
+        env={"COLUMNS": "200"},
+    )
+
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "RE v2 run ID below runs/" in normalized
+    assert "absolute total token ceiling" in normalized
+    assert "absolute total active-time ceiling" in normalized
+
+
+@pytest.mark.unit
+def test_typer_deepen_help_explains_automatic_l3_prerequisite_flow() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "deepen", "--help"],
+        env={"COLUMNS": "200"},
+    )
+
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "L4 automatically creates or reuses its required L3 prerequisite" in normalized
+    assert "rerun the same deepen command after L3 completes" in normalized
+
+
+@pytest.mark.unit
 def test_resume_routes_terminal_schema4_run_to_immutable_successor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -347,7 +741,7 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
     from echelon import cli
 
     run_dir = tmp_path / "runs" / "re-blocked-l3"
-    calls: list[tuple[Path, Path, str, int | None, int | None]] = []
+    calls: list[tuple[Path, Path, object, int | None, int | None, int | None, int | None]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "harness.re_lifecycle.resolve_current_re_run",
@@ -363,8 +757,17 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
     monkeypatch.setattr(
         cli,
         "_run_re_v25_resume",
-        lambda workspace, parent, answer, token_limit, time_limit_minutes: calls.append(
-            (workspace, parent, answer, token_limit, time_limit_minutes)
+        lambda workspace, parent, policy, token_limit, time_limit_minutes,
+        semantic_token_limit, semantic_time_limit_minutes: calls.append(
+            (
+                workspace,
+                parent,
+                policy,
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
         ),
         raising=False,
     )
@@ -380,12 +783,144 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
         ["Resolve only the retained timeout finding", "--re-token-limit", "7000000"]
     )
 
-    assert calls == [
-        (
-            tmp_path,
-            run_dir,
-            "Resolve only the retained timeout finding",
-            7_000_000,
-            None,
-        )
-    ]
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == "custom"
+    assert policy.answer == "Resolve only the retained timeout finding"
+    assert limits == [7_000_000, None, None, None]
+
+
+@pytest.mark.unit
+def test_resume_unwraps_schema5_l3_run_to_immutable_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch the public wrapper hiding resumable L3 authority from the CLI."""
+    from types import SimpleNamespace
+
+    from echelon import cli
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+    from tests.re_v2_protocol_26_fixtures import manifest_v5
+
+    run_dir = tmp_path / "runs" / "re-blocked-l3"
+    calls: list[tuple[Path, Path, object, int | None, int | None, int | None, int | None]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest_v5("L3", run_id="re-blocked-l3"),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_26.inputs.load_protocol_26_inputs",
+        lambda _paths, _manifest: SimpleNamespace(
+            layer_execution_contract=SimpleNamespace(
+                layer_manifest=manifest_v4(run_id="re-blocked-l3")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_resume",
+        lambda workspace, parent, policy, token_limit, time_limit_minutes,
+        semantic_token_limit, semantic_time_limit_minutes: calls.append(
+            (
+                workspace,
+                parent,
+                policy,
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
+        ),
+    )
+
+    cli._cmd_re_resume(["Retry the transient provider failure"])
+
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == "custom"
+    assert policy.answer == "Retry the transient provider failure"
+    assert limits == [None, None, None, None]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ("--recommended", "--banzai"))
+def test_resume_routes_installed_guidance_modes_and_semantic_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    from echelon import cli
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    run_dir = tmp_path / "runs" / "re-blocked-l3"
+    manifest = manifest_v4(run_id="re-blocked-l3")
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_resume",
+        lambda *values: calls.append(values),
+    )
+
+    cli._cmd_re_resume(
+        [
+            mode,
+            "--re-token-limit",
+            "11000000",
+            "--re-time-limit-minutes",
+            "360",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "180",
+        ]
+    )
+
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == mode.removeprefix("--")
+    assert policy.automation_root_manifest_hash == (
+        manifest.run_manifest_id if mode == "--banzai" else None
+    )
+    assert limits == [11_000_000, 360, 9_000_000, 180]
+
+
+@pytest.mark.unit
+def test_v1_resume_rejects_recommended_mode_directly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: None,
+    )
+
+    with pytest.raises(SystemExit) as failure:
+        cli._cmd_re_resume(["--recommended"])
+
+    assert failure.value.code == 2
+    assert "--recommended and --banzai require an immutable RE v2 L3 run" in (
+        capsys.readouterr().err
+    )

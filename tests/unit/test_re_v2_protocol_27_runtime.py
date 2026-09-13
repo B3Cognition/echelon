@@ -198,3 +198,22 @@ def test_runtime_rejects_citation_to_another_context_source(tmp_path: Path) -> N
 
     with pytest.raises(Protocol27RuntimeError, match="source"):
         runtime.certify_candidate(item, context, canonical_json_bytes(bad.to_json_dict()))
+
+
+@pytest.mark.unit
+def test_runtime_unions_sources_for_byte_identical_evidence(tmp_path: Path) -> None:
+    """A content-addressed blob may authenticate distinct sources simultaneously."""
+    from harness.re_v2.protocol_27.runtime import Protocol27DeterministicRuntime
+
+    _inputs, item, context, candidate, _runtime = _runtime_case(tmp_path)
+    duplicate = replace(
+        context.dependency_artifacts[0],
+        artifact_key_id=digest("web:overview-key"),
+        source_ids=("web",),
+    )
+    shared = replace(
+        context,
+        dependency_artifacts=(context.dependency_artifacts[0], duplicate),
+    )
+
+    Protocol27DeterministicRuntime._validate_candidate(item, shared, candidate)

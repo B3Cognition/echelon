@@ -59,6 +59,8 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = [".", "src"]
 norecursedirs = ["tests/fixtures"]
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1
 markers = [
   "unit: Unit tests (no external deps)",
   "contract: Contract tests (provider interface)",

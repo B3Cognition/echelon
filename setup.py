@@ -21,10 +21,13 @@ class BuildPyWithEchelonBundles(build_py):
                 destination,
                 copy_function=shutil.copy2,
                 ignore=shutil.ignore_patterns(
+                    ".git",
                     ".DS_Store",
                     ".pytest_cache",
                     "__pycache__",
+                    "*.egg-info",
                     "*.pyc",
+                    "node_modules",
                 ),
             )
 

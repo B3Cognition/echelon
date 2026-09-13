@@ -128,6 +128,16 @@ def build_compatibility_candidate(
     source_records: dict[str, dict[str, object]] = {}
     source_rows: list[dict[str, object]] = []
     for source in context.inputs.manifest.accepted_sources:
+        depth, reviewed_fingerprint, reviewed_source_path = _reviewed_source_metadata(
+            context,
+            source.source_id,
+            source.lower_authority_ids,
+        )
+        fingerprint = reviewed_fingerprint or source.source_root_hash
+        source_path = reviewed_source_path or source.source_id
+        freshness = context.inputs.parent_authority.refresh_dispositions.get(
+            source.source_id
+        )
         prefix = f"sources/{source.source_id}"
         required = ("overview.md", "architecture.md", "contracts.md", "components.md")
         if any(f"{prefix}/{name}" not in files for name in required):
@@ -137,10 +147,19 @@ def build_compatibility_candidate(
         manifest_payload = {
             "schema_version": 1,
             "source_id": source.source_id,
-            "source_path": source.source_id,
-            "source_fingerprint": source.source_root_hash,
+            "source_path": source_path,
+            "source_fingerprint": fingerprint,
             "profile_hash": context.inputs.manifest.synthesis_policy_hash,
             "publication_status": source.outcome,
+            **({"depth": depth} if depth is not None else {}),
+            **({"freshness": freshness} if freshness is not None else {}),
+            "run_id": context.inputs.manifest.run_id,
+            "snapshot_id": context.inputs.manifest.source_snapshot_id,
+            "knowledge_root_id": source.source_root_hash,
+            "accepted_source_outcome_id": source.identity,
+            "input_root_ids": list(source.lower_authority_ids),
+            "quality": source.outcome,
+            "debt_manifest_id": source.debt_manifest_hash,
             "overview": f"re/{prefix}/overview.md",
             "architecture": f"re/{prefix}/architecture.md",
             "contracts": f"re/{prefix}/contracts.md",
@@ -150,20 +169,24 @@ def build_compatibility_candidate(
         }
         files[f"{prefix}/manifest.json"] = canonical_json_bytes(manifest_payload)
         source_records[source.source_id] = {
-            "path": source.source_id,
+            "path": source_path,
             "published_path": f"re/{prefix}",
-            "fingerprint": source.source_root_hash,
+            "fingerprint": fingerprint,
             "profile_hash": context.inputs.manifest.synthesis_policy_hash,
             "status": source.outcome,
             "manifest": f"re/{prefix}/manifest.json",
+            **({"depth": depth} if depth is not None else {}),
+            **({"freshness": freshness} if freshness is not None else {}),
         }
         source_rows.append(
             {
                 "source_id": source.source_id,
-                "fingerprint": source.source_root_hash,
+                "fingerprint": fingerprint,
                 "profile_hash": context.inputs.manifest.synthesis_policy_hash,
                 "status": source.outcome,
                 "manifest": f"re/{prefix}/manifest.json",
+                **({"depth": depth} if depth is not None else {}),
+                **({"freshness": freshness} if freshness is not None else {}),
             }
         )
 
@@ -209,6 +232,38 @@ def build_compatibility_candidate(
         files=files,
         index_bytes=canonical_json_bytes(index),
     )
+
+
+def _reviewed_source_metadata(
+    context: Protocol27RunContext,
+    source_id: str,
+    lower_authority_ids: tuple[str, ...],
+) -> tuple[str | None, str | None, str | None]:
+    """Read optional reviewed freshness metadata from copied parent authority."""
+    from harness.re_v2.protocol_28.model import Protocol28SchemaError
+    from harness.re_v2.reviewed_synthesis_parent import (
+        ReviewedSourceKnowledgeProjectionV1,
+    )
+
+    matches: list[ReviewedSourceKnowledgeProjectionV1] = []
+    for object_id in lower_authority_ids:
+        try:
+            payload = context.object_store.read_blob(object_id)
+            value = json.loads(payload)
+            if canonical_json_bytes(value) != payload:
+                continue
+            projection = ReviewedSourceKnowledgeProjectionV1.from_json_dict(value)
+        except (OSError, json.JSONDecodeError, Protocol28SchemaError):
+            continue
+        if projection.source_id == source_id:
+            matches.append(projection)
+    if not matches:
+        return None, None, None
+    if len(matches) != 1:
+        raise Protocol27PublicationError(
+            f"reviewed source metadata authority is ambiguous: {source_id}"
+        )
+    return matches[0].depth, matches[0].source_content_id, matches[0].source_path
 
 
 def build_publication_descriptor(

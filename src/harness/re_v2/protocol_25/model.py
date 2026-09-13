@@ -25,10 +25,12 @@ RunModeV1 = Literal[
     "audit-successor",
     "closure-successor",
 ]
+SemanticLayerProtocolV1 = Literal["2.5", "2.5.1"]
 
 _RUN_MODES = frozenset(
     {"new-audit-epoch", "audit-successor", "closure-successor"}
 )
+_SEMANTIC_LAYER_PROTOCOLS = frozenset({"2.5", "2.5.1"})
 
 
 class Protocol25SchemaError(Protocol22SchemaError):
@@ -119,7 +121,7 @@ class SemanticClosurePolicyV1:
 class RunManifestV4:
     schema_version: int
     engine: Literal["re-v2"]
-    engine_protocol_version: Literal["2.5"]
+    engine_protocol_version: SemanticLayerProtocolV1
     run_id: str
     created_at: str
     source_snapshot_id: str
@@ -171,9 +173,9 @@ class RunManifestV4:
         _schema(literal, self.schema_version, 4, "RunManifestV4.schema_version")
         _schema(literal, self.engine, "re-v2", "RunManifestV4.engine")
         _schema(
-            literal,
+            one_of,
             self.engine_protocol_version,
-            "2.5",
+            _SEMANTIC_LAYER_PROTOCOLS,
             "RunManifestV4.engine_protocol_version",
         )
         _schema(safe_id, self.run_id, "RunManifestV4.run_id")

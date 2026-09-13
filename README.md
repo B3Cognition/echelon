@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.1.0** — 61 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 23 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.1.0** — 66 neutral Prosaic agent roles across the Echelon architecture, with 41 workflow-referenced roles (including three disabled internal knowledge roles) and 25 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -149,7 +149,7 @@ layout, `echelon workspace migrate --write` copies the legacy configuration,
 ignores runtime state, and stages canonical workspace files; add `--commit` to
 commit that migration after reviewing it.
 
-### Optional: add an existing repository and publish reverse engineering
+### Optional: add an existing repository and generate workspace knowledge
 
 For an existing implementation repository, place it under `sources/`, sync the
 workspace configuration, then run RE. This is optional: a greenfield spec can
@@ -160,11 +160,8 @@ git clone <repository-url> sources/app
 echelon workspace sources sync --write
 echelon workspace doctor
 
-# Analyze the declared source roots. Keep the run ID printed by this command.
-echelon re run --re-policy changed
-
-# Publish a validated completed run so subsequent spec runs receive its snapshot.
-echelon re publish <run-id>
+# Analyze every declared repository and publish one validated workspace generation.
+echelon re run
 
 # Target the existing repository when authoring a spec for it.
 echelon spec run "Add a health endpoint" --target sources/app
@@ -172,40 +169,61 @@ echelon spec run "Add a health endpoint" --target sources/app
 
 ### Published reverse engineering
 
-Reverse engineering is a first-class workspace lifecycle. Echelon keeps only the
-latest published generation under `re/`; active RE work is isolated under
-`runs/re-*/re/` and selected by `runs/.current-re`. Spec runs never execute or
-freshness-check RE. By default they take one immutable run-local snapshot of the
-latest publication; use `echelon spec run ... --ignore-re` to omit it.
-
-The default RE engine remains v1. Opt-in RE v2 first produces a reusable L0/L1
-baseline, then protocol 2.4 can deepen only selected clean source repositories
-or domains to L2. A deepening run is a self-contained child: it adopts the
-authenticated lower-layer authority and generates only its selected missing L2
-work through the same neutral Prosaic/shared-provider path used elsewhere.
-Repeating the same semantic request reuses its existing child with zero provider
-calls. `L2 SELECTED SCOPE COMPLETE` means the requested unaudited L2 outputs are
-complete; it is not a claim of semantic audit, workspace synthesis, exhaustive
-depth, publication, or full RE quality.
+Reverse engineering is a first-class workspace lifecycle. The normal product
+has two actions and one optional depth choice:
 
 ```bash
-echelon re run --engine v2
-echelon re deepen --to L2 --all
-echelon re deepen --to L2 --source api --domain 001-api
-echelon re status
-echelon re status --json
+echelon re run                         # standard depth for new sources
+echelon re run --depth quick
+echelon re run --depth deep
+echelon re refresh                     # check every declared source
+echelon re refresh --source api        # check only api; mark siblings not checked
+echelon re status [--json]
 ```
 
-New RE runs use the bounded `balanced` execution goal by default. It targets
-completion within 60 active minutes and has hard ceilings of 180 active minutes
-and 5,000,000 provider-reported tokens. `fast` uses 30/60 minutes and 1,000,000
-tokens; `high` uses 180/720 minutes and 15,000,000 tokens. Select one with
-`echelon re run --profile fast|balanced|high`. Active time excludes periods when
-the command is stopped. `continue` preserves the original profile and consumed
-budget instead of resetting either. An explicit `--re-token-limit` or
-`--re-time-limit-minutes` on `continue` or `resume` may raise its respective
-hard ceiling; it cannot lower a ceiling or reset consumed usage. Providers that
-do not report usage remain explicitly unknown rather than being estimated.
+`run` analyzes the declared repositories, independently reviews the grounded
+knowledge, synthesizes the repository and workspace documents, and atomically
+publishes one generation. `refresh` compares immutable local snapshots without
+fetching or changing a repository. It reanalyzes changed selected sources,
+authentically reuses compatible unchanged knowledge, rebuilds dependent
+workspace documents, and publishes either exactly one generation or a durable
+no-op. An explicit `--depth` selects `quick`, `standard`, or `deep`; refresh
+otherwise preserves each source's published depth.
+
+Each new request freezes the finite token and active-time ceilings from the
+workspace's selected `re.default_profile` in `.echelon/config.yml`; the CLI
+prints those aggregate limits before provider work begins. The shipped
+`balanced` profile remains 5,000,000 tokens and 180 active minutes. Customize
+the selected profile when a workspace needs more room—depth does not silently
+raise authorization.
+
+Echelon keeps the latest complete publication under `re/` and the durable run
+state under `runs/re-*`. Spec and delivery runs never execute or freshness-check
+RE. They take an immutable run-local snapshot of the latest generation, so an
+existing consumer stays pinned when a later refresh publishes; use
+`echelon spec run ... --ignore-re` to omit published knowledge.
+
+`complete-with-limitations` is an honest terminal result, not full semantic
+closure. Accepted debt and freshness limits flow into source/workspace output
+and consumer context. Structural, snapshot, provider, schema, resource, and
+unauthenticated-authority failures remain `needs-attention`; they cannot be
+silently accepted. Provider selection comes from the normal Echelon
+configuration facade. Unsupported providers fail before dispatch and are never
+replaced with Codex or another backend.
+
+The reviewed knowledge workflow is an M3 release candidate in this checkout. Its
+offline two-service acceptance and scoped regressions pass, but installation and
+live multi-workspace evaluation remain the separately authorized M4 release
+gate. Existing installed releases retain their shipped RE routing until that
+gate is completed. Historical `deepen`, `continue`, `resume`, `synthesize`, and
+`publish` commands remain advanced compatibility/recovery tools; normal success
+does not require protocol or layer choices. See
+[the command reference](docs/reference/commands.md) and
+[the RE v2 operator runbook](docs/re-v2-operator-runbook.md).
+
+All RE budget flags are absolute ceilings. Resuming never resets prior usage,
+and providers that do not report usage remain explicitly unknown rather than
+being estimated.
 
 Every new RE provider dispatch writes content-free, OpenTelemetry-aligned local
 telemetry below `runs/<run-id>/telemetry/`. Raw prompts, responses, source code,
@@ -246,9 +264,9 @@ the complete file, symbol, or relationship graph.
 
 `echelon re refresh --source <source-id>` selects one configured source,
 refreshes dependent workspace synthesis, and publishes through the normal RE
-transaction. Publication remains quality-gated: partial semantic output does
-not auto-publish and still requires the explicit `--allow-partial` recovery
-path.
+transaction. Unselected siblings are retained only through authenticated
+compatibility and are labeled `not_checked`. Quality limitations are carried as
+authenticated debt; structural and resource failures do not auto-publish.
 
 ```bash
 echelon topology audit [--source <source-id>] [--json]
@@ -273,39 +291,28 @@ successful source merge: topology is reported stale or unavailable and
 
 `<source-id>` is the stable `sources[].id` from `.echelon/config.yml`; its
 manifest records the matching `sources[].path`. Source content/fingerprint
-changes, dirty Git state, or any profile-hash change trigger refresh. The
-default profile remains `full` depth with `max_lines_per_file: 5000` and
-`git_history_limit: 2500`; `echelon re run --re-policy` overrides selection
-without changing those depth defaults.
-
-A successful complete `echelon re run` remains run-local until you explicitly
-publish it with `echelon re publish <run-id>`. A default `--re-policy changed`
-run makes zero provider calls when the publication is current. Empty declared
-sources can publish an explicit `empty` manifest without inventing domain specs.
-Partial output never auto-publishes and remains blocked for inspection or an
-explicit `--allow-partial` publication.
+changes or an explicit depth change trigger analysis. A default refresh makes
+zero provider calls and publishes no generation when the selected publication
+is current. Empty declared sources receive an explicit inventory disposition
+rather than an invented domain.
 
 ```bash
-echelon re run                               # changed policy; no-op when current
-echelon re continue --re-max-inner 10       # continue without a new answer
-echelon re continue --re-token-limit 25000000  # raise the active token ceiling
-echelon re resume "Use the v2 contract"     # answer a structured RE block
-echelon re publish <run-id>                   # publish a validated complete run
-echelon re publish <run-id> --allow-partial   # explicit structural override
-echelon re publish <run-id> --commit          # also make a local durable-RE commit
+echelon re run
+echelon re run --depth deep
+echelon re refresh
+echelon re refresh --source api --source worker
+echelon re status --json
 ```
 
-Publication never pushes. Without `--commit`, it does not invoke Git. With
-`--commit`, it stages only `re/.gitignore`, `re/index.json`, `re/sources`, and
-`re/workspace`; runtime directories remain ignored. Legacy
-`.echelon/cache/re` data is one-way migration input for manual publication and
-is never freshness or publication authority.
+Publication never pushes or changes a source checkout. Runtime cache, staging,
+and lock directories remain ignored. Legacy `.echelon/cache/re` data is one-way
+compatibility input and is never freshness or publication authority.
 
 ### Typical workflow
 
 ```bash
 # Optional — refresh published brownfield knowledge only when needed
-echelon re run --re-policy changed --re-max-inner 10
+echelon re refresh
 
 # Phase A — spec authoring (default: Claude)
 echelon spec run "Build a photo album app with sharing and tagging"
@@ -409,7 +416,7 @@ the result, so the graph does not duplicate mining:
 
 ```bash
 # Publish canonical sources as they become available.
-echelon re publish <run-id>                 # optional brownfield context
+echelon re run                              # optional brownfield context
 echelon spec publish <spec>                 # canonical spec on local default branch
 echelon spec verify <spec> --reconcile      # audit the declared target checkout
 echelon spec evidence publish <spec>        # normally after land
@@ -1202,12 +1209,11 @@ File: agents/exploration/scout.md
 
 ## Brownfield Support
 
-Run brownfield extraction explicitly with `echelon re run`, then publish a
-validated run with `echelon re publish <run-id>`. Blocked work uses `echelon re
-continue` or `echelon re resume`. Phase A does not invoke GOLDDIGGER. SCOUT
-receives the immutable
-published snapshot when available and otherwise performs normal scoped manual
-analysis.
+Run brownfield knowledge generation with `echelon re run`; the reviewed result
+is synthesized and atomically published by the same action. Use `echelon re
+refresh` after local repository changes. Phase A does not invoke RE. SCOUT
+receives the immutable published snapshot when available and otherwise performs
+normal scoped manual analysis.
 
 ## Commands
 
@@ -1230,13 +1236,10 @@ This keeps commands readable and makes individual phases independently editable 
 | -------- | ------- |
 | `echelon workspace init [--allow-unsafe-host-execution]` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
 | `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--perfectionist] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
-| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
-| `echelon re run --engine v2 [--goal <baseline\|inventory>]` | Create or reuse an opt-in reusable L0/L1 RE v2 baseline |
-| `echelon re deepen --to L2 (--all \| --source <id>...) [--domain <id>...] [--from-run <id>] [--token-limit <n>] [--active-ms-limit <n>]` | Create or reuse a self-contained protocol-2.4 child that generates only selected missing L2 work |
+| `echelon re run [--depth <quick\|standard\|deep>]` | Analyze declared repositories, review and synthesize their knowledge, and atomically publish one workspace generation |
+| `echelon re refresh [--source <id>]... [--depth <quick\|standard\|deep>]` | Check local immutable source snapshots, reanalyze selected changes, reuse compatible knowledge, and publish affected workspace outputs or a durable no-op |
 | `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
-| `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
-| `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
-| `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
+| `echelon re deepen`, `continue`, `resume`, `synthesize`, `publish` | Advanced historical compatibility and recovery tools; not required by the normal run/refresh path |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | Build phase (agent-driven) |
 | `echelon codegen <id>` | Disabled SOAR compatibility command |

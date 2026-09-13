@@ -50,7 +50,7 @@ from harness.re_v2.protocol_22.model import RunManifestV2, WorkTemplateV2
 from harness.re_v2.protocol_26.adoption import (
     FrozenAcceptancePackageV1,
     Protocol26AdoptionError,
-    import_typed_acceptance,
+    import_typed_acceptance_batch,
 )
 
 from .model import (
@@ -473,10 +473,74 @@ def import_parent_acceptance_closure(
         raise Protocol24AdoptionError(
             "adoption requires the existing object-store and typed-ledger facades"
         )
+    accepted_certification_ids = {
+        acceptance.certification_receipt_id
+        for acceptance in parent.ledger.accepted_artifacts.values()
+    }
+    certified_parent_candidates = tuple(
+        candidate
+        for candidate in parent.ledger.candidate_assessments.values()
+        if candidate.outcome == "certified"
+        and candidate.certification_receipt_id in accepted_certification_ids
+    )
+    candidates_by_certification = {
+        candidate.certification_receipt_id: candidate
+        for candidate in certified_parent_candidates
+    }
+    if len(candidates_by_certification) != len(certified_parent_candidates):
+        raise Protocol24AdoptionError("parent candidate authority is ambiguous")
+    receipt_ids = {
+        receipt_id
+        for acceptance in parent.ledger.accepted_artifacts.values()
+        for receipt_id in (
+            acceptance.identity,
+            acceptance.certification_receipt_id,
+            getattr(
+                candidates_by_certification.get(
+                    acceptance.certification_receipt_id
+                ),
+                "identity",
+                None,
+            ),
+        )
+        if receipt_id is not None
+    }
+    report = AdoptionReportV1(
+        artifact_count=len(parent.ledger.accepted_artifacts),
+        certification_count=len(
+            {
+                receipt.certification_receipt_id
+                for receipt in parent.ledger.accepted_artifacts.values()
+            }
+        ),
+        candidate_assessment_count=len(candidates_by_certification),
+        artifact_key_ids=tuple(sorted(parent.ledger.accepted_artifacts)),
+        receipt_ids=tuple(sorted(receipt_ids)),
+    )
+    existing = child_ledger.replay()
+    if all(
+        existing.accepted_artifacts.get(artifact_key_id) == acceptance
+        and existing.certifications.get(acceptance.certification_receipt_id)
+        == parent.ledger.certifications.get(acceptance.certification_receipt_id)
+        and existing.certification_work_items.get(
+            acceptance.certification_receipt_id
+        )
+        == parent.ledger.certification_work_items.get(
+            acceptance.certification_receipt_id
+        )
+        and (
+            (candidate := candidates_by_certification.get(
+                acceptance.certification_receipt_id
+            ))
+            is None
+            or existing.candidate_assessments.get(candidate.identity) == candidate
+        )
+        for artifact_key_id, acceptance in parent.ledger.accepted_artifacts.items()
+    ):
+        return report
     source_objects = ObjectStore(parent.paths.objects)
-    receipt_ids: set[str] = set()
-    candidates = 0
     try:
+        packages: list[FrozenAcceptancePackageV1] = []
         for artifact_key_id, acceptance in sorted(
             parent.ledger.accepted_artifacts.items()
         ):
@@ -484,17 +548,7 @@ def import_parent_acceptance_closure(
                 acceptance.certification_receipt_id
             ]
             work_item = parent.ledger.certification_work_items[certification.identity]
-            matches = tuple(
-                candidate
-                for candidate in parent.ledger.candidate_assessments.values()
-                if candidate.certification_receipt_id == certification.identity
-                and candidate.outcome == "certified"
-            )
-            if len(matches) > 1:
-                raise Protocol24AdoptionError(
-                    f"ambiguous candidate authority for {artifact_key_id}"
-                )
-            candidate = None if not matches else matches[0]
+            candidate = candidates_by_certification.get(certification.identity)
             object_ids = {acceptance.artifact_hash}
             if candidate is not None:
                 object_ids.add(candidate.execution_capture_hash)
@@ -510,13 +564,12 @@ def import_parent_acceptance_closure(
                     for object_hash in sorted(object_ids)
                 },
             )
-            imported = import_typed_acceptance(
-                package,
-                child_objects,
-                child_ledger,
-            )
-            receipt_ids.update(imported.receipt_ids)
-            candidates += candidate is not None
+            packages.append(package)
+        import_typed_acceptance_batch(
+            tuple(packages),
+            child_objects,
+            child_ledger,
+        )
         replayed = child_ledger.replay()
     except (KeyError, ReV2LedgerError, Protocol26AdoptionError) as exc:
         raise Protocol24AdoptionError(f"cannot import parent authority: {exc}") from exc
@@ -527,19 +580,7 @@ def import_parent_acceptance_closure(
         raise Protocol24AdoptionError(
             "imported ledger does not equal the parent acceptance authority"
         )
-    keys = tuple(sorted(parent.ledger.accepted_artifacts))
-    return AdoptionReportV1(
-        artifact_count=len(keys),
-        certification_count=len(
-            {
-                receipt.certification_receipt_id
-                for receipt in parent.ledger.accepted_artifacts.values()
-            }
-        ),
-        candidate_assessment_count=candidates,
-        artifact_key_ids=keys,
-        receipt_ids=tuple(sorted(receipt_ids)),
-    )
+    return report
 
 
 def _validated_run_path(parent_run: Path, workspace: Path) -> tuple[Path, Path]:

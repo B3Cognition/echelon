@@ -46,22 +46,23 @@ def test_readme_and_catalog_match_agent_role_inventory() -> None:
     missing = dispatched - available
     support_files = set(SUPPORT_DIR.rglob("*.md"))
 
-    assert len(available) == 61
-    assert len(dispatched) == 38
-    assert len(direct_use) == 23
+    assert len(available) == 66
+    assert len(dispatched) == 41
+    assert len(direct_use) == 25
     assert missing == set()
     assert len(support_files) == 14
 
     readme = README.read_text(encoding="utf-8")
     catalog = CATALOG.read_text(encoding="utf-8")
 
-    assert "61 neutral Prosaic agent roles" in readme
-    assert "38 workflow-dispatched roles" in readme
+    assert "66 neutral Prosaic agent roles" in readme
+    assert "41 workflow-referenced roles" in readme
+    assert "three disabled internal knowledge roles" in readme
     assert "Agent Role Catalog](docs/agent-role-catalog.md)" in readme
 
-    assert "| Neutral Prosaic agent roles | 61 |" in catalog
-    assert "| Workflow-dispatched roles | 38 |" in catalog
-    assert "| Direct-use roles | 23 |" in catalog
+    assert "| Neutral Prosaic agent roles | 66 |" in catalog
+    assert "| Workflow-referenced roles | 41 |" in catalog
+    assert "| Direct-use roles | 25 |" in catalog
     assert "| Support prose files | 14 |" in catalog
     assert "extension/extension.yml" not in catalog
     assert "speckit-echelon" not in catalog

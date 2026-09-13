@@ -19,9 +19,11 @@ from harness.re_v2.protocol_25.adoption import (
 from harness.re_v2.protocol_25.inputs import (
     Protocol25InputSet,
     Protocol25InputStoreError,
+    _load_guidance,
     create_protocol_25_run_store,
     load_protocol_25_inputs,
 )
+from harness.re_v2.protocol_25.guidance import GuidanceDirectiveV1
 from harness.re_v2.protocol_25.policies import (
     SEMANTIC_EXECUTOR_FAMILIES,
     SemanticExecutorAuthorityV1,
@@ -152,7 +154,21 @@ def _fixture(*, mode: str = "new-audit-epoch"):  # type: ignore[no-untyped-def]
             (),
         )
         guidance = canonical_json_bytes(
-            {"answer": "Use the authenticated bounded context.", "schema_version": 1}
+            {
+                "accepted_audit_candidate_hashes": list(
+                    semantic.accepted_audit_candidate_hashes
+                ),
+                "answer": "Use the authenticated bounded context.",
+                "audit_epoch_id": semantic.audit_epoch_id,
+                "closure_root_hash": semantic.closure_root_hash,
+                "parent_manifest_hash": lower.source_manifest_hash,
+                "parent_terminal_event_hash": lower.source_terminal_event_hash,
+                "schema_version": 1,
+                "unresolved_audit_target_ids": list(
+                    semantic.unresolved_audit_target_ids
+                ),
+                "unresolved_finding_ids": list(semantic.unresolved_finding_ids),
+            }
         )
     elif mode == "closure-successor":
         candidate = audit_candidate_v1()
@@ -198,7 +214,21 @@ def _fixture(*, mode: str = "new-audit-epoch"):  # type: ignore[no-untyped-def]
         parent_state = "blocked_plateau"
         parent_layer = "L3"
         guidance = canonical_json_bytes(
-            {"answer": "Resolve the frozen retry finding.", "schema_version": 1}
+            {
+                "accepted_audit_candidate_hashes": list(
+                    semantic.accepted_audit_candidate_hashes
+                ),
+                "answer": "Resolve the frozen retry finding.",
+                "audit_epoch_id": semantic.audit_epoch_id,
+                "closure_root_hash": semantic.closure_root_hash,
+                "parent_manifest_hash": lower.source_manifest_hash,
+                "parent_terminal_event_hash": lower.source_terminal_event_hash,
+                "schema_version": 1,
+                "unresolved_audit_target_ids": list(
+                    semantic.unresolved_audit_target_ids
+                ),
+                "unresolved_finding_ids": list(semantic.unresolved_finding_ids),
+            }
         )
 
     parent = ParentAuthorityBundleV2(
@@ -259,6 +289,34 @@ def _fixture(*, mode: str = "new-audit-epoch"):  # type: ignore[no-untyped-def]
     return inputs, manifest
 
 
+@pytest.mark.unit
+def test_human_guidance_loader_returns_bound_typed_directive() -> None:
+    payload = canonical_json_bytes(
+        {
+            "accepted_audit_candidate_hashes": [digest("candidate")],
+            "answer": "Use the authenticated bounded context.",
+            "audit_epoch_id": None,
+            "closure_root_hash": None,
+            "parent_manifest_hash": digest("parent-manifest"),
+            "parent_terminal_event_hash": digest("parent-terminal"),
+            "schema_version": 1,
+            "unresolved_audit_target_ids": [digest("target")],
+            "unresolved_finding_ids": [],
+        }
+    )
+
+    loaded = _load_guidance(payload)
+
+    assert isinstance(loaded, GuidanceDirectiveV1)
+    assert loaded.kind == "custom"
+
+
+@pytest.mark.unit
+def test_human_guidance_loader_rejects_unbound_text() -> None:
+    with pytest.raises(Protocol25InputStoreError, match="invalid human guidance"):
+        _load_guidance(canonical_json_bytes({"answer": "text only", "schema_version": 1}))
+
+
 def test_schema4_manifest_is_published_after_every_input(tmp_path: Path) -> None:
     inputs, manifest = _fixture()
     seen: list[str] = []
@@ -285,6 +343,22 @@ def test_schema4_manifest_is_published_after_every_input(tmp_path: Path) -> None
         )
     assert seen.index("inputs_fsynced") < seen.index("manifest_linked")
     assert load_run_manifest(paths.root.parent) == manifest
+
+
+def _extra_bound_guidance() -> bytes:
+    return canonical_json_bytes(
+        {
+            "accepted_audit_candidate_hashes": [digest("candidate")],
+            "answer": "extra",
+            "audit_epoch_id": None,
+            "closure_root_hash": None,
+            "parent_manifest_hash": digest("parent-manifest"),
+            "parent_terminal_event_hash": digest("parent-terminal"),
+            "schema_version": 1,
+            "unresolved_audit_target_ids": [digest("target")],
+            "unresolved_finding_ids": [],
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -322,7 +396,7 @@ def test_schema4_inputs_round_trip_mode_specific_authority(
 @pytest.mark.parametrize(
     ("mode", "mutation", "message"),
     (
-        ("new-audit-epoch", {"human_guidance": b'{"answer":"extra"}\n'}, "new audit"),
+        ("new-audit-epoch", {"human_guidance": _extra_bound_guidance()}, "new audit"),
         ("audit-successor", {"human_guidance": None}, "guidance"),
         ("audit-successor", {"frozen_audit_epoch": audit_epoch_v1()}, "audit successor"),
         ("closure-successor", {"frozen_audit_epoch": None}, "closure successor"),

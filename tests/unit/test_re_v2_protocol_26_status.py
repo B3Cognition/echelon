@@ -23,6 +23,7 @@ def test_status_reports_frozen_checkpoint_adoption_and_avoided_reservations(
     checkpoints = status["checkpoints"]
 
     assert status["engine_protocol_version"] == "2.6"
+    assert status["layer_protocol_version"] == "2.2"
     assert checkpoints["selected_count"] == 1
     assert checkpoints["adopted_count"] == 1
     assert checkpoints["avoided_dispatch_count"] == 1

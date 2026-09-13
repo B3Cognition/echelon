@@ -54,7 +54,7 @@ def test_sealed_images_and_unchanged_dependencies_share_one_observation(tmp_path
 
 
 def _prepared(tmp_path):
-    project = tmp_path.resolve()
+    project = (tmp_path / "project").resolve()
     squad = project / "runs/spec-test"
     squad.mkdir(parents=True)
     (project / "target").write_bytes(b"before")

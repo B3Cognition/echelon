@@ -288,7 +288,7 @@ class Protocol25Graph:
         )
         if selected_sources != tuple(sorted(set(selected_sources))) or not selected_sources:
             raise Protocol25GraphError("Protocol25Graph selected sources are invalid")
-        if not selected_domains or set(selected_domains) & set(not_requested):
+        if set(selected_domains) & set(not_requested):
             raise Protocol25GraphError("Protocol25Graph domain selection is invalid")
         object.__setattr__(self, "audit_target_plans", plans)
         object.__setattr__(self, "audit_templates", templates)
@@ -528,6 +528,24 @@ class Protocol25Graph:
         )
 
 
+def _source_audited_template_ids(
+    manifest: RunManifestV4,
+    source_overview: WorkTemplateV2,
+    domain_baselines: tuple[WorkTemplateV2, ...],
+) -> tuple[str, ...]:
+    """Select the pinned source projection without changing domain authority."""
+    if manifest.engine_protocol_version == "2.5.1":
+        return (source_overview.template_id,)
+    return tuple(
+        sorted(
+            (
+                source_overview.template_id,
+                *(item.template_id for item in domain_baselines),
+            )
+        )
+    )
+
+
 def build_protocol_25_graph(
     manifest: RunManifestV4,
     inputs: Protocol25GraphInputsV1,
@@ -629,19 +647,17 @@ def build_protocol_25_graph(
                 _slot(by_slot, source.source_id, None, "L1", kind).template_id
             )
         source_required = _template_closure(by_id, tuple(source_required))
+        frozen_domain_baselines = tuple(domain_baselines)
         plans.append(
             AuditTargetPlanV1(
                 schema_version=1,
                 target_kind="source",
                 scope=source_overview.scope,
                 coverage=("full-source" if not not_requested else "selected-domains"),
-                audited_template_ids=tuple(
-                    sorted(
-                        (
-                            source_overview.template_id,
-                            *(item.template_id for item in domain_baselines),
-                        )
-                    )
+                audited_template_ids=_source_audited_template_ids(
+                    manifest,
+                    source_overview,
+                    frozen_domain_baselines,
                 ),
                 required_template_ids=tuple(sorted(source_required)),
                 not_requested_domain_keys=not_requested,
@@ -750,8 +766,6 @@ def _resolve_selection(
         domains = tuple(
             item for item in source.domains if not requested or item.domain_key in requested
         )
-        if not domains:
-            raise Protocol25GraphError("selection resolves to no nonempty domains")
         resolved.update(item.domain_key for item in domains)
         result.append((source, domains))
     if requested - resolved:

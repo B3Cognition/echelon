@@ -955,8 +955,6 @@ class FindingClosureReceiptV1(_Authority):
         _schema(optional_digest, self.previous_closure_receipt_id, "previous closure receipt")
         if self.semantic_round == 1 and self.previous_closure_receipt_id is not None:
             raise Protocol25SchemaError("first closure receipt cannot have previous authority")
-        if self.semantic_round > 1 and self.previous_closure_receipt_id is None:
-            raise Protocol25SchemaError("later closure receipt requires previous authority")
 
     def to_json_dict(self) -> dict[str, object]:
         return {field: getattr(self, field) for field in self.FIELDS}
@@ -1207,7 +1205,6 @@ class L3SourceRootV1(_Authority):
             _digests(
                 self.selected_domain_keys,
                 "L3SourceRootV1.selected_domain_keys",
-                nonempty=True,
             ),
         )
         if not isinstance(self.full_source_coverage, bool):

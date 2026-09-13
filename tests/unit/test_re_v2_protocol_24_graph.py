@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Mapping
 
 import pytest
 
@@ -27,17 +28,26 @@ from harness.re_v2.protocol_24.model import (
 )
 from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_protocol_22_graph import _Authority, _Budget, _fixture
 
 
-def _accepted_parent_fixture() -> tuple[
+def _accepted_parent_fixture(
+    source_domains: Mapping[str, tuple[str, ...]] | None = None,
+) -> tuple[
     object,
     dict[str, tuple[WorkTemplateV2, AcceptedArtifactV2]],
     _Authority,
     dict[str, object],
 ]:
-    parent_manifest, parent_inputs = _fixture({"api": ("orders", "users")})
+    parent_manifest, parent_inputs = _fixture(
+        source_domains
+        if source_domains is not None
+        else {"api": ("orders", "users")}
+    )
     parent_graph = build_protocol_22_graph(parent_manifest, parent_inputs)
     authority = _Authority()
     accepted_by_template: dict[str, AcceptedArtifactV2] = {}
@@ -62,6 +72,58 @@ def _accepted_parent_fixture() -> tuple[
     return parent_inputs, closure, authority, work_by_template
 
 
+def test_all_source_selection_deepens_source_without_domains() -> None:
+    parent_inputs, accepted_parent, _authority, _work = _accepted_parent_fixture(
+        {"api": ("orders",), "deployment": ()}
+    )
+    policy = build_deepening_v1_policy_catalog()
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+        ),
+        "sha256:" + "c" * 64,
+    )
+    inputs = ValidatedProtocol22Inputs(
+        workspace_partition=parent_inputs.workspace_partition,
+        artifact_policy=policy,
+        executor_contract=executors,
+        immutable_objects={},
+    )
+    manifest = replace(
+        manifest_v3(),
+        source_snapshot_id=inputs.workspace_partition.snapshot_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            inputs.workspace_partition.identity, "workspace-partition.json"
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            policy.identity, "artifact-policy.json"
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            inputs.executor_contract.identity, "executor-contract.json"
+        ),
+        selection=replace(
+            manifest_v3().selection,
+            all_sources=True,
+            source_ids=(),
+            domain_keys=(),
+        ),
+    )
+
+    graph = build_protocol_24_graph(manifest, inputs, accepted_parent)
+
+    assert graph.selected_source_ids == ("api", "deployment")
+    assert len(graph.selected_domain_keys) == 1
+    assert any(
+        item.scope.source_id == "deployment"
+        and item.scope.domain_key is None
+        and item.layer == "L2"
+        and item.artifact_kind == "source-baseline-root"
+        for item in graph.templates
+    )
+
+
 def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
     (
         parent_inputs,
@@ -70,10 +132,13 @@ def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
         parent_work,
     ) = _accepted_parent_fixture()
     policy = build_deepening_v1_policy_catalog()
-    executors = build_deepening_executor_catalog(
-        parent_inputs.executor_contract,
-        "sha256:" + "a" * 64,
-        "sha256:" + "b" * 64,
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+        ),
+        "sha256:" + "c" * 64,
     )
     inputs = ValidatedProtocol22Inputs(
         workspace_partition=parent_inputs.workspace_partition,

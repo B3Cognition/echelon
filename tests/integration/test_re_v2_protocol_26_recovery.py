@@ -71,6 +71,41 @@ def test_checkpoint_initialization_imports_before_any_dispatch(tmp_path: Path) -
 
 
 @pytest.mark.integration
+def test_checkpoint_receipt_validation_loads_frozen_authority_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Many checkpoint events must not reload and rehash the full bundle each time."""
+    from harness.re_v2.protocol_22 import recovery as recovery_module
+    from harness.re_v2.protocol_26 import inputs as inputs_module
+
+    context = _context(tmp_path)
+    initialize_protocol_26_run(context)
+    events = context.event_store.replay()
+    checkpoint = next(
+        event for event in events if event.type == "checkpoint_artifact_adopted"
+    )
+    repeated = (*events, checkpoint)
+    original = inputs_module.load_protocol_26_inputs
+    calls = 0
+
+    def counted(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(inputs_module, "load_protocol_26_inputs", counted)
+
+    recovery_module._validate_existing_receipt_events(
+        context,
+        repeated,
+        context.ledger.replay(),
+    )
+
+    assert calls == 1
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "seam",
     ("run_created", "checkpoint_receipts_imported", "checkpoint_events_appended"),

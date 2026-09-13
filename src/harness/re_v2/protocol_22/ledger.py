@@ -49,6 +49,7 @@ _WORK_FAILURE_REASONS = {
     ),
     "minimum_utility": frozenset({"minimum_utility_not_met"}),
     "execution_indeterminate": frozenset({"execution_outcome_indeterminate"}),
+    "deterministic_execution": frozenset({"deterministic_execution_failed"}),
 }
 _PRE_DISPATCH_EXECUTOR_REASONS = frozenset(
     {"reservation_mismatch", "limit_unenforceable"}
@@ -133,6 +134,7 @@ class WorkItemFailureReceiptV1:
         "artifact_contract",
         "minimum_utility",
         "execution_indeterminate",
+        "deterministic_execution",
     ]
     reason_code: str
     normalized_diagnostics: tuple[str, ...]

@@ -295,11 +295,12 @@ def _write_debug_capture(
     exit_code: Optional[int],
     duration_ms: int,
 ) -> Optional[str]:
-    debug_dir = os.environ.get("ECHELON_DEBUG_RAW_DIR", "")
-    if not debug_dir:
+    from harness.verbosity import is_verbose
+
+    if not is_verbose():
         return None
     try:
-        debug_root = Path(debug_dir)
+        debug_root = Path.cwd() / ".echelon" / "debug"
         debug_root.mkdir(parents=True, exist_ok=True)
         tag = f"{os.getpid()}-{duration_ms}"
         raw_path = debug_root / f"raw-{tag}.txt"
