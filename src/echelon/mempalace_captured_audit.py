@@ -80,6 +80,30 @@ class _DetachedReadOnlyCollection:
         return deepcopy(self._collection.get(**kwargs))  # type: ignore[attr-defined]
 
 
+def _acquire_captured_rows(
+    collection: object, *, expected: list[str], wing: str, maximum_scan_rows: int,
+) -> tuple[_ParsedCollectionRows, dict[str, tuple[str, dict[str, Any]]]]:
+    collection = _DetachedReadOnlyCollection(collection)
+    raw = (
+        collection.get(ids=expected, include=["documents", "metadatas"])
+        if expected else {"ids": [], "documents": [], "metadatas": []}
+    )
+    parsed = _as_collection_rows(raw)
+    expected_ids = set(expected)
+    if (set(parsed.rows) | set(parsed.malformed)) - expected_ids:
+        raise SpecMemoryError("unexpected expected-fetch drawer IDs")
+    wing_rows = scan_wing_rows_complete(
+        collection, wing=wing, maximum_rows=maximum_scan_rows,
+    )
+    expected_in_wing = {
+        key: row for key, row in parsed.rows.items() if row[1].get("wing") == wing
+    }
+    scanned_expected = {key: row for key, row in wing_rows.items() if key in expected_ids}
+    if expected_in_wing != scanned_expected:
+        raise SpecMemoryError("expected drawer cohort changed during observation")
+    return parsed, wing_rows
+
+
 def audit_captured_spec_memory(
     project_root: Path,
     *,
@@ -105,24 +129,10 @@ def audit_captured_spec_memory(
         return _failure_report(snapshot=snapshot, adapter=adapter, error=exc)
     expected = [row.drawer_id for row in expected_rows]
     try:
-        collection = _DetachedReadOnlyCollection(_collection_from_adapter(adapter))
-        raw = (
-            collection.get(ids=expected, include=["documents", "metadatas"])
-            if expected else {"ids": [], "documents": [], "metadatas": []}
+        parsed, wing_rows = _acquire_captured_rows(
+            _collection_from_adapter(adapter), expected=expected, wing=adapter.wing,
+            maximum_scan_rows=maximum_scan_rows,
         )
-        parsed = _as_collection_rows(raw)
-        expected_ids = set(expected)
-        if (set(parsed.rows) | set(parsed.malformed)) - expected_ids:
-            raise SpecMemoryError("unexpected expected-fetch drawer IDs")
-        wing_rows = scan_wing_rows_complete(
-            collection, wing=adapter.wing, maximum_rows=maximum_scan_rows,
-        )
-        expected_in_wing = {
-            key: row for key, row in parsed.rows.items() if row[1].get("wing") == adapter.wing
-        }
-        scanned_expected = {key: row for key, row in wing_rows.items() if key in expected_ids}
-        if expected_in_wing != scanned_expected:
-            raise SpecMemoryError("expected drawer cohort changed during observation")
     except (Exception, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
     return _classify_spec_memory_audit(

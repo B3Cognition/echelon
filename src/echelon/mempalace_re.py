@@ -11,7 +11,7 @@ from echelon.mempalace_requirements import (
     _read_mempalace_wing,
     _read_str_list,
 )
-from echelon.mempalace_memory_audit import audit_artifact_memory
+from echelon.mempalace_memory_audit import ArtifactMemoryAuditReport, audit_artifact_memory
 from harness.re_artifacts import SUPPORTED_RE_ARTIFACT_KINDS, ReArtifactDescriptor
 from harness.re_registry import (
     canonical_re_artifact_descriptors,
@@ -304,30 +304,13 @@ def _load_descriptor_re_artifact_snapshots(
             continue
         artifact = (root / descriptor.path).resolve()
         snapshots.append(
-            ReArtifactSnapshot(
+            _re_artifact_snapshot(
                 re_root=re_root,
-                artifact_file=artifact,
+                artifact=artifact,
                 content=artifact.read_bytes(),
                 source=descriptor.path,
-                artifact_metadata={
-                    "scope": "reverse-engineering",
-                    "canonical": True,
-                    "artifact_kind": descriptor.kind,
-                    "artifact_path": descriptor.path,
-                    "artifact_hash": descriptor.sha256,
-                    "source_file": descriptor.path,
-                    "lifecycle_status": "active",
-                    "provenance_type": "reverse_engineering_mine",
-                    "added_by": "echelon",
-                    "phase": "RE",
-                    "room": room,
-                    "re_artifact_scope": descriptor.scope,
-                    **(
-                        {"re_source_id": descriptor.source_id}
-                        if descriptor.source_id is not None
-                        else {}
-                    ),
-                },
+                digest=descriptor.sha256, artifact_kind=descriptor.kind, room=room,
+                descriptor=descriptor,
             )
         )
     return snapshots
@@ -349,27 +332,33 @@ def _load_legacy_re_artifact_snapshots(root: Path) -> list[ReArtifactSnapshot]:
         digest = artifact_hash(artifact)
         artifact_kind, room = _re_artifact_classification(relative_to_re)
         snapshots.append(
-            ReArtifactSnapshot(
+            _re_artifact_snapshot(
                 re_root=re_root,
-                artifact_file=artifact,
+                artifact=artifact,
                 content=artifact.read_bytes(),
                 source=source,
-                artifact_metadata={
-                    "scope": "reverse-engineering",
-                    "canonical": True,
-                    "artifact_kind": artifact_kind,
-                    "artifact_path": source,
-                    "artifact_hash": digest,
-                    "source_file": source,
-                    "lifecycle_status": "active",
-                    "provenance_type": "reverse_engineering_mine",
-                    "added_by": "echelon",
-                    "phase": "RE",
-                    "room": room,
-                },
+                digest=digest, artifact_kind=artifact_kind, room=room,
             )
         )
     return snapshots
+
+
+def _re_artifact_snapshot(
+    *, re_root: Path, artifact: Path, content: bytes, source: str, digest: str,
+    artifact_kind: str, room: str, descriptor: ReArtifactDescriptor | None = None,
+) -> ReArtifactSnapshot:
+    metadata = {
+        "scope": "reverse-engineering", "canonical": True,
+        "artifact_kind": artifact_kind, "artifact_path": source,
+        "artifact_hash": digest, "source_file": source,
+        "lifecycle_status": "active", "provenance_type": "reverse_engineering_mine",
+        "added_by": "echelon", "phase": "RE", "room": room,
+    }
+    if descriptor is not None:
+        metadata["re_artifact_scope"] = descriptor.scope
+        if descriptor.source_id is not None:
+            metadata["re_source_id"] = descriptor.source_id
+    return ReArtifactSnapshot(re_root, artifact, content, source, metadata)
 
 
 class ReMemoryAdapter:
@@ -455,6 +444,10 @@ def audit_re_memory(project_root: Path) -> ReMemoryAuditReport:
         scope="reverse-engineering",
         planner_name="plan_re_artifact_rows",
     )
+    return _re_audit_report(generic)
+
+
+def _re_audit_report(generic: ArtifactMemoryAuditReport) -> ReMemoryAuditReport:
     return ReMemoryAuditReport(
         schema_version=generic.schema_version,
         re_root=generic.root,

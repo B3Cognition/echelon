@@ -126,6 +126,10 @@ def _read_frontmatter_only(spec_dir: Path) -> Dict[str, Any]:
     if md is None:
         return {}
     text = md.read_text(encoding="utf-8")
+    return _parse_frontmatter_text(text)
+
+
+def _parse_frontmatter_text(text: str) -> Dict[str, Any]:
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}

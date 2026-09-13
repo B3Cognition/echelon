@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from echelon.mempalace_requirements import SpecMemoryError
 
@@ -134,6 +134,26 @@ def audit_artifact_memory(
             errors=[type(exc).__name__],
         )
 
+    return _classify_artifact_memory(
+        label=label, root=root, snapshots=snapshots, adapter=adapter,
+        artifact_kind=artifact_kind, artifact_kinds_by_source=artifact_kinds_by_source,
+        scope=scope, spec_id=spec_id, expected_rows=expected_rows, parsed=parsed,
+        scan_extras=lambda: _scan_extras(
+            collection=collection, adapter=adapter, expected_rows=expected_rows,
+            artifact_kinds={artifact_kind} | set((artifact_kinds_by_source or {}).values()),
+            spec_id=spec_id,
+        ),
+    )
+
+
+def _classify_artifact_memory(
+    *, label: str, root: Path, snapshots: list[object], adapter: object,
+    artifact_kind: str, scope: str, expected_rows: list[object], parsed: _CollectionRows,
+    scan_extras: Callable[[], tuple[list[str], list[str], list[str], list[str], list[str]]],
+    artifact_kinds_by_source: Mapping[str, str] | None = None,
+    spec_id: str | None = None,
+) -> ArtifactMemoryAuditReport:
+    expected_ids = [row.drawer_id for row in expected_rows]
     present = 0
     missing: list[str] = []
     stale: list[str] = []
@@ -191,14 +211,7 @@ def audit_artifact_memory(
         present += 1
 
     try:
-        extra_stale, extra_non_canonical, extra_lifecycle, extra_duplicate, extra_historical = _scan_extras(
-            collection=collection,
-            adapter=adapter,
-            expected_rows=expected_rows,
-            artifact_kinds={artifact_kind}
-            | set((artifact_kinds_by_source or {}).values()),
-            spec_id=spec_id,
-        )
+        extra_stale, extra_non_canonical, extra_lifecycle, extra_duplicate, extra_historical = scan_extras()
     except (Exception, SystemExit) as exc:
         return _report(
             label=label,
@@ -359,6 +372,15 @@ def _scan_extras(
         limit=MAX_MEMORY_AUDIT_SCAN_ROWS,
     )
     parsed = _as_collection_rows(raw)
+    return _classify_artifact_extras(
+        parsed, expected_rows=expected_rows, artifact_kinds=artifact_kinds, spec_id=spec_id,
+    )
+
+
+def _classify_artifact_extras(
+    parsed: _CollectionRows, *, expected_rows: list[object], artifact_kinds: set[str],
+    spec_id: str | None,
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
     expected_ids = {row.drawer_id for row in expected_rows}
     expected_requirement_ids = {row.requirement_id for row in expected_rows}
     stale: list[str] = []

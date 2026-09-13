@@ -2398,11 +2398,99 @@ storage or silently changes to disk acquisition.
 The result is bounded to this read interval and source image. Equal scans do not
 lock storage or authorize publication. Returning this report to the captured graph
 memory contribution preserves actual missing, stale and unavailable observations;
-it adds no current-revision or semantic claim. Evidence/RE acquisition, identity
+it adds no current-revision or semantic claim. Authenticated aggregate acquisition, identity
 lifecycle, all producer integration, managed graph/source publication and recovery,
 completion ownership, bounded repair, legacy writer exclusion and final offline/
 live checkpoints remain separate work. No Phase A graph-audit gate or live runtime
 activation is added by this API.
+
+## Captured evidence and RE memory acquisition (inactive)
+
+`echelon.mempalace_captured_artifact_audit` adds two explicit library APIs:
+`audit_captured_spec_evidence_memory(project_root, *, spec_id, tree,
+maximum_scan_rows, allow_unlanded=False)` and
+`audit_captured_re_memory(project_root, *, tree, descriptors,
+maximum_scan_rows)`. Both return their existing native domain audit reports.
+They remain inactive: no public command, graph gate, producer, miner, provider,
+publication or stopped-run workflow invokes them automatically.
+
+Both require an absolute `Path` project root and positive exact-integer scan
+budget. Every original tree record, including ignored files and directories,
+validates before any configuration, adapter, planner or storage access. Sources
+and selected metadata detach before adapter callbacks. No source path is resolved
+or reread. Invalid input raises `SpecMemoryError("invalid captured artifact memory
+input")` without retaining a source-bearing exception chain. Operational adapter,
+open, response-copy and complete-observation failures return `unavailable`;
+planner failures return `fail`. These reports retain the validated artifact count,
+with zero expected rows before successful planning and the exact planned count
+afterward. Operational `SystemExit` follows these report conventions; other
+process-control exceptions propagate. This does not repair or change exceptional
+constructors in the existing live domain audits.
+
+Evidence uses the canonical audit's original tree validation and suffix mapping.
+Canonical, run-local and explicitly selected staging roots map to stable
+`specs/<spec_id>/...` keys without altering the physical observation. The selected
+spec must contain a regular UTF-8 `spec.md`. Only root files in
+`CANONICAL_SPEC_EVIDENCE_ARTIFACTS` and allowed direct files from
+`PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS` plus `manifest.json` under `evidence/` are
+selected. Unknown and nested evidence files are excluded after validation.
+Ordering follows native path components, including the position of the
+`evidence/` directory relative to `evidence-grades.md`.
+
+The default evidence audit requires captured YAML frontmatter status to satisfy
+`str(value or "").strip().lower() == "landed"`. The exact boolean
+`allow_unlanded=True` is the existing explicit unlanded opt-in; it waives no
+identity or quality failure. Captured status parsing shares the native pure
+frontmatter parser and emulates universal LF/CRLF/CR newline translation only for
+that status read. Stored source bytes and their hashes remain exact. Absent,
+malformed and nonmapping frontmatter retain native empty-metadata behavior.
+This status read does not acquire `targets.yml` or authenticate full native
+frontmatter/target inputs. Zero selected evidence artifacts remains a valid empty
+plan that still observes and classifies relevant extras. The graph's existing
+unlanded source-loading versus default-landed audit choice is unchanged.
+
+RE requires the fully validated physical tree `re`. The caller must explicitly
+choose one of two modes. `descriptors=None` selects legacy curated files and is
+rejected if a captured file or directory exists at `re/index.json`. It uses the
+native curated path, kind and room rules in native component order and requires
+at least one curated artifact. An exact nonempty tuple selects catalog mode and
+requires a regular captured `re/index.json` as a presence witness. Each exact
+`ReArtifactDescriptor` is checked against its captured bytes by the existing pure
+RE graph descriptor contract: canonical path, supported kind, scope/owner/source
+ID and content hash. Paths must be unique and in native catalog string order.
+All descriptors validate before unmined kinds are filtered; at least one eligible
+artifact is required. There is no empty-catalog, invalid-index or filtered-empty
+fallback to legacy mode.
+
+Catalog mode does not parse the captured index, infer descriptors, call a live
+registry or prove that the supplied catalog is complete or associated with that
+index. A caller-supplied subset remains a caller claim, even when self-consistent.
+The future acquisition owner must authenticate the complete catalog and its
+association elsewhere. Snapshot metadata shares the native constructors, so
+descriptor kinds govern rooms even for misleading filenames; native descriptor
+scope and optional source ID remain present, while legacy mode invents neither.
+
+All captured domains share the existing detached expected-ID read, exact response
+membership validation and unchanged complete two-pass wing scanner. Expected
+rows in the selected wing must agree with the complete observed cohort. Extras
+come from those same complete rows, without another bounded query. The budget is
+an operational observation bound, independent of element ID spelling or numeric
+capacity; an overflow or changing cohort returns unavailable. The native artifact
+classifier still owns metadata, hash, lifecycle, malformed expected rows,
+sorted/deduplicated lists and counts. Duplicate and historical extras retain
+native warning semantics. Native RE reports omit the generic historical list
+while retaining its effect on status; the graph's separate returned-RE report
+projection continues to filter issues to its selected drawers.
+
+`MemPalaceContext` remains the sole configuration authority. Equal bounded scans
+provide no storage lease, revision evidence, semantic approval or publication
+authority. Physical/configuration provenance, authenticated aggregate source and
+catalog selection, identity lifecycle, source/graph publication and recovery,
+bounded repair, legacy writer exclusion and final rollout checkpoints remain
+with their existing owners. Original disk read/resolve/hash order, bounded native
+extras policy, canonical audit behavior and scanner/retarget behavior are retained.
+Historical IDs and evidence are not relabeled, and no identity failure is waived
+in banzai or any other mode.
 
 ## Focused verification
 
