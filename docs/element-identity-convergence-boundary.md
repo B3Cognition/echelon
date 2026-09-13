@@ -72,6 +72,33 @@ existing tests; deferring activation does not justify deleting regression covera
 
 ## Delivery phase: original work still to close
 
+### User scope correction: legacy build entry is excluded
+
+The user explicitly excluded legacy `echelon build` from convergence after the
+documentation checkpoint. Do not alias it to `echelon delivery run`, migrate its
+native command, or clean up its legacy orchestration recipe merely to satisfy
+the earlier entry-point checklist. Preserve its current behavior and admission
+guard. Earlier references below to public/native build migration are historical
+scope, superseded by this decision.
+
+Convergence now targets the active controlled `echelon delivery run` path and
+the prose it actually consumes. The coordinator already bypasses the legacy
+build prompt when `delivery_gate_controller` is enabled; its internal canonical
+`echelon build` strategy label is not an invocation of the legacy CLI and does
+not need renaming. Feature-off delivery still uses the legacy prompt; excluding
+the legacy command does not authorize a default cutover or removal of that path.
+
+Next acceptance work is the active controlled prompt/companion ownership audit
+and remaining delivery integration evidence, followed by the separately gated
+bundle/rollout milestone. Update ownership guidance only to describe verified
+active behavior. No entry alias, additional controller or identity activation is
+needed for this scope correction.
+
+The existing focused regression
+`test_coordinator_trial_does_not_load_legacy_manager_command` passed (1 test in
+0.26s) after read-only inspection of the coordinator boundary. Only scope records
+changed; no CLI/runtime/prose behavior or rollout setting changed.
+
 The [original delivery design](superpowers/specs/2026-09-11-delivery-controller-ownership-design.md)
 has implemented opt-in command loading, sequential slice gates and durable
 recovery. Its original phase 4 remains necessary, not newly added scope:

@@ -134,6 +134,15 @@ inspection, not deleting a journal or retrying until it passes.
 
 ### Phase 4: entry points, finalization, and prose migration
 
+**Subsequent user scope correction:** legacy `echelon build`, including its
+native command and legacy recipe, is excluded from convergence. Do not turn it
+into a delivery alias or require its migration to close the active controlled
+delivery work. Preserve existing legacy behavior and the raw-entry admission
+guard. The public-build migration requirement below is superseded for that
+legacy entry; ownership audits apply to the active controlled `delivery run`
+path and its consumed prose. This does not authorize default cutover, removal of
+feature-off delivery, or renaming its internal canonical strategy command label.
+
 Move documentation/finalization routing to explicit controller steps. Resolve
 output ownership per step and publish validated reports through their owning
 controller. Route public build entry points through the controller; a raw
