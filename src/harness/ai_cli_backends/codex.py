@@ -551,6 +551,8 @@ def _run_screened_process(
             isinstance(item, dict) and item.get("type") == "error"
         ):
             failure_reason = failure_reason or "provider_event_failure"
+            if event_type == "turn.failed" and "usage" in event:
+                usage.add_modern(event["usage"])
             usage.fail_modern()
         if isinstance(item, dict) and item.get("type") in {
             "command_execution",

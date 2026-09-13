@@ -14,6 +14,7 @@ import pytest
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, ReviewTriageBackend
 from harness.ai_cli_backends.claude import ClaudeCliBackend
+from harness.ai_cli_backends.claude_triage import prepare_claude_triage_request
 from harness.ai_cli_backends.codex import CodexCliBackend
 from harness.config import HarnessConfig, LlmConfig
 from harness.llm_provider import AICodingCliProvider
@@ -469,8 +470,8 @@ def test_triage_rejects_malformed_or_missing_final_records(
     [
         (
             "codex",
-            b'{"type":"turn.failed"}\n'
-            b'{"type":"turn.completed","usage":{"input_tokens":9,"output_tokens":3}}\n',
+            b'{"type":"turn.failed","usage":'
+            b'{"input_tokens":9,"output_tokens":3}}\n',
             12,
         ),
         (
@@ -604,4 +605,86 @@ def test_failed_claude_triage_retains_usage_reported_before_error_result(
 
     assert result.exit_code == 125
     assert result.token_usage == 13
+    assert result.metadata["token_usage_status"] == "untrusted"
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file(),
+    reason="requires macOS sandbox-exec",
+)
+def test_claude_triage_real_sandbox_allows_only_private_runtime_and_auth_reads(
+    tmp_path,
+) -> None:
+    invocation = tmp_path / "invocation"
+    invocation.mkdir()
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir()
+    (auth_dir / ".credentials.json").write_text("synthetic credential\n")
+    product = tmp_path / "product"
+    product.mkdir()
+    product_secret = product / "source.py"
+    product_secret.write_text("sensitive product source\n")
+    product_write = product / "model-write.txt"
+    request = replace(
+        _request(invocation),
+        env={"CLAUDE_CONFIG_DIR": str(auth_dir), "PATH": "/usr/bin:/bin"},
+    )
+    prepared = prepare_claude_triage_request(
+        "/bin/sh", request, tool_policy=LlmToolPolicy()
+    )
+    profile = prepared.command[2]
+    probe = """
+if IFS= read -r value < "$1"; then auth=1; else auth=0; fi
+if IFS= read -r value < "$2"; then product=1; else product=0; fi
+if IFS= read -r value < /etc/passwd; then host=1; else host=0; fi
+if printf changed > "$3"; then write=1; else write=0; fi
+printf '%s%s%s%s' "$auth" "$product" "$host" "$write"
+"""
+
+    result = subprocess.run(
+        [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            profile,
+            "/bin/sh",
+            "-c",
+            probe,
+            "sh",
+            str(auth_dir / ".credentials.json"),
+            str(product_secret),
+            str(product_write),
+        ],
+        cwd=invocation,
+        env=prepared.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1000"
+    assert not product_write.exists()
+
+
+def test_codex_lone_failed_turn_retains_its_usage_as_untrusted(
+    tmp_path, monkeypatch
+) -> None:
+    wire = (
+        b'{"type":"turn.failed","error":{"message":"synthetic"},'
+        b'"usage":{"input_tokens":9,"output_tokens":3}}\n'
+    )
+    result, _captured = _run_scripted_backend(
+        CodexCliBackend(_config("codex")),
+        _request(tmp_path),
+        monkeypatch,
+        wire,
+    )
+
+    assert result.exit_code == 125
+    assert result.token_usage == 12
+    assert result.metadata["token_usage_details"] == {
+        "input_tokens": 9,
+        "output_tokens": 3,
+        "total_tokens": 12,
+    }
     assert result.metadata["token_usage_status"] == "untrusted"

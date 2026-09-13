@@ -118,10 +118,11 @@ def prepare_claude_triage_request(
         raise _ClaudeTriageError("input_overflow")
 
     model = _MODEL_TIER_TO_CLAUDE_MODEL[tier]
+    env = _isolated_environment(_sanitized_environment(request.env), request.cwd)
     command = (
         isolation,
         "-p",
-        _sandbox_profile(request.cwd),
+        _sandbox_profile(request.cwd, bin_=bin_, environment=env),
         bin_,
         "-p",
         "--input-format",
@@ -149,7 +150,7 @@ def prepare_claude_triage_request(
     )
     return PreparedClaudeTriageRequest(
         command=command,
-        env=_sanitized_environment(request.env),
+        env=env,
         prompt_bytes=prompt_bytes,
     )
 
@@ -254,25 +255,109 @@ def _sanitized_environment(environment: object) -> dict[str, str]:
     return sanitized
 
 
-def _sandbox_profile(cwd: str) -> str:
-    quoted = json.dumps(str(Path(cwd).resolve()))
-    outside_invocation = " ".join(
-        (f"(require-not (literal {quoted}))", f"(require-not (subpath {quoted}))")
+def _isolated_environment(environment: dict[str, str], cwd: str) -> dict[str, str]:
+    isolated = dict(environment)
+    runtime_root = str(Path(cwd).resolve())
+    isolated["TMPDIR"] = runtime_root
+    isolated["XDG_CACHE_HOME"] = str(Path(runtime_root, ".cache"))
+    isolated["XDG_CONFIG_HOME"] = str(Path(runtime_root, ".config"))
+    return isolated
+
+
+def _sandbox_profile(
+    cwd: str,
+    *,
+    bin_: str,
+    environment: Mapping[str, str],
+) -> str:
+    runtime_root = str(Path(cwd).resolve())
+    executable_paths = _executable_paths(bin_, environment)
+    credential_path = _claude_credentials_path(environment)
+    read_literals = (
+        "/",
+        "/dev/null",
+        "/dev/random",
+        "/dev/urandom",
+        "/private/etc/hosts",
+        "/private/etc/resolv.conf",
+        *executable_paths,
+        credential_path,
+    )
+    read_subpaths = (
+        "/usr/lib",
+        "/usr/share/icu",
+        "/System/Library/Frameworks/CoreFoundation.framework",
+        "/System/Library/Frameworks/Security.framework",
+        "/private/var/db/dyld",
+        "/private/etc/ssl",
+        runtime_root,
+    )
+    read_exclusions = [
+        f"(require-not (literal {json.dumps(path)}))" for path in read_literals
+    ]
+    read_exclusions.extend(
+        exclusion
+        for path in read_subpaths
+        for exclusion in (
+            f"(require-not (literal {json.dumps(path)}))",
+            f"(require-not (subpath {json.dumps(path)}))",
+        )
+    )
+    write_exclusions = " ".join(
+        (
+            f"(require-not (literal {json.dumps(runtime_root)}))",
+            f"(require-not (subpath {json.dumps(runtime_root)}))",
+        )
     )
     return "\n".join(
         (
             "(version 1)",
-            "(deny default)",
-            "(allow process*)",
-            f"(allow file-read* (require-all {outside_invocation}))",
-            f"(allow file-write* (require-all {outside_invocation}))",
-            f"(allow file-read-metadata (literal {quoted}))",
-            "(allow network*)",
-            "(allow sysctl-read)",
-            "(allow mach-lookup)",
-            "(allow ipc-posix*)",
+            "(allow default)",
+            f"(deny file-read* (require-all {' '.join(read_exclusions)}))",
+            f"(deny file-write* (require-all {write_exclusions}))",
         )
     )
+
+
+def _executable_paths(
+    bin_: str, environment: Mapping[str, str]
+) -> tuple[str, ...]:
+    located = shutil.which(bin_, path=environment.get("PATH"))
+    candidate = located or bin_
+    path = Path(candidate)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    lexical = str(path.absolute())
+    resolved = str(path.resolve(strict=False))
+    return tuple(dict.fromkeys((lexical, resolved)))
+
+
+def _claude_credentials_path(environment: Mapping[str, str]) -> str:
+    raw_config_dir = environment.get("CLAUDE_CONFIG_DIR")
+    if raw_config_dir is not None:
+        config_dir = Path(raw_config_dir).expanduser()
+        if not config_dir.is_absolute():
+            raise _ClaudeTriageError("invalid_request")
+    else:
+        raw_home = environment.get("HOME")
+        home = Path(raw_home).expanduser() if raw_home else Path.home()
+        if not home.is_absolute():
+            raise _ClaudeTriageError("invalid_request")
+        config_dir = home / ".claude"
+    credential_path = config_dir / ".credentials.json"
+    _reject_symlink_components(credential_path)
+    return str(credential_path.resolve(strict=False))
+
+
+def _reject_symlink_components(path: Path) -> None:
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            if current.is_symlink():
+                raise _ClaudeTriageError("invalid_request")
+        except OSError:
+            raise _ClaudeTriageError("invalid_request") from None
 
 
 def _parse_claude_triage_capture(
