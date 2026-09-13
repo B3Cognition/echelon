@@ -387,6 +387,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   remain shared. Tests expose an extra record beyond the legacy scan window.
   This is an observation, not source/configuration provenance, a storage lease,
   identity revision approval or managed publication authority.
+- Captured evidence and RE memory audits: implemented in `0768a2ac` and
+  independently approved with no findings. Seven-module covering suite:
+  821 passed. Both inactive paths share complete detached acquisition and native
+  classification, retain evidence's landed default, and validate explicit RE
+  catalog/legacy selection before acquisition. Tests bind actual native plans
+  to captured bytes without source rereads or storage writes. All three memory
+  domains now have captured observation paths, not authenticated aggregate
+  source/catalog/configuration ownership, revision approval or publication.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
