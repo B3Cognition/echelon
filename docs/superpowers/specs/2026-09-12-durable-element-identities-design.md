@@ -336,6 +336,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   observations are detached and byte-coherent, with real native-registry and
   retained-history composition fixtures. Physical registry admission and source
   selection remain outside the pure function; no live publication is enabled.
+- Captured identity graph assembly: implemented in `7a2c2d4b` and independently
+  reviewed with no findings. Eight-module covering suite: 712 passed. One shared
+  projected-byte table feeds local, memory and RE transformations before retained
+  history projection; full native rendered comparisons preserve stable keys and
+  old evidence revision bindings. Real guarded source publication matches the
+  predicted images and derived graph, but the graph itself is not yet sealed or
+  published by this function. Complete acquisition and publication remain required.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
