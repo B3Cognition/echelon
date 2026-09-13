@@ -193,6 +193,29 @@ remaining native-entry/prose work, rollout and installed-bundle acceptance remai
 separate; no deferred identity feature was activated. Do not claim all active
 delivery prompts are clean.
 
+### Production PR-review re-entry checkpoint (2026-09-13)
+
+The next bounded acceptance exercises the real coordinator, PR review loop,
+neutral triage/composer, canonical publisher, Ralph and controlled role gates in
+a temporary workspace. Its preceding controlled slice and retained journal are
+real; the preceding authoritative verification checkpoint is seeded. It covers
+only the newly published review evidence/task scope, an interrupted repair and
+restart, independent gate blocking in all three modes, both provider facades,
+and accepted-slice replay at the authoritative-verification entry boundary.
+
+This exposed triage usage held only in coordinator memory: interruption during
+repair lost that usage on restart. The opt-in coordinator now persists cumulative
+usage before re-entry, preserving Ralph's existing baseline/delta accounting and
+budget admission. No role prose, provider adapter, identity feature, fulfillment
+flow or developer instruction file is changed. Feature-off accounting is unchanged.
+
+These checks do not establish completion of the entire review-fix batch or its
+post-verification PR effects. External coding backends, Prosaic inspection, and
+Git/PR service interfaces are scripted. Authoritative verification is not given
+a fabricated passing result; accepted-path testing stops at its invocation.
+See the ownership audit for verification results. Installed/live acceptance,
+rollout and the remaining ownership work remain separate.
+
 ## Verification and limits
 
 The boundary review used Git deltas, source/caller inspection, and a static Python

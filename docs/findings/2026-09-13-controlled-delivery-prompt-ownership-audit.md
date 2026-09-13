@@ -254,3 +254,46 @@ feedback and slice-runner suites passed 49 tests in 15.50s. The review-route
 evidence claim above was also narrowed. Scoped re-review accepted both corrections
 with no remaining or newly introduced findings. This is bounded-checkpoint
 acceptance, not whole-branch merge or live-provider acceptance.
+
+## Production PR-review → controlled repair re-entry (2026-09-13)
+
+`tests/integration/test_controlled_review_reentry.py` now follows the production
+coordinator through the real PR review loop, neutral Prosaic triage/composer,
+publisher, Ralph and controlled slice runner. It starts with real initial slice
+receipts/progress and a seeded preceding authoritative-verification checkpoint.
+Only external coding backends, Prosaic inspection and Git/PR service interfaces
+are scripted. Local initial candidate commits are real. No runtime reads of
+developer AGENTS.md/CLAUDE.md are introduced or tested as product behavior.
+
+The first consuming restart test failed with 121 tokens instead of 129: the
+initial 100 and repair's 21 were retained, but triage's 8 were only in coordinator
+memory. The opt-in coordinator now checkpoints cumulative usage before invoking
+repair. Ralph's existing re-entry baseline excludes that already-accounted usage
+from the implementation delta. Uninterrupted and restarted runs count it once;
+triage also consumes the repair admission budget. This is not a new accounting
+framework or a migration of old undercounted records.
+
+The acceptance matrix checks both Claude/Codex facades and banzai/semi/guided
+gate blocking, no repeated completed role dispatch after interruption, only
+published task scope and current artifact evidence, pending unrelated work left
+untouched, and no early PR resolution/re-review side effects. A separate accepted
+path runs all four roles, applies the first review task's progress, and reaches
+authoritative verification; replay reaches the same boundary without redispatch
+or extra usage. It deliberately stops there rather than manufacturing verifier,
+fulfillment or finalization success. It does not establish the full three-task
+batch's verified completion or post-verification effects, and does not close
+installed-bundle/live-provider acceptance or broader convergence.
+
+Verification: 16 new acceptance cases and the surrounding coordinator, review
+loop, review publisher, controlled integration, source-feedback and slice-recovery
+suites passed together: **235 passed in 46.20s**. The uninterrupted/restarted
+matrix and low-budget cases exercise exact-once accounting after triage returns
+to the coordinator; they do not establish crash-safe accounting inside an
+unfinished triage/publication call. No install, live model, push, merge or rollout
+was performed.
+
+Independent read-only review accepted this bounded checkpoint with no important
+correctness or regression findings. It confirmed the cumulative/delta accounting
+and noted that accepted verification-entry replay is banzai-only; all-mode
+coverage is the interrupted/uninterrupted blocked-gate path. The reviewer did
+not duplicate the verification suites.

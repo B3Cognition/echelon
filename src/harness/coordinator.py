@@ -1773,6 +1773,17 @@ class StrategyCoordinator:
                             )
                         review_iterations += review_result.iterations
                         review_tokens += review_result.tokens_used
+                        if self._config.llm.features.get("delivery_gate_controller") is True:
+                            # Ralph may be interrupted during the queued repair.
+                            # Its durable baseline must already include triage;
+                            # the re-entry delta below excludes that baseline.
+                            current = state_store.read()
+                            state_store.transition(current["status"], updates={
+                                "tokens_used": max(
+                                    current.get("tokens_used", 0),
+                                    implementation_tokens + visual_tokens + review_tokens,
+                                ),
+                            })
                         if review_result.status != "review_fix_queued":
                             return RepairAttempt(
                                 output={
