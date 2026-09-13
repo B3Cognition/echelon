@@ -405,6 +405,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   remains. This is not positive managed retarget/rewind, concurrent enrollment
   exclusion or complete direct-writer coverage. Initial covering failures and
   narrowly authorized fixture corrections remain documented in the phase report.
+- Direct managed-spec memory/evidence exclusion: implemented in `5bb18aa8`,
+  with real-miner and owner-specific alias controls strengthened in `ac34c599`
+  after independent review. Seven-module covering suite: 595 passed; final
+  amended test module: 29 passed. Fresh scoped re-review addressed both test
+  findings with no new issues. Six direct legacy owners refuse retained managed
+  spec witnesses before backend acquisition, cleanup, evidence publication or
+  retarget-memory receipts. Native per-spec batch partial behavior and unrelated
+  legacy writes remain. This is not managed mining/publication, an enrollment
+  lease, complete command/low-level writer coverage or live activation.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
