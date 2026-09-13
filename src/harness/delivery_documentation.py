@@ -18,11 +18,10 @@ from harness.documentation_gate import evaluate_documentation_gate, validate_doc
 from harness.docs_verifier import _report_markdown, verify_docs
 from harness.durable_json import write_text_atomic
 from harness.llm_build_runner import _containment_policy_env
-from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.provider_workspace_scope import _CONTROL_PLANE_PATHS
 from harness.runnability_contract import load_runnability_contract, runnability_contract_sha256
-from harness.runnability_evidence import RunnabilityEvidenceRef, validate_runnability_report
+from harness.runnability_evidence import RunnabilityEvidenceRef, validate_runnability_report, runnability_product_fingerprint
 from kernel.task_contract import parse_task_rows
 
 
@@ -100,6 +99,39 @@ def _evidence_context(ref):
             "latest": _images(ref.path.parent, ("latest.json",))["latest.json"]}
 
 
+def _validate_current_runnability(ref, worktree, spec_dir):
+    contract = load_runnability_contract(worktree)
+    validation = validate_runnability_report(ref,
+        candidate_commit=ref.candidate_commit,
+        candidate_fingerprint=runnability_product_fingerprint(worktree, spec_dir),
+        contract_hash=runnability_contract_sha256(contract) if contract else "", stack_hash=ref.stack_hash)
+    if not validation.valid:
+        raise DeliverySliceError("documentation_runnability_evidence_stale: " + validation.reason)
+
+
+def reviewed_runnability_checkpoint(*, worktree, spec_dir, evidence_root, operation_id):
+    """Read-only proof for Ralph's final reuse of the exact reviewed receipt."""
+    _images(Path(spec_dir), REPORTS)
+    worktree, spec_dir = Path(worktree).resolve(strict=True), Path(spec_dir).resolve(strict=True)
+    with DeliverySliceJournal(evidence_root, operation_id, validator=validate_journal) as journal:
+        data = journal.load(required=True)
+        publication = data["publication"]
+        if not publication or publication["complete"] is not True or not data["checkpoints"]:
+            raise DeliverySliceError("documentation reviewed runnability checkpoint missing")
+        if (_source_fingerprint(worktree, spec_dir) != data["source_fingerprint"]
+                or _documentation_candidate_fingerprint(worktree, spec_dir) != data["records"][-1]["candidate_after"]
+                or _images(spec_dir, REPORTS) != publication["after"]):
+            raise DeliverySliceError("delivery_reconciliation_required: reviewed documentation candidate changed")
+        checkpoint = data["checkpoints"][-1]
+        if checkpoint["status"] != "complete":
+            raise DeliverySliceError("documentation runnability checkpoint incomplete")
+        ref = RunnabilityEvidenceRef.from_mapping(checkpoint["evidence_after"]["reference"])
+        if _evidence_context(ref) != checkpoint["evidence_after"]:
+            raise DeliverySliceError("delivery_reconciliation_required: reviewed runnability evidence changed")
+        _validate_current_runnability(ref, worktree, spec_dir)
+        return ref
+
+
 class DeliveryDocumentationRunner:
     def __init__(self, executor, project_dir: Path):
         self._executor, self._project_dir = executor, Path(project_dir)
@@ -108,7 +140,8 @@ class DeliveryDocumentationRunner:
             allowed_task_ids: set[str] | None = None, feedback: str = "", changed_files: list[str] | None = None,
             runnability_report: RunnabilityEvidenceRef | None = None, runnability_required: bool = False,
             containment_policy_file: str | None = None, token_budget: float | None = None,
-            operation_id: str = "active", journal_required: bool = False, on_journal_ready=None, stop_requested=None) -> BuildResult:
+            operation_id: str = "active", journal_required: bool = False, on_journal_ready=None, stop_requested=None,
+            runnability_checkpoint=None) -> BuildResult:
         start, data, dispatches = time.monotonic(), None, 0
         stack = ExitStack()
         def outcome(reason, success=False):
@@ -117,7 +150,8 @@ class DeliveryDocumentationRunner:
             return BuildResult(exit_code=0 if success else 1, status="done" if success else "blocked", impasse_file=None,
                                stdout="", stderr="", reason=reason, duration_ms=int((time.monotonic()-start)*1000),
                                token_usage=usage, task_ids=[], provider_invocation={"delivery_documentation": data["run_id"] if data else "",
-                                                                                "dispatches": dispatches, "token_usage": usage})
+                                                                                "dispatches": dispatches, "token_usage": usage,
+                                                                                "runnability_reviewed": bool(success and data and data["checkpoints"])})
         try:
             if getattr(self._executor, "supports_read_only_review", False) is not True:
                 raise DeliverySliceError("unsupported_read_only_boundary")
@@ -154,7 +188,10 @@ class DeliveryDocumentationRunner:
                 if role is None or role.frontmatter.get("name") != name or not role.body.strip():
                     raise DeliverySliceError(f"missing or invalid delivery role: {name}")
                 roles[step] = role
-            evidence = _evidence_context(runnability_report)
+            journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id, validator=validate_journal))
+            data = journal.load(required=journal_required)
+            provided_evidence = _evidence_context(runnability_report)
+            evidence = data["authoring_evidence"] if data else provided_evidence
             if runnability_required and runnability_report is None:
                 raise DeliverySliceError("documentation_runnability_evidence_missing")
             source = _source_fingerprint(worktree, spec_dir)
@@ -162,27 +199,31 @@ class DeliveryDocumentationRunner:
             fingerprint = _digest(context)
             binding = _digest({"worktree": str(worktree), "spec_dir": str(spec_dir), "task_ids": scope,
                                "feedback": feedback, "required": runnability_required, "policy": policy_content,
+                               "checkpoint_required": runnability_checkpoint is not None,
                                "roles": {step: {"body": role.body, "metadata": role.frontmatter} for step, role in roles.items()}})
-            journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id, validator=validate_journal))
-            data = journal.load(required=journal_required)
             if data is None:
                 if runnability_report is not None:
-                    contract = load_runnability_contract(worktree)
-                    validation = validate_runnability_report(runnability_report,
-                        candidate_commit=runnability_report.candidate_commit,
-                        candidate_fingerprint=product_evidence_fingerprint(worktree),
-                        contract_hash=runnability_contract_sha256(contract) if contract else "",
-                        stack_hash=runnability_report.stack_hash)
-                    if not validation.valid:
-                        raise DeliverySliceError("documentation_runnability_evidence_stale: " + validation.reason)
-                data = {"schema_version": 1, "run_id": uuid4().hex, "binding": binding, "input_fingerprint": fingerprint,
+                    _validate_current_runnability(runnability_report, worktree, spec_dir)
+                data = {"schema_version": 2, "run_id": uuid4().hex, "binding": binding, "input_fingerprint": fingerprint,
                         "source_fingerprint": source, "candidate_fingerprint": _documentation_candidate_fingerprint(worktree, spec_dir),
                         "budget_limit": token_budget, "task_ids": scope, "records": [], "publication": None,
+                        "authoring_evidence": evidence, "checkpoints": [],
                         "reports_before": _images(spec_dir, REPORTS), "docs_before": _images(worktree, DOCS)}
                 journal.save(data)
             if on_journal_ready: on_journal_ready()
             if data["binding"] != binding or data["input_fingerprint"] != fingerprint or data["source_fingerprint"] != source:
                 raise DeliverySliceError("delivery_reconciliation_required: documentation inputs changed")
+            checkpoints = data["checkpoints"]
+            if checkpoints:
+                if checkpoints[-1]["status"] != "complete":
+                    raise DeliverySliceError(checkpoints[-1]["error"] or "delivery_reconciliation_required: runnability checkpoint completion is unknown")
+                evidence = checkpoints[-1]["evidence_after"]
+                context = {"specification": inputs, "runnability": evidence, "changed_files": changed_files}
+                fingerprint = _digest(context)
+                if fingerprint != checkpoints[-1]["input_fingerprint"]:
+                    raise DeliverySliceError("invalid documentation checkpoint input binding")
+            if provided_evidence != evidence:
+                raise DeliverySliceError("delivery_reconciliation_required: current documentation evidence changed")
             if data["budget_limit"] is not None:
                 token_budget = min(token_budget, data["budget_limit"]) if token_budget is not None else data["budget_limit"]
             if token_budget != data["budget_limit"]:
@@ -191,10 +232,10 @@ class DeliveryDocumentationRunner:
             records = data["records"]
             expected_candidate = records[-1]["candidate_after"] if records else data["candidate_fingerprint"]
 
-            def guard(*, check_budget=True):
+            def guard(*, check_budget=True, check_evidence=True):
                 if stop_requested and stop_requested(): raise DeliverySliceError("delivery_documentation_cancelled")
                 if (_source_fingerprint(worktree, spec_dir) != source or _documentation_inputs(spec_dir, self._project_dir) != inputs
-                        or _evidence_context(runnability_report) != evidence
+                        or check_evidence and _evidence_context(runnability_report) != evidence
                         or containment_policy_file and Path(containment_policy_file).read_text() != policy_content):
                     raise DeliverySliceError("delivery_reconciliation_required: documentation inputs changed")
                 current = _images(spec_dir, REPORTS)
@@ -228,6 +269,34 @@ class DeliveryDocumentationRunner:
                         baseline = []
                         review_context = {}
                         if step == "docs_verifier":
+                            if runnability_report is not None and runnability_checkpoint is None:
+                                raise DeliverySliceError("documentation_runnability_checkpoint_missing")
+                            if runnability_checkpoint is not None and runnability_report is not None and len(checkpoints) <= attempt:
+                                checkpoint = {"attempt": attempt, "candidate_fingerprint": expected_candidate,
+                                    "evidence_before": evidence, "evidence_after": None, "input_fingerprint": None,
+                                    "status": "pending", "error": None}
+                                checkpoints.append(checkpoint)
+                                journal.save(data)  # Durable intent before running the external journey.
+                                try:
+                                    checkpoint_evidence = _tree_fingerprint(evidence_root)
+                                    refreshed = runnability_checkpoint()
+                                    if _tree_fingerprint(evidence_root) != checkpoint_evidence:
+                                        raise DeliverySliceError("documentation checkpoint journal mutated")
+                                    guard(check_evidence=False)
+                                    if not isinstance(refreshed, RunnabilityEvidenceRef):
+                                        raise DeliverySliceError("documentation runnability refresh did not return evidence")
+                                    _validate_current_runnability(refreshed, worktree, spec_dir)
+                                    runnability_report = refreshed
+                                    evidence = _evidence_context(refreshed)
+                                    context = {"specification": inputs, "runnability": evidence, "changed_files": changed_files}
+                                    fingerprint = _digest(context)
+                                    checkpoint.update(status="complete", evidence_after=evidence, input_fingerprint=fingerprint)
+                                    journal.save(data)
+                                except (ValueError, OSError, RuntimeError, TypeError, AttributeError, KeyError) as exc:
+                                    checkpoint.update(status="failed", error=str(exc), evidence_after=None, input_fingerprint=None)
+                                    journal.save(data)
+                                    raise
+                                guard()
                             impact = records[-1]["result"]["report_markdown"]
                             write_text_atomic(stage / REPORTS[0], impact, trusted_root=journal.root)
                             deterministic = verify_docs(worktree, stage, changed_files=changed_files, runnability_report=runnability_report)

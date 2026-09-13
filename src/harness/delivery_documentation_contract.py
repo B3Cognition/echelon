@@ -125,9 +125,10 @@ def validate_result(raw, assignment):
 def validate_journal(data):
     _require(len(json.dumps(data).encode()) <= 2_000_000, "documentation journal exceeds size limit")
     fields = {"schema_version", "run_id", "binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint",
-              "budget_limit", "task_ids", "records", "reports_before", "docs_before", "publication"}
+              "budget_limit", "task_ids", "records", "reports_before", "docs_before", "publication",
+              "authoring_evidence", "checkpoints"}
     _require(isinstance(data, dict) and set(data) == fields and type(data["schema_version"]) is int
-             and data["schema_version"] == 1, "invalid documentation journal schema")
+             and data["schema_version"] == 2, "invalid documentation journal schema")
     _require(isinstance(data["run_id"], str) and bool(data["run_id"]), "invalid documentation run identity")
     for field in ("binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint"):
         _require(_fingerprint(data[field]), "invalid documentation fingerprint")
@@ -141,16 +142,50 @@ def validate_journal(data):
                  "invalid documentation before-image size")
     records = data["records"]
     _require(isinstance(records, list) and len(records) <= 6, "invalid documentation receipt count")
+    checkpoints = data["checkpoints"]
+    _require(isinstance(checkpoints, list) and len(checkpoints) <= 3, "invalid documentation checkpoints")
+    previous_evidence = data["authoring_evidence"]
+    _validate_evidence_context(previous_evidence)
+    for attempt, checkpoint in enumerate(checkpoints):
+        _require(isinstance(checkpoint, dict) and set(checkpoint) == {
+            "attempt", "candidate_fingerprint", "evidence_before", "evidence_after", "input_fingerprint", "status", "error"},
+            "invalid documentation checkpoint")
+        _require(type(checkpoint["attempt"]) is int and checkpoint["attempt"] == attempt
+                 and checkpoint["evidence_before"] == previous_evidence and previous_evidence is not None,
+                 "invalid documentation evidence transition")
+        writer_index = attempt * 2
+        _require(writer_index < len(records) and records[writer_index].get("result") is not None
+                 and records[writer_index]["result"].get("verdict") == "DONE"
+                 and checkpoint["candidate_fingerprint"] == records[writer_index].get("candidate_after"),
+                 "checkpoint requires accepted authoring receipt")
+        if checkpoint["status"] == "complete":
+            _require(checkpoint["error"] is None and _fingerprint(checkpoint["input_fingerprint"])
+                     and checkpoint["evidence_after"] is not None, "invalid completed checkpoint")
+            _validate_evidence_context(checkpoint["evidence_after"])
+            previous_evidence = checkpoint["evidence_after"]
+        else:
+            _require(checkpoint["status"] in {"pending", "failed"}
+                     and checkpoint["evidence_after"] is None and checkpoint["input_fingerprint"] is None
+                     and len(records) == writer_index + 1 and len(checkpoints) == attempt + 1,
+                     "unresolved documentation checkpoint has later work")
+            _require((checkpoint["error"] is None if checkpoint["status"] == "pending"
+                      else isinstance(checkpoint["error"], str) and bool(checkpoint["error"])),
+                     "invalid checkpoint error")
     seen, candidate, terminal = set(), data["candidate_fingerprint"], False
+    input_fingerprint = data["input_fingerprint"]
     for index, record in enumerate(records):
         _require(not terminal and isinstance(record, dict) and set(record) == {
             "assignment", "repair_attempt", "result", "candidate_after", "token_usage", "error", "deterministic_findings", "gate_findings"},
             "invalid documentation receipt")
         assignment = record["assignment"]
+        if index % 2 and data["authoring_evidence"] is not None:
+            _require(index // 2 < len(checkpoints) and checkpoints[index // 2]["status"] == "complete",
+                     "review requires a completed documentation checkpoint")
+            input_fingerprint = checkpoints[index // 2]["input_fingerprint"]
         _require(isinstance(assignment, dict) and set(assignment) == IDENTITY, "invalid documentation assignment fields")
         _require(type(assignment["schema_version"]) is int and assignment["schema_version"] == 1
                  and assignment["step"] == STEPS[index % 2] and assignment["task_ids"] == scope
-                 and assignment["candidate_fingerprint"] == candidate and assignment["input_fingerprint"] == data["input_fingerprint"],
+                 and assignment["candidate_fingerprint"] == candidate and assignment["input_fingerprint"] == input_fingerprint,
                  "invalid documentation receipt chain")
         dispatch = assignment["dispatch_id"]
         _require(isinstance(dispatch, str) and bool(dispatch) and dispatch not in seen, "invalid documentation dispatch identity")
@@ -188,3 +223,18 @@ def validate_journal(data):
         _require(publication["after"] == {REPORTS[0]: records[-2]["result"]["report_markdown"],
                                          REPORTS[1]: records[-1]["result"]["report_markdown"]},
                  "documentation publication receipt mismatch")
+
+
+def _validate_evidence_context(evidence):
+    if evidence is None:
+        return
+    _require(isinstance(evidence, dict) and set(evidence) == {"reference", "report", "latest"},
+             "invalid captured runnability evidence")
+    ref = evidence["reference"]
+    _require(isinstance(ref, dict) and set(ref) == {
+        "path", "markdown_path", "receipt_sha256", "evidence_sha256", "candidate_commit",
+        "candidate_fingerprint", "contract_hash", "stack_hash", "status"}
+        and all(isinstance(value, str) for value in ref.values()) and ref["status"] == "runnable",
+        "invalid captured runnability reference")
+    _require(all(isinstance(evidence[key], str) and len(evidence[key].encode()) <= 100_000
+                 for key in ("report", "latest")), "invalid captured runnability content")

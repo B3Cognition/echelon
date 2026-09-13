@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from harness.durable_json import write_json_atomic
+from harness.product_inventory import product_evidence_fingerprint
 from harness.verification_evidence import (
     OUTPUT_TAIL_BYTES,
     redact_verification_text,
@@ -25,6 +26,24 @@ VALID_STATUSES = frozenset(
 VALID_LOCAL_JOURNEY_STATUSES = frozenset(
     {"not_required", "missing", "unverified", "passed", "failed"}
 )
+
+
+def runnability_product_fingerprint(worktree: Path, spec_dir: Path | None = None) -> str:
+    """Exclude only the resolved spec's two separately guarded generated reports."""
+    if spec_dir is None:
+        return product_evidence_fingerprint(worktree)
+    spec = Path(spec_dir)
+    if not spec.is_absolute() or spec.is_symlink() or any(parent.is_symlink() for parent in spec.parents):
+        raise ValueError("unsafe canonical documentation spec path")
+    spec = spec.resolve(strict=True)
+    if not spec.is_dir():
+        raise ValueError("canonical documentation spec is not a directory")
+    reports = tuple(spec / name for name in (
+        "documentation-impact-report.md", "docs-verification-report.md",
+    ))
+    if any(path.is_symlink() or path.exists() and not path.is_file() for path in reports):
+        raise ValueError("unsafe canonical documentation report path")
+    return product_evidence_fingerprint(worktree, excluded_roots=reports)
 
 
 @dataclass(frozen=True)

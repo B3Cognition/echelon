@@ -553,6 +553,7 @@ class CandidateEvidenceRunner:
             candidate_commit=candidate_commit,
             evidence_dir=evidence_dir,
             attempt_sequence=_next_runnability_attempt(evidence_dir),
+            spec_dir=spec_dir,
         )
         summary = _runnability_summary(result)
         if result.status == "runnable":

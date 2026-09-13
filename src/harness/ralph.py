@@ -88,6 +88,7 @@ from harness.runnability_evidence import (
     RunnabilityEvidenceRef,
     load_runnability_evidence_ref,
     validate_runnability_report,
+    runnability_product_fingerprint,
 )
 from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
 from harness.phase_a_readiness import validate_phase_a_readiness
@@ -2123,6 +2124,9 @@ class RalphController:
                     "changed_files": operation["changed_files"],
                     "runnability_report": runnability_ref,
                     "runnability_required": runnability_required,
+                    "runnability_checkpoint": (
+                        lambda: self._refresh_documentation_runnability(worktree)
+                    ) if runnability_ref is not None else None,
                 }
             else:
                 runner_options["repair_task_id"] = repair_task_id
@@ -2130,8 +2134,7 @@ class RalphController:
                 self._llm_provider, self._orchestration_root(worktree),
             ).run(
                 worktree=worktree, spec_dir=spec_dir,
-                evidence_root=self._state_store.state_dir / "delivery-slices" / hashlib.sha256(
-                    f"{self._strategy_id}:{state.get('run_id', '')}".encode()).hexdigest(),
+                evidence_root=self._delivery_operation_evidence_root(),
                 allowed_task_ids=scope, **runner_options,
                 feedback=prompt, stop_requested=lambda: self._interrupted or self.check_cancel(),
                 containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
@@ -2152,6 +2155,7 @@ class RalphController:
                 # The runner publishes both exact reports after durable review
                 # receipts. No canonical task progress belongs to this operation.
                 operation["progress_applied"] = True
+                operation["runnability_reviewed"] = result.provider_invocation.get("runnability_reviewed") is True
             elif result.succeeded and result.task_ids:
                 current["delivery_slice_task_id"] = result.task_ids[0]
                 operation["accepted_task_id"] = result.task_ids[0]
@@ -2792,6 +2796,27 @@ class RalphController:
         evidence_dir: Path,
     ) -> VerifyResult:
         """Require a fresh composed journey when resolved stacks demand it."""
+        operation = self._state_store.read().get("delivery_slice_operation")
+        if (verify_result.passed and self._config.llm.features.get("delivery_gate_controller") is True
+                and isinstance(operation, dict) and operation.get("kind") == "documentation"
+                and operation.get("progress_applied") is True and operation.get("runnability_reviewed") is True):
+            from harness.delivery_documentation import reviewed_runnability_checkpoint
+            try:
+                if operation.get("worktree_path") != str(Path(worktree_path).resolve()):
+                    raise ValueError("reviewed documentation worktree changed")
+                ref = reviewed_runnability_checkpoint(
+                    worktree=Path(worktree_path), spec_dir=self._find_existing_spec_dir(worktree_path),
+                    evidence_root=self._delivery_operation_evidence_root(), operation_id=operation["id"],
+                )
+                current, _ = self._controlled_documentation_runnability(Path(worktree_path), validate_candidate=True)
+                if current != ref:
+                    raise ValueError("reviewed runnability receipt is not the current controller receipt")
+            except (ValueError, OSError, RuntimeError, TypeError) as exc:
+                return self._runnability_failure(verify_result, failure_id="docs-runnability-evidence-stale",
+                                                error=str(exc), details={})
+            evidence = {**verify_result.verification_evidence, "runnability_evidence": ref.as_mapping()}
+            return VerifyResult(passed=True, failures=list(verify_result.failures), duration_s=verify_result.duration_s,
+                                token_usage=verify_result.token_usage, verification_evidence=evidence)
         gate = self._candidate_evidence_runner.apply_runnability(
             verify_result=verify_result,
             worktree=Path(worktree_path),
@@ -2917,7 +2942,7 @@ class RalphController:
         if controlled:
             from harness.delivery_slice import DeliverySliceError
             try:
-                runnability_ref, runnability_required = self._controlled_documentation_runnability(Path(worktree_path))
+                runnability_ref, runnability_required = self._controlled_documentation_runnability(Path(worktree_path), validate_candidate=True)
             except (DeliverySliceError, OSError) as exc:
                 return self._runnability_failure(
                     verify_result, failure_id="docs-runnability-evidence-stale",
@@ -2973,7 +2998,7 @@ class RalphController:
         )
 
     def _controlled_documentation_runnability(
-        self, worktree: Path,
+        self, worktree: Path, *, validate_candidate: bool = False,
     ) -> tuple[RunnabilityEvidenceRef | None, bool]:
         """Bind documentation to the current resolved stack and actual receipt."""
         from harness.delivery_slice import DeliverySliceError
@@ -2993,7 +3018,8 @@ class RalphController:
                 # The documentation runner validates the initial product and
                 # guards byte changes on replay. Its own document/report edits
                 # must not invalidate the captured runnability receipt here.
-                candidate_fingerprint=ref.candidate_fingerprint,
+                candidate_fingerprint=(runnability_product_fingerprint(worktree, self._find_existing_spec_dir(worktree))
+                                       if validate_candidate else ref.candidate_fingerprint),
                 contract_hash=runnability_contract_sha256(contract) if contract else "",
                 stack_hash=stack_hash,
             )
@@ -3002,6 +3028,29 @@ class RalphController:
         except (ValueError, RunnabilityContractError) as exc:
             raise DeliverySliceError(f"documentation_runnability_evidence_invalid: {exc}") from exc
         return ref, True
+
+    def _delivery_operation_evidence_root(self) -> Path:
+        state = self._state_store.read()
+        return self._state_store.state_dir / "delivery-slices" / hashlib.sha256(
+            f"{self._strategy_id}:{state.get('run_id', '')}".encode()).hexdigest()
+
+    def _refresh_documentation_runnability(self, worktree: Path) -> RunnabilityEvidenceRef:
+        """Execute the existing runnability owner at the journaled author checkpoint."""
+        from harness.delivery_slice import DeliverySliceError
+        gate = self._candidate_evidence_runner.apply_runnability(
+            verify_result=VerifyResult(True), worktree=worktree,
+            spec_dir=self._find_existing_spec_dir(worktree),
+            candidate_commit=_current_git_commit(worktree) or "", evidence_dir=self._runnability_evidence_dir(),
+        )
+        if gate.state_summary is not None:
+            self._record_user_runnability_state(gate.state_summary)
+        if not gate.verify_result.passed:
+            raise DeliverySliceError("documentation_runnability_refresh_failed: " + "; ".join(
+                f"{failure.id}: {failure.error}" for failure in gate.verify_result.failures))
+        ref, _ = self._controlled_documentation_runnability(worktree, validate_candidate=True)
+        if ref is None:
+            raise DeliverySliceError("documentation_runnability_refresh_missing")
+        return ref
 
     def _documentation_delivery_changes(
         self,

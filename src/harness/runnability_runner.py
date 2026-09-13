@@ -12,7 +12,7 @@ import uuid
 
 from harness.errors import NotSupportedError
 from harness.exec_result import ExecResult
-from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_evidence import runnability_product_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.runnability_contract import (
     LocalBoundaryProbe,
@@ -87,9 +87,10 @@ class RunnabilityRunner:
         candidate_commit: str,
         evidence_dir: Path,
         attempt_sequence: int,
+        spec_dir: Path | None = None,
     ) -> RunnabilityRunResult:
         worktree = worktree.expanduser().resolve(strict=True)
-        fingerprint_before = product_evidence_fingerprint(worktree)
+        fingerprint_before = runnability_product_fingerprint(worktree, spec_dir)
         contract_hash = runnability_contract_sha256(contract)
         stack_hash = resolved_stack_contract_sha256(resolved)
         user_commands = _user_commands(contract)
@@ -473,7 +474,7 @@ class RunnabilityRunner:
                         summary = str(exc)
                 stages.append(teardown)
 
-        fingerprint_after = product_evidence_fingerprint(worktree)
+        fingerprint_after = runnability_product_fingerprint(worktree, spec_dir)
         if fingerprint_after != fingerprint_before:
             status = "not_runnable"
             failed_stage = "candidate_integrity"

@@ -321,15 +321,8 @@ def test_documentation_downstream_feedback_respects_current_budget(documentation
 
 def test_runnability_receipt_survives_recovery_of_writer_owned_edits(documentation_project, tmp_path, monkeypatch):
     from harness.delivery_slice_journal import DeliverySliceJournal
-    from harness.product_inventory import product_evidence_fingerprint
-    from tests.unit.test_runnability_evidence import _write_report
-    controller, store, executor, root, spec = _setup(documentation_project, tmp_path)
-    _initialize_git_worktree(root)
-    ref = _write_report(tmp_path / "runnability", candidate_fingerprint=product_evidence_fingerprint(root),
-                        contract_hash="", stack_hash="")
-    state = store.read()
-    state["user_runnability"] = {"status": "runnable", "report": str(ref.path)}
-    store.write(state)
+    from tests.unit.test_delivery_documentation_checkpoint import _runnable_project
+    controller, store, executor, sandbox, root, spec, initial, ref = _runnable_project(documentation_project, tmp_path)
     original = DeliverySliceJournal.save
     def save(self, data):
         original(self, data)
@@ -338,10 +331,9 @@ def test_runnability_receipt_survives_recovery_of_writer_owned_edits(documentati
     with monkeypatch.context() as patch:
         patch.setattr(DeliverySliceJournal, "save", save)
         with pytest.raises(ProcessLost):
-            _feedback(controller, root)
+            _feedback(controller, root, initial)
     result = _build(_reconstruct(controller, store, executor), (root, spec, None))
-    # This fixture's README omits the runnability commands, so real validation
-    # must send it through review/repair until the existing ceiling blocks it.
-    assert result["build_reason"] == "delivery_documentation_repair_limit", result
-    assert executor.steps == ["tech_writer", "docs_verifier"] * 3
-    assert result["tokens"] == 42 and store.read()["tokens_used"] == 42
+    assert result["passed"], result
+    assert executor.steps == ["tech_writer", "docs_verifier"]
+    assert result["tokens"] == 14 and store.read()["tokens_used"] == 14
+    assert len(sandbox.created) == 2  # Initial receipt and the recovered post-author checkpoint.

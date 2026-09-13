@@ -194,6 +194,26 @@ def test_land_accepts_merge_only_commit_when_three_hashes_match(tmp_path: Path) 
 
     assert warning is None
 
+
+@pytest.mark.parametrize("changed", [None, "README.md", "specs/042-demo/spec.md", "other/docs-verification-report.md"])
+def test_land_runnability_excludes_only_resolved_generated_documentation_reports(tmp_path: Path, changed) -> None:
+    project, harness_root, _ = _ready_project_with_passing_runnability(tmp_path)
+    before = product_evidence_fingerprint(project)
+    spec = project / "specs/042-demo"
+    spec.mkdir(parents=True)
+    (spec / "documentation-impact-report.md").write_text("controller impact report")
+    (spec / "docs-verification-report.md").write_text("independently reviewed report")
+    if changed:
+        path = project / changed
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed actual product/spec input")
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "publish generated reports"], cwd=project, check=True, capture_output=True)
+    assert product_evidence_fingerprint(project) != before
+    warning = _runnability_warning("042-demo", project, harness_root=harness_root,
+                                   ref="HEAD", required=True, stack_hash="stack-1")
+    assert (warning is None) is (changed is None), warning
+
 def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
     tmp_path: Path,
 ) -> None:
