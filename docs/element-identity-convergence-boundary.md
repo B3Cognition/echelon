@@ -130,6 +130,27 @@ necessary lifecycle/projection/admin dependency. The missing producer protocol a
 semantic handoff need explicit implementation decisions; they must not silently
 become a second allocator/controller or a broader architecture.
 
+## Active prompt ownership audit after legacy exclusion
+
+The [2026-09-13 audit](findings/2026-09-13-controlled-delivery-prompt-ownership-audit.md)
+confirms the six controlled delivery roles use neutral, step-bound contracts and
+have no inlined phase companions. It also reproduces a remaining source-repair
+feedback conflict: inner/visual/review-requested repairs still receive a legacy
+completion-marker instruction alongside the controlled JSON-only contract.
+Generic failure details are lost in that legacy formatter. Documentation repair
+already uses structured evidence. Root AGENTS/CLAUDE ownership guidance is stale.
+
+Separate active limitations remain visible: fulfillment refresh embeds a
+model-sequenced mapper/judge workflow, and PR triage sequences diagnostic agents
+in prose and reads their profiles from `.claude/agents`. Neither was migrated by
+the controlled slice/documentation checkpoint. This audit does not prove they
+can be replaced by a prose-only edit or authorize a subsystem rewrite.
+
+Recommended next bounded correction is controlled source-feedback cleanup plus
+the narrow ownership-guidance update, pending approval of the reported changes.
+Do not claim all active delivery prompts are clean. No production/default/native
+entry behavior changed during this audit; no live provider or installation ran.
+
 ## Verification and limits
 
 The boundary review used Git deltas, source/caller inspection, and a static Python
