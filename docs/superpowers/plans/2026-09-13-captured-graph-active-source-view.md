@@ -1,0 +1,76 @@
+# Captured graph active source view implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Let the existing inactive captured graph assembler explicitly consume a run-local spec tree while preserving canonical graph identities and the original physical source manifest.
+
+**Architecture:** Add one optional source-tree selector to the existing assembler, not a second graph builder or source authority. Validate the complete raw projected observation first; use the selected tree with the existing spec-local transformation and a private canonical-name byte table for graph dependencies. No live caller is changed.
+
+**Tech Stack:** Existing immutable Python snapshot models and graph transformations, native memory planners, isolated SQLite/filesystem tests, pytest.
+
+**Spec:** `docs/superpowers/specs/2026-09-12-durable-element-identities-design.md`
+
+## Global Constraints
+
+- Work only in the existing delivery-controller-contract worktree; no global installation, main mutation, or stopped-smoke edits.
+- IDs travel through interfaces as strings.
+- Existing graph keys remain valid.
+- Historical evidence is retained, not relabeled as proof of the new content.
+- The physical source manifest remains unchanged; logical graph names do not become physical publication authority.
+- This opt-in pure adapter does not authenticate run ownership, source selection completeness, semantic approval or publication/completion.
+- No live controller, state, producer, provider, CLI, schema, codec, journal, memory writer or publication owner is changed or activated.
+
+---
+
+### Task 1: add an explicit run-local graph source view
+
+**Files:** Modify only `src/echelon/spec_graph_captured.py` and the focused storage documentation in `docs/element-identity-storage.md`; create `tests/unit/test_spec_graph_active_view.py`. Do not modify existing tests or other production modules. Root owns plan, brief and progress. Reuse existing owners; escalate if their contracts cannot support this scope.
+
+**Interface:** Extend the existing keyword-only function, retaining all existing arguments and return type:
+
+```python
+def build_captured_identity_graph(
+    *, spec_id: str, lifecycle: str, generator_version: str,
+    sources: ProjectedPublicationSources, policy_paths: tuple[str, ...],
+    memory: tuple[CapturedGraphMemory, ...],
+    re_artifacts: tuple[GraphReArtifact, ...], re_sources: tuple[GraphReSource, ...],
+    history: IdentityHistorySnapshot, spec_source_path: str | None = None,
+) -> SpecArtifactGraph:
+    ...
+```
+
+The signature is the contract, not permission to insert an ellipsis implementation. `None` uses exactly `specs/<spec_id>` and preserves the entire old behavior. An explicit exact canonical path behaves identically. The only other permitted form is exactly `runs/<one nonempty path component>/specs/<spec_id>`. Validate exact built-in str, UTF-8 and normalized project-relative syntax through the existing `_source_path` owner, plus this component layout. Do not normalize malformed spelling, infer a run, select by basename, accept arbitrary roots, validate current-run state or create a generic alias map. The run component has existing normalized physical-path syntax; this is not an assertion it is an authenticated run ID.
+
+**Raw validation and private view:** Keep exact existing `ProjectedPublicationSources`/nested validation and complete `snapshot_source_manifest(...) == sources.manifest` check before graph consumption. Select exactly one captured tree whose root equals the chosen physical path. Omission rejects even if canonical/another run/a parent tree contains plausible files. An explicitly selected missing tree and an explicitly selected empty tree retain native distinct physical observations; neither falls back to canonical bytes.
+
+The existing `build_spec_graph_structure(spec_id=..., tree=..., lifecycle=...)` already derives relative files and emits canonical graph paths from its validated tree. Pass the selected original physical tree directly; do not duplicate its parsing, construct a rebased physical manifest, or add another public snapshot carrier. For a run-local view only, remove original byte-table entries beneath the canonical spec root and the chosen physical root, then add each selected tree file under `specs/<spec_id>/<relative file path>`. Use component-aware ancestry, not string-prefix matching (`specs/demo-other` is not beneath `specs/demo`). The selected tree exclusively owns canonical logical spec bytes, including absence; no merging old canonical-only files. Leave unrelated captured RE/dependency bytes unchanged. All original trees/files, including ignored canonical/other-run hidden binary bytes, must remain fully validated before this filtering. Do not mutate any input or return a rebased manifest.
+
+All existing policy paths, memory source paths and native planned-row source names stay canonical/logical. Their content checks use this one private table. A supplied old canonical byte payload must reject when it differs from the active selected bytes, even though the old physical file is still captured. A supplied run-local memory/policy path must not acquire a second naming policy. Existing downstream validators continue to own domain/path/row/RE rules. The graph self-file remains excluded from graph inputs but remains an ordinary validated physical image. Existing bounded `SpecGraphError` normalization outside the handler and BaseException propagation remain unchanged.
+
+**First real RED:** Write `test_run_local_view_matches_canonical_graph_and_retains_history` before implementation. Use resolved tmp_path and explicitly request existing `secure_posix` fixture. Create a real IdentityStore, reserve `FR-000001`, establish `Movement` revision1, store an exact parsed evidence reference to revision1, then revise to2. Create old canonical `specs/demo/spec.md` and active `runs/spec-test/specs/demo/spec.md` with different old/new bytes, retained evidence, hidden binary and empty directory. Capture both physical roots through an actual immutable zero-operation seal and `inspect_sources`, then `project_publication_source_images`. Separately capture a canonical comparison fixture containing the active bytes and use the existing default assembler/native canonical planner/deterministic explicitly fixture-only audit to establish the complete expected graph. Independently assert stable requirement key, current revision2 and old evidence-to-revision1 edge before calling the new keyword. Require full rendered equality, not only digest/key equality. The new call should fail first because `spec_source_path` is not supported. Report actual RED before writing production code. No fake absent module, stub validator or live storage audit.
+
+```python
+expected = build_captured_identity_graph(**canonical_arguments)
+# Independent expected graph assertions precede the missing-keyword call.
+actual = build_captured_identity_graph(
+    **active_arguments, spec_source_path="runs/spec-test/specs/demo")
+assert render_spec_graph(actual) == render_spec_graph(expected)
+assert active_arguments["sources"] == retained_physical_sources
+```
+
+- [ ] Run the first RED using `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_spec_graph_active_view.py::test_run_local_view_matches_canonical_graph_and_retains_history -q` from this worktree and notify root of the actual result. Fix genuine fixture errors separately; never disguise them as feature RED.
+- [ ] Implement the smallest selector/private-table change in the existing assembler and rerun only that test to GREEN. Preserve the default API behavior and reuse the native local structure with the raw selected tree.
+- [ ] Add portable value-based selector cases: None and explicit canonical exact wire parity; valid selected run tree; absent selected tree despite canonical or another run; wrong spec, wrong layout/depth, arbitrary root, absolute/traversal/repeated/trailing separators, backslash, invalid UTF-8, non-str and str subclass rejection. Pure tests must not inherit a filesystem skip.
+- [ ] Add selected missing/empty cases with stale canonical files and no selected memory content: graph uses native empty canonical view and never pulls stale requirements/policies. Explicit requests for a canonical-only stale policy/memory source reject. Compare complete graph bytes to a real or explicitly value-based empty canonical expectation and retain original distinct physical manifest values.
+- [ ] Add no-blending and exact byte ownership cases: canonical-old spec differs from active, canonical-only artifact is ignored unless requested (then absent rejects), selected nested policy/evidence uses active bytes, old content rejected, physical run-local policy/memory spelling rejected by native naming constraints, canonical-prefix sibling not accidentally substituted. Keep native planned rows rather than mocking graph outputs.
+- [ ] Add native all-domain parity for run-local local/canonical/evidence input plus unchanged captured RE contributions. Reuse existing fixture builders as setup where appropriate, but compare complete rendered output and independently assert canonical Artifact/Requirement/drawer keys and preserved RE identities. Explicitly test selected graph self-file bytes changing a valid original physical manifest while not changing derived graph bytes.
+- [ ] Add damaged original raw observation cases before filtering: ignored old canonical bytes/hash, mode/layout, hidden binary, and stale/mismatched manifest reject. Recompute a self-consistent changed ignored canonical observation to show validation is coherence, not authority: it remains valid and cannot change the active derived graph. No claimed accepted-source or run-authentication gate.
+- [ ] Add deep ownership and purity checks: source snapshots/manifests and memory/history inputs unchanged; post-call mutation of caller-owned nested values cannot change the returned graph; captured graph call performs no Path read/open/write, filesystem inspection, SQLite acquisition, provider/miner/planner/audit acquisition. Set tripwires only around graph call, after real fixture setup. A process-control exception propagates, while ordinary malformed input keeps bounded error text with neither cause nor context.
+- [ ] Extend the real filesystem test or add one focused real publication case: seal an ordinary update to the active run-local spec while both canonical and active roots are selected, derive from projected active bytes, publish via existing `publish_sources` with no graph/provider callbacks, and compare actual final captured physical manifest to original projection plus full derived graph to the prior expected graph. Assert canonical bytes remain unchanged. This proves physical guarding/view composition, not graph sealing, managed enrollment or a production publisher gate.
+- [ ] Document the exact source selector and logical/physical distinction, supported path layout, no fallback, unchanged graph wire and legacy callers, and missing runtime ownership/promotion integration. No claim that copying a draft to canonical allocates or has already been wired to avoid duplicate revisions.
+- [ ] Self-review and run once the covering modules: `tests/unit/test_spec_graph_active_view.py`, `tests/unit/test_spec_graph_captured.py`, `tests/unit/test_spec_graph_structure.py`, `tests/unit/test_identity_graph_publication_composition.py`, `tests/unit/test_squad_source_projection_images.py`. Use the exact pytest executable/workdir above. No full-unit/capacity/live/global-install or unchanged postcommit reruns. Any later amendment receives named scoped checks and exact tested-tree chronology.
+- [ ] Diff-check, stage/commit only scoped production/new tests/storage docs, then retain the complete report separately with exact authorized report path. Include every actual run/failure/fixture correction, commands/output, RED/GREEN, pristine covering result, exact staged tested tree and any subsequent amendment. Root performs a fresh original-BASE task review. Do not edit root progress or dispatch child agents.
+
+## Remaining integration
+
+This phase provides only a pure logical view over a fully validated supplied physical observation. Runtime run selection/authentication, accepted-source ownership, managed fresh/later run transitions, canonical mirroring without duplicate lifecycle events, complete memory/RE acquisition, semantic approval, sealed graph admission, recovery/completion ordering, all producers and bounded repair remain separate integration work. No live activation is authorized.
