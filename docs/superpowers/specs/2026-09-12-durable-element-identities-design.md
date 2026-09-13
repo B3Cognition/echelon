@@ -372,6 +372,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   decision claims or publication effects; rejected state and stages remain intact.
   Unrelated legacy runs retain their existing behavior. This negative boundary
   does not authorize managed execution or serialize concurrent enrollment.
+- Captured memory drawer reconciliation: implemented in `4549c128` and
+  independently approved with no findings. Four-module covering suite:
+  331 passed. One shared classifier preserves native disk behavior while the
+  new inactive path compares exact supplied bytes, distinguishes uncaptured
+  from explicitly missing images, and retains the existing canonical path rule.
+  No filesystem reads occur in the new path. This is not collection acquisition,
+  identity revision authentication, a complete memory audit or publication authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
