@@ -14,6 +14,7 @@ from harness.ai_cli_backend import (
     CliRunRequest,
     CliRunResult,
     ConstrainedPromptBackend,
+    ReviewTriageBackend,
     create_ai_cli_backend,
 )
 from harness.ai_cli_backends.claude import (
@@ -286,6 +287,62 @@ class AICodingCliProvider:
                 max_input_bytes=max_input_bytes,
                 max_capture_bytes=max_capture_bytes,
                 screen_input=screen_input,
+            )
+        self._record_result(result, metadata)
+        return result
+
+    def run_review_triage_turn(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        frontmatter: Mapping[str, object],
+        timeout_ms: int,
+    ) -> CliRunResult:
+        """Run only the selected backend's isolated PR-triage operation."""
+        self.last_stdout = ""
+        self.last_stderr = ""
+        self.last_token_usage = 0
+        metadata = {
+            "prompt_metadata": dict(frontmatter)
+            if isinstance(frontmatter, Mapping)
+            else {}
+        }
+        if not isinstance(self._backend, ReviewTriageBackend):
+            result = CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr=(
+                    f"configured provider '{self._cli}' lacks "
+                    "review-triage capability"
+                ),
+                metadata={
+                    "failure_reason": "review-triage-unsupported",
+                    "provider": self._cli,
+                },
+            )
+        elif (
+            not isinstance(frontmatter, Mapping)
+            or type(prompt) is not str
+            or type(worktree_path) is not str
+            or type(timeout_ms) is not int
+            or timeout_ms <= 0
+        ):
+            result = CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr="invalid review-triage request",
+                metadata={"failure_reason": "invalid_request"},
+            )
+        else:
+            result = self._backend.run_review_triage_turn(
+                CliRunRequest(
+                    cwd=worktree_path,
+                    prompt=prompt,
+                    env=self._build_env(),
+                    timeout_s=min(timeout_ms / 1000.0, self._timeout_s),
+                    metadata=metadata,
+                )
             )
         self._record_result(result, metadata)
         return result

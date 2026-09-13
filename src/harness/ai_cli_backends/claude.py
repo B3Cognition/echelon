@@ -170,6 +170,15 @@ class ClaudeCliBackend:
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self.run_prompt(request)
 
+    def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.ai_cli_backends.claude_triage import run_claude_review_triage
+
+        return run_claude_review_triage(
+            self._bin,
+            request,
+            tool_policy=self._config.llm.tool_policy,
+        )
+
     def _run_stream_json(self, cmd: list[str], request: CliRunRequest) -> CliRunResult:
         quiet = _prompt_metadata_bool(request, "quiet")
         proc = subprocess.Popen(
