@@ -122,7 +122,7 @@ class AICodingCliProvider:
     @property
     def supports_read_only_review(self) -> bool:
         """Only advertise an implemented, enforced exclusive read-only scope."""
-        return self._cli == "codex" and self.enforces_workspace_synthesis_boundary
+        return self._cli in {"claude", "codex"} and self.enforces_workspace_synthesis_boundary
 
     @property
     def enforces_workspace_synthesis_boundary(self) -> bool:

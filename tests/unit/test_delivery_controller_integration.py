@@ -136,14 +136,15 @@ def test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice(slice_projec
     assert "repair_limit" in store.read()["build_reason"]
 
 
-def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project):
+@pytest.mark.parametrize("cli", ["codex", "claude"])
+def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project, cli):
     from harness.llm_provider import AICodingCliProvider
     from tests.unit.test_delivery_slice_runner import _run
     from unittest.mock import patch
 
     script = ScriptedExecutor()
     config = HarnessConfig()
-    config.llm.cli = "codex"
+    config.llm.cli = cli
     provider = AICodingCliProvider(config)
     class ExternalBackend:
         def run_agent(self, request):

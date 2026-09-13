@@ -153,16 +153,57 @@ Verification (overlapping suites, not additive totals):
 This does not close phase 4. Documentation/finalization production, native
 provider entry/prose migration, default rollout, external-spec output ownership
 and bundle verification remain. Provider support is an explicit rollout boundary:
-the existing enforced read-only review capability currently requires Codex and
-a supported host. Do not silently enable the controller for unsupported providers
+enforced read-only review requires Claude or Codex and a supported host.
+Do not silently enable the controller for unsupported providers
 or change provider configuration to make a test pass.
 
-Default cutover is paused for a user decision: should the first converged release
-remain opt-in and Codex-only, or also provide enforced controlled review for the
-other currently supported build providers? The latter requires provider-boundary
-work beyond the currently implemented trial. No compatibility reduction or new
-provider capability was inferred from approval of necessary identity dependencies.
+The earlier Codex-only rollout question was resolved by explicit user direction
+on 2026-09-13: Claude must also be supported. The bounded adapter work below
+implements that requirement; it does not authorize default cutover or expansion
+to other providers. The controller remains opt-in pending the remaining phase-4
+work. No provider capability was inferred from identity-dependency approval.
 
 No installation, migration, live provider run or full-suite rerun occurred during
 these corrections. A tracked visual-test `latest.json` side effect was restored
 to its original content after the tests; it is not part of the release change.
+
+## Claude controlled-delivery support (2026-09-13)
+
+Claude now consumes the same neutral `tool_write_scope_exclusive` contract as
+Codex. No Prosaic role or workflow prose changed. Claude-specific permission
+translation remains in its Python provider adapter:
+
+- Exclusive reviewers receive only Read/Glob/Grep, with Write/Edit available
+  only for declared output files. Unsafe permission bypass is suppressed even
+  when approved for implementation. Missing host enforcement blocks dispatch.
+- The macOS host sandbox makes the candidate/read roots nonwritable except for
+  exact declared outputs. Enclosing read roots do not reopen forbidden control
+  children. Real-process probes verify writes through symlinks are also denied.
+- Nonexclusive implementation receives native approval for workspace edits and
+  exact declared exceptions, not an output-only tool restriction. Shell access
+  retains the existing host approval policy: no broad Bash approval or automatic
+  unsafe bypass was added. Ralph still owns authoritative verification.
+- Explicit scopes reject paths that cannot be represented safely in Claude
+  permission rules. Calls without the explicit flag retain legacy behavior.
+
+Test-first regressions exposed and then verified the native approval gap, missing
+exclusive enforcement, and enclosing-root control-file read leak. Independent
+review identified the native approval blind spot in the initial process stand-in;
+the correction and follow-up review have no remaining concrete findings.
+
+Verification: 462 tests passed in 18.73s across `test_ai_cli_backend`,
+`test_llm_provider`, `test_claude_delivery_scope`,
+`test_delivery_controller_integration`, `test_delivery_slice_runner`,
+`test_delivery_slice_recovery`, `test_llm_tool_policy`,
+`test_coverage_diagnostic`, `test_verification_diagnostic`, and
+`test_squad_executors_journal`. This includes the actual host sandbox, provider
+facade, response parser and controller with a scripted external process, covering
+acceptance and exhaustion after three rejected implementation attempts. It is
+not a live-model test or a full-suite rerun.
+
+Installed Claude Code 2.1.236 help was checked for the adapter's flags; permission
+semantics were checked against the [official Claude permission reference](https://code.claude.com/docs/en/permissions).
+No global installation, workspace migration, provider configuration change or
+live provider execution occurred. Live Claude/Codex smoke verification and the
+remaining original phase-4 work are still outstanding; this does not close the
+overall convergence plan or add support on hosts without the enforced boundary.

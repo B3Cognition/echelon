@@ -62,7 +62,8 @@ class TestAICodingCliProvider:
 
     @pytest.mark.parametrize("cli,available,expected", [
         ("codex", True, True), ("codex", False, False),
-        ("claude", True, False), ("openai-compatible", True, False),
+        ("claude", True, True), ("claude", False, False),
+        ("openai-compatible", True, False),
     ])
     def test_read_only_review_requires_implemented_boundary(self, cli, available, expected):
         with patch("harness.llm_provider.host_workspace_synthesis_boundary_available", return_value=available):

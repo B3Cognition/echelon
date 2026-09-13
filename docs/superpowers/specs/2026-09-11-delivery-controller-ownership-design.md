@@ -74,7 +74,7 @@ Phase 2 is an explicit opt-in trial via `llm.features.delivery_gate_controller:
 true`, not a production-default cutover before phases 3 and 4. Existing runs
 remain on the old path unless enabled. The controlled path never falls back to
 that old path. It requires an advertised enforced read-only provider boundary
-(currently Codex on a supported host), and all four installed delivery-scoped
+(Claude and Codex on a supported host), and all four installed delivery-scoped
 Prosaic roles. Unsupported providers block before implementation; provider
 configuration is never silently changed. Separate delivery role profiles avoid
 feeding legacy dispatch/state-writing recipes into the new controller.
