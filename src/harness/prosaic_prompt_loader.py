@@ -35,10 +35,17 @@ class RenderedProsaicCommand:
 class ProsaicPromptLoader:
     """Load commands from an installer-owned project Prosaic bundle."""
 
-    def __init__(self, project_dir: Path, *, executable: str = "prosaic") -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        *,
+        executable: str = "prosaic",
+        timeout_s: float | None = None,
+    ) -> None:
         self._project_dir = project_dir
         self._source_dir = project_dir / ".echelon" / "prosaic"
         self._executable = executable
+        self._timeout_s = timeout_s
 
     def load_command(self, command_id: str) -> ProsaicCommandArtifact | None:
         """Return a command artifact, or ``None`` when the bundle is not installed."""
@@ -59,6 +66,14 @@ class ProsaicPromptLoader:
 
         artifact_id = f"{directory}/{artifact_name}.md"
         try:
+            run_options: dict[str, object] = {
+                "cwd": str(self._project_dir),
+                "capture_output": True,
+                "text": True,
+                "check": False,
+            }
+            if self._timeout_s is not None:
+                run_options["timeout"] = self._timeout_s
             result = subprocess.run(
                 [
                     self._executable,
@@ -67,11 +82,12 @@ class ProsaicPromptLoader:
                     "--source",
                     str(self._source_dir),
                 ],
-                cwd=str(self._project_dir),
-                capture_output=True,
-                text=True,
-                check=False,
+                **run_options,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise ProsaicPromptLoadError(
+                f"Prosaic inspection timed out for {artifact_id}"
+            ) from exc
         except OSError as exc:
             raise ProsaicPromptLoadError(
                 f"cannot execute Prosaic for {artifact_id}: {exc}"
