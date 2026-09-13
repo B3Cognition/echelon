@@ -146,6 +146,25 @@ in prose and reads their profiles from `.claude/agents`. Neither was migrated by
 the controlled slice/documentation checkpoint. This audit does not prove they
 can be replaced by a prose-only edit or authorize a subsystem rewrite.
 
+### PR-triage Prosaic migration checkpoint (2026-09-13)
+
+The separately approved PR-triage correction is now implemented on
+`fix/delivery-controller-contract` and awaits independent integration review.
+`ReviewLoopController` deterministically groups comments and sequences the three
+neutral Prosaic diagnostic roles before one composition turn. A bounded,
+descriptor-pinned read channel services exact host-validated read requests; the
+roles receive no shell, network, write, dispatch, or publication operation. The
+controller validates the complete allocated composition before exclusive
+attempt-local staging, and the existing `ReviewArtifactPublisher` remains the
+only canonical writer and recovery/journal owner.
+
+The historical audit statement above remains accurate for its audited baseline;
+this checkpoint supersedes only that PR-triage limitation after review. It does
+not alter fulfillment, legacy build, default activation, installation, or
+identity scope. Verification scripts external Claude and Codex CLI processes
+while exercising the real facade, adapters, read boundary, controller and
+publisher; no live provider, installed-bundle, migration, push or merge ran.
+
 Recommended next bounded correction is controlled source-feedback cleanup plus
 the narrow ownership-guidance update, pending approval of the reported changes.
 Do not claim all active delivery prompts are clean. No production/default/native

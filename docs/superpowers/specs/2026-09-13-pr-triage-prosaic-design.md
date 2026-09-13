@@ -6,8 +6,10 @@ Architecture approved in conversation: use the existing ReviewLoopController to
 sequence provider-neutral review roles for Claude and Codex, without a new
 orchestration framework. The user additionally approved a triage-only,
 harness-validated file-reading channel to preserve the no-shell/no-network-tool
-restriction. This document records the concrete contract for final design review;
-implementation has not started.
+restriction. This document records the concrete implementation contract. The
+scoped implementation is complete on `fix/delivery-controller-contract` and
+awaits independent integration review. This checkpoint is not independently
+accepted or activated by that implementation status.
 
 This checkpoint finishes the missed active PR-triage consumer migration before
 returning to delivery convergence. It does not change legacy `echelon build`,

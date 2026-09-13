@@ -96,6 +96,31 @@ Do not relabel them Python-owned in project guidance. Migrating them requires
 separate bounded designs/acceptance; no such migration is implemented or silently
 authorized by this report. They remain visible in convergence tracking.
 
+### Later approved PR-triage checkpoint
+
+The PR-triage finding above is preserved as the result at audited implementation
+`b6bfceda`. A separately approved correction is now implemented on
+`fix/delivery-controller-contract` and awaits independent integration review.
+The host controller owns grouping and the debugger, sentinel, spec-guard and
+composer sequence; the four self-contained artifacts come from Prosaic. Model
+reads cross only the bounded triage channel, and the existing publisher retains
+canonical files, locks, allocation, acceptance, recovery and journaling.
+
+Focused consuming tests cover both real provider facades/adapters with only the
+external CLI process scripted, plus the real publisher. Failure tests cover
+schema, read, deadline, byte-limit, allocation and no-follow boundaries. This is
+not live-provider, installed-bundle, migration, default-activation, push or merge
+evidence, and it does not change the fulfillment finding above. The checkpoint
+must not be described as independently accepted before integration review.
+
+The final affected controller, publisher, Prosaic, facade and backend batch
+passed 560 tests in 8.14s; direct inspection of all four changed Prosaic
+artifacts, compilation and whitespace checks also passed. A complete existing
+execution-policy inventory test separately retains one baseline failure: the
+base-commit delivery docs-verifier and tech-writer files are absent from its
+policy table. The three new review roles have the approved `strong`/`medium`
+entries; the unrelated historical mismatch was not changed by this checkpoint.
+
 ## CLAUDE.md quality report
 
 Files found: one repository `CLAUDE.md`; no nested or local Claude instruction
