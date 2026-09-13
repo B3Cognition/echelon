@@ -2097,6 +2097,73 @@ integration work before live activation. Imported identities and existing
 memory/verification edges remain unassessed; this function does not adopt or
 repair them.
 
+## Coherent candidate and proposed history (inactive)
+
+`IdentityStore.preview_identity_candidate` returns an immutable
+`IdentityCandidatePreview(check, history)` from one query-only identity
+transaction. The check retains the existing candidate diagnostics and reference
+observations. Diagnostics always mean `history is None`; a clean check carries
+the complete existing `IdentityHistorySnapshot` for the exact proposed journal
+children. There is no accepted flag, new wire format or live caller.
+
+The caller supplies captured artifacts, an explicit `IdentityEditScope`, ordered
+`PublicationOperation` records and optional native projection, inventory and
+issue-report contexts. Operations are validated and detached before acquiring
+authority, and lifecycle changes, reference claims and issue occurrences are
+decoded exclusively from their canonical child payloads. Artifact records,
+scope sequences, supplemental descriptors and nested report occurrences are
+owned snapshots, including against caller mutation when the transaction opens.
+Malformed requests and authority failures become the bounded
+`IdentityStoreError("invalid identity candidate preview authority or request")`
+without source-bearing exception cause or context. Process-control exceptions
+propagate unchanged.
+
+The reader requires no pending publication for the selected spec and globally
+unused, unclaimed child operation IDs. It captures and fully audits retained
+history before interpreting candidate defects, including damage outside the
+candidate's selected identities. Existing candidate owners still decide scope,
+definition content, immutable subjects, lifecycle rejection and reference
+observations. Exact supplied reference claims additionally require their parsed
+postimage hash, span, target and relation. Proposed claims do not become retained
+assessments in the check, and omitted claims do not synthesize assessments.
+
+Every proposed issue occurrence must match a supplied after occurrence in all
+seven native fields. Every supplied after occurrence must match either a
+proposed child or exact retained provenance. Orphans produce
+`issue_operation_unbound`; missing bindings produce `issue_operation_missing`.
+Existing report checks still authenticate report mapping and before provenance,
+enforce active projected revisions, and permit exact unchanged historical
+reports without another child. Association cannot authenticate malformed report
+content or silently create, remove or close occurrences. Diagnostics are merged
+in the existing sorted unique order. Only a clean check reaches the journal's
+existing projected binding/lifecycle planner and complete snapshot overlay.
+
+The transaction performs no allocation, ledger writes, source acquisition,
+provider work, graph assembly, memory writes or publication preparation. A real
+concurrent-writer test verifies one rollback-journal snapshot through candidate
+checking and overlay, then verifies that later v3 preparation rejects stale
+proposed history. This observation is not a lease. Existing v1/v2/v3 publication
+APIs and separate candidate/history readers remain compatible.
+
+The integration fixture captures sealed source operations, assembles native
+candidate images, previews identity, projects source images, runs the native
+canonical planner with an explicit deterministic audit observation, and builds
+the captured graph. Its retained graph bytes equal those assembled with history
+after real v3 identity journal application. Existing graph keys and old evidence
+revision targets are preserved. This fixture does not seal or publish a graph,
+publish source files, authenticate semantic review, or establish accepted-source
+ownership.
+
+A clean structural preview is not semantic verification, physical source
+freshness, accepted-source ownership, dependency completeness, a lease, a receipt
+or permission to publish. Rejected candidates remain diagnostics; they cannot
+update canonical artifacts, graphs or memory, or become quality debt or banzai
+waivers. Agents propose content and edits; they do not allocate IDs, mutate the
+ledger or certify publication. Runtime/manual/CLI enforcement, managed run and
+source ownership, real byte guards, graph sealing, durable joint publication and
+recovery, producer integration, bounded repair and final offline regression
+remain required before rollout.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,

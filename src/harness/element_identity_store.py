@@ -35,6 +35,7 @@ from harness.element_identity_publication import PublicationIntentRequest, Publi
 from harness.element_identity_managed import ManagedIdentityRequest, encode_managed_identity_request
 
 if TYPE_CHECKING:
+    from harness.element_identity_candidate_preview import IdentityCandidatePreview
     from harness.element_identity_snapshot import IdentityHistorySnapshot
     from harness.squad_source_manifest import SourceManifestSnapshot
 
@@ -703,6 +704,28 @@ class IdentityStore:
             return candidate_store.check_identity(
                 connection, self, spec_id, artifacts, scope, changes, affected,
                 projection_sources, evidence_inventories, issue_reports)
+
+    def preview_identity_candidate(self, *, spec_id: str,
+                                   artifacts: Sequence[CandidateArtifact],
+                                   scope: IdentityEditScope,
+                                   operations: tuple[PublicationOperation, ...] = (),
+                                   projection_sources: Sequence[LexiconProjectionSource] = (),
+                                   evidence_inventories: Sequence[EvidenceInventoryContext] = (),
+                                   issue_reports: Sequence[IssueReportContext] = (),
+                                   ) -> IdentityCandidatePreview:
+        """Observe candidate diagnostics and exact proposed history; no publication authority."""
+        from harness import element_identity_candidate_preview as candidate_preview
+
+        try:
+            request = candidate_preview.normalize(
+                spec_id, artifacts, scope, operations, projection_sources,
+                evidence_inventories, issue_reports)
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                return candidate_preview.preview(connection, self, spec_id, request)
+        except Exception:
+            pass
+        raise IdentityStoreError("invalid identity candidate preview authority or request")
 
     def register_managed_identity(self, *, spec_id: str, operation_id: str,
                                   request: ManagedIdentityRequest) -> dict:
