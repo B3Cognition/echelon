@@ -78,6 +78,7 @@ from harness.runnability_contract import (
     CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH,
     RunnabilityContractError,
     load_runnability_contract,
+    runnability_contract_sha256,
 )
 from harness.runnability_disposition import (
     RunnabilityDispositionError,
@@ -86,6 +87,7 @@ from harness.runnability_disposition import (
 from harness.runnability_evidence import (
     RunnabilityEvidenceRef,
     load_runnability_evidence_ref,
+    validate_runnability_report,
 )
 from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
 from harness.phase_a_readiness import validate_phase_a_readiness
@@ -313,6 +315,10 @@ class CommitPushError(RuntimeError):
         self.branch = branch
         self.worktree_path = worktree_path
         self.stage = stage
+
+
+class _DocumentationBuildResult(dict):
+    """Controller-only provenance for a taskless documentation completion."""
 
 
 class RalphController:
@@ -2021,11 +2027,15 @@ class RalphController:
 
     # === Sandbox execution helpers ===
 
-    def _exec_controlled_slice(self, worktree_path: str, prompt: str, *, repair: bool) -> Dict[str, Any]:
+    def _exec_controlled_slice(
+        self, worktree_path: str, prompt: str, *, repair: bool,
+        documentation: bool = False,
+    ) -> Dict[str, Any]:
         """Adapt the opt-in controller to Ralph's existing build result boundary."""
         from harness.delivery_slice_runner import DeliverySliceRunner
         from harness.delivery_slice_runner import _digest, _spec_inputs
         from harness.delivery_slice import DeliverySliceError
+        from harness.delivery_documentation import DeliveryDocumentationRunner
 
         try:
             if self._config.llm.features.get("delivery_gate_controller") is not True:
@@ -2045,17 +2055,27 @@ class RalphController:
                 scope = self._target_task_ids()
             repair_task_id = state.get("delivery_slice_task_id") if repair else None
             operation = state.get("delivery_slice_operation")
+            requested_kind = "documentation" if documentation else "task"
             source = self._source_phase_a_spec_dir(worktree)
             source_binding = None
             if source is not None and source.resolve() != spec_dir.resolve():
                 source_binding = _digest(_spec_inputs(source, self._orchestration_root(worktree)))
             if isinstance(operation, dict):
+                kind = operation.get("kind", "task")
+                if kind not in {"task", "documentation"}:
+                    raise DeliverySliceError("invalid pending delivery operation kind")
                 if (operation.get("worktree_path") != str(worktree.resolve())
                         or operation.get("source_binding") != source_binding):
                     raise DeliverySliceError("delivery_reconciliation_required: pending worktree or published source changed")
-                if (operation.get("progress_applied") is True
-                        and (repair or state.get("outer_iter", 0) > operation.get("outer_iter", 0))):
-                    operation = None  # A new verified-loop iteration or explicit repair.
+                if operation.get("progress_applied") is True:
+                    if repair and kind == requested_kind == "documentation":
+                        raise DeliverySliceError("delivery_reconciliation_required: accepted documentation received new failure evidence")
+                    if repair or state.get("outer_iter", 0) > operation.get("outer_iter", 0):
+                        operation = None  # Advance only an applied operation.
+                elif repair and kind != requested_kind:
+                    raise DeliverySliceError("delivery_reconciliation_required: unresolved delivery operation has a different kind")
+                elif repair and kind == "documentation" and operation.get("feedback") != prompt:
+                    raise DeliverySliceError("delivery_reconciliation_required: documentation failure evidence changed")
             resuming = operation is not None
             if resuming:
                 if (not isinstance(operation, dict) or not isinstance(operation.get("id"), str)
@@ -2065,13 +2085,18 @@ class RalphController:
                     raise DeliverySliceError("invalid pending delivery operation")
                 repair_task_id = operation.get("repair_task_id")
                 prompt = operation["feedback"]
-            elif repair and (not isinstance(repair_task_id, str) or not repair_task_id):
+                documentation = operation.get("kind", "task") == "documentation"
+            elif repair and not documentation and (not isinstance(repair_task_id, str) or not repair_task_id):
                 raise DeliverySliceError("feedback requires a previously accepted delivery slice task")
             else:
                 operation = {"id": uuid4().hex, "feedback": prompt,
                              "repair_task_id": repair_task_id, "accounted_tokens": 0,
                              "worktree_path": str(worktree.resolve()), "source_binding": source_binding,
                              "outer_iter": state.get("outer_iter", 0), "progress_applied": False}
+                if documentation:
+                    operation["kind"] = "documentation"
+                    operation["repair_task_id"] = None
+                    operation["changed_files"] = self._documentation_delivery_changes(worktree)
 
             def remember_operation():
                 current = self._state_store.read()
@@ -2081,13 +2106,33 @@ class RalphController:
             # Reuse path/containment preparation, but never send the legacy
             # MANAGER/context routing recipe to a controlled role.
             self._with_harness_context("", worktree_path)
-            result = DeliverySliceRunner(
+            runner = DeliveryDocumentationRunner if documentation else DeliverySliceRunner
+            runner_options = {}
+            if documentation:
+                # The writer changes README/CHANGELOG itself. Replay the input
+                # inventory while the runner checks actual candidate/source bytes.
+                if "changed_files" not in operation or (
+                    operation["changed_files"] is not None and (
+                        not isinstance(operation["changed_files"], list)
+                        or any(not isinstance(path, str) for path in operation["changed_files"])
+                    )
+                ):
+                    raise DeliverySliceError("invalid pending documentation change inventory")
+                runnability_ref, runnability_required = self._controlled_documentation_runnability(worktree)
+                runner_options = {
+                    "changed_files": operation["changed_files"],
+                    "runnability_report": runnability_ref,
+                    "runnability_required": runnability_required,
+                }
+            else:
+                runner_options["repair_task_id"] = repair_task_id
+            result = runner(
                 self._llm_provider, self._orchestration_root(worktree),
             ).run(
                 worktree=worktree, spec_dir=spec_dir,
                 evidence_root=self._state_store.state_dir / "delivery-slices" / hashlib.sha256(
                     f"{self._strategy_id}:{state.get('run_id', '')}".encode()).hexdigest(),
-                allowed_task_ids=scope, repair_task_id=repair_task_id,
+                allowed_task_ids=scope, **runner_options,
                 feedback=prompt, stop_requested=lambda: self._interrupted or self.check_cancel(),
                 containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
                 token_budget=(self._controlled_slice_budget + operation["accounted_tokens"]
@@ -2103,7 +2148,11 @@ class RalphController:
                 current["tokens_used"] = current.get("tokens_used", 0) + new_tokens
             if current.get("delivery_slice_operation", {}).get("id") == operation["id"]:
                 current["delivery_slice_operation"] = operation
-            if result.succeeded and result.task_ids:
+            if result.succeeded and documentation:
+                # The runner publishes both exact reports after durable review
+                # receipts. No canonical task progress belongs to this operation.
+                operation["progress_applied"] = True
+            elif result.succeeded and result.task_ids:
                 current["delivery_slice_task_id"] = result.task_ids[0]
                 operation["accepted_task_id"] = result.task_ids[0]
             elif result.succeeded and not resuming:
@@ -2112,7 +2161,7 @@ class RalphController:
                 # preserve its receipts and last task for explicit repairs.
                 current.pop("delivery_slice_operation", None)
             self._state_store.write(current)
-            return {
+            adapted = {
                 "exit_code": result.exit_code, "passed": result.succeeded,
                 "build_status": result.status, "completion_marker_explicit": True,
                 "build_reason": result.reason, "blocker_kind": result.blocker_kind,
@@ -2121,6 +2170,9 @@ class RalphController:
                 "impasse": False, "impasse_file": None, "task_ids": result.task_ids or [],
                 "stdout": result.stdout, "stderr": result.stderr,
             }
+            if documentation and result.succeeded:
+                adapted = _DocumentationBuildResult(adapted, documentation_operation_id=operation["id"])
+            return adapted
         except (DeliverySliceError, OSError) as exc:
             return {"exit_code": 1, "passed": False, "build_status": "blocked",
                     "completion_marker_explicit": True, "build_reason": str(exc),
@@ -2847,6 +2899,7 @@ class RalphController:
         )
 
         state = self._state_store.read()
+        controlled = self._config.llm.features.get("delivery_gate_controller") is True
         raw_runnability = state.get("user_runnability")
         runnability_ref: RunnabilityEvidenceRef | None = None
         if isinstance(raw_runnability, dict) and raw_runnability.get("status") == "runnable":
@@ -2861,7 +2914,16 @@ class RalphController:
             str(getattr(resolved_policy, "policy", "not_applicable")) == "required"
             or runnability_ref is not None
         )
-        if runnability_ref is not None:
+        if controlled:
+            from harness.delivery_slice import DeliverySliceError
+            try:
+                runnability_ref, runnability_required = self._controlled_documentation_runnability(Path(worktree_path))
+            except (DeliverySliceError, OSError) as exc:
+                return self._runnability_failure(
+                    verify_result, failure_id="docs-runnability-evidence-stale",
+                    error=str(exc), details={},
+                )
+        if runnability_ref is not None and not controlled:
             write_docs_verification_report(
                 Path(worktree_path),
                 spec_dir,
@@ -2875,8 +2937,9 @@ class RalphController:
             changed_files=documentation_changes,
             runnability_report=runnability_ref,
             runnability_required=runnability_required,
+            require_independent_review=controlled,
         )
-        if self._can_write_noop_documentation_report(
+        if not controlled and self._can_write_noop_documentation_report(
             gate,
             changed_files,
             Path(worktree_path),
@@ -2908,6 +2971,37 @@ class RalphController:
             token_usage=verify_result.token_usage,
             verification_evidence=dict(verify_result.verification_evidence),
         )
+
+    def _controlled_documentation_runnability(
+        self, worktree: Path,
+    ) -> tuple[RunnabilityEvidenceRef | None, bool]:
+        """Bind documentation to the current resolved stack and actual receipt."""
+        from harness.delivery_slice import DeliverySliceError
+
+        policy = getattr(self._config, "resolved_runnability", None)
+        required = str(getattr(policy, "policy", "not_applicable")) == "required"
+        raw = self._state_store.read().get("user_runnability")
+        if not isinstance(raw, dict) or raw.get("status") != "runnable":
+            return None, required
+        try:
+            ref = load_runnability_evidence_ref(str(raw.get("report") or ""))
+            resolved = self._config.resolved_stacks
+            stack_hash = resolved_stack_contract_sha256(resolved) if resolved is not None else ""
+            contract = load_runnability_contract(worktree)
+            validation = validate_runnability_report(
+                ref, candidate_commit=_current_git_commit(worktree) or "",
+                # The documentation runner validates the initial product and
+                # guards byte changes on replay. Its own document/report edits
+                # must not invalidate the captured runnability receipt here.
+                candidate_fingerprint=ref.candidate_fingerprint,
+                contract_hash=runnability_contract_sha256(contract) if contract else "",
+                stack_hash=stack_hash,
+            )
+            if not validation.valid:
+                raise ValueError(validation.reason)
+        except (ValueError, RunnabilityContractError) as exc:
+            raise DeliverySliceError(f"documentation_runnability_evidence_invalid: {exc}") from exc
+        return ref, True
 
     def _documentation_delivery_changes(
         self,
@@ -3201,6 +3295,13 @@ class RalphController:
             return
         if (build_result.get("build_status") or "unknown") != "done":
             return
+        if isinstance(build_result, _DocumentationBuildResult):
+            operation = self._state_store.read().get("delivery_slice_operation")
+            if (isinstance(operation, dict) and operation.get("kind") == "documentation"
+                    and operation.get("progress_applied") is True
+                    and operation.get("id") == build_result.get("documentation_operation_id")
+                    and operation.get("worktree_path") == str(Path(worktree_path).resolve())):
+                return
         if (
             build_result.get("completion_metadata_recovery") is True
             and build_result.get("partial_progress") is True
@@ -4391,7 +4492,17 @@ class RalphController:
         """
         if (self._config.llm.features.get("delivery_gate_controller") is True
                 or self._state_store.read().get("delivery_slice_operation") is not None):
-            return self._exec_controlled_slice(worktree_path, prompt, repair=True)
+            documentation = bool(verify_result.failures) and all(
+                failure.id.startswith(("documentation-", "docs-", "readme-", "changelog-"))
+                for failure in verify_result.failures
+            )
+            if documentation:
+                prompt = json.dumps({"failures": [
+                    {"category": failure.category.value, "id": failure.id,
+                     "error": failure.error, "details": failure.details}
+                    for failure in verify_result.failures
+                ], "verification_evidence": verify_result.verification_evidence}, sort_keys=True)
+            return self._exec_controlled_slice(worktree_path, prompt, repair=True, documentation=documentation)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
             result = self._llm_build_runner.exec_feedback(

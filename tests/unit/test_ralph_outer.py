@@ -3479,6 +3479,7 @@ class TestOuterLoopConvergence:
             changed_files=None,
             runnability_report=None,
             runnability_required=False,
+            require_independent_review=False,
         ):
             seen["worktree_path"] = worktree_path
             seen["spec_dir"] = resolved_spec_dir
@@ -3525,6 +3526,7 @@ class TestOuterLoopConvergence:
             changed_files=None,
             runnability_report=None,
             runnability_required=False,
+            require_independent_review=False,
         ):
             seen["changed_files"] = changed_files
             return DocumentationGateResult(passed=True)

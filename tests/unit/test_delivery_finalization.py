@@ -121,6 +121,9 @@ def test_completed_build_reaches_real_documentation_gate_before_publication(
         "---\ndocs_required: false\nnot_applicable_reason: Internal-only change.\n---\n"
         if docs_valid else "---\ndocs_required: invalid\n---\n"
     )
+    if docs_valid:
+        from tests.unit.test_delivery_documentation import review_report
+        (slice_project[1] / "docs-verification-report.md").write_text(review_report())
     for args in (["add", "."], ["commit", "-m", "completed fixture"]):
         subprocess.run(["git", *args], cwd=slice_project[0], capture_output=True, check=True)
     executor = ScriptedExecutor()

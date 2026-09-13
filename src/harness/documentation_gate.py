@@ -65,6 +65,7 @@ def evaluate_documentation_gate(
     changed_files: Iterable[str] | None = None,
     runnability_report: RunnabilityEvidenceRef | None = None,
     runnability_required: bool = False,
+    require_independent_review: bool = False,
 ) -> DocumentationGateResult:
     """Validate TECH WRITER's documentation impact report and required docs."""
     worktree = Path(worktree_path)
@@ -140,7 +141,7 @@ def evaluate_documentation_gate(
             )
         # Preserve the independent agent's semantic judgment (command order,
         # failure handling, auth, evidence claims), even on a no-impact slice.
-        if (spec / DOCS_VERIFICATION_REPORT_NAME).exists():
+        if require_independent_review or (spec / DOCS_VERIFICATION_REPORT_NAME).exists():
             failure = _docs_verification_report_failure(
                 spec,
                 runnability_required=runnability_required,
