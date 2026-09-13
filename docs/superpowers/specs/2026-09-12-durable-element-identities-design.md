@@ -358,6 +358,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   boundaries, including a real child-process exit. Post-apply source drift
   leaves the journal pending and blocks recovery. Tests compose existing
   primitives; they do not introduce production admission or completion owners.
+- Explicit run-local captured graph view: implemented in `0e2f7d37` and
+  independently approved, with two unused test imports deferred as a Minor.
+  Five-module covering suite: 290 passed. The selected run-local tree supplies
+  canonical logical graph paths without blending stale published files; the
+  complete physical observation remains validated and unchanged. Real guarded
+  run-local publication matches prediction while old evidence keeps revision1.
+  This pure selector does not authenticate or activate managed runtime ownership.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
