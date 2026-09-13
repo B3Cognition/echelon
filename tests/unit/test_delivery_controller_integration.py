@@ -173,6 +173,48 @@ def _build(controller, fixture):
     return controller._exec_build(None, "echelon build", "", worktree_path=str(fixture[0]), prompt="build")
 
 
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("used,expected_dispatches", [(95, 0), (88, 1)])
+def test_downstream_repair_uses_current_durable_budget(
+    slice_project, tmp_path, restart, used, expected_dispatches,
+):
+    executor = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, executor)
+    controller._controlled_slice_budget = 95  # Initial build allowance, now stale.
+    built = _build(controller, slice_project)
+    assert built["passed"], built
+    controller._apply_build_task_progress(
+        worktree_path=str(slice_project[0]), task_ids=built["task_ids"],
+    )
+    state = store.read()
+    state.update(token_budget=100, tokens_used=used)
+    store.write(state)
+    if restart:
+        executor = ScriptedExecutor()
+        controller = _reconstruct(controller, store, executor)
+    before = len(executor.calls)
+
+    result = controller.run_downstream_feedback(
+        handle=None, worktree_path=str(slice_project[0]),
+        verify_result=VerifyResult(False), build_command="echelon build",
+        strategy_context="", build_prompt="build", phase="visual",
+    )
+
+    assert not result["passed"], result
+    assert result["build_reason"] == "delivery_slice_budget_exhausted"
+    assert len(executor.calls) - before == expected_dispatches
+    assert store.read()["tokens_used"] == 95
+    # A later restart cannot make the partially reviewed operation unlimited.
+    resumed = ScriptedExecutor()
+    again = _reconstruct(controller, store, resumed).run_downstream_feedback(
+        handle=None, worktree_path=str(slice_project[0]),
+        verify_result=VerifyResult(False), build_command="echelon build",
+        strategy_context="", build_prompt="build", phase="visual",
+    )
+    assert not again["passed"] and not resumed.calls
+    assert store.read()["tokens_used"] == 95
+
+
 def test_reconstructed_ralph_recovers_accepted_task_and_unaccounted_usage(slice_project, tmp_path, monkeypatch):
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     with monkeypatch.context() as patch:
@@ -335,6 +377,48 @@ def test_full_loop_crash_after_progress_state_preserves_accepted_candidate(slice
     with pytest.raises(ProcessLost):
         other.run_loop(max_outer=1, max_inner=1, build_prompt="build")
     assert not resumed.calls and store.read()["build"]["completed_tasks"] == 1
+
+
+def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, tmp_path, monkeypatch):
+    import shutil
+    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_results import ImplementationResult, VisualResult
+    from harness.run_intent import RunIntent
+    from harness.visual_ralph import VisualRalphController
+
+    _initialize_git_worktree(slice_project[0])
+    shutil.copytree(slice_project[0] / ".echelon", tmp_path / ".echelon")
+    config = HarnessConfig()
+    config.llm.enabled = True
+    config.llm.features["delivery_gate_controller"] = True
+    config.visual_tests.enabled = True
+    gitops = MagicMock()
+    gitops.base_dir = str(slice_project[0])
+    gitops.get_latest_worktree.return_value = str(slice_project[0])
+    executor = ScriptedExecutor()
+    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: executor)
+
+    def implementation(self, **kwargs):
+        result = _build(self, slice_project)
+        assert result["passed"], result
+        self._apply_build_task_progress(worktree_path=str(slice_project[0]), task_ids=result["task_ids"])
+        return ImplementationResult("verified", "converged", 1, 0, None, 28, None)
+
+    def visual(self, **kwargs):
+        failure = VerifyResult(False, token_usage=20)
+        result = self._feedback_runner(None, str(slice_project[0]), failure, [])
+        assert not result["passed"], result
+        assert result["build_reason"] == "delivery_slice_budget_exhausted"
+        assert result["tokens"] == 0
+        return VisualResult("blocked", "visual_feedback_failed", 1, 20, failure)
+
+    monkeypatch.setattr(RalphController, "run_loop", implementation)
+    monkeypatch.setattr(VisualRalphController, "run_loop", visual)
+    coordinator = StrategyCoordinator(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
+    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1, token_budget=50))[0]
+    assert result.status == "blocked", result
+    assert result.tokens_used == 48
+    assert len(executor.calls) == 4  # Initial build only; 28 + 20 exceeds 95% of 50.
 
 
 def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tmp_path, monkeypatch):

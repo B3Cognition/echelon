@@ -4332,8 +4332,20 @@ class RalphController:
         build_prompt: str,
         phase: str,
         evidence_paths: tuple[str, ...] = (),
+        token_budget: int | None = None,
+        tokens_used: int = 0,
     ) -> Dict[str, Any]:
         """Apply a downstream-gate repair through the configured build provider."""
+        state = self._state_store.read()
+        # Downstream entry may reconstruct Ralph without running either build
+        # loop. Recompute its allowance, including caller-owned gate usage that
+        # has not reached strategy state yet; never reuse a prior slice's value.
+        ceilings = [value for value in (token_budget, state.get("token_budget"))
+                    if value is not None and value > 0]
+        used = max(tokens_used, state.get("tokens_used", 0))
+        self._controlled_slice_budget = (
+            max(0, min(ceilings) * 0.95 - used) if ceilings else None
+        )
         _clear_build_status(worktree_path)
         prompt = self._make_feedback_prompt(build_prompt, verify_result, 0)
         prompt += (

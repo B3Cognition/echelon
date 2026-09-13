@@ -1563,6 +1563,8 @@ class StrategyCoordinator:
                             build_prompt=get_build_prompt(),
                             phase="visual",
                             evidence_paths=tuple(evidence_paths),
+                            token_budget=budget,
+                            tokens_used=implementation_tokens + visual_tokens + verify.token_usage,
                         )
                     ),
                 )

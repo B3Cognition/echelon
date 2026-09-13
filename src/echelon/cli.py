@@ -13279,6 +13279,15 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
+    if command == "build" and config.llm.features.get("delivery_gate_controller") is True:
+        print(
+            "echelon build: controlled delivery cannot run through the raw build command.\n"
+            "Use echelon delivery run <spec_id> for controller-owned task selection, "
+            "reviews and recovery. Raw --fix/--failures invocations are not accepted; "
+            "the delivery controller owns repair scope and evidence.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     cli = config.llm.cli
 
     prosaic_command = _load_prosaic_command(skill_base, arguments, project_dir)
