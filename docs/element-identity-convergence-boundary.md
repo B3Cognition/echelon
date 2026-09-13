@@ -317,7 +317,7 @@ recovery fix, the affected-file run passed 438 tests, including all 41 new
 integration cases. Unaffected passing files were not rerun; this is not a
 repository-wide test or live-provider claim.
 
-**Independent integration review: needs fixes; this checkpoint is not accepted.**
+**Initial independent integration review: needed fixes; the checkpoint was not accepted.**
 The real post-verification chain reruns runnability after documentation authoring.
 README/CHANGELOG changes alter the product fingerprint and therefore the new
 runnability evidence digest. The independent docs report still cites pre-authoring
@@ -326,15 +326,66 @@ correctly refuses to reuse its approval. The passing inner-loop fixture has no
 enabled runnability contract; the receipt-backed recovery fixture deliberately
 ends at the repair limit. Neither proves this positive convergence path.
 
-Proposed next correction, requiring user approval before implementation: add a
+Subsequently approved sequencing correction: add a
 controller-owned checkpoint after authoring and before independent docs review
 to obtain current runnability evidence. Preserve Ralph ownership, the existing
 operation and attempt ceiling, and exact evidence comparison. Do not weaken
 digest comparison, silently refresh canonical report hashes, reuse stale approval,
-or redefine product/evidence identity to ignore documentation changes. A positive
+or ignore README/CHANGELOG changes in product/evidence identity. A positive
 real-loop regression with runnability enabled is required for acceptance.
 
 Remaining original delivery work: public/native entry routing, active
 prose/companion migration, default rollout decisions, and installed-bundle
 acceptance. Deferred identity integration is still a separate milestone.
 No installation, live execution, migration, push or default activation occurred.
+
+### Approved sequence, additional report-identity blocker
+
+The user approved the post-authoring runnability refresh. Reproduction before
+implementation then exposed a second issue for in-worktree specs: publishing
+`documentation-impact-report.md` and `docs-verification-report.md` changes the
+same product fingerprint used by runnability evidence. The verifier report cites
+evidence whose digest includes the report itself. Refreshing earlier alone
+cannot remove this circular dependency.
+
+Two consuming RED cases in `test_delivery_documentation_checkpoint.py` reproduce
+the real-loop stale-evidence block and the post-authoring/publication fingerprint
+change. They use real Git checkpointing, report generation and validation, with
+external provider/sandbox execution scripted. Both failed in 2.12s. No production
+code or identity policy was changed during that reproduction-only checkpoint.
+
+Separately approved additional policy: exclude only the two resolved
+canonical controller-owned documentation report paths from the runnability
+product fingerprint, keeping their independent validation and exact publication
+checks. README/CHANGELOG remain product content. This does not authorize broad
+spec/report exclusions, rewriting report hashes after review, or a new inventory
+framework.
+
+### Approved correction implemented and independently accepted
+
+Commit `782f58a7` implements both approved corrections. Runnability identity
+excludes the exact two reports at the resolved spec location; general product
+inventory and other evidence fingerprints remain unchanged. README, CHANGELOG,
+source and other spec inputs remain covered. The existing runnability producer,
+documentation consumer and Land comparison use the same narrow policy.
+
+After each successful authoring attempt, Ralph refreshes runnability through its
+existing execution owner before independent review. The same documentation
+journal records checkpoint intent/completion and retains original evidence.
+Final verification may reuse only that reviewed, fully published checkpoint,
+after checking the actual candidate, current stack/contract, receipt integrity
+and currentness, and exact report bytes. Unknown or failed completion blocks;
+the operation, three-author ceiling and cumulative accounting are unchanged.
+
+Verification: 86 focused checkpoint/integration tests passed, followed by one
+surrounding batch of 942 tests passing without failures or warnings. The cases
+include both neutral provider facades in all three modes, real enabled-runnability
+loop convergence, restart boundaries, failed/cancelled refreshes, mutation
+rejection, budget/attempt limits and Land's archived candidate comparison.
+External providers and sandbox execution are scripted; this is not live-provider
+or installed-bundle acceptance. Independent scoped re-review found the original
+failure addressed and no new Critical/Important breakage. This closes Task 2 and
+the documentation repair checkpoint. The positive real-loop fixture disables
+fulfillment refresh; it does not establish broader phase-4 or whole-branch merge
+acceptance. Remaining native entry/prose, rollout and bundle milestones above
+are unchanged; no deferred identity feature was activated.

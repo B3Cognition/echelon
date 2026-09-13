@@ -99,17 +99,76 @@ def test_repeated_rejection_survives_reconstruction(documentation_project):
 
 **Consumes:** `DeliveryDocumentationRunner.run` and its cumulative `BuildResult` contract from Task 1.
 
-**Review checkpoint — needs fixes (2026-09-13):** implementation `9c474d63`
+**Initial review checkpoint — needed fixes (2026-09-13):** implementation `9c474d63`
 passes the focused integration suite but does not converge with enabled
 runnability when authoring changes documentation. Post-verification refreshes
 runnability evidence after the docs report was accepted, invalidating its cited
-digest. Do not mark Task 2 complete. A controller-owned post-authoring evidence
-checkpoint before independent review is the proposed sequencing correction;
-implementation pauses for user approval because this changes the written step
-contract. Preserve exact evidence checks and the existing operation/attempt
-ceiling; add a positive real-loop runnability regression when approved.
+digest. Task 2 remained incomplete at that point. A controller-owned post-authoring evidence
+checkpoint before independent review is the sequencing correction approved by
+the user after this review. Preserve exact evidence checks and the existing
+operation/attempt ceiling; add a positive real-loop runnability regression.
 
-- [ ] Add integration regressions through actual `_exec_feedback`, `_exec_build` restart and the inner verification loop. Script only external providers/sandbox processes; preserve real docs gate/report validation. Cover completed tasks with no last implementation pointer, repair after an accepted task, unrelated source failure routing, mixed failures, all modes, external specs, unknown pending completion and token accounting after reconstruction.
+**Accepted correction (2026-09-13):** `782f58a7` implements the two separately
+approved corrections below. Focused checkpoint/integration tests: 86 passed;
+single surrounding regression batch: 942 passed, no failures or warnings.
+Independent scoped re-review found the original issue addressed and no new
+Critical/Important breakage. Tasks 1 and 2 are complete for this documentation
+checkpoint, not the remaining phase-4 work. The positive real-loop fixture uses
+scripted provider/sandbox execution and disables fulfillment refresh; it is not
+installed-bundle, live-provider or whole-branch merge acceptance.
+
+### Approved Task 2 correction: post-authoring evidence checkpoint
+
+**Additional policy approved after RED reproduction:** for in-worktree
+specs, the current product fingerprint includes the two canonical generated
+documentation reports. Publication therefore changes the post-authoring
+candidate fingerprint; the verifier report cites evidence whose digest includes
+that report's own contents. The user separately approved excluding only the
+resolved spec's two controller-owned documentation report paths from the
+runnability product fingerprint, retaining their separate strict
+publication/integrity checks. Implement that narrowly scoped policy together
+with the already approved evidence checkpoint.
+README/CHANGELOG and other product/spec inputs must remain covered. Do not
+adopt a broad report exclusion or publication-overlay exception. Resolve exact
+canonical paths, not arbitrary basename matches; unsafe paths must fail closed.
+
+- [x] Reproduce the finding through the real Ralph verification loop with an
+  enabled runnability contract, real receipt generation/validation, and actual
+  documentation edits; script only external provider/sandbox execution.
+- [x] After each successful authoring attempt and before deterministic/independent
+  documentation review, Ralph obtains current runnability evidence using its
+  existing execution owner. The documentation helper may expose a narrow callback
+  for this checkpoint; no new orchestration controller or provider-specific prose.
+- [x] Bind the review assignment and returned report to that refreshed receipt
+  and exact post-authoring candidate. Preserve the original authoring inputs and
+  record the explicit authorized evidence transition durably in the same journal.
+  Extend only the documentation journal contract, not implementation-slice state.
+- [x] Preserve the same three-author-attempt ceiling, operation pointer, finite
+  budget and cumulative accounting. Record checkpoint intent/completion before
+  advancing; unknown completion, failed refresh, cancellation, stale/mutated
+  candidate or unsafe evidence must not publish or bypass the reviewer.
+- [x] Final authoritative verification must validate the exact current candidate
+  and refreshed evidence used by independent review. Avoid replacing that evidence
+  merely as a side effect of revisiting the same accepted documentation candidate;
+  any reuse must validate candidate, contract, resolved stack, receipt integrity
+  and currentness. Changed candidate/evidence never inherits approval. Do not
+  weaken digests, broaden the approved two-report exclusion, or edit report
+  hashes after review.
+- [x] Cover successful real-loop convergence, failed refresh, repaired authoring,
+  stale evidence/candidate, cancellation and crashes around checkpoint completion,
+  review/publication and Ralph progress. Keep no-runnability behavior, both neutral
+  provider boundaries and all modes compatible. Run focused RED/GREEN then one
+  relevant regression batch; review the correction before closing Task 2.
+
+The approved correction may modify `delivery_documentation.py`, its strict
+contract validator, Ralph, narrow runnability fingerprint/consumer plumbing and
+the directly affected tests. Reuse existing inventory mechanics; do not introduce
+a general inventory framework. Keep ordinary product inventory and unrelated
+evidence identity unchanged. Audit actual runnability producers/validators for
+consistent use of the narrowly scoped policy. Preserve existing
+safe rejection of incompatible unreleased receipts; no migration or live runs.
+
+- [x] Add integration regressions through actual `_exec_feedback`, `_exec_build` restart and the inner verification loop. Script only external providers/sandbox processes; preserve real docs gate/report validation. Cover completed tasks with no last implementation pointer, repair after an accepted task, unrelated source failure routing, mixed failures, all modes, external specs, unknown pending completion and token accounting after reconstruction.
 
 ```python
 def test_completed_tasks_docs_failure_routes_writer_not_implementer(completed_project):
@@ -125,14 +184,14 @@ def test_completed_tasks_docs_failure_routes_writer_not_implementer(completed_pr
     ).passed
 ```
 
-- [ ] Route only a nonempty all-documentation failure set to documentation execution; mixed or source failures keep existing implementation repair behavior. Preserve deterministic failure IDs under prefixes `documentation-`, `docs-`, `readme-`, `changelog-`; missing required runnability evidence must block inside the documentation helper.
-- [ ] Use the existing `delivery_slice_operation` pointer with `kind="documentation"`; absence of kind remains the existing task operation. A pending documentation operation resumes through `_exec_build` before any new selection. Persist the pointer after the empty journal is durable and before provider intent, as implementation already does. Do not create a parallel state pointer/controller.
-- [ ] Existing eligible applied task operations can advance into documentation repair. Repeated documentation feedback against the same pending/accepted documentation operation must not reset its attempt ceiling. A completed documentation operation may advance on the next outer iteration or explicit non-documentation repair; retain the last real implementation task as the source-repair target. Never clear unresolved state or replace an expected journal.
-- [ ] Return no completed task IDs, account only the unseen token delta, and preserve the pending candidate on crash. Mark documentation progress only after journaled report publication; existing same-iteration recovery protects the uncommitted checkpoint window. Existing downstream budget plumbing supplies current remaining allowance.
-- [ ] `_apply_documentation_gate` must not rewrite controlled independently reviewed canonical reports with a deterministic baseline. It still runs the existing read-only validators and current runnability checks. Keep legacy behavior unchanged when the flag is off.
-- [ ] Require an independent verifier report on the controlled path even for `docs_required: false`. Add a default-false internal `require_independent_review` option to the existing documentation gate and enable it from controlled Ralph calls; preserve legacy no-impact behavior otherwise. A controller-authored no-impact report alone cannot bypass the author/reviewer checkpoint. Update controlled finalization fixtures and test missing/rejected no-impact review explicitly.
-- [ ] Scope `_enforce_completed_task_ids` so a controller-produced documentation operation can finish with no task IDs even during partial delivery; provider prose cannot claim that exemption. No broader completion-marker fallback or canonical progress change.
-- [ ] Run focused new integration tests RED/GREEN, then delivery, Ralph inner/outer, documentation, runnability and provider regressions. Request read-only review; resolve important findings before the checkpoint commit. Record exact evidence and unfinished phase-4/identity work in the existing convergence record.
+- [x] Route only a nonempty all-documentation failure set to documentation execution; mixed or source failures keep existing implementation repair behavior. Preserve deterministic failure IDs under prefixes `documentation-`, `docs-`, `readme-`, `changelog-`; missing required runnability evidence must block inside the documentation helper.
+- [x] Use the existing `delivery_slice_operation` pointer with `kind="documentation"`; absence of kind remains the existing task operation. A pending documentation operation resumes through `_exec_build` before any new selection. Persist the pointer after the empty journal is durable and before provider intent, as implementation already does. Do not create a parallel state pointer/controller.
+- [x] Existing eligible applied task operations can advance into documentation repair. Repeated documentation feedback against the same pending/accepted documentation operation must not reset its attempt ceiling. A completed documentation operation may advance on the next outer iteration or explicit non-documentation repair; retain the last real implementation task as the source-repair target. Never clear unresolved state or replace an expected journal.
+- [x] Return no completed task IDs, account only the unseen token delta, and preserve the pending candidate on crash. Mark documentation progress only after journaled report publication; existing same-iteration recovery protects the uncommitted checkpoint window. Existing downstream budget plumbing supplies current remaining allowance.
+- [x] `_apply_documentation_gate` must not rewrite controlled independently reviewed canonical reports with a deterministic baseline. It still runs the existing read-only validators and current runnability checks. Keep legacy behavior unchanged when the flag is off.
+- [x] Require an independent verifier report on the controlled path even for `docs_required: false`. Add a default-false internal `require_independent_review` option to the existing documentation gate and enable it from controlled Ralph calls; preserve legacy no-impact behavior otherwise. A controller-authored no-impact report alone cannot bypass the author/reviewer checkpoint. Update controlled finalization fixtures and test missing/rejected no-impact review explicitly.
+- [x] Scope `_enforce_completed_task_ids` so a controller-produced documentation operation can finish with no task IDs even during partial delivery; provider prose cannot claim that exemption. No broader completion-marker fallback or canonical progress change.
+- [x] Run focused new integration tests RED/GREEN, then delivery, Ralph inner/outer, documentation, runnability and provider regressions. Request read-only review; resolve important findings before the checkpoint commit. Record exact evidence and unfinished phase-4/identity work in the existing convergence record.
 
 ## Execution and acceptance boundary
 
