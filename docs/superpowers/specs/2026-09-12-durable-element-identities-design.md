@@ -379,6 +379,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   from explicitly missing images, and retains the existing canonical path rule.
   No filesystem reads occur in the new path. This is not collection acquisition,
   identity revision authentication, a complete memory audit or publication authority.
+- Captured canonical memory audit: implemented in `36f15ddf` and independently
+  approved with no findings. Six-module covering suite: 583 passed. Exact
+  candidate-tree bytes supply native main/support plans; actual read-only
+  expected-row and complete bounded wing observations must agree. Truncation,
+  overflow and drift become unavailable, while complete native classifications
+  remain shared. Tests expose an extra record beyond the legacy scan window.
+  This is an observation, not source/configuration provenance, a storage lease,
+  identity revision approval or managed publication authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
