@@ -462,6 +462,86 @@ def test_workspace_ownership_extra_observations_and_stored_nondecisions():
     assert result.inputs == result.edges == ()
 
 
+@pytest.mark.parametrize("scope", ["workspace", "source"])
+def test_captured_path_component_order_matches_actual_legacy_relationships(tmp_path, monkeypatch, scope):
+    # Lexical string order puts a-b.md first; legacy Path order puts directory a first.
+    source_id = "api" if scope == "source" else None
+    prefix = "re/sources/api" if source_id else "re/workspace"
+    nested_path, hyphen_path = prefix + "/a/decision.md", prefix + "/a-b.md"
+    nested = _artifact(nested_path, content=b"# Nested decision\n", source=source_id)
+    hyphen = _artifact(hyphen_path, content=b"# Hyphen decision\n", source=source_id)
+    summary = _artifact(prefix + "/a/summary.md", "re-architecture", b"Architecture", source_id)
+    selected = (hyphen, summary, nested) if source_id else (hyphen, nested)
+    observed_order = (nested, summary, hyphen) if source_id else (nested, hyphen)
+    for artifact in selected:
+        path = tmp_path / artifact.descriptor.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(artifact.content)
+        assert validate_re_artifact_descriptor(
+            artifact.descriptor.to_json_dict(), workspace_root=tmp_path,
+            owner_scope=scope, owner_source_id=source_id,
+        ) == artifact.descriptor
+    source = _source() if source_id else None
+    if source_id:
+        from tests.unit.test_spec_graph import _write_workspace_source
+        _write_workspace_source(tmp_path)
+    index = SimpleNamespace(generation=2, sources={"api": SimpleNamespace(
+        source_path="sources/api", status="observed-status", fingerprint="semantic-observation",
+        manifest="re/sources/api/manifest.json",
+    )} if source_id else {})
+    monkeypatch.setattr(spec_graph, "_linked_re_artifacts", lambda *args: [tmp_path / a.descriptor.path for a in selected])
+    monkeypatch.setattr(spec_graph, "load_published_index", lambda *args: index)
+    monkeypatch.setattr(spec_graph, "canonical_re_artifact_descriptors", lambda *args: [a.descriptor for a in selected])
+    initial = tuple(_node(a) for a in observed_order)
+    nodes, edges, inputs = {n.id: n for n in initial}, [], {}
+    spec_graph._add_re_topology(tmp_path, tmp_path / "specs/demo", nodes, edges, inputs)
+
+    annotated = tuple(GraphNode("artifact:demo:" + a.descriptor.path, "Artifact", {
+        "path": a.descriptor.path, "hash": _sha(a.content), "role": "reverse-engineering",
+        "mining_status": "eligible" if a is summary else "not-mined-by-policy",
+        "re_artifact_kind": "re-architecture" if a is summary else "re-decision", "re_scope": scope,
+        **({"re_source_id": "api"} if source_id else {}),
+    }) for a in observed_order)
+    owner = "api" if source_id else "workspace"
+    nested_decision = GraphNode(f"decision:{owner}:a/decision.md", "Decision", {
+        **({"source_id": "api"} if source_id else {"scope": "workspace"}),
+        "path": nested_path, "title": "Nested decision",
+    })
+    hyphen_decision = GraphNode(f"decision:{owner}:a-b.md", "Decision", {
+        **({"source_id": "api"} if source_id else {"scope": "workspace"}),
+        "path": hyphen_path, "title": "Hyphen decision",
+    })
+    source_node = GraphNode("source:api", "SourceRoot", {
+        "source_id": "api", "path": "sources/api", "publication_status": "observed-status",
+        "semantic_generation": 2, "semantic_fingerprint": "semantic-observation",
+        "semantic_receipt_path": "re/sources/api/manifest.json",
+    })
+    parent, relation = ("source:api", "HAS_DECISION") if source_id else ("spec:demo", "INFORMED_BY_DECISION")
+    expected_edges = (
+        *((GraphEdge("spec:demo", "USES_SOURCE", "source:api", {}),) if source_id else ()),
+        GraphEdge(parent, relation, nested_decision.id, {}),
+        GraphEdge(nested_decision.id, "DOCUMENTED_BY", "artifact:demo:" + nested_path, {}),
+        *((GraphEdge("source:api", "DESCRIBED_BY", "artifact:demo:" + prefix + "/a/summary.md", {}),) if source_id else ()),
+        GraphEdge(parent, relation, hyphen_decision.id, {}),
+        GraphEdge(hyphen_decision.id, "DOCUMENTED_BY", "artifact:demo:" + hyphen_path, {}),
+    )
+    expected_legacy_nodes = (*annotated, *((source_node,) if source_id else ()), nested_decision, hyphen_decision)
+    assert tuple(nodes.values()) == expected_legacy_nodes
+    assert tuple(edges) == expected_edges
+    assert inputs == {}
+
+    captured_nodes = (expected_legacy_nodes if source_id else
+                      (annotated[0], nested_decision, annotated[1], hyphen_decision))
+    expected = _api().ReGraphContribution("demo", (), captured_nodes, expected_edges)
+    result = _api().build_re_graph_contribution(
+        spec_id="demo", lifecycle="build", artifacts=selected, sources=(source,) if source_id else (),
+        artifact_nodes=initial, stored_artifact_ids=(),
+    )
+    assert result.edges == expected_edges
+    assert result == expected
+    assert _render(result) == _render(expected)
+
+
 @pytest.mark.parametrize("first", ["echelon.spec_graph_re", "echelon.spec_graph"])
 def test_import_orders_preserve_native_model_identities(first):
     import os

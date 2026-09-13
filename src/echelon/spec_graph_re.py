@@ -254,7 +254,7 @@ def _build(spec_id, lifecycle, artifacts, sources, artifact_nodes, stored_artifa
     stored = set(stored_artifact_ids)
     _require(len(stored) == len(stored_artifact_ids))
     nodes, edges, inputs, by_source = {}, [], {}, {}
-    for artifact in sorted(artifacts, key=lambda a: a.descriptor.path):
+    for artifact in sorted(artifacts, key=lambda a: PurePosixPath(a.descriptor.path)):
         descriptor = artifact.descriptor
         artifact_id = f"artifact:{spec_id}:{descriptor.path}"
         node = original.get(artifact_id)
