@@ -2039,11 +2039,24 @@ this assembler.
 
 The assembler recomputes the exact source manifest through its existing owner
 and requires equality to the supplied manifest. Every selected image, including
-hidden, binary and unreferenced files, participates in that validation. One
-selected tree must be exactly `specs/<spec_id>`; an empty or missing selected
-tree preserves its original observation. A broader tree or another physical
-root is not expanded or relabeled. Present bytes form one shared table; a
-missing selected file remains missing rather than becoming an empty file.
+hidden, binary and unreferenced files, participates in that validation before a
+logical view is composed. The optional `spec_source_path` selector accepts only
+the exact canonical `specs/<spec_id>` path or
+`runs/<one-nonempty-component>/specs/<spec_id>`, using the existing normalized
+UTF-8 project-relative path grammar. `None` means exactly `specs/<spec_id>` and
+preserves legacy behavior and wire bytes. Arbitrary roots, extra depth, another
+spec, path normalization, basenames and inferred runs are rejected.
+
+Exactly one captured tree must have the selected physical root. Selection never
+falls back to a canonical tree, another run, or a plausible parent tree. A
+selected missing tree and a selected present-but-empty tree retain their distinct
+physical observations, while both produce the native empty logical spec view.
+For a run-local selection only, that selected tree exclusively supplies bytes at
+logical `specs/<spec_id>/...` paths. Existing canonical-only files are not merged,
+and original run-local path spellings do not become valid policy or memory names.
+Unrelated captured RE and dependency bytes retain their original paths. The
+private view neither mutates nor returns a rebased source manifest; all physical
+trees and files remain fully validated as originally captured.
 
 Policy paths are explicit, unique canonical paths beneath this spec or `re`.
 Only selected present policy files are added, in component-wise path order.
@@ -2070,7 +2083,7 @@ exception cause or context; process-control exceptions propagate. Neither
 filesystem reads nor planning, audits, registry discovery, identity authority
 queries, version discovery or writes occur inside this assembly operation.
 
-The selected spec tree may retain an older or future root
+The selected physical spec tree may retain an older or future root
 `spec-artifact-graph.json`. Its bytes still affect the selected source manifest,
 but are excluded from the derived graph inputs. Selecting it as policy or
 memory input is rejected, preventing a self-hash dependency. This exclusion
@@ -2088,14 +2101,21 @@ match the retained projection. They do not seal, write or atomically publish
 the graph. Portable pure fixtures cover complete expected graph bytes,
 malformed observations, ownership, purity and import-order identities.
 
-Byte coherence does not prove complete dependency selection, authentic registry
-or memory observations, authentic selection of the identity ledger, semantic
-acceptance, or authority to publish. Graph sealing, durable joint identity/source
-publication, run enrollment and transitions, producer allocation, runtime/manual/
-CLI enforcement, semantic review and bounded repair remain separate required
-integration work before live activation. Imported identities and existing
-memory/verification edges remain unassessed; this function does not adopt or
-repair them.
+Byte coherence does not prove complete dependency selection, authentic run
+ownership, source-selection completeness, authentic registry or memory
+observations, authentic selection of the identity ledger, semantic acceptance,
+or authority to publish or complete. The logical run component is only existing
+physical-path syntax, not an authenticated run ID. No controller, state, producer,
+provider, CLI, schema, codec, journal, memory writer or publication owner selects
+or calls this opt-in adapter in this phase. Runtime selection and promotion,
+canonical mirroring without duplicate lifecycle revisions, graph sealing, durable
+joint identity/source publication, managed run transitions, producer allocation,
+semantic review, recovery/completion ordering and bounded repair remain separate
+required integration work before live activation. Copying a draft to canonical
+does not itself allocate identities or prove those transitions are wired. Imported
+identities and existing memory/verification edges remain unassessed; historical
+evidence remains historical evidence rather than proof of selected new content,
+and this function does not adopt or repair it.
 
 ## Coherent candidate and proposed history (inactive)
 

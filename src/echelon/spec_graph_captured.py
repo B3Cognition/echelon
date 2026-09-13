@@ -56,7 +56,7 @@ def build_captured_identity_graph(
     sources: ProjectedPublicationSources, policy_paths: tuple[str, ...],
     memory: tuple[CapturedGraphMemory, ...],
     re_artifacts: tuple[GraphReArtifact, ...], re_sources: tuple[GraphReSource, ...],
-    history: IdentityHistorySnapshot,
+    history: IdentityHistorySnapshot, spec_source_path: str | None = None,
 ) -> SpecArtifactGraph:
     """Compose native projections over one image table, with retained history last.
 
@@ -66,14 +66,14 @@ def build_captured_identity_graph(
     """
     try:
         return _build(spec_id, lifecycle, generator_version, sources, policy_paths,
-                      memory, re_artifacts, re_sources, history)
+                      memory, re_artifacts, re_sources, history, spec_source_path)
     except Exception:
         pass
     raise SpecGraphError("invalid captured identity graph assembly")
 
 
 def _build(spec_id, lifecycle, generator_version, sources, policy_paths,
-           memory, re_artifacts, re_sources, history):
+           memory, re_artifacts, re_sources, history, spec_source_path):
     spec_path = _validate_scope(spec_id, lifecycle)
     _require(type(generator_version) is str and bool(generator_version))
     generator_version.encode("utf-8")
@@ -81,10 +81,35 @@ def _build(spec_id, lifecycle, generator_version, sources, policy_paths,
     _require(type(sources.manifest) is SourceManifestSnapshot)
     _require(type(sources.manifest.payload) is str and type(sources.manifest.sha256) is str)
     _require(snapshot_source_manifest(trees=sources.trees, files=sources.files) == sources.manifest)
-    selected = [tree for tree in sources.trees if tree.path == spec_path.as_posix()]
+    selected_path = spec_path if spec_source_path is None else PurePosixPath(
+        _source_path(spec_source_path).as_posix()
+    )
+    _require(spec_source_path is None or selected_path.as_posix() == spec_source_path)
+    run_local = selected_path != spec_path
+    selected_parts = selected_path.parts
+    _require(
+        not run_local
+        or (
+            len(selected_parts) == 4
+            and selected_parts[0] == "runs"
+            and selected_parts[2:] == ("specs", spec_id)
+        )
+    )
+    selected = [tree for tree in sources.trees if tree.path == selected_path.as_posix()]
     _require(len(selected) == 1)
     images = {item.path: item.content for tree in sources.trees for item in tree.files}
     images.update((item.path, item.content) for item in sources.files if item.content is not None)
+    if run_local:
+        roots = (spec_path.parts, selected_path.parts)
+        images = {
+            path: content for path, content in images.items()
+            if not any(PurePosixPath(path).parts[:len(root)] == root for root in roots)
+        }
+        root_length = len(selected_path.parts)
+        images.update(
+            (spec_path.joinpath(*PurePosixPath(item.path).parts[root_length:]).as_posix(), item.content)
+            for item in selected[0].files
+        )
     output_path = (spec_path / "spec-artifact-graph.json").as_posix()
 
     for collection in (policy_paths, memory, re_artifacts, re_sources):
