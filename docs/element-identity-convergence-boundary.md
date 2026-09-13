@@ -216,6 +216,18 @@ a fabricated passing result; accepted-path testing stops at its invocation.
 See the ownership audit for verification results. Installed/live acceptance,
 rollout and the remaining ownership work remain separate.
 
+### Fulfillment ownership design prepared (2026-09-13)
+
+The user approved preparing the next migration design. The
+[controlled fulfillment design](superpowers/specs/2026-09-13-controlled-fulfillment-ownership-design.md)
+proposes four independently testable phases: deterministic preparation, neutral
+semantic full refresh, scoped completion/recovery, and Ralph integration. It
+reuses the existing runner, deterministic writers, validators and provider facade;
+there is no new COMMANDER or generic workflow engine. Legacy/direct-CLI behavior
+remains separate. The design is awaiting user review; no fulfillment runtime
+migration, rollout or implementation acceptance is claimed. Phase 1 is the next
+implementation checkpoint after design approval.
+
 ## Verification and limits
 
 The boundary review used Git deltas, source/caller inspection, and a static Python
