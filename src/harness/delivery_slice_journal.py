@@ -14,12 +14,13 @@ from harness.durable_json import write_json_atomic
 
 
 class DeliverySliceJournal:
-    def __init__(self, root: Path, operation_id: str):
+    def __init__(self, root: Path, operation_id: str, *, validator=None):
         if not isinstance(operation_id, str) or not operation_id:
             raise DeliverySliceError("invalid delivery operation identity")
         self.root = root / hashlib.sha256(operation_id.encode()).hexdigest()
         self.path = self.root / "journal.json"
         self._fd = None
+        self._validator = validator or _validate
 
     def __enter__(self):
         if self.root.is_symlink():
@@ -53,11 +54,11 @@ class DeliverySliceJournal:
         if not self.path.is_file() or self.path.stat().st_size > 2_000_000:
             raise DeliverySliceError("invalid delivery journal file")
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        _validate(data)
+        self._validator(data)
         return data
 
     def save(self, data):
-        _validate(data)
+        self._validator(data)
         write_json_atomic(self.path, data, trusted_root=self.root)
 
 

@@ -315,16 +315,23 @@ def _spec_inputs(spec_dir: Path, project_dir: Path) -> dict[str, str]:
     return inputs
 
 
-def _protected_fingerprint(worktree: Path, spec_dir: Path, progress_text: str | None = None) -> str:
+def _protected_fingerprint(worktree: Path, spec_dir: Path, progress_text: str | None = None,
+                           *, excluded_report_paths: tuple[Path, ...] = ()) -> str:
     """Detect writes outside implementation ownership, even from a faulty adapter."""
     from harness.provider_workspace_scope import _CONTROL_PLANE_PATHS
 
     entries = {}
+    allowed_exclusions = {spec_dir / name for name in
+                          ("documentation-impact-report.md", "docs-verification-report.md")}
+    if not set(excluded_report_paths) <= allowed_exclusions:
+        raise DeliverySliceError("invalid protected report exclusion")
     roots = [worktree / name for name in _CONTROL_PLANE_PATHS]
     roots.append(spec_dir)
     for root in roots:
         paths = [root, *sorted(root.rglob("*"))] if root.is_dir() and not root.is_symlink() else [root]
         for path in paths:
+            if path in excluded_report_paths:
+                continue
             if path == worktree / ".echelon/runnability.yml":
                 continue  # the explicitly authorized candidate contract
             if path.is_symlink():
