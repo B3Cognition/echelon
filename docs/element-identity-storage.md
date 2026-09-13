@@ -2347,6 +2347,63 @@ retain their meaning; identity failure is never quality debt or a banzai waiver.
 Prior composition experiments above remain historical evidence for their stated
 scope and do not prove these new controller boundaries or authorize live rollout.
 
+## Captured canonical memory acquisition
+
+`echelon.mempalace_captured_audit.audit_captured_spec_memory` is an opt-in library
+entry point for actual native memory observations against a supplied complete
+`ProjectTreeSnapshot`. It validates the full original selection, including ignored
+binary files, hashes, modes and directory membership, before adapter acquisition.
+The selected tree must exist and contain a regular direct-child `spec.md`; present
+empty bytes retain native planning outcomes. Every present direct supporting
+artifact named by `SUPPORTING_MEMORY_ARTIFACTS` is included in native filename
+order. Nested or unselected files remain validated but are not supporting inputs.
+
+The caller explicitly selects the physical tree, whether canonical, run-local or
+another normalized staging root. The audit detaches its bytes and maps relative
+suffixes to logical `specs/<spec_id>/...` keys without rebasing the original tree or
+claiming a canonical physical manifest. Hashes and native snapshot metadata come
+from those same captured bytes. The absolute `Path` project root is not resolved
+or used to reread spec sources; it supplies report display paths and the existing
+adapter configuration location. Selection, configuration, wing and source-table
+provenance binding remain the caller's later integration responsibility. The
+complete supplied membership is an observation claim, not an acquired source lease.
+
+The native adapter plans main and supporting rows with run ID `audit` and opens
+the existing collection through its read-only entry. The audit reads exact expected
+IDs and then uses the unchanged complete wing scanner, including its two paged
+passes and order/content checks. Every raw response is deeply detached before any
+subsequent backend read. Unrequested expected-fetch IDs are rejected, and valid
+expected-fetch rows in the selected wing must equal the complete scan restricted
+to expected IDs. Legitimate wrong-wing expected rows retain native wrong-wing
+classification. Extras are classified from the acquired complete wing rows,
+without another bounded extras query. Unsupported, malformed, truncated,
+overflowing or changing observations yield `unavailable`, never prospective success.
+
+`maximum_scan_rows` is a required positive exact integer operational read budget.
+It neither derives from nor limits numeric element labels, spelling or allocation
+capacity. It can reveal relevant extras beyond the legacy audit's 1,000-row window;
+an insufficient budget yields `unavailable`. Exact expected classification,
+extras policy, counts, errors, sorted report lists, and skipped versus warn/zero
+retrieval probes are shared with the native audit. Captured reconciliation uses
+the detached byte table. Existing disk audit acquisition, cleanup and scanner/
+retarget behavior remain intact, including inherited canonical path policy.
+
+Ordinary invalid input raises a bounded `SpecMemoryError` without source-bearing
+exception chaining. Planner and reconciliation failures produce native failure
+reports; adapter and storage observation failures produce unavailable reports
+with bounded error classes. Operational `SystemExit` follows the native report
+convention, while `KeyboardInterrupt` propagates. No fallback opens creating
+storage or silently changes to disk acquisition.
+
+The result is bounded to this read interval and source image. Equal scans do not
+lock storage or authorize publication. Returning this report to the captured graph
+memory contribution preserves actual missing, stale and unavailable observations;
+it adds no current-revision or semantic claim. Evidence/RE acquisition, identity
+lifecycle, all producer integration, managed graph/source publication and recovery,
+completion ownership, bounded repair, legacy writer exclusion and final offline/
+live checkpoints remain separate work. No Phase A graph-audit gate or live runtime
+activation is added by this API.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
