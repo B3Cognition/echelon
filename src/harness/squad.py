@@ -38,6 +38,7 @@ from echelon.spec_lifecycle import (
     SpecRunExecutionLock,
 )
 from harness.condition_evaluator import ConditionEvaluator
+from harness.element_identity_legacy_guard import LEGACY_IDENTITY_EXECUTION_BLOCKED
 from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
@@ -2386,6 +2387,18 @@ class SquadController:
             )
             return outcome
 
+    def _legacy_identity_execution_blocked(self, state: dict) -> bool:
+        from harness.element_identity_legacy_guard import require_legacy_identity_execution
+        from harness.element_identity_store import IdentityStoreError
+
+        try:
+            require_legacy_identity_execution(
+                project_root=self._project_root, run_dir=self._squad_dir, state=state,
+            )
+        except IdentityStoreError:
+            return True
+        return False
+
     def _run_with_execution_lease(
         self,
         execute: Callable[[], SquadResult],
@@ -2404,6 +2417,15 @@ class SquadController:
                     self._squad_dir,
                     operation_id,
                 ):
+                    state = self._state_store.load()
+                    if self._legacy_identity_execution_blocked(state):
+                        phase = state.get("phase")
+                        return SquadResult(
+                            status="blocked",
+                            phase=phase if isinstance(phase, str) else "unknown",
+                            run_id=self._squad_dir.name,
+                            summary=LEGACY_IDENTITY_EXECUTION_BLOCKED,
+                        )
                     recovery = (
                         self._drain_pending_controller_completion()
                     )
@@ -3911,6 +3933,8 @@ class SquadController:
                 )
 
         state = self._state_store.load()
+        if self._legacy_identity_execution_blocked(state):
+            raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         autonomy_mode = state.get("autonomy_mode")
         if autonomy_mode not in {"guided", "semi", "banzai"}:
             raise HumanInputPolicyError(
@@ -5063,6 +5087,8 @@ class SquadController:
                 "human-input token usage delta is invalid"
             )
         state = self._state_store.load()
+        if self._legacy_identity_execution_blocked(state):
+            raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             raise HumanInputPolicyError(
                 "controller completion is pending human-input resolution"
@@ -6217,6 +6243,8 @@ class SquadController:
     def resume_pending_human_input(self) -> bool:
         """Recover an interrupted claim, then route one pending decision."""
         pending = self._state_store.load()
+        if self._legacy_identity_execution_blocked(pending):
+            raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
                 return False
@@ -6323,6 +6351,8 @@ class SquadController:
         if not isinstance(answer, str) or not answer.strip():
             raise HumanInputPolicyError("human-input answer is required")
         state = self._state_store.load()
+        if self._legacy_identity_execution_blocked(state):
+            raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             if not self._drain_pending_controller_completion().recovered:
                 return False

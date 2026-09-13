@@ -2262,6 +2262,58 @@ staging, final graph rederivation and approval/recovery ownership remain future
 integration work. No production code, schema, codec, controller, provider, state,
 CLI, prose or memory writer is changed or activated, and no rollout is authorized.
 
+## Early exclusion from legacy execution
+
+The legacy squad controller now refuses existing managed ownership before any
+completion drain, retarget recovery, orphan cleanup or phase callback. Both public
+run entry points make the check inside the existing Phase A and run execution
+leases. The returned blocked result is synthetic: rejection saves no blocker,
+claims no decision, changes no identity ledger or repair/dispatch counter, and
+retains pending completion/publication markers and staged artifacts. Lock
+contention keeps the existing busy outcome.
+
+The focused adapter rejects any present `managed_identity` key, regardless of its
+value. Without that declaration, it checks the explicit `.echelon` parent and
+`identity` leaf using `lstat`. A missing parent or missing leaf beneath a real
+directory preserves the legacy route without creating an authority or reading
+Markdown. A present symlink or non-directory parent refuses; an existing leaf
+must pass native `IdentityStore.open` validation. Incomplete directories, missing
+files, broken links, malformed schema/marker and ordinary authority failures
+cannot silently fall back to legacy execution.
+
+`require_unmanaged_execution(spec_id=..., run_ids=(...))` validates exact native
+text identifiers before one query-only transaction. The adapter supplies both the
+physical run directory name and any nonempty declared run ID, deduplicated without
+normalization, plus any claimed spec ID. The query uses the unique managed spec
+and run indexes. Any matching retained row refuses even if its request or source
+payload is damaged; a later run of an already managed spec also refuses. A final
+orphan check scans only the `managed_identity_operations` partial index and joins
+the indexed registration operation ID, so a removed registration with its managed
+operation retained also blocks. It does not scan identity child history or all
+general operations. Other legacy ownership can proceed, and nonselected damaged
+payloads are not certified by this bounded negative query.
+
+The four public human-input methods check at their existing state-load boundary,
+before answer/decision writes or completion recovery. They raise the existing
+handled `HumanInputPolicyError` with `identity authority does not permit legacy
+execution`, which prevents the CLI's successful submission path. Ordinary
+adapter failures use the same bounded message without nested exception details;
+process-control exceptions propagate. Earlier read-only argument/policy validation
+keeps its existing ordering.
+
+This exclusion does not enable managed execution, authoring, enrollment,
+migration, recovery or any producer. A successful absence read is neither a
+registration lease nor a complete authority audit and does not serialize later
+explicit enrollment. If both declarations and durable ownership witnesses are
+lost, Markdown cannot reconstruct the missing authority here. Positive managed
+admission still needs complete state/run/source authentication and coordinated
+candidate production, semantic review, identity/source journals, sealed graphs,
+completion/recovery and bounded repair. Pending publication continues to block
+conflicting writes until reconciled. Existing graph keys and historical evidence
+retain their meaning; identity failure is never quality debt or a banzai waiver.
+Prior composition experiments above remain historical evidence for their stated
+scope and do not prove these new controller boundaries or authorize live rollout.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,

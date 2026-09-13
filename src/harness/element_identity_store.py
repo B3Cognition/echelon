@@ -753,6 +753,41 @@ class IdentityStore:
         except Exception:
             raise IdentityStoreError("invalid managed identity authority or request") from None
 
+    def require_unmanaged_execution(self, *, spec_id: str | None,
+                                    run_ids: tuple[str, ...]) -> None:
+        """Refuse retained managed ownership; this absence read is not a lease or audit."""
+        try:
+            if spec_id is not None:
+                lifecycle.text(spec_id, "spec_id")
+            if type(run_ids) is not tuple or not run_ids:
+                raise ValueError("run_ids must be a nonempty exact tuple")
+            for run_id in run_ids:
+                lifecycle.text(run_id, "run_id")
+            if len(set(run_ids)) != len(run_ids):
+                raise ValueError("run_ids must be unique")
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                if spec_id is not None and connection.execute(
+                    "SELECT 1 FROM managed_identity_specs WHERE spec_id=?", (spec_id,),
+                ).fetchone() is not None:
+                    raise ValueError("managed spec ownership is retained")
+                for run_id in run_ids:
+                    if connection.execute(
+                        "SELECT 1 FROM managed_identity_specs WHERE run_id=?", (run_id,),
+                    ).fetchone() is not None:
+                        raise ValueError("managed run ownership is retained")
+                if connection.execute(
+                    "SELECT 1 FROM operations AS op INDEXED BY managed_identity_operations "
+                    "LEFT JOIN managed_identity_specs AS managed "
+                    "ON managed.operation_id=op.operation_id "
+                    "WHERE op.method='managed_identity' AND managed.operation_id IS NULL LIMIT 1"
+                ).fetchone() is not None:
+                    raise ValueError("orphan managed registration is retained")
+            return None
+        except Exception:
+            pass
+        raise IdentityStoreError("invalid unmanaged execution authority or request")
+
     def check_managed_context(self, *, spec_id: str, run_id: str,
                               record: object) -> dict:
         """Check explicit genesis ownership and observe its current source, read-only."""
