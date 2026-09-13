@@ -2164,6 +2164,84 @@ source ownership, real byte guards, graph sealing, durable joint publication and
 recovery, producer integration, bounded repair and final offline regression
 remain required before rollout.
 
+## Sealed graph/source and identity journal composition (test only)
+
+`tests/unit/test_identity_graph_publication_composition.py` now exercises actual
+sealed publication of both `spec.md` and `spec-artifact-graph.json`, composed
+with the real v3 identity publication journal and accepted source context. This
+extends the earlier separate captured-graph and candidate fixtures above; it
+does not activate a production caller or select a production staging protocol.
+
+The isolated fixture allocates `FR-000001`, materializes typed revision 1 with
+immutable subject `Movement`, and stores a parsed evidence reference assessed
+against revision 1. It captures an existing assessed source tree, explicitly
+registers that manifest, and previews an arrow-key revision using the native
+candidate assembler and coherent history preview. A never-promoted provisional
+source-only transaction supplies projected bytes for native canonical planning
+and captured graph assembly. Its transaction ID differs from the final seal,
+and it has no identity intent. Neither transaction is unsealed or mutated.
+
+A separate final transaction contains the proposed spec and rendered graph as
+ordinary staged writes. The graph has an explicit physical opaque-write binding;
+it is not an identity definition artifact. Repeating candidate preview and graph
+derivation from that final seal produces exactly the sealed graph bytes. The
+final selected manifest includes the graph, while graph inputs exclude the graph
+itself. Assertions retain the original requirement key, current revision 2 and
+the old evidence edge to revision 1; historical evidence is not relabeled as
+proof of the new content.
+
+The fixture prepares the v3 intent before promotion, associating the final seal,
+original encoded source baseline and complete previewed history hash. The native
+publisher promotes both artifacts in its sorted operation order; graph promotion
+can precede spec promotion. Only after physical promotion does a short fixture
+hook call the actual identity journal application. It performs no graph writes,
+planning, provider work or memory acquisition. Successful guarded return is
+followed by assertions of complete physical source images, manifest, retained
+history and receipt payloads, then a low-level release using an explicitly
+fixture-only completion string. Exact application/release retries and reopen
+retain one reservation, two revisions, one historical claim and one accepted
+source publication at sequence `"1"`.
+
+Real publisher fault boundaries cover before-first promotion, after-first
+promotion and after-all promotion before journal application. A separate hook
+failure occurs immediately after actual journal application. Recovery reloads
+the prepared transaction and store from the retained request and baseline codecs,
+keeps the original source selection and finishes the same operation without
+another allocation. One real spawned process exits deliberately at the first
+completed promotion boundary, bypassing Python cleanup; the parent verifies the
+native partial prefix and resumes solely from persisted recovery inputs. These
+are bounded process-interruption and exception-boundary observations, not a
+claim that all machine or storage crashes have been simulated.
+
+Native source/seal guards reject changed read-only evidence, hidden binary
+bytes, file modes, empty-directory membership, canonical preimages and sealed
+graph bytes/modes before application, preserving pending recovery material. A
+post-apply hook that changes evidence makes guarded exit fail even though the
+database application committed. Reopening and retrying against that drift also
+fails and leaves the applied journal pending. Conflicting allocation and
+lifecycle writes are rejected by the existing whole-spec journal guard in both
+prepared and applied pending states. Separate native preparation checks reject
+stale complete history and an advanced accepted source predecessor. No failure
+handler repairs drift, discards stages or releases pending state.
+
+All effects and rejection checks above use existing native functions. Selection,
+two-transaction staging, graph comparison, hook placement and release sequencing
+are fixture orchestration only. The supplied `GraphMemoryAudit` is a deterministic
+observation, not an actual collection audit, prospective storage-pass proof or
+authenticated dependency acquisition; there is no provider or memory writer.
+Low-level publication still trusts its caller for graph derivation and semantic
+authorization: freshly sealed but semantically wrong graph bytes are not a
+native rejection contract. The test's byte comparison is not a production gate.
+Opaque recovery/completion strings are not authenticated by these APIs.
+
+This checkpoint does not establish fresh managed-run enrollment, historical
+migration, run ownership, closed recovery admission, complete dependency/memory
+capture, semantic review, pending-read enforcement, squad/controller completion,
+producer integration, manual/CLI enforcement or bounded repair. Production
+staging, final graph rederivation and approval/recovery ownership remain future
+integration work. No production code, schema, codec, controller, provider, state,
+CLI, prose or memory writer is changed or activated, and no rollout is authorized.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
