@@ -788,6 +788,25 @@ class IdentityStore:
             pass
         raise IdentityStoreError("invalid unmanaged execution authority or request")
 
+    def require_unmanaged_workspace(self) -> None:
+        """Refuse any retained managed ownership; this observation is not a lease."""
+        try:
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                if connection.execute(
+                    "SELECT 1 FROM managed_identity_specs LIMIT 1"
+                ).fetchone() is not None:
+                    raise ValueError("managed workspace ownership is retained")
+                if connection.execute(
+                    "SELECT 1 FROM operations INDEXED BY managed_identity_operations "
+                    "WHERE method='managed_identity' LIMIT 1"
+                ).fetchone() is not None:
+                    raise ValueError("managed registration is retained")
+            return None
+        except Exception:
+            pass
+        raise IdentityStoreError("invalid unmanaged workspace authority or request")
+
     def check_managed_context(self, *, spec_id: str, run_id: str,
                               record: object) -> dict:
         """Check explicit genesis ownership and observe its current source, read-only."""

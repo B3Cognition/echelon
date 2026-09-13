@@ -25,6 +25,7 @@ from echelon.workspace_graph import (
     WorkspaceGraphBuildResult,
     WorkspaceGraphError,
     WorkspaceGraphMember,
+    _require_legacy_workspace_projection,
     build_workspace_graph,
     render_workspace_graph,
     workspace_graph_path,
@@ -161,6 +162,7 @@ def write_workspace_graph_audit(
     project_root: Path,
 ) -> Path:
     """Atomically publish a deterministic workspace audit report."""
+    _require_legacy_workspace_projection(project_root)
     path = workspace_graph_path(project_root).with_name(WORKSPACE_GRAPH_AUDIT_FILENAME)
     _prepare_graph_output_path(
         path,

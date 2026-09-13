@@ -2926,8 +2926,14 @@ def graph_refresh(
 
 
 def _graph_output_commit(spec_dir: Path, *, graph: bool = True, audit: bool = True):
+    from echelon.mempalace_requirements import _require_legacy_spec_memory
     from echelon.owned_output_commit import OwnedOutputCommit
 
+    _require_legacy_spec_memory(
+        Path.cwd(),
+        spec_id=spec_dir.name,
+        resolved_spec_id=spec_dir.resolve().name,
+    )
     names = (["spec-artifact-graph.json"] if graph else []) + (
         ["spec-artifact-graph-audit.json"] if audit else []
     )
@@ -3109,10 +3115,21 @@ def spec_memory_audit(
     probe_retrieval: bool = typer.Option(False, "--probe-retrieval"),
 ) -> None:
     from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
-    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_requirements import (
+        SpecMemoryError,
+        _require_legacy_spec_memory,
+        resolve_spec_dir,
+    )
 
     try:
         report = audit_spec_memory(Path.cwd(), spec_selector, probe_retrieval=probe_retrieval)
+        if write and report.status != "unavailable":
+            spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+            _require_legacy_spec_memory(
+                Path.cwd(),
+                spec_id=spec_dir.name,
+                resolved_spec_id=Path(report.spec_dir).resolve().name,
+            )
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

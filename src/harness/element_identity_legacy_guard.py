@@ -40,9 +40,21 @@ def _require_existing_unmanaged_authority(
             spec_id = None
         else:
             text(spec_id, "spec_id")
-    IdentityStore.open(project_root).require_unmanaged_execution(
-        spec_id=spec_id, run_ids=tuple(run_ids),
-    )
+    store = IdentityStore.open(project_root)
+    if spec_id is None and not run_ids:
+        store.require_unmanaged_workspace()
+    else:
+        store.require_unmanaged_execution(spec_id=spec_id, run_ids=tuple(run_ids))
+
+
+def require_legacy_identity_workspace(*, project_root: Path) -> None:
+    """Observe workspace-wide ownership without inventing a selected spec or run."""
+    try:
+        _require_existing_unmanaged_authority(project_root)
+        return None
+    except Exception:
+        pass
+    raise IdentityStoreError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
 def require_legacy_identity_spec(*, project_root: Path, spec_id: str) -> None:

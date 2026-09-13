@@ -1,8 +1,9 @@
 # Element identity allocation, lifecycle, binding, and publication journal storage
 
 `harness.element_identity_store.IdentityStore` remains inactive except for the
-narrow selected-spec legacy memory and evidence exclusion documented below. It
-is not wired into managed spec producers, providers, graph adapters, positive
+narrow selected-spec legacy memory/evidence and named projection-output
+exclusions documented below. It is not wired into managed spec producers,
+providers, positive managed graph publication,
 memory/evidence publication, or squad publication. Existing authoring behavior
 remains in place. Importing this module does not activate identity management or
 create workspace state.
@@ -857,6 +858,43 @@ Direct graph and CLI effects, low-level and generic writers/miners, managed
 producers and runtime selection, positive managed memory/evidence publication,
 semantic authorization, coordinated completion, recovery, and bounded repair
 remain separate integration work.
+
+### Named legacy projection-output exclusion
+
+Five rootful output owners now perform negative admission before publication:
+`write_workspace_graph`, `write_workspace_graph_audit`, write-mode
+`refresh_workspace_graph`, `_graph_output_commit`, and write-mode
+`spec_memory_audit`. The workspace graph, audit, and aggregate refresh owners use
+a workspace-global observation: any retained row in `managed_identity_specs` or
+any retained `managed_identity` operation refuses the legacy workspace
+projection. This includes damaged genesis payloads and registration-only orphans,
+even when the managed spec exists only in a run-local source tree and is absent
+from canonical `specs/` discovery. Ordinary allocations, imports, and source
+contexts do not establish managed enrollment and therefore do not block those
+workspace projections.
+
+The graph commit and memory-audit owners remain selected-spec boundaries. They
+check both the selected canonical directory name and the independently resolved
+physical output directory name. An unrelated managed spec does not prevent a
+legacy spec graph or memory-audit report from being written. Read-only graph
+builds, audits, and workspace refresh previews remain diagnostic and do not
+acquire write permission.
+
+Each negative check is one bounded, query-only observation, not an enrollment
+lease or atomic proof spanning SQLite, memory, graph, Git, and filesystem effects.
+The direct workspace writers repeat the observation at their own boundary. The
+rootless `write_spec_graph`, spec audit/report serializers,
+`write_workspace_graph_bytes`, and generic exact-byte/export helpers remain
+trusted-caller primitives with no fabricated project root; this exclusion does
+not claim to confine arbitrary Python or file access or every CLI `--output`
+destination.
+
+These guards provide refusal only. Positive managed graph/source/runtime
+publication, authenticated producer selection, semantic repair, coordinated
+completion, concurrent enrollment serialization, and rollout authorization
+remain separate integration requirements. Standalone RE mining is not globally
+blocked, and this is not a complete all-writer perimeter or a live managed
+success path.
 
 ## Authority and API
 
