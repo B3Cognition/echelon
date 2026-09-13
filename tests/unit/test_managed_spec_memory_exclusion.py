@@ -4,7 +4,6 @@ from pathlib import Path
 import shutil
 import sqlite3
 import stat
-from types import SimpleNamespace
 
 import pytest
 
@@ -98,6 +97,14 @@ class LocalCollection:
         rows = list(self.rows.items())
         if ids is not None:
             rows = [(drawer_id, self.rows[drawer_id]) for drawer_id in ids if drawer_id in self.rows]
+        if where is not None:
+            def selected(row):
+                return all(
+                    row[1].get(key) == (value.get("$eq") if isinstance(value, dict) else value)
+                    for key, value in where.items()
+                )
+
+            rows = [(drawer_id, row) for drawer_id, row in rows if selected(row)]
         if limit is not None:
             start = offset or 0
             rows = rows[start : start + limit]
@@ -107,12 +114,43 @@ class LocalCollection:
             "metadatas": [row[1] for _drawer_id, row in rows],
         }
 
+    def add(self, *, documents, ids, metadatas):
+        if not (len(documents) == len(ids) == len(metadatas)):
+            raise ValueError("mismatched local collection rows")
+        if any(drawer_id in self.rows for drawer_id in ids):
+            raise ValueError("duplicate local collection drawer")
+        for drawer_id, document, metadata in zip(ids, documents, metadatas):
+            self.rows[drawer_id] = (document, dict(metadata))
+
     def delete(self, ids=None, **kwargs):
         selected = list(ids if ids is not None else kwargs["ids"])
         self.deleted.extend(selected)
         for drawer_id in selected:
             self.rows.pop(drawer_id, None)
         return {"deleted": len(selected)}
+
+
+def install_local_mempalace(monkeypatch, collection):
+    from codegen.memory import collision, mempalace_writer
+    from codegen.memory.mempalace_writer import MemPalaceWriter
+
+    monkeypatch.setattr(collision, "_get_collection", lambda _path: collection)
+    monkeypatch.setattr(mempalace_writer, "add_drawer", object())
+    monkeypatch.setattr(MemPalaceWriter, "_get_collection", lambda self: collection)
+    monkeypatch.setattr(
+        MemPalaceWriter,
+        "get_collection_read_only",
+        lambda self: collection,
+    )
+
+
+def add_verify_evidence_alias(root: Path, alias: str) -> None:
+    verify_root = root / "runs/spec-20260728-120000/verify-spec"
+    shutil.copytree(verify_root / "003-demo", verify_root / alias)
+    state_path = verify_root / alias / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["spec_id"] = alias
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
 
 
 def test_managed_evidence_mining_rejects_before_adapter_acquisition(tmp_path, monkeypatch):
@@ -306,6 +344,115 @@ def test_requirement_symlink_selector_checks_selected_and_physical_identities(
     assert snapshot(tmp_path) == before
 
 
+@pytest.mark.parametrize("managed_id", ["004-alias", "003-demo"])
+def test_cleanup_symlink_selector_checks_selected_and_physical_identities(
+    tmp_path, monkeypatch, managed_id,
+):
+    import echelon.mempalace_audit as audit
+
+    spec_dir = write_workspace(tmp_path)
+    alias = spec_dir.with_name("004-alias")
+    alias.symlink_to(spec_dir.name, target_is_directory=True)
+    enroll_managed_spec(tmp_path, managed_id)
+    effects = []
+    monkeypatch.setattr(
+        audit,
+        "create_requirement_memory_adapter",
+        acquisition_tripwire(effects, "cleanup adapter"),
+    )
+    before = snapshot(tmp_path)
+    assert_bounded(lambda: audit.cleanup_stale_spec_memory(tmp_path, alias.name))
+    assert effects == []
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("managed_id", ["004-alias", "003-demo"])
+def test_evidence_mining_symlink_selector_checks_selected_and_physical_identities(
+    tmp_path, monkeypatch, managed_id,
+):
+    import echelon.mempalace_spec_evidence as evidence
+
+    spec_dir = write_evidence_workspace(tmp_path)
+    alias = spec_dir.with_name("004-alias")
+    alias.symlink_to(spec_dir.name, target_is_directory=True)
+    enroll_managed_spec(tmp_path, managed_id)
+    effects = []
+    monkeypatch.setattr(
+        evidence,
+        "create_spec_evidence_memory_adapter",
+        acquisition_tripwire(effects, "evidence adapter"),
+    )
+    before = snapshot(tmp_path)
+    assert_bounded(
+        lambda: evidence.mine_spec_evidence_memory(
+            tmp_path,
+            alias.name,
+            run_id="manual",
+        )
+    )
+    assert effects == []
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("managed_id", ["004-alias", "003-demo"])
+def test_evidence_publication_symlink_selector_checks_selected_and_physical_identities(
+    tmp_path, monkeypatch, managed_id,
+):
+    import echelon.mempalace_spec_evidence as evidence
+
+    spec_dir = write_evidence_workspace(tmp_path)
+    alias = spec_dir.with_name("004-alias")
+    alias.symlink_to(spec_dir.name, target_is_directory=True)
+    add_verify_evidence_alias(tmp_path, alias.name)
+    enroll_managed_spec(tmp_path, managed_id)
+    effects = []
+    real_mkdir = Path.mkdir
+
+    def observed_mkdir(path, *args, **kwargs):
+        if path == alias / "evidence":
+            effects.append("evidence mkdir")
+            raise AssertionError("managed alias publication reached evidence mkdir")
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", observed_mkdir)
+    monkeypatch.setattr(
+        evidence.shutil,
+        "copy2",
+        acquisition_tripwire(effects, "evidence copy"),
+    )
+    before = snapshot(tmp_path)
+    assert_bounded(
+        lambda: evidence.publish_spec_evidence_package(tmp_path, alias.name)
+    )
+    assert effects == []
+    assert snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("managed_id", ["004-alias", "003-demo"])
+def test_retarget_refresh_symlink_selector_checks_selected_and_physical_identities(
+    tmp_path, monkeypatch, managed_id,
+):
+    import echelon.mempalace_retarget as retarget
+
+    spec_dir = write_workspace(tmp_path)
+    alias = spec_dir.with_name("004-alias")
+    alias.symlink_to(spec_dir.name, target_is_directory=True)
+    enroll_managed_spec(tmp_path, managed_id)
+    effects = []
+    monkeypatch.setattr(
+        retarget,
+        "_configured_mempalace_wing",
+        acquisition_tripwire(effects, "retarget config"),
+    )
+    before = snapshot(tmp_path)
+    assert_bounded(
+        lambda: retarget.refresh_retarget_spec_memory(tmp_path, alias),
+        retarget.RetargetMemoryError,
+    )
+    assert effects == []
+    assert snapshot(tmp_path) == before
+
+
 @pytest.mark.parametrize(
     ("owner", "damage"),
     [
@@ -401,7 +548,6 @@ def test_direct_translation_bounds_identity_errors_and_propagates_process_contro
 def test_unrelated_authority_preserves_legacy_requirement_alias_mining(
     tmp_path, monkeypatch,
 ):
-    from echelon.spec_memory_miner import SpecMemoryMiner
     import echelon.mempalace_requirements as requirements
 
     spec_dir = write_workspace(tmp_path)
@@ -409,35 +555,58 @@ def test_unrelated_authority_preserves_legacy_requirement_alias_mining(
     alias.symlink_to(spec_dir.name, target_is_directory=True)
     IdentityStore.initialize(tmp_path)
     enroll_managed_spec(tmp_path, "999-unrelated", run_id="manual")
-
-    monkeypatch.setattr(
-        SpecMemoryMiner,
-        "mine_canonical_bytes",
-        lambda self, content, *, source, artifact_metadata: SimpleNamespace(
-            written=1,
-            already_present=0,
-            skipped=0,
-            failed=0,
-            drifted=0,
-            unavailable=0,
-            drawer_ids=["drawer-current"],
-            expected_drawer_ids=["drawer-current"],
-            errors=[],
-        ),
-    )
+    collection = LocalCollection({})
+    install_local_mempalace(monkeypatch, collection)
     report = requirements.mine_spec_requirements(tmp_path, alias, run_id="manual")
     assert report.status == "complete"
     assert report.spec_id == "003-demo"
-    assert report.drawer_ids == ["drawer-current"]
+    assert report.written_count == 2
+    assert report.adopted_count == 0
+    assert report.failed_count == 0
+    assert report.drawer_ids == [
+        "drawer_demo-wing_functional-requirements_"
+        "030f38098da74edce33f15481ef195007e647987561cc1230cca023d54b4f602",
+        "drawer_demo-wing_non-functional-requirements_"
+        "94c4c6283c516412cbcad68cf6acf48839251207cb72832db311a3a10136c16b",
+    ]
+    assert report.expected_drawer_ids == report.drawer_ids
+    assert sorted(collection.rows) == report.drawer_ids
+    rows_by_requirement = {
+        metadata["requirement_id"]: (drawer_id, document, metadata)
+        for drawer_id, (document, metadata) in collection.rows.items()
+    }
+    assert set(rows_by_requirement) == {"FR-001", "NFR-001"}
+    functional = rows_by_requirement["FR-001"]
+    assert functional[1] == "FR-001: Upload a photo."
+    assert functional[2]["room"] == "functional-requirements"
+    assert functional[2]["source_file"] == "specs/003-demo/spec.md"
+    assert functional[2]["artifact_path"] == "specs/003-demo/spec.md"
+    assert functional[2]["canonical_spec_sha256"] == (
+        "c9698026144b9653999c75bcb3dd29e9dd585d6e05ef9f3ba49e0229b4bc6fcf"
+    )
+    assert functional[2]["requirement_content_sha256"] == (
+        "4b84c42d63c891e7827e88fb598c5b809c69c2b28cd3861fde0aeb3a6b43d14d"
+    )
+    nonfunctional = rows_by_requirement["NFR-001"]
+    assert nonfunctional[1] == "NFR-001: Respond within 1s."
+    assert nonfunctional[2]["room"] == "non-functional-requirements"
+    assert all(
+        metadata["wing"] == "demo-wing"
+        and metadata["run_id"] == "manual"
+        and metadata["scope"] == "canonical"
+        and metadata["canonical"] is True
+        and metadata["provenance_type"] == "requirements_mine"
+        for _drawer_id, _document, metadata in rows_by_requirement.values()
+    )
 
 
 def test_legacy_evidence_mining_uses_native_adapter_and_local_collection_seam(
     tmp_path, monkeypatch,
 ):
-    from echelon.spec_memory_miner import SpecMemoryMiner
     import echelon.mempalace_spec_evidence as evidence
 
-    write_evidence_workspace(tmp_path)
+    spec_dir = write_evidence_workspace(tmp_path)
+    spec_dir.joinpath("fulfillment-report.md").unlink()
     IdentityStore.initialize(tmp_path)
     enroll_managed_spec(tmp_path, "999-unrelated")
     collection = LocalCollection(
@@ -452,28 +621,44 @@ def test_legacy_evidence_mining_uses_native_adapter_and_local_collection_seam(
             ),
         }
     )
-    monkeypatch.setattr(SpecMemoryMiner, "open_collection_read_only", lambda self: collection)
-    monkeypatch.setattr(
-        SpecMemoryMiner,
-        "mine_spec_evidence_artifact_bytes",
-        lambda self, content, *, source, artifact_metadata: SimpleNamespace(
-            written=1,
-            already_present=0,
-            skipped=0,
-            failed=0,
-            drifted=0,
-            unavailable=0,
-            drawer_ids=[source],
-            expected_drawer_ids=[source],
-            errors=[],
-        ),
-    )
+    install_local_mempalace(monkeypatch, collection)
     report = evidence.mine_spec_evidence_memory(tmp_path, "003-demo", run_id="manual")
     assert report.status == "complete"
-    assert report.artifact_count == 2
-    assert report.written_count == 2
+    assert report.artifact_count == 1
+    assert report.written_count == 1
+    assert report.adopted_count == 0
+    assert report.failed_count == 0
+    expected_id = (
+        "drawer_demo-wing_spec-fulfillment-evidence_"
+        "427895e988fd1caeed70b3627092d690383ecf631d1ad52d6812e31c1078d608"
+    )
+    assert report.drawer_ids == [expected_id]
+    assert report.expected_drawer_ids == [expected_id]
     assert collection.deleted == ["old-evidence"]
     assert "other" in collection.rows
+    document, metadata = collection.rows[expected_id]
+    assert document == (
+        "EVID-specs-003-demo-verified-fulfillment-ledger-json-000: "
+        'verified-fulfillment-ledger.json: {"FR-001":{"status":"IMPLEMENTED"}}'
+    )
+    assert metadata["requirement_id"] == (
+        "EVID-specs-003-demo-verified-fulfillment-ledger-json-000"
+    )
+    assert metadata["wing"] == "demo-wing"
+    assert metadata["room"] == "spec-fulfillment-evidence"
+    assert metadata["run_id"] == "manual"
+    assert metadata["phase"] == "VERIFY"
+    assert metadata["scope"] == "canonical"
+    assert metadata["artifact_kind"] == "spec-evidence"
+    assert metadata["artifact_path"] == (
+        "specs/003-demo/verified-fulfillment-ledger.json"
+    )
+    assert metadata["canonical_spec_sha256"] == (
+        "7fd572f7e9e21be49949714103185da38bf91a4ee4443abce48520db98140d8a"
+    )
+    assert metadata["requirement_content_sha256"] == (
+        "aea4ee162608d284500b6e7aa4b1670a363f4567a3a53861a95b4968e32c59dd"
+    )
 
 
 def test_legacy_cleanup_uses_native_adapter_planner_and_local_collection_seam(
