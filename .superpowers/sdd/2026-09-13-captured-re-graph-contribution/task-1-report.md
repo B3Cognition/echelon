@@ -316,3 +316,83 @@ completion enforcement, and bounded repair still require integration. A coherent
 supplied descriptor, source tuple, or receipt hash is not accepted registry
 provenance, and preceding stored IDs do not prove current storage. The new entry
 point has no live caller. Controller performs independent original-BASE review.
+
+## Fix round 1: preserve legacy path-component ordering
+
+FIX_BASE: `7cfaf0a8033430a78b25443f282c3b830193410d`.
+Fresh review found one Important ordering defect: sorting descriptor strings
+does not match legacy sorting of Path objects. For example, string order puts
+`re/workspace/a-b.md` before `re/workspace/a/decision.md`; legacy path-component
+order puts the directory `a` first. This changed contributed node order,
+decision-edge order and serialization. The existing passing cases had not used
+names that distinguish those orderings. The controller confirmed the original
+ordering requirement; no policy/brief amendment was needed.
+
+Fix commit: `7cf1b3139a032f6f9491f99bba8af006e142f649`
+(`fix: preserve legacy component order in captured RE graph`).
+Tested tree: `6ff30cedf21c51efa40a9b3387e5aa3081e35d7e`.
+
+The production change is one line: the artifact sort key now constructs a
+`PurePosixPath`, matching the legacy component ordering without filesystem
+access. No legacy helper, validation, source selection, registry or model code
+changed. The only other executable change is a two-case parametrized regression
+in `tests/unit/test_spec_graph_re.py`.
+
+The regression creates and physically validates native descriptors and exact
+bytes, then calls actual `_add_re_topology` before the captured entry point.
+It independently specifies complete ordered legacy nodes, captured contributed
+nodes, edges, and rendered contribution bytes. Both workspace and source cases
+use `a/decision.md` and `a-b.md`. The source case additionally includes the
+nondecision `a/summary.md`, checking its `DESCRIBED_BY` edge between the two
+decision relationships. Selection, semantic index and descriptor acquisition
+are deterministic fixtures; physical descriptor validation, workspace source
+configuration/discovery, source-path validation, absent-topology loading, title
+reads and graph transformations remain real. No provider or memory acquisition
+occurs. Expected ordering is explicitly declared, not derived by the production
+sort function.
+
+All commands ran from
+`/Users/michalbachorik/work/echelon_r/echelon/.worktrees/delivery-controller-contract`:
+
+1. Focused RED before changing production:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_spec_graph_re.py::test_captured_path_component_order_matches_actual_legacy_relationships -q
+```
+
+Exit 1; `2 failed in 0.28s`. No fixture failures preceded this RED. Native
+physical descriptor checks and every independent actual-legacy ordered-node/
+edge assertion passed first. Captured workspace edge 0 incorrectly targeted
+`decision:workspace:a-b.md` instead of `decision:workspace:a/decision.md`;
+captured source edge 1 incorrectly targeted `decision:api:a-b.md` instead of
+`decision:api:a/decision.md`. Controller notified before the one-line fix.
+
+2. Focused GREEN, same exact command as step 1:
+
+Exit 0; `2 passed in 0.22s`. Complete ordered nodes, all relationships, and
+rendered bytes now match the independent expectations in both cases.
+
+3. Once-only requested amended covering modules:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_spec_graph_re.py tests/unit/test_spec_graph.py -q
+```
+
+Exit 0; `144 passed in 1.13s`, pristine output. Neither the previous eight-module
+covering run nor broader unit suites were repeated. No live/global/main actions
+or subagents were used.
+
+Before the two-module covering run, staging the two changed executable files
+and `git write-tree` yielded `6ff30cedf21c51efa40a9b3387e5aa3081e35d7e`.
+`git diff --cached --check` passed without diagnostics. The fix commit has that
+same tree, confirmed after commit. Root-owned unstaged plan/progress differences
+were excluded. There were no code/test amendments after covering; this report
+appendix is the only later change and is committed separately without a test
+repeat.
+
+Self-review: verified the single production-line diff and the independent
+workspace/source expected sequences, including the interleaved nondecision
+source relationship. The pure path sort changes only deterministic ordering;
+it adds no observation or physical-path normalization. No known fix blocker
+remains. The original inactive integration limits above remain unchanged.
+Fresh scoped controller re-review follows this DONE report.
