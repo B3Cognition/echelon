@@ -8,8 +8,10 @@ orchestration framework. The user additionally approved a triage-only,
 harness-validated file-reading channel to preserve the no-shell/no-network-tool
 restriction. This document records the concrete implementation contract. The
 scoped implementation is complete on `fix/delivery-controller-contract` and
-awaits independent integration review. This checkpoint is not independently
-accepted or activated by that implementation status.
+independently accepted through code commit `602ee524`, including final review
+fixes. Acceptance covers local contracts and scripted provider integration, not
+live-provider behavior, installation, or activation. Verification and the known
+baseline policy-test exception are recorded in the convergence audit.
 
 This checkpoint finishes the missed active PR-triage consumer migration before
 returning to delivery convergence. It does not change legacy `echelon build`,

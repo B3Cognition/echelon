@@ -100,7 +100,8 @@ authorized by this report. They remain visible in convergence tracking.
 
 The PR-triage finding above is preserved as the result at audited implementation
 `b6bfceda`. A separately approved correction is now implemented on
-`fix/delivery-controller-contract` and awaits independent integration review.
+`fix/delivery-controller-contract` and independently accepted through code commit
+`602ee524` after task-level and final cross-component review.
 The host controller owns grouping and the debugger, sentinel, spec-guard and
 composer sequence; the four self-contained artifacts come from Prosaic. Model
 reads cross only the bounded triage channel, and the existing publisher retains
@@ -110,8 +111,7 @@ Focused consuming tests cover both real provider facades/adapters with only the
 external CLI process scripted, plus the real publisher. Failure tests cover
 schema, read, deadline, byte-limit, allocation and no-follow boundaries. This is
 not live-provider, installed-bundle, migration, default-activation, push or merge
-evidence, and it does not change the fulfillment finding above. The checkpoint
-must not be described as independently accepted before integration review.
+evidence, and it does not change the fulfillment finding above.
 
 The final affected controller, publisher, Prosaic, facade and backend batch
 passed 560 tests in 8.14s; direct inspection of all four changed Prosaic
@@ -120,6 +120,25 @@ execution-policy inventory test separately retains one baseline failure: the
 base-commit delivery docs-verifier and tech-writer files are absent from its
 policy table. The three new review roles have the approved `strong`/`medium`
 entries; the unrelated historical mismatch was not changed by this checkpoint.
+
+Review corrections reuse the publisher's task-row validator before staging,
+supply canonical row/title syntax and allocated dependencies in the host composer
+contract, and convert JSON nesting failures into blocked outcomes with retained
+usage. Their covering runs passed 77 tests in 2.63s and then 78 tests in 2.70s;
+these are separate from the earlier 560-test run. Final scoped re-review found
+both final findings addressed and no residual or newly introduced findings.
+
+Implementation decisions retained for future convergence:
+
+- `.` lists only an already-pinned read root; it does not add a root or traversal
+  alias. If misunderstood, root listing could be broadened beyond this boundary.
+- Prosaic inspection accepts the attempt's remaining timeout; shared-loader
+  defaults are unchanged. Too small a remaining budget can reject slow inspection.
+- The 64 KiB read-reply cap applies to serialized JSON, including escaping and
+  metadata. A text payload slightly below 64 KiB can therefore be unavailable.
+- Claude uses safe-mode, not bare mode, to retain ordinary authentication while
+  disabling customizations; native tools are explicitly empty and filesystem
+  access is separately restricted. Compatibility remains a live-validation limit.
 
 ## CLAUDE.md quality report
 

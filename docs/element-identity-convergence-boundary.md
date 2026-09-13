@@ -149,7 +149,8 @@ can be replaced by a prose-only edit or authorize a subsystem rewrite.
 ### PR-triage Prosaic migration checkpoint (2026-09-13)
 
 The separately approved PR-triage correction is now implemented on
-`fix/delivery-controller-contract` and awaits independent integration review.
+`fix/delivery-controller-contract` and independently accepted through code commit
+`602ee524` after task-level reviews and final cross-component review.
 `ReviewLoopController` deterministically groups comments and sequences the three
 neutral Prosaic diagnostic roles before one composition turn. A bounded,
 descriptor-pinned read channel services exact host-validated read requests; the
@@ -159,11 +160,16 @@ attempt-local staging, and the existing `ReviewArtifactPublisher` remains the
 only canonical writer and recovery/journal owner.
 
 The historical audit statement above remains accurate for its audited baseline;
-this checkpoint supersedes only that PR-triage limitation after review. It does
+this checkpoint supersedes only that PR-triage limitation. It does
 not alter fulfillment, legacy build, default activation, installation, or
 identity scope. Verification scripts external Claude and Codex CLI processes
 while exercising the real facade, adapters, read boundary, controller and
 publisher; no live provider, installed-bundle, migration, push or merge ran.
+
+The pre-review affected batch passed 560 tests; subsequent review-fix suites
+passed 77 and then 78 tests. These are distinct runs, not a repository-wide
+success claim. The audit records the unchanged baseline policy-inventory failure
+and the final review corrections.
 
 Recommended next bounded correction is controlled source-feedback cleanup plus
 the narrow ownership-guidance update, pending approval of the reported changes.
