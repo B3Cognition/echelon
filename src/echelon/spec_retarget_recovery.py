@@ -922,11 +922,12 @@ def _require_legacy_recovery_identity(
     raise RetargetRecoveryError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
-def _require_recovery_revision(
+def _inspect_legacy_retarget_recovery(
     project_root: Path,
     checkpoint: PhaseCheckpoint,
     replacement_state: Mapping[str, object],
 ) -> tuple[Path, RetargetRevision]:
+    """Validate native recovery identity and observe ownership without effects."""
     root = Path(project_root).resolve()
     if type(checkpoint) is not PhaseCheckpoint or checkpoint.source != "retarget-preflight":
         raise RetargetRecoveryError("checkpoint is not a retarget preflight")
@@ -967,6 +968,27 @@ def _require_recovery_revision(
     ):
         raise RetargetRecoveryError("retarget recovery identity drifted")
     _require_legacy_recovery_identity(root, checkpoint.spec_id, revision, replacement_state)
+    return spec_dir, revision
+
+
+def require_legacy_retarget_recovery(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> None:
+    """Refuse managed recovery before callers perform rewind or publication effects."""
+    _inspect_legacy_retarget_recovery(project_root, checkpoint, replacement_state)
+
+
+def _require_recovery_revision(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> tuple[Path, RetargetRevision]:
+    spec_dir, revision = _inspect_legacy_retarget_recovery(
+        project_root, checkpoint, replacement_state,
+    )
+    retarget = replacement_state["retarget"]
     raw_graph = retarget.get("graph_invalidation")
     if revision.graph_invalidation is None:
         if (

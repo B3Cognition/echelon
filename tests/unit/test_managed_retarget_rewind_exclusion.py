@@ -241,11 +241,11 @@ def _prepare_adoption(root):
                               run_id=preview.baseline.run_id, revision_id=revision.revision_id)
 
 
-def _leases_released(root):
+def _leases_released(root, run="squad-base"):
     from echelon.spec_lifecycle import SpecMutationLock, PhaseAExecutionLock, SpecRunExecutionLock
     with SpecMutationLock.acquire(root, "001-demo", "prove-release"):
         with PhaseAExecutionLock.acquire(root, "prove-release"):
-            with SpecRunExecutionLock.acquire(root / "runs/squad-base", "prove-release"):
+            with SpecRunExecutionLock.acquire(root / "runs" / run, "prove-release"):
                 pass
 
 
@@ -706,6 +706,179 @@ def test_optional_baseline_read_bounds_io_failure_and_preserves_process_control(
     action = lambda: recovery._require_recovery_revision(root, checkpoint, state)
     if isinstance(exception, Exception):
         _blocked(action, recovery.RetargetRecoveryError)
+    else:
+        with pytest.raises(type(exception)):
+            action()
+    assert _snapshot(root) == before
+
+
+def test_cli_rewind_rejects_baseline_only_metadata_before_first_effect(retarget_cli_workspace, monkeypatch, capsys):
+    from echelon.cli import _cmd_rewind
+    from echelon.spec_retarget import prepare_spec_retarget
+    import echelon.rewind as rewind
+    import harness.phase_checkpoints as checkpoints
+    root = retarget_cli_workspace
+    result = prepare_spec_retarget(root, "001-demo", ("apps/web",), confirm=True)
+    assert result.applied is True
+    _state(root, managed_identity=False)
+    effects = []
+    def forbidden(*args, **kwargs):
+        effects.append("rewind-effect")
+        pytest.fail("baseline-only managed rewind reached its first effect")
+    for name in ("create_backup_ref", "reset_branch_to_commit", "_discard_recovery_dirty_paths"):
+        monkeypatch.setattr(rewind, name, forbidden)
+    monkeypatch.setattr(checkpoints, "write_checkpoint_ledger", forbidden)
+    before = _snapshot(root)
+    with pytest.raises(SystemExit) as raised:
+        _cmd_rewind([f"checkpoint:{result.checkpoint_id}", "--confirm"], root)
+    assert raised.value.code == 1
+    assert LEGACY_IDENTITY_EXECUTION_BLOCKED in capsys.readouterr().err
+    from echelon.rewind import RewindError
+    assert type(raised.value.__context__) is RewindError
+    assert raised.value.__context__.__cause__ is None
+    assert raised.value.__context__.__context__ is None
+    assert effects == []
+    _assert_only_native_state_bookkeeping(root, before, result.replacement_run_id)
+    _leases_released(root, result.replacement_run_id)
+
+
+def _native_retarget_rewind(root, head):
+    from echelon.spec_retarget import (
+        prepare_spec_retarget, _build_retarget_preview,
+        append_prepared_revision_from_preview, start_retarget_phase_a_spec_from_preview,
+    )
+    from echelon.spec_retarget_recovery import retarget_recovery_dirty_paths
+    from echelon.rewind import prepare_rewind
+    if head == "clean-noop":
+        from echelon.spec_lifecycle import SpecMutationLock, PhaseAExecutionLock, SpecRunExecutionLock
+        from harness.phase_checkpoints import commit_retarget_checkpoint
+        preview = _build_retarget_preview(root, "001-demo", ("apps/web",))
+        with SpecMutationLock.acquire(root, preview.spec_id, preview.operation_id):
+            with PhaseAExecutionLock.acquire(root, preview.operation_id):
+                with SpecRunExecutionLock.acquire(preview.baseline.run_dir, preview.operation_id):
+                    revision = append_prepared_revision_from_preview(preview)
+                    checkpoint = commit_retarget_checkpoint(project_root=root, spec_dir=preview.spec_dir,
+                        run_id=preview.baseline.run_id, revision_id=revision.revision_id)
+                    replacement = start_retarget_phase_a_spec_from_preview(preview, revision, checkpoint)
+        checkpoint_id, checkpoint_commit, active_id = checkpoint.id, checkpoint.commit, replacement.run.run_id
+    else:
+        result = prepare_spec_retarget(root, "001-demo", ("apps/web",), confirm=True)
+        assert result.applied
+        checkpoint_id, checkpoint_commit, active_id = result.checkpoint_id, result.checkpoint_commit, result.replacement_run_id
+    if head == "moving":
+        (root / "later.txt").write_text("later unrelated commit\n")
+        _git(root, "add", "later.txt")
+        _git(root, "commit", "-m", "later")
+    assert (_git(root, "rev-parse", "HEAD").strip() == checkpoint_commit) is (head != "moving")
+    state = json.loads((root / "runs" / active_id / "state.json").read_text())
+    spec_dir = root / "specs/001-demo"
+    # A newly bootstrapped checkpointed runtime with prepared history is the
+    # native pre-invalidation state. Its library rewind is already at HEAD;
+    # the CLI admission must precede even later dirty-plan validation.
+    dirty_paths = (frozenset() if head == "clean-noop"
+                   else retarget_recovery_dirty_paths(root, spec_dir, state))
+    preview = prepare_rewind(project_root=root, spec="001-demo", spec_dir=spec_dir,
+        target=f"checkpoint:{checkpoint_id}", confirm=False,
+        discard_active_spec_dirty_paths=dirty_paths)
+    assert preview.applied is (head == "clean-noop")
+    if head == "clean-noop":
+        assert preview.message == "Already at checkpoint."
+    return checkpoint_id, active_id
+
+
+@pytest.mark.parametrize("head", ["same", "moving", "clean-noop"])
+@pytest.mark.parametrize("confirm", [False, True])
+@pytest.mark.parametrize("witness", ["metadata", "physical", "declared", "claimed", "missing-state", "missing-run", "malformed", "symlink"])
+def test_cli_baseline_only_recovery_admission_precedes_every_rewind_route(retarget_cli_workspace, monkeypatch, capsys, head, confirm, witness):
+    from echelon.cli import _cmd_rewind
+    from echelon.rewind import RewindError
+    import echelon.rewind as rewind
+    import echelon.spec_retarget_recovery as recovery
+    import harness.phase_checkpoints as checkpoints
+    from harness.squad_state import SquadStateStore
+    root = retarget_cli_workspace
+    checkpoint_id, active_id = _native_retarget_rewind(root, head)
+    baseline_path = root / "runs/squad-base/state.json"
+    if witness == "metadata":
+        _state(root, managed_identity=False)
+    elif witness in {"physical", "missing-state", "missing-run"}:
+        _enroll(root, spec="002-retained-baseline")
+        if witness == "missing-state":
+            baseline_path.unlink()
+        elif witness == "missing-run":
+            baseline_path.parent.rename(root / "retained-baseline")
+    elif witness == "declared":
+        _enroll(root, spec="002-retained-baseline", run="baseline-declared-owner")
+        _state(root, run_id="baseline-declared-owner")
+    elif witness == "claimed":
+        _enroll(root, spec="002-retained-baseline", run="other")
+        _state(root, spec_id="002-retained-baseline")
+    elif witness == "malformed":
+        baseline_path.write_text("[]")
+    else:
+        baseline_path.unlink()
+        baseline_path.symlink_to(root / "missing-baseline-state")
+    effects = []
+    def forbidden(*args, **kwargs):
+        effects.append("rewind-or-recovery-effect")
+        pytest.fail("baseline-only admission reached a rewind/recovery effect")
+    for module, names in ((rewind, ("create_backup_ref", "reset_branch_to_commit", "_discard_recovery_dirty_paths")),
+                          (checkpoints, ("write_checkpoint_ledger",)),
+                          (recovery, ("advance_retarget_revision", "restore_or_recreate_baseline_state",
+                                      "purge_retarget_spec_memory", "refresh_retarget_spec_memory",
+                                      "finalize_retarget_graphs", "persist_recovered_baseline_state",
+                                      "create_or_recover_retarget_recovery_commit", "activate_recovered_spec_run")),
+                          (SquadStateStore, ("save",))):
+        for name in names:
+            monkeypatch.setattr(module, name, forbidden)
+    before = _snapshot(root)
+    with pytest.raises(SystemExit) as raised:
+        _cmd_rewind([f"checkpoint:{checkpoint_id}"] + (["--confirm"] if confirm else []), root)
+    assert raised.value.code == 1
+    output = capsys.readouterr()
+    assert LEGACY_IDENTITY_EXECUTION_BLOCKED in output.err
+    assert "COMPLETE" not in output.out and "Already at checkpoint" not in output.out
+    assert type(raised.value.__context__) is RewindError
+    assert raised.value.__context__.__cause__ is None
+    assert raised.value.__context__.__context__ is None
+    assert effects == []
+    _assert_only_native_state_bookkeeping(root, before, active_id)
+    if witness == "missing-run":
+        assert not baseline_path.parent.exists()
+    _leases_released(root, active_id)
+
+
+def test_recovery_admission_wrapper_does_not_reconcile_captured_receipts(retarget_cli_workspace):
+    from echelon.spec_retarget_recovery import require_legacy_retarget_recovery, _require_recovery_revision
+    from echelon.spec_retarget_history import load_retarget_history
+    root = retarget_cli_workspace
+    checkpoint, state = _captured_recovery(root)
+    _enroll(root, spec="002-other", run="other")
+    before = _snapshot(root)
+    assert require_legacy_retarget_recovery(root, checkpoint, state) is None
+    assert _snapshot(root) == before
+    assert load_retarget_history(root / "specs/001-demo").revisions[-1].status == "prepared"
+    _, revision = _require_recovery_revision(root, checkpoint, state)
+    assert revision.status == "failed"
+    assert revision.graph_invalidation == state["retarget"]["graph_invalidation"]
+
+
+@pytest.mark.parametrize("exception", [PermissionError("private path"), KeyboardInterrupt(), SystemExit()])
+def test_recovery_admission_wrapper_preserves_bounded_io_and_process_control(retarget_cli_workspace, monkeypatch, exception):
+    from echelon.spec_retarget_recovery import require_legacy_retarget_recovery, RetargetRecoveryError
+    root = retarget_cli_workspace
+    checkpoint, state = _captured_recovery(root)
+    baseline_path = root / "runs/squad-base/state.json"
+    original = Path.read_text
+    def read(path, *args, **kwargs):
+        if path == baseline_path:
+            raise exception
+        return original(path, *args, **kwargs)
+    before = _snapshot(root)
+    monkeypatch.setattr(Path, "read_text", read)
+    action = lambda: require_legacy_retarget_recovery(root, checkpoint, state)
+    if isinstance(exception, Exception):
+        _blocked(action, RetargetRecoveryError)
     else:
         with pytest.raises(type(exception)):
             action()

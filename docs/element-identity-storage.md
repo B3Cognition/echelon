@@ -2342,9 +2342,14 @@ revision/checkpoint writes, checkpoint callbacks, bootstrap, memory purges,
 graph/artifact invalidation, failed-state recording and pointer publication.
 The preview-only retarget path retains its existing behavior.
 
-Retarget recovery checks checkpoint ownership and validated runtime state inside
-`_require_recovery_revision`, before captured receipt reconciliation can advance
-history. It independently checks the retained baseline run. Optional baseline
+Retarget recovery shares one nonmutating checkpoint/history/runtime identity
+inspector that independently checks the retained baseline run. The public
+`require_legacy_retarget_recovery` wrapper invokes only this inspector; CLI
+rewind calls it before committed-recovery probes/resume, dirty-path planning,
+Git/file effects or ledger trimming, including when only the baseline retains
+managed ownership. `_require_recovery_revision` uses the same inspector before
+captured receipt reconciliation, which remains at that existing later owner.
+The early wrapper never reconciles or advances captured receipts. Optional baseline
 state uses strict object reads after checking real parent directories and a
 regular state file; a truly missing state supplies only an empty negative-query
 carrier for that retained run ID. This check creates no baseline directory,

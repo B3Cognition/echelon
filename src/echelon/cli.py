@@ -11492,11 +11492,23 @@ def _cmd_rewind(
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
                             RetargetRecoveryError,
+                            require_legacy_retarget_recovery,
                             resume_committed_retarget_recovery,
                             retarget_recovery_dirty_paths,
                             verified_committed_retarget_recovery,
                         )
 
+                        identity_blocked = False
+                        try:
+                            require_legacy_retarget_recovery(
+                                project_root, checkpoint, replacement_state,
+                            )
+                        except RetargetRecoveryError as exc:
+                            if str(exc) != LEGACY_IDENTITY_EXECUTION_BLOCKED:
+                                raise RewindError(str(exc)) from exc
+                            identity_blocked = True
+                        if identity_blocked:
+                            raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                         try:
                             recovery_commit = verified_committed_retarget_recovery(
                                 project_root,
