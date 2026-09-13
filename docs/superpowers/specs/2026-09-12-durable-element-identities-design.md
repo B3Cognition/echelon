@@ -351,6 +351,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   A real synchronized writer test proves coherent reads and subsequent v3
   stale-history rejection. This remains pre-intent structural observation, not
   semantic approval or physical publication authority.
+- Combined graph/source/identity publication characterization: implemented in
+  `dcebb085` and independently approved, with one deferred test-assertion Minor.
+  Six-module covering suite: 451 passed. Native sealed graph promotion, exact
+  history/source receipts and recovery preserve original evidence across fault
+  boundaries, including a real child-process exit. Post-apply source drift
+  leaves the journal pending and blocks recovery. Tests compose existing
+  primitives; they do not introduce production admission or completion owners.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
