@@ -167,6 +167,14 @@ available; necessary integration is authorized by the subsequent instruction abo
 
 ## Open choices: do not mistake these for settled design
 
+On 2026-09-14 the user approved a discovery-first integration approach after
+controlled-fulfillment closure. The
+[managed discovery design](superpowers/specs/2026-09-14-managed-discovery-integration-design.md)
+records the proposed producer/reservation/review contract for written review.
+It reuses the necessary parts of DEFER-000002/000003/000004/000005 and only
+create/revise from DEFER-000001. No capability is activated by this record;
+public activation and the other producer families remain subsequent checkpoints.
+
 The producer proposal/reservation wire format, candidate placeholder convention,
 binding of proposals to reservation requests, semantic-review handoff, and exact
 activation configuration still require an integration decision. Reuse existing

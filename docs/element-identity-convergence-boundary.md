@@ -638,3 +638,20 @@ No installed-bundle refresh, live provider/game run, installation, push, merge
 or branch-wide merge verification was performed. The convergence branch and
 worktree remain in place; the recorded bundle/live/merge gates must still be
 completed before treating this as real-use release acceptance.
+
+## Discovery-first integration design checkpoint (2026-09-14)
+
+After controlled-fulfillment implementation closure, the user approved proceeding
+with discovery-first identity integration. The
+[written design](superpowers/specs/2026-09-14-managed-discovery-integration-design.md)
+proposes two semantic producer turns around host reservation, independent
+candidate review, and guarded publication through existing Squad completion.
+Its first proving slice covers U/A creation and same-subject repair only; it
+does not unlock unsupported managed phases or change public/default activation.
+
+The existing discovery-candidate and graph/publication composition suites passed
+**102 tests in 13.22s** at `0db43e2a`. They remain characterization evidence, not
+proof of positive managed Squad execution. This checkpoint changes only design
+and scope records. The written design awaits user review before implementation
+planning; no source code, stopped smoke workspace, installation or live provider
+was changed.
