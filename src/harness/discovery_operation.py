@@ -12,6 +12,7 @@ import re
 
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_candidate import author_artifacts, build_discovery_changes
+from harness.discovery_inputs import DiscoveryInputError, admit_runtime_inputs, runtime_input_paths
 from harness.discovery_operation_state import DISCOVERY_OPERATION_KEY, operation_from_state
 from harness.discovery_reservations import DiscoveryReservationJournal
 from harness.discovery_semantics import DISCOVERY_ROLES, DiscoveryAssignment
@@ -66,11 +67,15 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
         raise _Blocked("discovery_input_tree_not_admitted")
     prepared = load_prepared_publication(root, state_store.squad_dir, selected["selection"]["capture_marker"])
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
-    with prepared.inspect_sources(tree_paths=(spec_path, input_tree), file_paths=tuple(template_paths)) as sources:
+    runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
+    with prepared.inspect_sources(tree_paths=(spec_path, input_tree, *runtime_trees),
+            file_paths=(*template_paths, *runtime_files)) as sources:
         if sources.publication.operations:
             raise _Blocked("discovery_capture_contains_publication")
+        state = state_store.load()
+        runtime, documents = admit_runtime_inputs(root, state_store.squad_dir, state, sources)
         observed = store.check_managed_context(spec_id=selected["selection"]["spec_id"],
-            run_id=selected["selection"]["run_id"], record=state_store.load()["managed_identity"])
+            run_id=selected["selection"]["run_id"], record=state["managed_identity"])
         spec, = (tree for tree in sources.trees if tree.path == spec_path)
         inputs, = (tree for tree in sources.trees if tree.path == input_tree)
         if not inputs.exists:
@@ -86,15 +91,16 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
-        if any(item.content is None for item in sources.files):
+        evidence.update(documents)
+        if any(item.content is None for item in sources.files if item.path in template_paths):
             raise _Blocked("discovery_template_missing")
-        templates = {template_paths[item.path]: item.content.decode("utf-8") for item in sources.files}
+        templates = {template_paths[item.path]: item.content.decode("utf-8") for item in sources.files if item.path in template_paths}
         if any("\x00" in content for content in (*files.values(), *evidence.values(), *templates.values())):
             raise _Blocked("discovery_source_not_text")
         digest = _hash(dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
-            history=asdict(history), authority=observed))
+            history=asdict(history), authority=observed, runtime=runtime))
     # Normal inspector exit authenticates paths and membership before handoff.
-    return digest, files, evidence, history, templates
+    return digest, files, evidence, history, templates, runtime
 
 
 def _citations(artifacts, labels):
@@ -138,7 +144,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         if any(type(value) is not tuple for value in (artifact_paths, editable_revisions, unowned_writable_paths)):
             raise _Blocked("invalid_discovery_scope")
         store = IdentityStore.open(root)
-        fingerprint, before, evidence, retained_history, templates = _capture(root, state_store, store, selected, input_tree, artifact_paths)
+        fingerprint, before, evidence, retained_history, templates, runtime = _capture(root, state_store, store, selected, input_tree, artifact_paths)
         binding = dict(operation_id=selected["selection"]["operation_id"], spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], input_tree=input_tree, artifact_paths=list(artifact_paths),
             editable_revisions=[list(pair) for pair in editable_revisions], unowned_writable_paths=list(unowned_writable_paths),
@@ -164,7 +170,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     state_store.advance_discovery_operation(binding, "begin")
                 proposal_assignment = DiscoveryAssignment(binding["operation_id"], f"attempt-{number}-propose",
                     binding["spec_id"], binding["run_id"], "propose", fingerprint, artifact_paths, editable_revisions)
-                common = dict(intent=deepcopy(binding["intent"]), baseline=before, evidence=evidence, templates=templates,
+                common = dict(intent=deepcopy(binding["intent"]), baseline=before, evidence=evidence, templates=templates, runtime=runtime,
                     history=json.loads(retained_history.payload), feedback=feedback,
                     read_protocol=dict(roots=["inputs"], request=dict(op="read_file", root="inputs", path="relative/path", start_line=1, line_count=1)))
                 def turn(assignment, context, *, fresh=False):
@@ -242,6 +248,6 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 feedback = dict(findings=findings, candidate=authored["artifacts"])
             raise _Blocked("discovery_attempts_exhausted")
     except Exception as error:
-        return DiscoveryOperationResult("blocked", str(error) if isinstance(error, _Blocked) else "discovery_operation_reconciliation_required",
+        return DiscoveryOperationResult("blocked", str(error) if isinstance(error, (_Blocked, DiscoveryInputError)) else "discovery_operation_reconciliation_required",
             retained_usage["token_usage"] if last is None else last.token_usage,
             retained_usage["dispatch_count"] if last is None else last.dispatch_count)

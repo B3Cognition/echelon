@@ -221,6 +221,23 @@ repair units, expose a public mode or activate unsupported sources/producers.
 Missing selected journals deliberately require reconciliation; do not replace that
 boundary with automatic reset. The full original renumbering/evidence fixture and
 actual provider-facade/mode acceptance remain runtime duties.
+The [runtime-input checkpoint](superpowers/plans/2026-09-14-discovery-runtime-inputs.md)
+now makes fixed local runtime capture and domain exclusion mandatory inside that
+operation. It binds config, optional constitution, existing generated context,
+knowledge/evolution documents and selected semantic run state. Actual memory-wing
+configuration, RE-root presence and run selection are checked; supplied empty
+observations alone cannot admit a linked domain. Existing RE roots, configured
+memory, prior/WIP feature context, additional context domains, structured product
+packages and polyrepo/retarget selections remain explicitly unadmitted here.
+Do not turn these exclusions into a new public mode, clear configured wings,
+regenerate missing context, or reset old operation fingerprints to pass them.
+An empty feature registry does not authenticate the text beside it. Newly
+captured runtime documents with parsed identity references or diagnostics block
+until their provenance can be admitted; they must not bind foreign IDs to new
+same-spelled allocations. Keep the existing explicit spec-scoped input-tree
+contract separate from these additional runtime domains.
+Typed evidence/investigation selection and guarded Squad publication/completion
+are still the next required integration work, not a new collector implementation.
 The provider recovery plan records exact verification and review receipts;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.

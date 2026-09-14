@@ -12,6 +12,10 @@ in `../plans/2026-09-14-discovery-provider-recovery.md` (1,096 passing affected 
 The reviewed-candidate composition checkpoint is tracked in
 `../plans/2026-09-14-discovery-reviewed-candidate.md`. Positive managed runtime
 admission and publication/completion integration remain open.
+The next prerequisite is tracked in
+`../plans/2026-09-14-discovery-runtime-inputs.md`: mandatory captured runtime
+inputs and fail-closed domain admission at the inactive operation boundary.
+This is not yet positive Squad admission or publication authority.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary

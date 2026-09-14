@@ -19,6 +19,7 @@ KEY = "managed_discovery_operation"
 
 @pytest.fixture
 def prepared(turn_prepared):
+    from echelon.context_builder import build_run_context
     root = turn_prepared[0]
     templates = root / ".echelon/runtime/templates"
     templates.mkdir(parents=True)
@@ -26,6 +27,8 @@ def prepared(turn_prepared):
     for name in ("unknowns", "assumptions", "glossary", "mental-model", "boundaries", "reference-architectures"):
         filename = name + "-template.md"
         (templates / filename).write_bytes((repo / "runtime/templates" / filename).read_bytes())
+    (root / ".echelon/config.yml").write_bytes((repo / "runtime/config-template.yml").read_bytes())
+    build_run_context(root, turn_prepared[1].squad_dir, user_request="Create an isometric game")
     return turn_prepared
 
 

@@ -827,3 +827,55 @@ subsequent accepted repair units or activation of other producers. Returned
 artifacts include read-only dependencies, not an unrestricted publication list.
 Actual provider-facade and managed guided/semi/banzai acceptance remain open.
 No installation, live game run, public/default change, push or merge occurred.
+
+### Discovery runtime input-admission checkpoint
+
+The [runtime-input plan](superpowers/plans/2026-09-14-discovery-runtime-inputs.md)
+extends the existing composed operation's source inspection with canonical
+configuration, optional constitution, run-local context/evolution and knowledge
+files. These join spec, input and template bytes in one authenticated capture.
+Selected request, mode, autonomy, stack and calibration state enter the same
+immutable operation fingerprint. All existing turn/replay checks reobserve them;
+absent optional files becoming present also invalidate the selected review.
+
+Configuration remains host-only, not model context. The host validates the actual
+MemPalace wing selection and requires the RE root to be absent; it does not read
+an external collection or recursively acquire an RE domain. An existing `re`
+directory blocks even if no publication is registered. `ignore_re` or a claimed
+absent RE state cannot conceal one. A configured memory wing remains unsupported
+even with a made-up `enabled: false` key: the existing memory owner does not use
+that key to disable retrieval. No new configuration switch is introduced.
+
+The admitted context is the existing five-file generated local context set, with
+an exact empty memory reconciliation and empty feature registry for the selected
+request. Linked prior/WIP feature identities, additional context domains,
+structured product-input packages, polyrepo targets and retarget operations stop
+before attempts, reservations or calls. These are exclusions for this internal
+fresh proving slice, not claims that those Echelon features are unsupported in
+legacy execution or removed from convergence scope.
+
+Admitted documents become read-only reference candidates and exact reviewer
+source citations, never writable outputs. Changed configuration/context/state
+blocks resume while retaining known provider accounting. Pre-checkpoint operation
+fingerprints cannot be upgraded or reset silently; they require reconciliation.
+An empty registry is not enough to establish document provenance: independent
+review reproduced an old foreign ID in retained context attaching to a newly
+allocated same-spelled local ID. The existing reference parser now screens every
+new runtime document, blocking identity-bearing/invalid reference context before
+allocation. No foreign identity provenance is inferred. The pre-existing explicit
+spec-scoped input-tree contract is unchanged.
+
+Positive Squad admission, typed evidence/investigation-domain selection, guarded
+publication with a bound graph/history/review, durable completion/release and
+recovery before the unsupported next phase remain open. This checkpoint does not
+replace those owners or grant an internal candidate publication authority.
+
+Final affected acceptance: **1,800 tests passed in 119.14s**, including 66 new
+input-admission cases. The tests exercise actual state, source capture, identity
+storage and candidate checks; external Prosaic/model processes are scripted.
+Both provider IDs and all three autonomy modes are covered at this component
+boundary, not through positive managed Squad dispatch or live provider facades.
+Final independent review found no outstanding Critical or Important issues and
+independently passed 107 focused tests in 66.33s. Previous-run evolution selection
+remains a later caller duty; this checkpoint only captures the current run-local
+optional document and never infers a prior run.
