@@ -1,7 +1,9 @@
 # Managed discovery: producer-to-publication integration
 
-Status: discovery-first approach approved by the user on 2026-09-14; this
-written integration design awaits review before implementation planning.
+Status: written integration design approved by the user on 2026-09-14.
+The first contract checkpoint is planned in
+`../plans/2026-09-14-discovery-producer-contracts.md`; runtime activation remains
+outside that checkpoint.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary
