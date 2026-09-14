@@ -709,3 +709,42 @@ journal creation. Managed bootstrap, provider intents/results/usage, semantic
 execution and Squad integration remain next. The three-proposal receipt ceiling
 is not a substitute for persisting attempts before provider dispatch. No provider,
 publication/completion or rollout path is activated by this helper.
+
+### Inactive discovery selection/bootstrap checkpoint
+
+The [bootstrap plan](superpowers/plans/2026-09-14-discovery-bootstrap.md) connects
+fresh-spec enrollment to the existing SquadStateStore. Protected transitions
+retain the independent selected spec/run/operation, namespace and sealed capture
+marker, then the original empty source manifest, then the exact genesis receipt.
+Generic state writes cannot inject, alter or remove bootstrap metadata. Pending
+selection blocks legacy Squad entry before any registry enrollment; actual run
+and single-phase entry tests cover guided, semi and banzai without provider calls.
+
+The inactive helper opens established authority, uses the existing guarded source
+inspection and source/genesis registration APIs, and confirms durable state at
+each handoff. It never initializes a missing registry. Interrupted registrations
+replay exact requests; completed state authenticates retained rows rather than
+recreating missing ones. Source drift, namespace/selection changes, conflicting
+registrations and missing/corrupt recovery material block. The component test
+feeds completed bootstrap into the actual reservation journal and preserves its
+first `U-000001` reservation across resume.
+
+Independent review found one Important ordering defect: completion was written
+before the source inspector's final exit validation. Two failing regressions
+reproduced this after each real database registration. Completion now follows
+successful inspection exit; failed validation leaves captured state and retained,
+idempotently recoverable registrations. No findings remain. This confirms the
+bootstrap capture, not future provider-input freshness or publication authority.
+
+Final acceptance: **848 affected tests passed in 34.08s**, including **63 new
+bootstrap tests**; **397 existing managed/Squad exclusion tests passed in
+184.31s**. Whitespace checks passed. Existing Phase A/run leases remain caller-
+owned and are real in the component tests. No positive Squad discovery admission,
+provider execution, allocation inside bootstrap, accepted candidate publication,
+installation, default change, live smoke or merge occurred.
+
+Next is bounded provider-turn intent/result recovery and accounting, followed by
+semantic execution and guarded Squad publication/completion/repair integration.
+Runtime admission must still prove the absence of unsupported RE/external-memory
+domains and capture the complete selected provider inputs. The original approved
+discovery-first scope and existing branch/worktree remain unchanged.

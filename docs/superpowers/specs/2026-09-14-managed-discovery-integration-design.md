@@ -5,7 +5,10 @@ The first contract checkpoint is implemented and independently reviewed in
 `../plans/2026-09-14-discovery-producer-contracts.md` (551 passing affected tests).
 The inactive reservation-binding slice is also implemented and reviewed in
 `../plans/2026-09-14-discovery-reservation-binding.md` (613 passing affected tests).
-Managed bootstrap, provider-turn recovery and runtime activation remain open.
+The inactive selected-state/bootstrap slice is implemented and reviewed in
+`../plans/2026-09-14-discovery-bootstrap.md` (848 passing affected tests plus
+397 managed/Squad exclusion regressions). Provider-turn recovery and positive
+managed runtime activation remain open.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary

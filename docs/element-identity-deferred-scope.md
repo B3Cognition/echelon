@@ -185,8 +185,17 @@ now retains canonical proposals, exact per-kind intents and key/subject/ID
 associations across allocation interruptions and subsequent proposals. It uses
 the existing allocator plus a read-only retained-reservation lookup, not another
 identity authority. Its 613 affected tests passed with no independent review
-findings. Already registered genesis/source context is authenticated; durable
-controller selection and managed bootstrap are still caller/integration duties.
+findings. Already registered genesis/source context is authenticated. The next
+[inactive bootstrap checkpoint](superpowers/plans/2026-09-14-discovery-bootstrap.md)
+now connects protected selection/capture/completion transitions in the existing
+SquadStateStore to the existing source/genesis registration APIs. Explicit resume
+requires matching state and retained authority, and pending bootstrap blocks
+legacy Squad entry before enrollment. Final acceptance passed 848 affected tests
+plus 397 managed/Squad exclusion regressions. Review found a completion-before-
+source-exit-validation ordering defect; two RED regressions preceded its fix,
+and no review findings remain. Existing execution leases are caller-owned;
+positive Squad admission and full provider-input/domain selection still require
+runtime integration. This is not a new storage authority or public activation.
 Provider-turn recovery, executed semantic review and runtime wiring remain gaps;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.
