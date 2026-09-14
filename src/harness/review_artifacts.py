@@ -22,6 +22,7 @@ from typing import AbstractSet, Any, Literal, Sequence
 from uuid import uuid4
 
 from harness.state import is_process_alive
+from harness.task_progress import summarize_task_progress, update_task_progress_markdown
 from kernel.element_ids import format_element_id
 from kernel.task_contract import parse_task_rows
 
@@ -489,7 +490,13 @@ class ReviewArtifactPublisher:
                 raise ReviewArtifactError(f"published artifact digest is invalid: {artifact['name']}")
         tasks_path = self.spec_dir / "tasks.md"
         expected = _append_bytes(_decode(journal["tasks_before"]["content"]), _decode(journal["tasks_append"]["content"]))
-        if not _is_regular_file(tasks_path) or tasks_path.read_bytes() != expected:
+        if not _is_regular_file(tasks_path):
+            raise ReviewArtifactError("published tasks.md does not match the journal")
+        current = tasks_path.read_bytes()
+        if current != expected and not (
+            journal["complete"] is True
+            and _matches_completed_batch_progress(expected, current, journal["task_ids"])
+        ):
             raise ReviewArtifactError("published tasks.md does not match the journal")
         validate_review_tasks_append(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
@@ -498,6 +505,27 @@ class ReviewArtifactPublisher:
 
     def _after_publication_boundary(self, boundary: str) -> None:
         """Crash-test hook; production intentionally has no behavior here."""
+
+
+def _matches_completed_batch_progress(expected: bytes, current: bytes, task_ids: list[str]) -> bool:
+    """Admit only exact host DONE updates after publication, never definition drift.
+
+    Replaying the existing host formatter over the journal snapshot preserves
+    every other byte and limits progress changes to this published batch.
+    This does not authorize review effects; phase verification still owns that.
+    """
+    try:
+        actual = current.decode("utf-8")
+        replay = expected.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    progress = summarize_task_progress(actual, selected_task_ids=set(task_ids))
+    if not progress.valid:
+        return False
+    for task_id in task_ids:
+        if progress.task_statuses.get(task_id) == "DONE":
+            replay = update_task_progress_markdown(replay, task_id, "DONE")
+    return replay.encode("utf-8") == current
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:

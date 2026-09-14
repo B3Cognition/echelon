@@ -194,6 +194,8 @@ class FulfillmentRunner:
         source_root: Path | str | None = None,
         token_budget: float | None = None,
         forbidden_paths: tuple[Path, ...] = (),
+        accounted_usage: Mapping[str, int] | None = None,
+        on_run_selected=None,
     ) -> FulfillmentRefreshResult:
         if self._controlled:
             from harness.controlled_fulfillment_refresh import refresh_controlled_fulfillment
@@ -204,7 +206,8 @@ class FulfillmentRunner:
                 reconcile=reconcile, dry_run=dry_run, verification_evidence=verification_evidence,
                 coverage_observation=coverage_observation, observer_required=observer_required,
                 verify_run_dir=verify_run_dir, source_id=source_id, source_root=source_root,
-                token_budget=token_budget, forbidden_paths=forbidden_paths)
+                token_budget=token_budget, forbidden_paths=forbidden_paths,
+                accounted_usage=accounted_usage, on_run_selected=on_run_selected)
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
                 status="failed",

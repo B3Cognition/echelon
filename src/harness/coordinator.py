@@ -694,6 +694,14 @@ class StrategyCoordinator:
             )
             ledger_path = verified_fulfillment_ledger_path(spec_dir)
             if ledger_path.is_file():
+                ledger = read_verified_ledger(ledger_path)
+                contracts = {item.contract_hash for item in ledger.rows}
+                if len(contracts) != 1 or not next(iter(contracts)):
+                    # An immutable checkpoint must not relabel mixed or
+                    # unbound rows as the currently configured verifier.
+                    updates["verified_contract_hash"] = ""
+                    return updates
+                updates["verified_contract_hash"] = next(iter(contracts))
                 updates["verified_fulfillment_rows"] = [
                     {
                         "requirement_id": item.requirement_id,
@@ -701,7 +709,7 @@ class StrategyCoordinator:
                         "evidence_refs": list(item.selected_evidence or item.evidence_refs),
                         "verified_at": item.verified_at,
                     }
-                    for item in read_verified_ledger(ledger_path).rows
+                    for item in ledger.rows
                 ]
         return updates
 

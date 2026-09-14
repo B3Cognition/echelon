@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 
@@ -15,6 +16,7 @@ from harness.durable_json import write_json_atomic, write_text_atomic
 from harness.fulfillment_preparation import FulfillmentPreparationContext, _validate_source_binding
 from harness.fulfillment_preparation_steps import load_preparation_observation
 from harness.fulfillment_recovery import FulfillmentRecovery, _load, _save, publish_fulfillment_outputs
+from harness.inspection_io import _open_root_directory
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.product_inventory import product_evidence_fingerprint
 from harness.verify_spec_run import init_verify_spec_run, complete_verify_spec_run, _require_safe_label
@@ -78,7 +80,7 @@ def _run_identity(path):
 def refresh_controlled_fulfillment(executor, *, worktree, spec_id, spec_dir, orchestration_root,
         scope, completed_task_ids, changed_files, reconcile, dry_run, verification_evidence,
         coverage_observation, observer_required, verify_run_dir, source_id, source_root,
-        token_budget, forbidden_paths):
+        token_budget, forbidden_paths, accounted_usage=None, on_run_selected=None):
     # Import lazily to keep the legacy runner API and shared policy helpers singular.
     from harness import fulfillment_runner as shared
     usage, dispatches, operation_id = 0, 0, None
@@ -111,10 +113,34 @@ def refresh_controlled_fulfillment(executor, *, worktree, spec_id, spec_dir, orc
         selected.relative_to(workspace / "runs")
         if selected == workspace / "runs":
             raise ValueError("selected verify run must be below runs")
-        if verify_run_dir is not None and not (selected / "state.json").is_file():
-            raise ValueError("caller-owned verify state is unavailable")
-        selected.mkdir(parents=True, exist_ok=True)
         operation_id = str(selected)
+        if verify_run_dir is not None and not selected.is_dir():
+            usage = None
+            raise ValueError("caller-owned verify run is unavailable")
+        # Admit the runs directory before mkdir can follow an alias outside the
+        # workspace. The same descriptor-pinned root rules protect host reads.
+        workspace_fd = _open_root_directory(workspace)
+        try:
+            try:
+                os.mkdir("runs", dir_fd=workspace_fd)
+            except FileExistsError:
+                pass
+        finally:
+            os.close(workspace_fd)
+        runs_fd = _open_root_directory(workspace / "runs")
+        try:
+            if verify_run_dir is None:
+                try:
+                    os.mkdir(selected.name, dir_fd=runs_fd)
+                except FileExistsError:
+                    pass
+        finally:
+            os.close(runs_fd)
+        if token_budget is not None and accounted_usage is not None:
+            accounted = accounted_usage.get(operation_id, 0)
+            if type(accounted) is not int or accounted < 0:
+                raise ValueError("invalid accounted fulfillment usage")
+            token_budget += accounted
         with FulfillmentRecovery(selected) as recovery:
             # Accounting admission precedes every fallible role/provider check.
             usage = None
@@ -123,6 +149,8 @@ def refresh_controlled_fulfillment(executor, *, worktree, spec_id, spec_dir, orc
                 accounting = recovery.usage()
                 usage = accounting["tokens"] if accounting["known"] else None
                 dispatches = accounting["dispatches"]
+            if verify_run_dir is not None and not (selected / "state.json").is_file():
+                raise ValueError("caller-owned verify state is unavailable")
             record_path = selected / "controlled-refresh.json"
             saved = _load(record_path)
             if saved is None and journal is not None:
@@ -228,6 +256,8 @@ def refresh_controlled_fulfillment(executor, *, worktree, spec_id, spec_dir, orc
                 raise ValueError("controlled refresh binding changed; reconciliation required")
             if _run_identity(selected / "state.json") != saved["run_identity"]:
                 raise ValueError("controlled refresh run identity changed")
+            if on_run_selected is not None:
+                on_run_selected(selected)
             from dataclasses import replace
             context = replace(context, scope=effective_scope, scoped_ids=tuple(saved["ids"]),
                               base_full_verify_commit=saved["base_commit"])

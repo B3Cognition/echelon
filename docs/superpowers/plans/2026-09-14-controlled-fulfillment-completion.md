@@ -105,13 +105,13 @@ assert executor.dispatch_count == first.dispatch_count
 
 ## Task 5 — Ralph opt-in, accounting and closure acceptance
 
-**Files:** Modify `src/harness/ralph.py`; create `tests/unit/test_controlled_fulfillment_delivery.py`; update parent design and convergence boundary receipts.
+**Files:** Modify `src/harness/ralph.py`; create `tests/unit/test_controlled_fulfillment_delivery.py`; update parent design and convergence boundary receipts. Demonstrated integration fixes also touch runner/recovery admission, coordinator ledger checkpointing and review-publication recovery, with focused regression tests; no new subsystem or public setting.
 
-- [ ] Write RED tests through real Ralph verification/refresh with both provider facades and guided/semi/banzai modes. Existing `delivery_gate_controller` selects the controlled runner; feature-off and standalone calls remain legacy.
-- [ ] Pass existing source, containment, remaining-budget and durable operation/accounted-usage context. Persist only newly unaccounted cumulative usage once in Ralph state; unknown usage remains explicit. Test interruption between runner completion and Ralph accounting, resumed replay and failed refresh charges.
-- [ ] Exercise full/scoped/no-judge/cache/non-passing fulfillment, restart and completed PR-fix batch re-entry through verification and post-verification effects without mocking controller decisions. Preserve banzai deferral and convergence gating.
-- [ ] Run affected Ralph, delivery documentation/finalization/re-entry, provider, direct-CLI and all new fulfillment tests. Repeat active prompt-ownership audit: no controlled fulfillment COMMANDER/legacy phase dispatch, no provider-specific role files.
-- [ ] Obtain independent read-only final review, fix only demonstrated in-scope defects with RED tests, run final affected batch and `git diff --check`, record exact receipts and remaining live/installed/merge gates. Commit `test: accept controlled fulfillment delivery integration`.
+- [x] Write RED tests through real Ralph verification/refresh with both provider facades and guided/semi/banzai modes. Existing `delivery_gate_controller` selects the controlled runner; feature-off and standalone calls remain legacy.
+- [x] Pass existing source, containment, remaining-budget and durable operation/accounted-usage context. Persist only newly unaccounted cumulative usage once in Ralph state; unknown usage remains explicit. Test interruption between runner completion and Ralph accounting, resumed replay and failed refresh charges.
+- [x] Exercise full/scoped/no-judge/cache/non-passing fulfillment, restart and completed PR-fix batch re-entry through verification and post-verification effects without mocking controller decisions. Preserve banzai deferral and convergence gating.
+- [x] Run affected Ralph, delivery documentation/finalization/re-entry, provider, direct-CLI and all new fulfillment tests. Repeat active prompt-ownership audit: no controlled fulfillment COMMANDER/legacy phase dispatch, no provider-specific role files.
+- [x] Obtain independent read-only final review, fix only demonstrated in-scope defects with RED tests, run final affected batch and `git diff --check`, record exact receipts and remaining live/installed/merge gates. Commit `test: accept controlled fulfillment delivery integration`.
 
 ## Execution / self-review
 
@@ -124,6 +124,40 @@ approval gate between these already-approved phases. A required design expansion
 still stops for direction. Preserve branch/worktree; do not push or merge.
 
 ## Receipts
+
+- Final Task 5 affected batch: **1,251 passed in 164.38s**, including all new
+  fulfillment tests, shared runner/preparation/judgment/reconciliation/ledger
+  consumers, inspection and both provider adapters, Ralph/coordinator,
+  documentation/finalization, review publisher/loop/re-entry and standalone
+  reconciliation CLI regressions. `git diff --check` passed. The controlled
+  ownership search found no generic prompt execution, legacy phase resolution,
+  COMMANDER/MANAGER or native agent lookup in the new controller/roles. No
+  AGENTS.md/CLAUDE.md/native-agent files changed from this plan's baseline.
+  Independent final review reported no remaining findings. All five tasks are
+  complete; installed-bundle, live-provider and branch-wide merge gates remain
+  unperformed. Keep the branch/worktree; no installation, push or merge.
+- Task 5 integration corrections were reproduced before implementation. The
+  coordinator now preserves the actual uniform ledger contract identity instead
+  of relabelling controlled evidence as legacy. Recovery retains unpaid known
+  usage when selected state disappears. Automatic run creation uses a pinned
+  directory descriptor and rejects symlink escapes, including a directory swap
+  after admission. Scoped independent re-review confirmed each correction.
+- The completed PR-fix batch acceptance exposed a pre-existing handoff conflict:
+  the review journal rejected the host's own DONE updates to published tasks.
+  Two direct RED cases and six mutation-rejection cases bound the narrow fix:
+  only a completed journal may admit the exact existing host DONE formatter's
+  output for its batch IDs. Incomplete publication, definitions, unrelated tasks
+  and review artifacts retain their conflict checks. The phase-verification gate
+  still owns permission for PR side effects. Independent review reported no
+  remaining findings after reproducing completion and drift rejection.
+- Task 5 focused publication/delivery acceptance: **76 passed in 11.63s**,
+  including 32 delivery cases, six real Claude/Codex facade × mode cases and six
+  completed-batch passing/nonpassing cases. The completed-batch fixture starts
+  after source repair; real host task progress, verifier orchestration,
+  fulfillment, post-verification gates, journal recovery and coordinator effect
+  ordering run with scripted external verifier/model/graph/PR services. It is
+  not evidence of live source repair or a real sandbox test execution. Separate
+  task-progress regressions: **18 passed in 0.24s**.
 
 - Task 4: **387 passed in 27.36s**, including 35 real runner cases. Independent
   review exposed cache shortcuts around source/run identity, report content,

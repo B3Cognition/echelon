@@ -592,3 +592,49 @@ fulfillment caller, Prosaic content, AGENTS.md/CLAUDE.md, legacy build flow,
 mode/default or identity policy changed. No installation, live model call, push
 or merge occurred; the convergence branch/worktree is retained. Provider API
 transport remains necessary and distinct from prohibited model network tools.
+
+## Controlled fulfillment implementation closure (2026-09-14)
+
+The user requested completing all remaining implementation phases before live
+testing. The [executed completion plan](superpowers/plans/2026-09-14-controlled-fulfillment-completion.md)
+closes the semantic, full/scoped, recovery and Ralph integration phases of the
+[approved fulfillment design](superpowers/specs/2026-09-13-controlled-fulfillment-ownership-design.md).
+This supersedes the inactive-fulfillment limitations in the earlier checkpoints,
+not their historical receipts or the deferred identity register.
+
+With the existing `llm.features.delivery_gate_controller` opt-in, Python now
+owns fulfillment preparation, mapper/prepass/optional-judge sequencing, exact ID
+validation, scoped merge, publication, lifecycle and usage accounting. The two
+neutral roles load through Prosaic and use the accepted host-serviced inspection
+interface for both Claude and Codex. Semantic receipts bind inputs and admitted
+reads; completed work is reused without redispatch or duplicate charging.
+Unknown completion and conflicting edits block rather than resetting the run.
+Controlled caches and verified ledgers carry their own semantic-profile contract
+identity, which the coordinator now preserves in its immutable checkpoint.
+
+The real completed-PR-fix acceptance found that publication recovery rejected
+host-authored task completion. Completed journals now admit only exact replay
+of the existing DONE formatter for their own batch IDs. Definitions, unrelated
+tasks and review artifacts remain bound; incomplete publication stays exact.
+Passing fulfillment permits the existing post-verification effects once;
+nonpassing fulfillment leaves them untouched in guided, semi and banzai modes.
+
+Mode policy, banzai refresh deferral, default activation, observer authority,
+owner deferrals and exact legacy/six-digit/seven-digit IDs remain unchanged.
+Feature-off delivery and standalone verify-spec retain their command-driven
+contracts. No AGENTS.md/CLAUDE.md, legacy build entry or deferred identity
+activation changed. The controlled prompt audit found no legacy COMMANDER,
+generic phase execution or native provider-agent lookup in the new path.
+
+Final affected acceptance: **1,251 tests passed in 164.38s**, plus **18 task
+progress tests passed in 0.24s**. Independent scoped reviews reported no remaining
+findings after RED reproductions and corrections; `git diff --check` passed.
+The completion plan records the phase receipts and exact evidence limitations.
+
+This is controlled-fulfillment implementation acceptance, not completion of the
+separate identity integration or release milestones. External model processes,
+graphs, verifier execution and PR services are scripted in the composed tests.
+No installed-bundle refresh, live provider/game run, installation, push, merge
+or branch-wide merge verification was performed. The convergence branch and
+worktree remain in place; the recorded bundle/live/merge gates must still be
+completed before treating this as real-use release acceptance.

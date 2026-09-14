@@ -1,7 +1,9 @@
 # Controlled fulfillment ownership: phased design
 
-Status: approved design; inactive Phase 1 preparation implemented and reviewed
-on 2026-09-14. Phases 2–4 are not implemented by this checkpoint.
+Status: all four implementation phases completed on 2026-09-14, selected in
+Ralph by the existing `llm.features.delivery_gate_controller` opt-in. Scripted
+acceptance and review receipts are in the completion plan; installed-bundle,
+live-provider and branch-wide merge acceptance remain separate gates.
 Baseline: `bffbf46b` on `fix/delivery-controller-contract`.
 
 ## Purpose and authorization
@@ -15,7 +17,7 @@ The invariant is the original goal: Python owns invocation-specific orchestratio
 Prosaic supplies neutral semantic roles. There is no extra COMMANDER role and no
 new "when run from delivery" branch in shared role prose.
 
-## Existing boundary and reuse
+## Original boundary and reuse (design baseline)
 
 `src/harness/fulfillment_runner.py` already owns admission, full/scoped selection,
 cache checks, run initialization, coverage-observation binding, report validation,
@@ -212,12 +214,15 @@ continues inline under `docs/superpowers/plans/2026-09-14-controlled-fulfillment
 This supersedes the Phase-1-only execution limit below, not the design's scope,
 compatibility or separate live/installation/merge gates.
 
-The requested next implementation checkpoint is Phase 1 only. Approval of this
+The original next implementation checkpoint was Phase 1 only. Approval of this
 design fixes the intended end state and compatibility boundaries; it does not
 authorize silently widening a phase when a missing capability is discovered.
 The approved Phase 1 implementation plan is
 `docs/superpowers/plans/2026-09-13-fulfillment-preparation.md`; its executed
 checkpoint records 285 passing affected tests and the independent review.
-Shared CLI preparation steps and the bound callable are implemented; no active
-runner invokes that callable. Semantic execution, recovery, provider acceptance
-and delivery integration remain the separate phases above.
+At that checkpoint, shared CLI preparation steps and the bound callable were
+implemented without an active runner. The completion plan now records semantic
+execution, recovery, both provider facades and delivery integration acceptance.
+Its implementation closes this controlled-delivery ownership gap; it does not
+migrate standalone verify-spec or feature-off delivery, change defaults, or
+activate deferred identity work.

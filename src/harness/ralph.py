@@ -366,7 +366,9 @@ class RalphController:
         self._fulfillment_runner = (
             fulfillment_runner
             if fulfillment_runner is not None
-            else FulfillmentRunner(llm_provider) if llm_provider is not None else None
+            else FulfillmentRunner(llm_provider,
+                controlled=config.llm.features.get("delivery_gate_controller") is True)
+            if llm_provider is not None else None
         )
         self._build_id = build_id
         self._fresh_delivery = fresh_delivery
@@ -1042,6 +1044,9 @@ class RalphController:
                     verify_result = self._apply_verification_diagnosis(
                         verify_result, worktree_path
                     )
+                    self._controlled_slice_budget = (
+                        max(0, token_budget * 0.95 - tokens_used - verify_result.token_usage)
+                        if token_budget and token_budget > 0 else None)
                     verify_result = self._apply_post_verify_gates(
                         verify_result,
                         worktree_path,
@@ -1859,6 +1864,9 @@ class RalphController:
                 current_verify, worktree_path
             )
             inner_changed_files = self._changed_files_since_head(worktree_path)
+            self._controlled_slice_budget = (
+                max(0, token_budget * 0.95 - tokens_used - current_verify.token_usage)
+                if token_budget and token_budget > 0 else None)
             current_verify = self._apply_post_verify_gates(
                 current_verify,
                 worktree_path,
@@ -3504,11 +3512,23 @@ class RalphController:
                     "changed_files": changed_files or [],
                 }
             )
+        controlled = self._config.llm.features.get("delivery_gate_controller") is True
+        if controlled:
+            try:
+                refresh_kwargs.update(self._controlled_fulfillment_options(worktree_path, refresh_kwargs))
+            except (ValueError, OSError, TypeError, KeyError) as exc:
+                return VerifyResult(False, [FailureEntry(FailureCategory.OTHER,
+                    "fulfillment-containment-invalid", str(exc))], verify_result.duration_s,
+                    verify_result.token_usage, dict(verify_result.verification_evidence))
         refresh_result = self._fulfillment_runner.refresh(
             worktree_path,
             self._spec_id,
             **refresh_kwargs,
         )
+        if controlled:
+            from dataclasses import replace
+            newly_used = self._account_fulfillment_usage(refresh_result)
+            verify_result = replace(verify_result, token_usage=verify_result.token_usage + newly_used)
         exit_code = getattr(refresh_result, "exit_code", refresh_result)
         self._record_fulfillment_refresh(
             {
@@ -3587,6 +3607,82 @@ class RalphController:
             token_usage=verify_result.token_usage,
             verification_evidence=dict(verify_result.verification_evidence),
         )
+
+    def _controlled_fulfillment_options(self, worktree_path, refresh_kwargs):
+        """Bind the exact refresh before dispatch; reuse delivery's root policy."""
+        from harness.llm_build_runner import _containment_policy_env
+        from harness.fulfillment_runner import _spec_input_hash, _implementation_input_hash
+        from harness.controlled_fulfillment import _digest
+        state = self._state_store.read()
+        workspace = self._orchestration_root(Path(worktree_path))
+        policy_path = self._state_store.state_dir / "delivery-containment-policy.json"
+        if policy_path.is_symlink():
+            raise ValueError("unsafe fulfillment containment policy")
+        policy = json.loads(policy_path.read_text())
+        expected = dict(schema_version=1, worktree=str(worktree_path), workspace_root=str(workspace),
+                        source_id=state.get("source_id"), source_root=state.get("source_root"))
+        if any(policy.get(key) != value for key, value in expected.items()):
+            raise ValueError("fulfillment containment policy binding changed")
+        env, error = _containment_policy_env(str(policy_path), worktree_path=worktree_path)
+        if error:
+            raise ValueError(error)
+        forbidden = tuple(Path(path) for key in ("ECHELON_FORBIDDEN_ROOTS_JSON", "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON")
+                          for path in json.loads(env[key]))
+        spec = refresh_kwargs.get("spec_dir")
+        if spec is None:
+            raise ValueError("controlled fulfillment spec is unavailable")
+        key = _digest(dict(worktree=str(worktree_path), workspace=str(workspace),
+            spec=_spec_input_hash(Path(spec)), product=_implementation_input_hash(Path(worktree_path)),
+            scope=refresh_kwargs.get("scope", "full"), tasks=refresh_kwargs.get("completed_task_ids", []),
+            changed=refresh_kwargs.get("changed_files", []), evidence=refresh_kwargs.get("verification_evidence"),
+            observation=refresh_kwargs["coverage_observation"].ref.as_mapping() if refresh_kwargs.get("coverage_observation") else None))
+        pending = state.get("fulfillment_operation")
+        selected = None
+        if isinstance(pending, dict) and (pending.get("input_key") == key or pending.get("status") in {"pending", "unknown"}):
+            selected = pending.get("id")
+            if not isinstance(selected, str) or not selected:
+                raise ValueError("invalid persisted fulfillment selection")
+        records = state.get("fulfillment_operations", {})
+        if not isinstance(records, dict) or any(not isinstance(row, dict)
+                or type(row.get("accounted_tokens")) is not int or row["accounted_tokens"] < 0 for row in records.values()):
+            raise ValueError("invalid persisted fulfillment accounting")
+        ceilings = []
+        if self._controlled_slice_budget is not None:
+            ceilings.append(max(0, self._controlled_slice_budget))
+        budget = state.get("token_budget")
+        if isinstance(budget, (int, float)) and budget > 0:
+            ceilings.append(max(0, budget * 0.95 - state.get("tokens_used", 0)))
+        def selected_run(path):
+            current = self._state_store.read()
+            current["fulfillment_operation"] = dict(id=str(path), input_key=key, status="pending")
+            self._state_store.write(current)
+        return dict(orchestration_root=workspace, forbidden_paths=forbidden,
+            verify_run_dir=selected, on_run_selected=selected_run,
+            token_budget=min(ceilings) if ceilings else None,
+            accounted_usage={name: row["accounted_tokens"] for name, row in records.items()})
+
+    def _account_fulfillment_usage(self, result):
+        """Commit cumulative receipts and the newly charged amount atomically."""
+        operation_id = getattr(result, "operation_id", None)
+        if operation_id is None:
+            return 0
+        state = self._state_store.read()
+        records = state.setdefault("fulfillment_operations", {})
+        row = records.setdefault(operation_id, {"accounted_tokens": 0, "usage_unknown": False})
+        usage = getattr(result, "token_usage", None)
+        newly_used = 0
+        if usage is None:
+            row["usage_unknown"] = True
+            state["fulfillment_usage_unknown"] = True
+        else:
+            newly_used = max(0, usage - row["accounted_tokens"])
+            row["accounted_tokens"] = max(row["accounted_tokens"], usage)
+            state["tokens_used"] = state.get("tokens_used", 0) + newly_used
+        pending = state.get("fulfillment_operation")
+        if isinstance(pending, dict) and pending.get("id") == operation_id:
+            pending["status"] = "unknown" if usage is None else ("complete" if result.ok else "failed")
+        self._state_store.write(state)
+        return newly_used
 
     def _task_progress_counts(self) -> tuple[int, int]:
         state = self._state_store.read()

@@ -1,7 +1,7 @@
 """Deterministic preparation for an explicitly bound, caller-owned verify run.
 
-This callable is intentionally not connected to active delivery. It neither
-dispatches semantic roles nor publishes a fulfillment result or completes a run.
+The controlled delivery runner composes this callable with semantic inspection.
+Preparation itself neither dispatches roles nor publishes or completes a run.
 """
 from __future__ import annotations
 

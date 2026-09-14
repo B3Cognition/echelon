@@ -351,3 +351,37 @@ def test_no_impact_explicit_run_cannot_bypass_state_validation(runner_context):
     result = refresh(runner_context, executor, scope="scoped")
     assert not result.ok
     assert executor.dispatch_count == 0
+
+
+@pytest.mark.parametrize("alias", ["parent_escape", "runs_symlink"])
+def test_run_selection_cannot_create_control_files_outside_workspace(runner_context, tmp_path, alias):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if alias == "parent_escape":
+        selected = runner_context.workspace_root / "runs" / ".." / ".." / "outside"
+    else:
+        runs = runner_context.workspace_root / "runs"
+        runs.rename(runner_context.workspace_root / "runs-preserved")
+        runs.symlink_to(outside, target_is_directory=True)
+        selected = None
+    result = refresh(runner_context, SemanticExecutor(), verify_run_dir=selected)
+    assert not result.ok
+    assert list(outside.iterdir()) == []
+
+
+def test_run_creation_uses_admitted_directory_descriptor(runner_context, tmp_path, monkeypatch):
+    import harness.controlled_fulfillment_refresh as controlled
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    runs = runner_context.workspace_root / "runs"
+    original = controlled._open_root_directory
+    def swap_after_admission(path):
+        fd = original(path)
+        if path == runs:
+            runs.rename(runner_context.workspace_root / "runs-preserved")
+            runs.symlink_to(outside, target_is_directory=True)
+        return fd
+    monkeypatch.setattr(controlled, "_open_root_directory", swap_after_admission)
+    result = refresh(runner_context, SemanticExecutor(), verify_run_dir=None)
+    assert not result.ok
+    assert list(outside.iterdir()) == []

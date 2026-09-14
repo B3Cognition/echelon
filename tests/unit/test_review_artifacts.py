@@ -469,6 +469,56 @@ def test_recovery_is_idempotent_after_each_publication_write_boundary(tmp_path: 
     ]
 
 
+@pytest.mark.parametrize("completed_count", [1, 3])
+def test_completed_publication_recovers_after_host_batch_progress(tmp_path: Path, completed_count: int) -> None:
+    from harness.task_progress import update_task_progress_markdown
+    spec_dir, state_dir = tmp_path / "spec", tmp_path / "state"
+    spec_dir.mkdir()
+    tasks = spec_dir / "tasks.md"
+    tasks.write_text(_task("T-001"))
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = _stage_one_group(publisher)
+        batch = publisher.accept_manifest(allocation.status_file)
+    updated = tasks.read_text()
+    for task_id in batch.task_ids[:completed_count]:
+        updated = update_task_progress_markdown(updated, task_id, "DONE")
+    tasks.write_text(updated)
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        assert publisher.recover_publication(set()) == batch
+        assert publisher.recover_publication(set()) == batch
+    assert tasks.read_text() == updated
+
+
+@pytest.mark.parametrize("mutation", ["unrelated_progress", "title", "requirement", "append", "checkbox_only", "duplicate_status"])
+def test_completed_publication_still_rejects_non_host_batch_changes(tmp_path: Path, mutation: str) -> None:
+    from harness.task_progress import update_task_progress_markdown
+    spec_dir, state_dir = tmp_path / "spec", tmp_path / "state"
+    spec_dir.mkdir()
+    tasks = spec_dir / "tasks.md"
+    tasks.write_text(_task("T-001"))
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = _stage_one_group(publisher)
+        batch = publisher.accept_manifest(allocation.status_file)
+    updated = update_task_progress_markdown(tasks.read_text(), batch.task_ids[0], "DONE")
+    if mutation == "unrelated_progress":
+        updated = update_task_progress_markdown(updated, "T-001", "DONE")
+    elif mutation == "title":
+        updated = updated.replace("Review follow-up", "Changed definition", 1)
+    elif mutation == "requirement":
+        updated = updated.replace("req=UNMAPPED", "req=FR-999999")
+    elif mutation == "append":
+        updated += _task("T-999999")
+    elif mutation == "checkbox_only":
+        updated = updated.replace("  **Status:** DONE\n", "")
+    else:
+        updated = updated.replace("  **Status:** DONE\n", "  **Status:** DONE\n  **Status:** DONE\n")
+    tasks.write_text(updated)
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        with pytest.raises(ReviewArtifactError, match="tasks.md does not match"):
+            publisher.recover_publication(set())
+    assert tasks.read_text() == updated
+
+
 def test_recovery_preserves_conflicting_artifact_after_crash(tmp_path: Path) -> None:
     """A changed canonical artifact after a crash is a blocker, never an overwrite target."""
     spec_dir = tmp_path / "spec"

@@ -1,4 +1,4 @@
-"""Inactive host-owned fulfillment semantics, staged in an explicitly bound run."""
+"""Host-owned fulfillment semantics, staged in an explicitly bound run."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -124,7 +124,7 @@ def _read_channel(context, forbidden_paths):
 
 
 class ControlledFulfillment:
-    """Stage a full/scoped semantic result; no canonical writes or active callers."""
+    """Stage a full/scoped result; the runner owns canonical publication."""
 
     def __init__(self, executor, project_dir: Path):
         self._executor = executor
