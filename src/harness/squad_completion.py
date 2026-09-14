@@ -602,8 +602,9 @@ def _validate_intent(
     route = _validate_route(dict.__getitem__(record, "route"))
     if "managed_discovery" in publication:
         from harness.discovery_completion import decode_binding
-        decode_binding(publication, completion_id=completion_id)
-        if (origin != "routed" or route.get("from_phase") != "phase1-discover"
+        from harness.discovery_producer import producer_phase
+        binding = decode_binding(publication, completion_id=completion_id)
+        if (origin != "routed" or route.get("from_phase") != producer_phase(binding.producer)
                 or route.get("manual_phase_run") is not False or route.get("record_completion") is not True):
             _raise("intent_invalid")
     if origin != route["kind"]:

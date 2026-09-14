@@ -15,6 +15,7 @@ from harness.discovery_operation_state import DISCOVERY_OPERATION_KEY, operation
 from harness.discovery_publication import _graph
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
+from harness.discovery_producer import producer_key, producer_phase, producer_role, synthesis_source, identity_spec_tree
 from harness.element_identity_json import strict_json, _unique_object
 from harness.element_identity_publication import decode_publication_request, encode_publication_request
 from harness.element_identity_snapshot import IdentityHistorySnapshot
@@ -59,6 +60,10 @@ class DiscoveryCompletionBinding:
     baseline: object
 
     @property
+    def producer(self):
+        return self.recovery.get("producer", "discovery")
+
+    @property
     def spec_id(self):
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -93,8 +98,11 @@ def _decode(publication, completion_id, state):
         and request.proposed_history_sha256 is not None)
     recovery = _document(request.recovery_payload)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
-        "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256"))
-    _require(type(recovery["version"]) is int and recovery["version"] == 2
+        "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256",
+        *(("producer", "source_completion") if recovery.get("version") == 3 else ())))
+    producer = recovery.get("producer", "discovery")
+    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3}
+        and (recovery["version"] != 3 or producer == "synthesizer")
         and _json(recovery) == request.recovery_payload)
     if completion_id is not None:
         _require(recovery["completion_id"] == completion_id)
@@ -125,6 +133,8 @@ def _decode(publication, completion_id, state):
     genesis = authority["managed_identity"]
     spec_path = genesis["spec_path"]
     spec, = (tree for tree in sources.trees if tree.path == spec_path)
+    if producer == "synthesizer":
+        spec = identity_spec_tree(spec)
     _require(baseline.trees == (spec,) and baseline.files == ()
         and request.sources.context_id == genesis["context_id"] == authority["source_context"]["context_id"]
         and request.sources.expected_operation_id == authority["source_context"]["operation_id"]
@@ -142,9 +152,12 @@ def _decode(publication, completion_id, state):
         and op.postimage.mode == modes.get(op.target, 0o644) for op in operations))
     if state is not None:
         bootstrap = bootstrap_from_state(state)
-        _require(bootstrap is not None and operation_from_state(state) == operation
-            and state.get("managed_identity") == genesis and state.get(DISCOVERY_TURNS_KEY) == recovery["provider"])
-        _require(all(bootstrap["selection"][key] == selected[key] for key in ("spec_id", "run_id", "operation_id")))
+        _require(bootstrap is not None and operation_from_state(state, producer) == operation
+            and state.get("managed_identity") == genesis and state.get(producer_key(producer, "turns")) == recovery["provider"])
+        _require(all(bootstrap["selection"][key] == selected[key]
+            for key in (("spec_id", "run_id", "operation_id") if producer == "discovery" else ("spec_id", "run_id"))))
+        if producer == "synthesizer":
+            _require(synthesis_source(state) == recovery["source_completion"])
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
 
 
@@ -155,13 +168,20 @@ def authenticate(root, run, state, completion):
         if binding is None:
             return None
         route = completion.intent.route
-        _require(completion.intent.origin == "routed" and route["from_phase"] == "phase1-discover"
+        _require(completion.intent.origin == "routed" and route["from_phase"] == producer_phase(binding.producer)
             and route["manual_phase_run"] is False and route["record_completion"] is True
             and set(completion.intent.effect_plan) <= {"journal", "timing", "checkpoint", "context"}
             and "product_input_mutation" not in state)
         selection = bootstrap_from_state(state)["selection"]
         _require(str(root) == selection["project_root"] and str(run) == selection["run_dir"])
-        runtime, _ = admit_runtime_inputs(root, run, state, binding.sources)
+        input_view = binding.sources
+        if binding.producer == "synthesizer":
+            spec_view, runtime_view = _released_discovery_projections(root, run, state,
+                source=binding.recovery["source_completion"], historical=True)
+            spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
+            _require(spec_view(spec_tree) == binding.baseline.trees[0])
+            input_view = runtime_view(binding.sources)
+        runtime, _ = admit_runtime_inputs(root, run, state, input_view)
         _require(runtime == binding.source["runtime"])
         store = IdentityStore.open(root)
         observed = store.check_managed_context(spec_id=binding.spec_id, run_id=state["run_id"], record=state["managed_identity"])
@@ -187,7 +207,7 @@ def require_unpublished_orphan(root, run, state, intent):
     """Authorize disposal, never promotion, of a sealed but never-routed draft."""
     try:
         binding = decode_binding(intent["publication"], completion_id=intent["completion_id"], state=state)
-        _require(binding is not None and state.get("phase") == "phase1-discover"
+        _require(binding is not None and state.get("phase") == producer_phase(binding.producer)
             and not any(key in state for key in ("pending_controller_completion", "pending_external_publication")))
         dispatch = state.get("last_dispatch") or {}
         _require(dispatch.get("dispatch_id") != intent["completion_id"]
@@ -221,8 +241,8 @@ def require_unpublished_orphan(root, run, state, intent):
     raise CompletionError("intent_mismatch")
 
 
-def _read_receipt(run, name):
-    with DiscoveryReceiptFile(run, name) as file:
+def _read_receipt(run, name, producer="discovery"):
+    with DiscoveryReceiptFile(run, name, producer=producer) as file:
         raw = file._read()
         value = json.loads(raw, object_pairs_hook=_unique_object)
         _closed(value, ("payload", "sha256"))
@@ -234,13 +254,13 @@ def _read_receipt(run, name):
 def _receipts(root, run, state, binding, store):
     from harness.discovery_turns import _validate
     from harness.discovery_reservations import _validate as validate_reservations
-    turns = _read_receipt(run, "discovery-turns")
+    turns = _read_receipt(run, "discovery-turns", binding.producer)
     _validate(turns)
-    _require(_hash(turns["binding"]) == state[DISCOVERY_TURNS_KEY]["binding_sha256"]
+    _require(_hash(turns["binding"]) == state[producer_key(binding.producer, "turns")]["binding_sha256"]
         and turns["binding"]["authority"] == binding.source["authority"])
     from harness.prosaic_prompt_loader import ProsaicPromptLoader
     loader = ProsaicPromptLoader(root, timeout_s=10)
-    _require({name: asdict(loader.load_subagent("echelon.discovery-" + name))
+    _require({name: asdict(loader.load_subagent(producer_role(binding.producer, name)))
         for name in ("producer", "reviewer")} == turns["binding"]["roles"])
     number = len(binding.recovery["operation"]["attempts"])
     replies = {}
@@ -251,7 +271,7 @@ def _receipts(root, run, state, binding, store):
     _require(replies["propose"] == binding.candidate["proposal"]
         and replies["author"]["artifacts"] == binding.candidate["artifacts"]
         and replies["review"] == binding.recovery["review"] and replies["review"]["verdict"] == "accept")
-    reservations = _read_receipt(run, "discovery-reservations")
+    reservations = _read_receipt(run, "discovery-reservations", binding.producer)
     _require(reservations["binding"]["context"] == binding.source["authority"])
     known = validate_reservations(reservations, reservations["binding"])
     _require([asdict(known[item["key"]][1]) for item in replies["propose"]["new_subjects"]] == binding.candidate["reservations"])
@@ -294,6 +314,8 @@ def _require_applied(root, run, state, completion):
     # All other captured sources remain pinned through effects and release.
     context = (run / "context").relative_to(root).as_posix()
     trees = tuple(tree for tree in projected.trees if tree.path != context)
+    if binding.producer == "synthesizer":
+        trees = tuple(identity_spec_tree(tree) if tree.path == binding.baseline.trees[0].path else tree for tree in trees)
     expected = snapshot_source_manifest(trees=trees, files=projected.files)
     with publication.inspect_sources(tree_paths=tuple(tree.path for tree in projected.trees),
             file_paths=tuple(item.path for item in projected.files)) as current:
@@ -309,36 +331,43 @@ def _checkpoint_projection(root, run, state, *, intent, marker, receipts, bindin
     """Resolve Git proof before the source lock; projection checks captured bytes."""
     from harness.phase_checkpoints import fresh_completion_checkpoint_ledger_image
     plan = intent.effect_plan
-    if "checkpoint" not in plan:
-        return lambda tree: tree
     selection = bootstrap_from_state(state)["selection"]
     spec = selection["spec_path"]
+    original, = (tree for tree in binding.sources.trees if tree.path == spec)
+    metadata = spec + "/.echelon"
+    prior_ledger = None
+    if binding.producer == "synthesizer":
+        matches = [item.content for item in original.files if item.path == metadata + "/checkpoints.json"]
+        prior_ledger = matches[0] if matches else None
+    else:
+        _require(not any(item.path == metadata or item.path.startswith(metadata + "/")
+            for item in (*original.directories, *original.files)))
+    prior_projection = partial(_project_checkpoint_tree, spec=spec, ledger=prior_ledger, pending=False) if prior_ledger is not None else lambda tree: tree
+    if "checkpoint" not in plan:
+        return prior_projection
     target = Path(str(state.get("spec_dir") or ""))
     if not target.is_absolute():
         target = root / target
     _require(target == root / spec)
-    original, = (tree for tree in binding.sources.trees if tree.path == spec)
-    metadata = spec + "/.echelon"
-    _require(not any(item.path == metadata or item.path.startswith(metadata + "/")
-        for item in (*original.directories, *original.files)))
     step = marker.step
     if step in plan and plan.index(step) < plan.index("checkpoint"):
-        return lambda tree: tree
+        return prior_projection
     _require(step == "complete" or step in plan)
     pending = step == "checkpoint" and "checkpoint" not in receipts["effects"]
     route = intent.route
     artifacts, = project_publication_source_images(binding.baseline).trees
+    images = {item.path: (item.image.mode, item.content) for item in artifacts.files}
     ledger = fresh_completion_checkpoint_ledger_image(project_root=root, spec_dir=root / spec,
         phase=route["from_phase"], next_phase=route["to_phase"], run_id=selection["run_id"],
         spec_id=selection["spec_id"], completion_id=marker.completion_id,
         checkpoint_prestate=intent.checkpoint_prestate,
         expected_receipt=receipts["effects"].get("checkpoint"),
         allow_pending=pending, rewind=str(route.get("rewind_policy") or "supported"),
-        artifact_images={item.path: (item.image.mode, item.content) for item in artifacts.files})
-    return partial(_project_checkpoint_tree, spec=spec, ledger=ledger, pending=pending)
+        artifact_images=images, ledger_preimage=prior_ledger)
+    return partial(_project_checkpoint_tree, spec=spec, ledger=ledger, pending=pending, preimage=prior_ledger)
 
 
-def _project_checkpoint_tree(tree, *, spec, ledger, pending):
+def _project_checkpoint_tree(tree, *, spec, ledger, pending, preimage=None):
     if tree.path != spec:
         return tree
     metadata = spec + "/.echelon"
@@ -352,11 +381,15 @@ def _project_checkpoint_tree(tree, *, spec, ledger, pending):
         # The commit follows creation of the directory and lock. Only the
         # ledger write may still be pending once that commit exists.
         _require(len(directories) == 1 and metadata + "/checkpoints.lock" in names)
+    if preimage is not None:
+        # An append may replace a retained ledger, never recreate a lost one.
+        _require(metadata + "/checkpoints.json" in names)
     if not pending:
         _require(len(directories) == 1 and len(names) == 2 and ledger is not None)
     for path, item in names.items():
         expected = b"" if path.endswith("/checkpoints.lock") else ledger
-        _require(item.image.mode == 0o600 and expected is not None and item.content == expected)
+        _require(item.image.mode == 0o600 and expected is not None and (item.content == expected
+            or (pending and path.endswith("/checkpoints.json") and preimage is not None and item.content == preimage)))
     return replace(tree, directories=tuple(item for item in tree.directories if item not in directories),
         files=tuple(item for item in tree.files if item not in files))
 
@@ -464,7 +497,7 @@ def released_discovery_input_projectors(root, run, state, *, source):
     return _released_discovery_projections(root, run, state, source=source)
 
 
-def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None):
+def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None, historical=False):
     """Prepare a checked spec-identity view after completion outbox cleanup.
 
     Caller owns execution leases, then captures the complete tree under the
@@ -479,9 +512,10 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
         store = IdentityStore.open(root)
         observed = store.check_managed_context(spec_id=selection["spec_id"], run_id=selection["run_id"],
             record=state["managed_identity"])
-        row = store.identity_publication(spec_id=selection["spec_id"], operation_id=observed["source_context"]["operation_id"])
+        operation_id = "discovery-completion-" + source["dispatch_id"] if historical else observed["source_context"]["operation_id"]
+        row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
         _require(row is not None and row["state"] == "released"
-            and store.pending_identity_publication(spec_id=selection["spec_id"]) is None)
+            and (historical or store.pending_identity_publication(spec_id=selection["spec_id"]) is None))
         proof = _document(row["completion_payload"])
         _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3})
         field = "checkpoint" if proof["version"] == 2 else "proof"
@@ -497,10 +531,10 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
         _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
         binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
         _require(binding is not None and row["request"] == encode_publication_request(binding.request)
-            and binding.operation_id == observed["source_context"]["operation_id"]
-            and asdict(store.identity_history(spec_id=binding.spec_id)) == binding.candidate["history"])
+            and binding.operation_id == operation_id
+            and (historical or asdict(store.identity_history(spec_id=binding.spec_id)) == binding.candidate["history"]))
         expected = project_publication_source_images(binding.baseline).manifest
-        _require(asdict(expected) == observed["source_context"]["manifest"])
+        _require(historical or asdict(expected) == observed["source_context"]["manifest"])
         project = _checkpoint_projection(root, run, state, intent=intent, marker=marker,
             receipts=receipts, binding=binding)
         def checked(tree):

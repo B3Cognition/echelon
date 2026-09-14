@@ -1310,10 +1310,12 @@ def fresh_completion_checkpoint_ledger_image(
     checkpoint_prestate: Mapping[str, object], expected_receipt: object | None,
     allow_pending: bool, rewind: str = "supported",
     artifact_images: Mapping[str, tuple[int, bytes]],
+    ledger_preimage: bytes | None = None,
 ) -> bytes | None:
-    """Read-only expected metadata for one fresh-spec completion.
+    """Read-only expected metadata, optionally extending an authenticated ledger.
 
-    The caller proves its captured ledger baseline is absent. This does not
+    The caller proves its captured ledger baseline is absent or authenticates
+    the exact supplied preimage against the preceding completion. This does not
     create/recover a checkpoint, accept an arbitrary ledger, or inspect live
     ledger bytes. It uses the same Git identity and serialization as the writer.
     """
@@ -1321,6 +1323,16 @@ def fresh_completion_checkpoint_ledger_image(
         spec_dir=spec_dir, phase=phase, next_phase=next_phase, run_id=run_id,
         spec_id=spec_id, completion_id=completion_id, checkpoint_prestate=checkpoint_prestate,
         fault_hook=None)
+    previous = CheckpointLedger(spec_id=spec_id, checkpoints=[])
+    if ledger_preimage is not None:
+        if type(ledger_preimage) is not bytes or len(ledger_preimage) > 4_194_304:
+            raise PhaseCheckpointError("invalid captured checkpoint ledger")
+        raw = loads_strict_json(ledger_preimage.decode("utf-8"))
+        if type(raw) is not dict or set(raw) != {"spec_id", "checkpoints"} or raw["spec_id"] != spec_id or type(raw["checkpoints"]) is not list:
+            raise PhaseCheckpointError("invalid captured checkpoint ledger")
+        previous = CheckpointLedger(spec_id=spec_id, checkpoints=[_strict_checkpoint_row(row, spec_id=spec_id) for row in raw["checkpoints"]])
+        if _checkpoint_ledger_bytes(previous) != ledger_preimage or any(row.completion_id == completion_id for row in previous.checkpoints):
+            raise PhaseCheckpointError("captured checkpoint ledger differs from preimage")
     if type(allow_pending) is not bool or rewind not in {"supported", "none"}:
         raise PhaseCheckpointError("invalid checkpoint metadata policy")
     common = _checkpoint_receipt_common(completion_id=completion_id, run_id=run_id,
@@ -1343,7 +1355,7 @@ def fresh_completion_checkpoint_ledger_image(
     if record is None:
         if expected is not None:
             raise PhaseCheckpointError("checkpoint commit missing")
-        return None
+        return ledger_preimage
     receipt = _committed_checkpoint_receipt(common, record["commit"])
     if expected is not None and receipt != expected:
         raise PhaseCheckpointError("checkpoint receipt mismatch")
@@ -1373,7 +1385,7 @@ def fresh_completion_checkpoint_ledger_image(
     checkpoint = _completion_checkpoint_from_commit(record=record, completion_id=completion_id,
         run_id=run_id, spec_id=spec_id, phase=phase, next_phase=next_phase, source="auto",
         rewind=rewind, rewind_reason="workflow-policy" if rewind == "none" else "")
-    return _checkpoint_ledger_bytes(CheckpointLedger(spec_id=spec_id, checkpoints=[checkpoint]))
+    return _checkpoint_ledger_bytes(CheckpointLedger(spec_id=spec_id, checkpoints=[*previous.checkpoints, checkpoint]))
 
 
 def _record_completion_checkpoint_unlocked(

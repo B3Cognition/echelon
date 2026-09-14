@@ -310,6 +310,19 @@ exception allowing IDs in arbitrary runtime inputs. Requesting-review provenance
 per-unit execution and guarded repair publication/return are still unimplemented;
 the opaque selected `review_id` must not become their authority by assumption.
 
+The approved [managed Synthesizer checkpoint](superpowers/plans/2026-09-14-managed-synthesizer.md)
+follows the real workflow ordering before review-triggered discovery repair.
+It reuses the existing owners with closed producer selection, separate immutable
+discovery/synthesis records, retained parent completion proof and an authenticated
+second-checkpoint ledger append. This supersedes the earlier fresh-ledger-only
+limitation for this specific managed continuation, not for arbitrary existing
+ledgers. Exact raw metadata/context remain guarded; derived context is evidence,
+not a second canonical definition source. Default selection stays discovery-only.
+Modeler/Tracker and WHY1, followed by authenticated review-origin repair and its
+original renumbering/evidence acceptance, remain required convergence work.
+Do not skip these producers or fake a requesting review to demonstrate repair.
+Installation, migration and live acceptance remain separate approval boundaries.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

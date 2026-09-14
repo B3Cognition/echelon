@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import re
 
-from harness.discovery_semantics import DISCOVERY_ROLES, DiscoveryAssignment, validate_discovery_reply
+from harness.discovery_semantics import artifact_roles, DiscoveryAssignment, validate_discovery_reply
 from harness.element_artifacts import parse_identity_artifact
 from harness.element_identity_candidate import CandidateArtifact
 from harness.element_identity_lifecycle import ElementCreate, ElementRevision, text
@@ -41,7 +41,7 @@ def author_artifacts(assignment, reply, *, before: Mapping[str, str | None]) -> 
             if type(content) is not str or "\x00" in content:
                 raise ValueError("invalid captured discovery text")
             content.encode("utf-8")
-    return tuple(CandidateArtifact(path, DISCOVERY_ROLES[path], before[path], value["artifacts"][path])
+    return tuple(CandidateArtifact(path, artifact_roles(assignment.producer)[path], before[path], value["artifacts"][path])
                  for path in assignment.artifact_paths)
 
 
@@ -69,7 +69,7 @@ def build_discovery_changes(assignment, reply, *, reservations, artifacts, exist
         raise ValueError("invalid discovery artifact descriptor")
     if (len(artifacts) != len(assignment.artifact_paths)
             or {item.path for item in artifacts} != set(assignment.artifact_paths)
-            or any(item.role != DISCOVERY_ROLES[item.path] for item in artifacts)):
+            or any(item.role != artifact_roles(assignment.producer)[item.path] for item in artifacts)):
         raise ValueError("discovery artifacts must match assigned paths and roles")
     bindings, ids = {}, set()
     for item in reservations:

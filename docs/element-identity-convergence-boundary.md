@@ -1039,3 +1039,33 @@ bind that real review origin, per-unit provider/reservation receipts and bounded
 attempts to the existing guarded publication/completion owners and exact return
 route. The original renumbering/evidence repair acceptance and full activation
 remain open; this read-only checkpoint must not be presented as either.
+
+### Managed Synthesizer integration (2026-09-14)
+
+The approved [Synthesizer plan](superpowers/plans/2026-09-14-managed-synthesizer.md)
+extends normal managed Squad entry through the next real producer. The optional
+internal `through_phase: phase1-synthesizer` selection permits this checkpoint;
+the existing selection remains discovery-only by default. Synthesis publishes
+its seven required Markdown outputs and updated derived graph, then stops at
+the unchanged `phase1-modeler` successor without dispatching later producers.
+
+The same proposal/reservation/author/review, Prosaic inspection, publication,
+completion and checkpoint owners perform the work. A closed producer selection
+chooses a neutral synthesis role and separate protected state/receipt paths.
+Original discovery bootstrap, operation, provider receipts and released proof
+remain immutable. New U/A use the existing counters; existing IDs, subjects,
+captions and revision-bound evidence are not renumbered or repurposed.
+
+The earlier checkpoint limitation is now extended for this authenticated second
+checkpoint only: the proof reader validates the captured prior ledger and exact
+append while the existing writer still owns Git and ledger publication. Pending
+append recovery requires the prior ledger to remain present. Historical parent
+proof authenticates captured discovery images after the child advances the live
+identity head. Raw metadata and generated context remain in the guarded capture;
+only receipt-verified derived context is excluded from duplicate definition
+parsing, not from model evidence or freshness checks.
+
+Read the plan for test/review results. This checkpoint does not activate Modeler,
+Tracker, WHY1, review-origin selection or repair execution. The original
+renumbering/evidence repair acceptance remains open. No public/default activation,
+installation, workspace migration or live-provider readiness is claimed.

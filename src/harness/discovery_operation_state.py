@@ -6,6 +6,7 @@ import re
 
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_semantics import DiscoveryAssignment
+from harness.discovery_producer import producer_key, producer_phase, producer_operation_id
 
 
 DISCOVERY_OPERATION_KEY = "managed_discovery_operation"
@@ -21,19 +22,20 @@ def _digest(value):
         raise ValueError("invalid discovery operation digest")
 
 
-def validate_binding(state, binding):
+def validate_binding(state, binding, producer="discovery"):
     _closed(binding, ("operation_id", "spec_id", "run_id", "input_tree", "artifact_paths",
         "editable_revisions", "unowned_writable_paths", "intent", "fingerprint"))
     selected = bootstrap_from_state(state)
     if selected is None or "managed_identity" not in state:
         raise ValueError("completed discovery bootstrap required")
-    if any(binding[key] != selected["selection"][key] for key in ("operation_id", "spec_id", "run_id")):
+    if (binding["operation_id"] != producer_operation_id(state, producer)
+            or any(binding[key] != selected["selection"][key] for key in ("spec_id", "run_id"))):
         raise ValueError("discovery operation selection changed")
     if any(type(binding[key]) is not list for key in ("artifact_paths", "editable_revisions", "unowned_writable_paths")):
         raise ValueError("invalid discovery scope")
     DiscoveryAssignment(binding["operation_id"], "selection", binding["spec_id"], binding["run_id"],
         "propose", binding["fingerprint"], tuple(binding["artifact_paths"]),
-        tuple(tuple(pair) for pair in binding["editable_revisions"])).identity()
+        tuple(tuple(pair) for pair in binding["editable_revisions"]), producer=producer).identity()
     path = binding["input_tree"]
     if type(path) is not str or not path or PurePosixPath(path).is_absolute() or any(
             part in {"", ".", ".."} for part in path.split("/")) or "\x00" in path or "\\" in path:
@@ -42,7 +44,7 @@ def validate_binding(state, binding):
     if len(set(unowned)) != len(unowned) or not set(unowned) <= set(binding["artifact_paths"]):
         raise ValueError("invalid discovery unowned scope")
     intent = binding["intent"]
-    if (type(intent) is not dict or intent.get("kind") not in {"create", "repair"}
+    if (type(intent) is not dict or intent.get("kind") not in ({"create", "repair"} if producer == "discovery" else {"synthesize"})
             or type(intent.get("request")) is not str or not intent["request"].strip()
             or (intent["kind"] == "repair" and (not intent.get("origin") or not intent.get("findings")))):
         raise ValueError("discovery requires an explicit bound origin")
@@ -50,14 +52,15 @@ def validate_binding(state, binding):
         raise ValueError("discovery selection exceeds limit")
 
 
-def operation_from_state(state):
-    if DISCOVERY_OPERATION_KEY not in state:
+def operation_from_state(state, producer="discovery"):
+    key = producer_key(producer, "operation")
+    if key not in state:
         return None
-    value = state[DISCOVERY_OPERATION_KEY]
+    value = state[key]
     _closed(value, ("schema_version", "binding", "attempts"))
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise ValueError("invalid discovery operation version")
-    validate_binding(state, value["binding"])
+    validate_binding(state, value["binding"], producer)
     attempts = value["attempts"]
     if type(attempts) is not list or len(attempts) > 3:
         raise ValueError("invalid discovery attempt count")
@@ -77,14 +80,14 @@ def operation_from_state(state):
     return deepcopy(value)
 
 
-def advance_operation(state, binding, event, result=None):
-    validate_binding(state, binding)
-    retained = operation_from_state(state)
+def advance_operation(state, binding, event, result=None, producer="discovery"):
+    validate_binding(state, binding, producer)
+    retained = operation_from_state(state, producer)
     if retained is not None and retained["binding"] != binding:
         raise ValueError("discovery operation is immutable")
     if event == "prepare" and result is None:
         if retained is None:
-            if state.get("phase") != "phase1-discover" or state.get("status") != "running":
+            if state.get("phase") != producer_phase(producer) or state.get("status") != "running":
                 raise ValueError("discovery operation requires active discovery")
             retained = dict(schema_version=1, binding=deepcopy(binding), attempts=[])
     elif retained is None:
@@ -102,6 +105,6 @@ def advance_operation(state, binding, event, result=None):
         attempt["result"] = deepcopy(result)
     else:
         raise ValueError("invalid discovery operation transition")
-    updated = {**state, DISCOVERY_OPERATION_KEY: retained}
-    operation_from_state(updated)
+    updated = {**state, producer_key(producer, "operation"): retained}
+    operation_from_state(updated, producer)
     return updated

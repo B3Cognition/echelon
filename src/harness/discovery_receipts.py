@@ -15,9 +15,15 @@ _MAX_BYTES = 16 * 1024 * 1024
 class DiscoveryReceiptFile:
     """File/lock mechanics only; each owner validates its own payload."""
 
-    def __init__(self, run_dir: Path, name: str, *, repair_unit: str | None = None):
+    def __init__(self, run_dir: Path, name: str, *, repair_unit: str | None = None, producer="discovery"):
+        from harness.discovery_producer import producer_key
+        producer_key(producer, "operation")
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
+        if producer != "discovery":
+            if repair_unit is not None:
+                raise ValueError("synthesis repair receipts not supported")
+            name = name.replace("discovery-", "synthesizer-", 1)
         if repair_unit is not None:
             if type(repair_unit) is not str or re.fullmatch(r"[0-9a-f]{64}", repair_unit) is None:
                 raise ValueError("invalid discovery repair receipt selection")

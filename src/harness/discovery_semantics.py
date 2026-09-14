@@ -18,6 +18,13 @@ DISCOVERY_ROLES = {
 _MAX_REPLY_BYTES = 256 * 1024
 
 
+def artifact_roles(producer):
+    from harness.discovery_producer import producer_key
+    producer_key(producer, "operation")
+    return DISCOVERY_ROLES if producer == "discovery" else {
+        **DISCOVERY_ROLES, "contradictions-and-gaps.md": "references", "risks.md": "references"}
+
+
 def _plain(value):
     if (type(value) is not str or not value.strip() or len(value) > 8192
             or any(unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} for char in value)):
@@ -47,6 +54,7 @@ class DiscoveryAssignment:
     artifact_paths: tuple[str, ...]
     editable_revisions: tuple[tuple[str, str], ...] = ()
     assigned_ids: tuple[str, ...] = ()
+    producer: str = "discovery"
 
     def identity(self) -> dict:
         for value in (self.operation_id, self.dispatch_id, self.spec_id, self.run_id):
@@ -56,7 +64,7 @@ class DiscoveryAssignment:
         if type(self.input_fingerprint) is not str or not re.fullmatch(r"[0-9a-f]{64}", self.input_fingerprint):
             raise ValueError("invalid discovery input fingerprint")
         if (type(self.artifact_paths) is not tuple or not self.artifact_paths
-                or any(type(path) is not str or path not in DISCOVERY_ROLES for path in self.artifact_paths)
+                or any(type(path) is not str or path not in artifact_roles(self.producer) for path in self.artifact_paths)
                 or len(set(self.artifact_paths)) != len(self.artifact_paths)):
             raise ValueError("invalid discovery artifact selection")
         if type(self.editable_revisions) is not tuple or type(self.assigned_ids) is not tuple:
@@ -72,10 +80,13 @@ class DiscoveryAssignment:
             _discovery_id(item)
         if len(set(selected)) != len(selected) or len(set(self.assigned_ids)) != len(self.assigned_ids):
             raise ValueError("duplicate discovery selection")
-        return dict(schema_version=1, operation_id=self.operation_id, dispatch_id=self.dispatch_id,
+        result = dict(schema_version=1, operation_id=self.operation_id, dispatch_id=self.dispatch_id,
             spec_id=self.spec_id, run_id=self.run_id, step=self.step, input_fingerprint=self.input_fingerprint,
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
+        if self.producer != "discovery":
+            result.update(schema_version=2, producer=self.producer)
+        return result
 
 
 def _proposal(value, assignment):

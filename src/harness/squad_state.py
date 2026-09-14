@@ -31,6 +31,7 @@ from harness.discovery_bootstrap_state import (
     advance_bootstrap_state, bootstrap_from_state,
 )
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY, discovery_turns_from_state
+from harness.discovery_producer import SOURCE_KEY, SOURCE_FIELDS, synthesis_source, producer_key, producer_phase
 from harness.discovery_operation_state import advance_operation, operation_from_state
 from harness.discovery_repair_state import (
     DISCOVERY_REPAIRS_KEY, advance_repair, prepare_repair, repairs_from_state,
@@ -300,6 +301,16 @@ def _discovery_repairs_from_state(state: dict) -> dict | None:
         pass
     raise StateAdvanceError("invalid discovery repair state",
         json_path="$.managed_discovery_repairs", validator="discovery_repairs") from None
+
+
+def _synthesis_from_state(state):
+    try:
+        return (synthesis_source(state), operation_from_state(state, "synthesizer"),
+                discovery_turns_from_state(state, "synthesizer"))
+    except Exception:
+        pass
+    raise StateAdvanceError("invalid synthesis state", json_path="$.managed_synthesizer_source",
+        validator="synthesizer") from None
 
 
 def _autonomous_default_candidate_from_state(
@@ -2282,6 +2293,7 @@ class SquadStateStore:
         _discovery_turns_from_state(value)
         _discovery_operation_from_state(value)
         _discovery_repairs_from_state(value)
+        _synthesis_from_state(value)
         return value
 
     def load(self) -> dict:
@@ -2418,6 +2430,7 @@ class SquadStateStore:
         allow_discovery_turn_initialization: bool = False,
         allow_discovery_operation_update: bool = False,
         allow_discovery_repair_update: bool = False,
+        synthesis_update: str | None = None,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
@@ -2425,6 +2438,7 @@ class SquadStateStore:
         _discovery_turns_from_state(state)
         _discovery_operation_from_state(state)
         _discovery_repairs_from_state(state)
+        _synthesis_from_state(state)
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2474,6 +2488,12 @@ class SquadStateStore:
                 and not allow_discovery_repair_update):
             raise StateAdvanceError("discovery repairs require their owning transition",
                 json_path="$.managed_discovery_repairs", validator="discovery_repairs") from None
+        previous_synthesis, next_synthesis = _synthesis_from_state(current_state), _synthesis_from_state(next_state)
+        for index, component in enumerate(("source", "operation", "turns")):
+            old, new = previous_synthesis[index], next_synthesis[index]
+            if old != new and (synthesis_update != component or (component != "operation" and old is not None)):
+                raise StateAdvanceError("synthesis state requires its owning transition",
+                    json_path="$.managed_synthesizer_" + component, validator="synthesizer") from None
         if old_text is not None:
             bak = self._path.with_suffix(".json.bak")
             try:
@@ -2559,33 +2579,56 @@ class SquadStateStore:
     def complete_discovery_bootstrap(self, selection: dict, genesis: dict) -> dict:
         return self._advance_discovery_bootstrap(selection, "complete", genesis)
 
-    def prepare_discovery_turns(self, marker: dict) -> dict:
+    def prepare_synthesizer(self, source: dict) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
-            desired = {**current, DISCOVERY_TURNS_KEY: marker}
-            _discovery_turns_from_state(desired)
+            desired = {**current, SOURCE_KEY: deepcopy(source)}
+            _synthesis_from_state(desired)
+            if SOURCE_KEY not in current:
+                dispatch = current.get("last_dispatch", {})
+                if (current.get("phase") != "phase1-synthesizer" or current.get("status") != "running"
+                        or dispatch.get("post_dispatch_complete") is not True
+                        or source != {key: dispatch.get(key) for key in SOURCE_FIELDS}
+                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))):
+                    raise StateAdvanceError("accepted discovery required", json_path="$.managed_synthesizer_source", validator="synthesizer")
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
-            written = self._save_unlocked(desired, allow_discovery_turn_initialization=True)
+            written = self._save_unlocked(desired, synthesis_update="source")
             return self._confirm_durable_state_unlocked(written)
 
-    def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None) -> dict:
+    def prepare_discovery_turns(self, marker: dict, *, producer="discovery") -> dict:
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            desired = {**current, producer_key(producer, "turns"): marker}
+            if producer == "discovery":
+                _discovery_turns_from_state(desired)
+            else:
+                _synthesis_from_state(desired)
+            if desired == current:
+                return self._confirm_durable_state_unlocked(current)
+            written = self._save_unlocked(desired, allow_discovery_turn_initialization=producer == "discovery",
+                synthesis_update="turns" if producer == "synthesizer" else None)
+            return self._confirm_durable_state_unlocked(written)
+
+    def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery") -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
-                desired = advance_operation(current, binding, event, result)
-                if event == "prepare" and "managed_discovery_operation" not in current:
+                desired = advance_operation(current, binding, event, result, producer)
+                if event == "prepare" and producer_key(producer, "operation") not in current:
                     # Selection and its one outer dispatch share this state
                     # commit. Provider/operation replay must not charge again.
                     counts = dict(current.get("phase_dispatch_counts") or {})
-                    counts["phase1-discover"] = counts.get("phase1-discover", 0) + 1
+                    phase = producer_phase(producer)
+                    counts[phase] = counts.get(phase, 0) + 1
                     desired["phase_dispatch_counts"] = counts
             except Exception:
                 raise StateAdvanceError("invalid discovery operation transition",
                     json_path="$.managed_discovery_operation", validator="discovery_operation") from None
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
-            written = self._save_unlocked(desired, allow_discovery_operation_update=True)
+            written = self._save_unlocked(desired, allow_discovery_operation_update=producer == "discovery",
+                synthesis_update="operation" if producer == "synthesizer" else None)
             return self._confirm_durable_state_unlocked(written)
 
     def _update_discovery_repair(self, transition, *args, **kwargs) -> dict:

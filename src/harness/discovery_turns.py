@@ -16,7 +16,7 @@ import time
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.discovery_semantics import DiscoveryAssignment, parse_discovery_reply, validate_discovery_reply
-from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
+from harness.discovery_producer import producer_key, producer_operation_id, producer_role
 from harness.element_identity_store import IdentityStore
 from harness.inspection_io import BoundedReadChannel
 from harness.product_inventory import CONTROL_PATHS, CONTROL_ROOTS
@@ -67,7 +67,8 @@ def _limits(token_budget, dispatch_limit):
 
 def _assignment(value):
     _closed(value, ("schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
-                    "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"))
+                    "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids",
+                    *(("producer",) if value.get("schema_version") == 2 else ())))
     if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
         raise _Blocked("invalid_provider_assignment")
     selected = DiscoveryAssignment(**{key: (tuple(tuple(pair) for pair in item) if key == "editable_revisions"
@@ -168,7 +169,8 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
     try:
         if type(replay_only) is not bool or (replay_only and create):
             raise _Blocked("invalid_provider_replay_mode")
-        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns") as file:
+        producer = assignment.producer
+        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer) as file:
             retained = []
             raw = file._read()
             file._raw = raw
@@ -187,7 +189,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     or retained[0]["records"][-1]["accepted"] is not True):
                 raise _Blocked("accepted_provider_step_required")
             state = state_store.load()
-            marker = state.get(DISCOVERY_TURNS_KEY)
+            marker = state.get(producer_key(producer, "turns"))
             if marker is None and raw is None:
                 usage["known"] = True
             if type(create) is not bool or (create and (marker is not None or raw is not None)) or (
@@ -201,7 +203,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                 raise _Blocked("completed_discovery_bootstrap_required")
             identity = assignment.identity()
             if (assignment.spec_id, assignment.run_id, assignment.operation_id, str(project_root), str(state_store.squad_dir)) != (
-                    selected["selection"]["spec_id"], selected["selection"]["run_id"], selected["selection"]["operation_id"],
+                    selected["selection"]["spec_id"], selected["selection"]["run_id"], producer_operation_id(state, producer),
                     selected["selection"]["project_root"], selected["selection"]["run_dir"]):
                 raise _Blocked("discovery_provider_selection_changed")
             store = IdentityStore.open(Path(project_root))
@@ -209,14 +211,17 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
             roles = {}
             for name in ("producer", "reviewer"):
                 loader = ProsaicPromptLoader(Path(project_root), timeout_s=_remaining(preparation_deadline))
-                role = loader.load_subagent("echelon.discovery-" + name)
-                if role is None or role.frontmatter.get("name") != "echelon.discovery-" + name or not role.body.strip():
+                role_name = producer_role(producer, name)
+                role = loader.load_subagent(role_name)
+                if role is None or role.frontmatter.get("name") != role_name or not role.body.strip():
                     raise _Blocked("missing_discovery_role")
                 roles[name] = role
             _remaining(preparation_deadline)
             denied = tuple(forbidden_paths) + tuple(Path(project_root) / name for name in CONTROL_ROOTS | CONTROL_PATHS) + tuple(
                 state_store.squad_dir / name for name in ("state.json", "state.json.bak", "state.lock",
-                    "discovery-turns.json", "discovery-turns.lock", "discovery-reservations.json", "discovery-reservations.lock"))
+                    "discovery-turns.json", "discovery-turns.lock", "discovery-reservations.json", "discovery-reservations.lock",
+                    *(("synthesizer-turns.json", "synthesizer-turns.lock", "synthesizer-reservations.json", "synthesizer-reservations.lock")
+                        if producer == "synthesizer" else ())))
             binding = dict(contract="discovery-inspection-v1", bootstrap=selected, authority=observed,
                 roles={name: asdict(role) for name, role in roles.items()},
                 provider=getattr(executor, "provider_id", executor.cli),
@@ -226,7 +231,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
             expected_marker = dict(schema_version=1, operation_id=assignment.operation_id, binding_sha256=_hash(binding))
             with BoundedReadChannel(roots, forbidden_paths=denied) as channel:
                 if create:
-                    state = state_store.prepare_discovery_turns(expected_marker)
+                    state = state_store.prepare_discovery_turns(expected_marker, **({"producer": producer} if producer != "discovery" else {}))
                     data = dict(schema_version=1, binding=binding, token_budget=token_budget, dispatch_limit=dispatch_limit, steps=[])
                     _save(file, data)
                 else:
@@ -349,7 +354,7 @@ def _result_usage(data):
     return dict(token_usage=usage["tokens"] if usage["known"] else None, dispatch_count=usage["dispatches"])
 
 
-def read_discovery_usage(state_store):
+def read_discovery_usage(state_store, producer="discovery"):
     """Observe retained cumulative charges even when current inputs cannot resume.
 
     This validates receipt/selection integrity, not current source freshness or
@@ -357,8 +362,8 @@ def read_discovery_usage(state_store):
     """
     try:
         state = state_store.load()
-        marker = state.get(DISCOVERY_TURNS_KEY)
-        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns") as file:
+        marker = state.get(producer_key(producer, "turns"))
+        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer) as file:
             raw = file._read()
             if raw is None and marker is None:
                 return dict(token_usage=0, dispatch_count=0)

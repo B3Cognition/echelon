@@ -6535,7 +6535,8 @@ class SquadController:
         from harness.discovery_operation_state import operation_from_state
         from harness.element_identity_store import IdentityStore
 
-        if (type(selected) is not dict or set(selected) != {"bootstrap", "input_tree"}
+        if (type(selected) is not dict or set(selected) not in ({"bootstrap", "input_tree"}, {"bootstrap", "input_tree", "through_phase"})
+                or selected.get("through_phase", "phase1-synthesizer") != "phase1-synthesizer"
                 or type(create) is not bool or type(selected["input_tree"]) is not str):
             raise ValueError("invalid managed selection")
         claim = validate_selection(selected["bootstrap"])
@@ -6562,6 +6563,10 @@ class SquadController:
         count = (state.get("phase_dispatch_counts") or {}).get("phase1-discover", 0)
         if operation is None and count != 0:
             raise ValueError("fresh discovery cannot inherit earlier dispatches")
+        if (selected.get("through_phase") == "phase1-synthesizer"
+                and operation_from_state(state, "synthesizer") is None
+                and (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != 0):
+            raise ValueError("fresh synthesis cannot inherit earlier dispatches")
         if operation is not None and operation["binding"]["input_tree"] != selected["input_tree"]:
             raise ValueError("independent input selection changed")
         if "managed_identity" not in state:
@@ -6578,9 +6583,13 @@ class SquadController:
         from harness.discovery_operation_state import operation_from_state
         from harness.discovery_publication import prepare_discovery_publication
         from harness.element_identity_publication import encode_publication_request
+        from harness.discovery_producer import SOURCE_FIELDS, synthesis_source
+        from harness.element_identity_store import IdentityStore
 
         state = self._state_store.load()
-        if state.get("phase") != "phase1-discover":
+        producer = "synthesizer" if state.get("phase") == "phase1-synthesizer" else "discovery"
+        if state.get("phase") not in {"phase1-discover", "phase1-synthesizer"} or (
+                producer == "synthesizer" and selected.get("through_phase") != "phase1-synthesizer"):
             return self._managed_discovery_stop("managed_phase_not_supported")
         if (state.get("status") == "blocked"
                 and state.get("blocked_reason") == "controller_state_contract_validation_failed"):
@@ -6593,20 +6602,37 @@ class SquadController:
             state = self._state_store.load()
         if state.get("status") != "running" or self._cancelled or state.get("cancel_requested"):
             return self._managed_discovery_stop("managed_discovery_not_running")
-        node = self._graph.get("phase1-discover")
+        node = self._graph.get("phase1-discover" if producer == "discovery" else "phase1-synthesizer")
         paths = ("glossary.md", "mental-model.md", "boundaries.md", "assumptions.md",
             "unknowns.md", "reference-architectures.md")
+        successor = "phase1-synthesizer"
+        if producer == "synthesizer":
+            paths = (*paths[:-1], "contradictions-and-gaps.md", "risks.md")
+            successor = "phase1-modeler"
         # This admission cannot authorize a judgment/provider fallback. The
         # unchanged deterministic graph transition remains the routing owner.
         if (node.type != "agent" or tuple(node.outputs) != paths
-                or node.transitions != [{"to": "phase1-synthesizer", "condition": "always"}]):
+                or node.transitions != [{"to": successor, "condition": "always"}]):
             return self._managed_discovery_stop("managed_discovery_workflow_not_admitted")
+        extra = {}
+        if producer == "synthesizer":
+            try:
+                if synthesis_source(state) is None:
+                    from harness.discovery_completion import released_discovery_input_projectors
+                    source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+                    released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                    state = self._state_store.prepare_synthesizer(source)
+                history = IdentityStore.open(self._project_root).identity_history(spec_id=selected["bootstrap"]["spec_id"])
+                extra = dict(producer=producer, editable_revisions=tuple(
+                    (row["element_id"], row["revision"]) for row in json.loads(history.payload)["entities"]))
+            except Exception:
+                return self._managed_discovery_stop("managed_synthesizer_selection_requires_reconciliation")
         budget = self._token_budget or state.get("token_budget", 0)
         remaining = max(0, budget - state.get("token_usage", 0)) if budget else None
         outcome = run_discovery_operation(self._project_root, self._state_store, self._provider,
             input_tree=selected["input_tree"], artifact_paths=paths,
-            unowned_writable_paths=paths, intent={"kind": "create", "request": state.get("user_request") or state.get("user_message")},
-            create=operation_from_state(state) is None, token_budget=remaining)
+            unowned_writable_paths=paths, intent={"kind": "create" if producer == "discovery" else "synthesize", "request": state.get("user_request") or state.get("user_message")},
+            create=operation_from_state(state, producer) is None, token_budget=remaining, **extra)
         if outcome.status != "reviewed":
             return self._managed_discovery_stop(outcome.reason)
         if self._cancelled:
@@ -6614,7 +6640,7 @@ class SquadController:
         completion_id = uuid.uuid4().hex
         try:
             package = prepare_discovery_publication(self._project_root, self._state_store,
-                self._provider, completion_id=completion_id)
+                self._provider, completion_id=completion_id, **({"producer": producer} if producer != "discovery" else {}))
             snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
             result = SquadAgentResult(exit_code=0, echelon_result={"verdict": "DONE", "state_updates": {}},
                 raw_output="", duration_ms=0, timed_out=False)
@@ -6631,6 +6657,8 @@ class SquadController:
                 return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
         except Exception:
             return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
+        if producer == "discovery" and selected.get("through_phase") == "phase1-synthesizer":
+            return self._run_managed_discovery_locked(selected)
         return self._managed_discovery_stop("managed_phase_not_supported")
 
     def _resume_exhausted_lexicon_gate(self) -> bool:

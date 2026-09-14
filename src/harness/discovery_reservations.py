@@ -45,6 +45,8 @@ def _pairs(pairs):
 def _assignment(value):
     fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
               "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
+    if value.get("schema_version") == 2:
+        fields.add("producer")
     identity = {key: value[key] for key in fields if key in value}
     _closed(identity, fields)
     if any(type(identity[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
@@ -123,8 +125,8 @@ def _validate(data, binding):
 class DiscoveryReservationJournal(DiscoveryReceiptFile):
     """Serialize exact associations; a completed result is verified read-only."""
 
-    def __init__(self, run_dir: Path):
-        super().__init__(run_dir, "discovery-reservations")
+    def __init__(self, run_dir: Path, *, producer="discovery"):
+        super().__init__(run_dir, "discovery-reservations", producer=producer)
         self._data = self._binding = self._store = None
 
     def __exit__(self, *args):
