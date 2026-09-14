@@ -548,3 +548,26 @@ option precedence and managed-worktree admission were reused, not redesigned.
 No provider adapter, Prosaic role, AGENTS.md/CLAUDE.md, legacy build flow, mode
 policy or identity activation changed. No installed-bundle refresh, live model
 run, graph installation, push, merge or branch-wide verification was performed.
+
+## Approved inspection-boundary prerequisite (2026-09-14)
+
+Phase 2 admission inspection confirmed the existing generic Codex review
+profile enables network and does not disable shell/agent tools. Its read-only
+filesystem capability is not the stronger inspection capability required by
+fulfillment. No runtime change was made during that inspection.
+
+The user approved a scoped provider-boundary checkpoint, then approved reusing
+PR triage's tool-disabled model turns and Python-serviced bounded reads through
+neutral interfaces. The
+[recorded design](superpowers/specs/2026-09-14-host-serviced-inspection-design.md)
+and [implementation plan](superpowers/plans/2026-09-14-host-serviced-inspection.md)
+define this prerequisite. The original fulfillment design now records the
+amendment so future work does not revert to generic `run_agent_result` or invent
+a second native read-tool policy.
+
+Only design/planning is complete. The new interfaces and reader extraction are
+not implemented. Existing triage/provider/read baseline tests passed 97 cases
+in 1.49s with scripted model processes; this is not acceptance of the proposed
+change. Existing delivery modes, triage semantics, Prosaic content and all
+fulfillment activation boundaries remain unchanged. Provider API transport is
+necessary and is distinct from prohibited model-accessible network tools.

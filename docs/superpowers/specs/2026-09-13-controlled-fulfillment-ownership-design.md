@@ -102,10 +102,17 @@ validates duplicates, omissions, enums, field types and row boundaries before
 rendering existing Markdown artifacts. No model writes canonical reports, state,
 task progress or verification receipts; no completion markers or agent dispatch.
 
-Resolve role bodies/metadata through `ProsaicPromptLoader`, then use the existing
-provider facade's `run_agent_result` and enforced read-only review capability.
-Use exclusive empty write scope, explicit permitted read roots and the existing
-containment policy. Never load `.claude/agents`, read developer AGENTS.md/CLAUDE.md
+Resolve role bodies/metadata through `ProsaicPromptLoader`. The approved
+2026-09-14 boundary amendment replaces the originally proposed generic
+`run_agent_result` read-only review path with tool-disabled inspection turns
+and Python-serviced bounded read requests. Reuse PR triage's existing provider
+and descriptor-read machinery through neutral interfaces; do not adopt its
+role semantics or workflow. See
+`docs/superpowers/specs/2026-09-14-host-serviced-inspection-design.md` and its
+implementation plan. This amendment is approved but not yet implemented.
+
+Use explicit permitted read roots and the existing containment policy in the
+host read channel. Never load `.claude/agents`, read developer AGENTS.md/CLAUDE.md
 as runtime instructions, or construct native provider commands in fulfillment.
 Claude and Codex must both pass capability/containment tests on the accepted
 macOS boundary. Read-only filesystem permissions do not alone prove that arbitrary
