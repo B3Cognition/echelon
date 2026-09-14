@@ -170,6 +170,14 @@ class ClaudeCliBackend:
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self.run_prompt(request)
 
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.inspection_turn import inspection_request_failure
+
+        failure = inspection_request_failure(request)
+        if failure is not None:
+            return failure
+        return self.run_review_triage_turn(request)
+
     def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
         from harness.ai_cli_backends.claude_triage import run_claude_review_triage
 

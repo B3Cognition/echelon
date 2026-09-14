@@ -58,6 +58,14 @@ class CodexCliBackend:
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self._run_codex(request, use_final_message=True)
 
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.inspection_turn import inspection_request_failure
+
+        failure = inspection_request_failure(request)
+        if failure is not None:
+            return failure
+        return self.run_review_triage_turn(request)
+
     def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
         metadata = _review_triage_metadata(request)
         if metadata is None:

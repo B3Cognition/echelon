@@ -58,6 +58,14 @@ class ConstrainedPromptBackend(Protocol):
 
 
 @runtime_checkable
+class InspectionTurnBackend(Protocol):
+    """Optional no-tools turn with evidence access owned by the host caller."""
+
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        ...
+
+
+@runtime_checkable
 class ReviewTriageBackend(Protocol):
     """Optional native operation for one isolated, no-tools review turn."""
 

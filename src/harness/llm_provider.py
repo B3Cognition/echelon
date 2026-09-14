@@ -14,6 +14,7 @@ from harness.ai_cli_backend import (
     CliRunRequest,
     CliRunResult,
     ConstrainedPromptBackend,
+    InspectionTurnBackend,
     ReviewTriageBackend,
     create_ai_cli_backend,
 )
@@ -119,6 +120,13 @@ class AICodingCliProvider:
         if self._cli == "openai-compatible":
             return ARTIFACT_PROVIDER_CAPABILITIES
         return CLI_PROVIDER_CAPABILITIES
+
+    @property
+    def supports_inspection_turn(self) -> bool:
+        from harness.ai_cli_backends.claude import host_workspace_synthesis_boundary_available
+
+        return (isinstance(self._backend, InspectionTurnBackend)
+                and host_workspace_synthesis_boundary_available())
 
     @property
     def supports_read_only_review(self) -> bool:
@@ -288,6 +296,37 @@ class AICodingCliProvider:
                 max_capture_bytes=max_capture_bytes,
                 screen_input=screen_input,
             )
+        self._record_result(result, metadata)
+        return result
+
+    def run_inspection_turn(
+        self,
+        private_cwd: str,
+        prompt: str,
+        *,
+        frontmatter: Mapping[str, object],
+        timeout_ms: int,
+    ) -> CliRunResult:
+        """Run a neutral no-tools turn; source reads belong to its host caller."""
+        from harness.inspection_turn import inspection_request_failure
+
+        self.last_stdout = ""
+        self.last_stderr = ""
+        self.last_token_usage = 0
+        metadata = {"prompt_metadata": dict(frontmatter) if isinstance(frontmatter, Mapping) else {}}
+        if not isinstance(self._backend, InspectionTurnBackend):
+            result = CliRunResult(125, "", "configured provider lacks inspection capability",
+                                  metadata={"failure_reason": "inspection-unsupported", "provider": self._cli})
+        elif type(timeout_ms) is not int or timeout_ms <= 0:
+            result = CliRunResult(125, "", "invalid inspection request",
+                                  metadata={"failure_reason": "invalid_request"})
+        else:
+            request = CliRunRequest(
+                cwd=private_cwd, prompt=prompt, env=self._build_env(),
+                timeout_s=min(timeout_ms / 1000.0, self._timeout_s), metadata=metadata)
+            result = inspection_request_failure(request)
+            if result is None:
+                result = self._backend.run_inspection_turn(request)
         self._record_result(result, metadata)
         return result
 
