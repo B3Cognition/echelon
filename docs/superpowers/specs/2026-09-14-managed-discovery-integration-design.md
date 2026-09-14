@@ -3,7 +3,9 @@
 Status: written integration design approved by the user on 2026-09-14.
 The first contract checkpoint is implemented and independently reviewed in
 `../plans/2026-09-14-discovery-producer-contracts.md` (551 passing affected tests).
-Runtime activation remains outside that checkpoint.
+The inactive reservation-binding slice is also implemented and reviewed in
+`../plans/2026-09-14-discovery-reservation-binding.md` (613 passing affected tests).
+Managed bootstrap, provider-turn recovery and runtime activation remain open.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary

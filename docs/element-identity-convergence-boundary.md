@@ -677,3 +677,35 @@ Next is the approved durable operation/reservation/provider-turn checkpoint,
 then Squad publication/recovery and bounded repair acceptance. No live workspace,
 installation, public/default activation, legacy SCOUT, AGENTS.md/CLAUDE.md or
 legacy build changed. The existing branch/worktree remains the execution home.
+
+### Inactive discovery reservation-binding checkpoint
+
+The next durable checkpoint was split at its independently testable allocation
+boundary. The
+[reservation plan](superpowers/plans/2026-09-14-discovery-reservation-binding.md)
+now retains canonical proposals and complete per-kind reservation intents before
+allocation, then exact mappings before returning to the caller. Unchanged keys
+retain their subjects and IDs across proposals, including removal/reintroduction;
+new keys alone allocate new ranges. No Markdown or retained references are rewritten.
+
+Completed mappings use a new read-only lookup on the existing identity store.
+Missing completed receipts fail without reallocating; interrupted pending
+reservations recover the exact request. The selected-run journal authenticates
+already registered managed genesis and its retained source context, rejects
+changed selection/scope/source and requires explicit creation versus resume.
+Its checksum is corruption detection, not semantic or controller authority.
+
+Final affected acceptance: **613 tests passed in 41.45s**, including **63 new
+tests**. Tests use real SQLite, captured source manifests, guarded source-head
+advance and the existing candidate preview. They exercise interruptions before
+and after allocator commit and journal writes, permanent associations, forged
+receipts, missing authority, path/link/lock rejection and unchanged accepted
+history/artifacts. Independent read-only review found no defects; whitespace
+checks passed.
+
+This is only the reservation part of the approved durable checkpoint. The caller
+must durably select the operation under existing execution leases before explicit
+journal creation. Managed bootstrap, provider intents/results/usage, semantic
+execution and Squad integration remain next. The three-proposal receipt ceiling
+is not a substitute for persisting attempts before provider dispatch. No provider,
+publication/completion or rollout path is activated by this helper.

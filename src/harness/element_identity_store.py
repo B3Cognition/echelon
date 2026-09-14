@@ -388,6 +388,30 @@ class IdentityStore:
         return result
 
     @_public
+    def reservation(self, *, spec_id: str, kind: str, operation_id: str, count: int) -> tuple[str, ...] | None:
+        """Read an exact retained request without allocating or repairing it."""
+        _identifier(spec_id, "spec_id")
+        _identifier(operation_id, "operation_id")
+        _kind(kind)
+        if type(count) is not int or count <= 0:
+            raise IdentityStoreError("count must be a positive integer")
+        digest = _digest(["reserve", spec_id, kind, _decimal(count)])
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            self._high_water(connection, spec_id, kind)
+            operation = connection.execute("SELECT method,spec_id,digest FROM operations WHERE operation_id=?",
+                                           (operation_id,)).fetchone()
+            row = connection.execute("SELECT * FROM reservations WHERE operation_id=?", (operation_id,)).fetchone()
+            if operation is None and row is None:
+                return None
+            if operation is None or tuple(operation) != ("reserve", spec_id, digest) or row is None:
+                raise IdentityStoreError("reservation request is missing or inconsistent")
+            self._validate_reservation(connection, row)
+            if (row["spec_id"], row["kind"], row["count"]) != (spec_id, kind, _decimal(count)):
+                raise IdentityStoreError("reservation request differs from retained range")
+            return _labels(kind, _integer(row["first_ordinal"]), count)
+
+    @_public
     def import_identities(self, *, spec_id: str, operation_id: str,
                           definitions: Sequence[tuple[str, str]]) -> None:
         """Atomically bind exact legacy labels and subjects, retaining numeric claims."""

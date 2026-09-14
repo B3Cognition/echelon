@@ -179,8 +179,15 @@ create/revise from DEFER-000001. No capability is activated by this record;
 public activation and the other producer families remain subsequent checkpoints.
 
 The producer wire shapes are now explicit: proposal handles stay out of authored
-Markdown, and the author uses supplied reserved IDs. Durable binding of proposals
-to reservation requests and executed semantic review remain implementation gaps;
+Markdown, and the author uses supplied reserved IDs. The inactive
+[reservation-binding checkpoint](superpowers/plans/2026-09-14-discovery-reservation-binding.md)
+now retains canonical proposals, exact per-kind intents and key/subject/ID
+associations across allocation interruptions and subsequent proposals. It uses
+the existing allocator plus a read-only retained-reservation lookup, not another
+identity authority. Its 613 affected tests passed with no independent review
+findings. Already registered genesis/source context is authenticated; durable
+controller selection and managed bootstrap are still caller/integration duties.
+Provider-turn recovery, executed semantic review and runtime wiring remain gaps;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.
 The final code extraction boundary and which deferred components remain necessary
