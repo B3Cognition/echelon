@@ -28,6 +28,9 @@
 #   echelon.delivery-code-reviewer, echelon.delivery-test-guardian.
 # These bounded profiles are dispatched by harness.delivery_slice_runner, not
 # the legacy build graph below. They never consume its DEGRADED transitions.
+# Controlled fulfillment semantic profiles (Python-owned, not legacy routing):
+#   echelon.fulfillment-mapper, echelon.fulfillment-judge.
+# These inspect assigned evidence only; Python owns preparation and publication.
 
 schema_version: 1
 controller_runtime_compatibility_version: 3
