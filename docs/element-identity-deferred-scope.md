@@ -205,10 +205,22 @@ completion blocks, completed results replay and budgets only tighten. Shared
 secure file mechanics were extracted from the reservation journal without changing
 its schema or allocator behavior. No additional deferred capability is activated.
 
-Executed candidate approval and runtime wiring remain gaps: the caller must still
-capture all selected inputs/domains, order proposal/reservation/author/preview/
-review, persist the actual three-attempt repair unit and publish through the
-existing Squad completion owner. A checked provider reply is not that approval.
+The [reviewed-candidate checkpoint](superpowers/plans/2026-09-14-discovery-reviewed-candidate.md)
+now orders proposal/reservation/author/preview/review for one selected operation,
+captures its explicit input/spec/template selection and consumes each of at most
+three attempts through protected Squad state. Exact candidate/source citations,
+permanent proposal associations and normalized no-progress checks constrain
+rejection/retry. Offline tests prove U/A creation and proposed same-subject revision
+without changing accepted artifacts/history. The affected batch passed 1,734
+tests, with 41 composition cases additionally rerun under actual execution leases.
+
+Runtime wiring remains a gap: the caller must establish all configured inputs and
+dependency domains, then authenticate the reviewed candidate at publication and
+the existing Squad completion owner. The helper does not select subsequent accepted
+repair units, expose a public mode or activate unsupported sources/producers.
+Missing selected journals deliberately require reconciliation; do not replace that
+boundary with automatic reset. The full original renumbering/evidence fixture and
+actual provider-facade/mode acceptance remain runtime duties.
 The provider recovery plan records exact verification and review receipts;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.

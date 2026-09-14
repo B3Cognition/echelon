@@ -341,6 +341,30 @@ def _result_usage(data):
     return dict(token_usage=usage["tokens"] if usage["known"] else None, dispatch_count=usage["dispatches"])
 
 
+def read_discovery_usage(state_store):
+    """Observe retained cumulative charges even when current inputs cannot resume.
+
+    This validates receipt/selection integrity, not current source freshness or
+    permission to dispatch. Missing or damaged selected material remains unknown.
+    """
+    try:
+        state = state_store.load()
+        marker = state.get(DISCOVERY_TURNS_KEY)
+        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns") as file:
+            raw = file._read()
+            if raw is None and marker is None:
+                return dict(token_usage=0, dispatch_count=0)
+            envelope = json.loads(raw, object_pairs_hook=_pairs)
+            _closed(envelope, ("payload", "sha256"))
+            data = envelope["payload"]
+            _validate(data)
+            if envelope["sha256"] != _hash(data) or marker is None or marker["binding_sha256"] != _hash(data["binding"]):
+                raise ValueError("discovery accounting receipt differs from selection")
+            return _result_usage(data)
+    except Exception:
+        return dict(token_usage=None, dispatch_count=0)
+
+
 def _remaining(deadline):
     remaining = deadline - time.time()
     if remaining < 0.001:

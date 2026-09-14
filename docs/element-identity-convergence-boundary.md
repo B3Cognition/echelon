@@ -785,3 +785,45 @@ does not implement the three-attempt repair policy.
 No positive Squad discovery admission, installation, live game run, default/mode
 change, migration, push or merge occurred. The stopped smoke workspace, provider
 adapters, neutral role contents, AGENTS.md/CLAUDE.md and legacy build are untouched.
+
+### Inactive reviewed discovery candidate checkpoint
+
+The [reviewed-candidate plan](superpowers/plans/2026-09-14-discovery-reviewed-candidate.md)
+joins the existing pieces: a protected operation and attempt transition in
+SquadStateStore, captured spec/input/template bytes, proposal, permanent
+reservation association, authoring, structural preview and independent semantic
+review. The helper returns a bound reviewed candidate; it does not publish it.
+
+Each attempt is consumed durably before its proposal turn. There are at most
+three attempts, with early stop on repeated normalized findings and candidate
+content. Label/whitespace churn alone cannot reset progress. Rejected candidates
+retain reservations and IDs across retries. Malformed, uncertain and stale-cited
+provider results block rather than entering an automatic protocol-repair loop.
+Candidate citations name exact artifact bytes and definitions; additional source
+citations must name captured input bytes. Templates use the existing runtime
+files and are part of the fingerprint, not new prose or provider-specific paths.
+
+Read-only accounting observation preserves known provider charges even if an
+unrelated source/template/reservation failure prevents resumption. Every attempt
+uses the detached selected request, including nested origin/findings. Both defects
+were reproduced during independent review before their corrections. Missing
+already selected journals intentionally require reconciliation, even across
+initial setup interruption; absence never selects a fresh budget or allocation.
+Final independent re-review found no remaining blocking findings.
+
+Acceptance: **1,734 affected tests passed in 87.50s**, plus the final **41
+composition tests passed in 18.85s** under actual Phase A/run execution leases.
+The suite scripts external Prosaic inspection and model replies, not the source,
+state, reservation, preview or history owners. A guarded fixture publication
+establishes a real accepted question; the proposed clarification reaches revision
+2 while accepted revision 1 stays untouched. Subject reassignment rejects before
+review, and fresh U/A definitions retain distinct six-digit family counters.
+
+The runtime owner still must establish complete configured input/domain admission,
+authenticate this result at existing guarded publication and Squad completion,
+and recover those effects before stopping at an unsupported next phase. This is
+one selected operation within the existing bootstrap, not general selection of
+subsequent accepted repair units or activation of other producers. Returned
+artifacts include read-only dependencies, not an unrestricted publication list.
+Actual provider-facade and managed guided/semi/banzai acceptance remain open.
+No installation, live game run, public/default change, push or merge occurred.

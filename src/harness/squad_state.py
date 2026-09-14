@@ -31,6 +31,7 @@ from harness.discovery_bootstrap_state import (
     advance_bootstrap_state, bootstrap_from_state,
 )
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY, discovery_turns_from_state
+from harness.discovery_operation_state import advance_operation, operation_from_state
 from harness.element_identity_state import (
     MANAGED_IDENTITY_KEY,
     validate_managed_identity_record,
@@ -278,6 +279,15 @@ def _discovery_turns_from_state(state: dict) -> dict | None:
         pass
     raise StateAdvanceError("invalid discovery provider receipt selection",
         json_path="$.managed_discovery_turns", validator="discovery_turns") from None
+
+
+def _discovery_operation_from_state(state: dict) -> dict | None:
+    try:
+        return operation_from_state(state)
+    except Exception:
+        pass
+    raise StateAdvanceError("invalid discovery operation",
+        json_path="$.managed_discovery_operation", validator="discovery_operation") from None
 
 
 def _autonomous_default_candidate_from_state(
@@ -2258,6 +2268,7 @@ class SquadStateStore:
         _managed_identity_from_state(value)
         _discovery_bootstrap_from_state(value)
         _discovery_turns_from_state(value)
+        _discovery_operation_from_state(value)
         return value
 
     def load(self) -> dict:
@@ -2392,11 +2403,13 @@ class SquadStateStore:
         allow_managed_identity_initialization: bool = False,
         allow_discovery_bootstrap_update: bool = False,
         allow_discovery_turn_initialization: bool = False,
+        allow_discovery_operation_update: bool = False,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
         _discovery_bootstrap_from_state(state)
         _discovery_turns_from_state(state)
+        _discovery_operation_from_state(state)
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2438,6 +2451,10 @@ class SquadStateStore:
         if retained_turns != candidate_turns and (retained_turns is not None or not allow_discovery_turn_initialization):
             raise StateAdvanceError("discovery provider receipt selection is immutable",
                 json_path="$.managed_discovery_turns", validator="discovery_turns") from None
+        if (_discovery_operation_from_state(current_state) != _discovery_operation_from_state(next_state)
+                and not allow_discovery_operation_update):
+            raise StateAdvanceError("discovery operation requires its owning transition",
+                json_path="$.managed_discovery_operation", validator="discovery_operation") from None
         if old_text is not None:
             bak = self._path.with_suffix(".json.bak")
             try:
@@ -2531,6 +2548,19 @@ class SquadStateStore:
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
             written = self._save_unlocked(desired, allow_discovery_turn_initialization=True)
+            return self._confirm_durable_state_unlocked(written)
+
+    def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None) -> dict:
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            try:
+                desired = advance_operation(current, binding, event, result)
+            except Exception:
+                raise StateAdvanceError("invalid discovery operation transition",
+                    json_path="$.managed_discovery_operation", validator="discovery_operation") from None
+            if desired == current:
+                return self._confirm_durable_state_unlocked(current)
+            written = self._save_unlocked(desired, allow_discovery_operation_update=True)
             return self._confirm_durable_state_unlocked(written)
 
     def save(self, state: dict) -> None:

@@ -7,8 +7,11 @@ The inactive reservation-binding slice is also implemented and reviewed in
 `../plans/2026-09-14-discovery-reservation-binding.md` (613 passing affected tests).
 The inactive selected-state/bootstrap slice is implemented and reviewed in
 `../plans/2026-09-14-discovery-bootstrap.md` (848 passing affected tests plus
-397 managed/Squad exclusion regressions). Provider-turn recovery and positive
-managed runtime activation remain open.
+397 managed/Squad exclusion regressions). Provider-turn recovery is implemented
+in `../plans/2026-09-14-discovery-provider-recovery.md` (1,096 passing affected tests).
+The reviewed-candidate composition checkpoint is tracked in
+`../plans/2026-09-14-discovery-reviewed-candidate.md`. Positive managed runtime
+admission and publication/completion integration remain open.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary
