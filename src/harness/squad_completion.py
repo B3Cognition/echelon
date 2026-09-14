@@ -1473,10 +1473,33 @@ def load_prepared_controller_completion(
     )
 
 
+def validate_retained_completion_proof(marker_value, intent_value, receipts_value):
+    """Validate detached completion proof retained by an existing durable owner.
+
+    This verifies the same sealed bytes as outbox loading; it does not grant
+    completion provenance. The caller must authenticate the retaining owner.
+    """
+    marker = _marker_from(marker_value)
+    raw = _detach_loaded_json(intent_value, root_path="$.controller_completion", code="intent_invalid")
+    intent = _validate_intent(raw)
+    receipts = _validate_receipts(_detach_loaded_json(receipts_value,
+        root_path="$.controller_completion_receipts", code="receipts_invalid"), intent=intent)
+    if (marker.step != "complete" or marker.origin != intent["origin"]
+            or marker.completion_id != intent["completion_id"]
+            or set(receipts["effects"]) != set(intent["effect_plan"])
+            or hashlib.sha256(_canonical_json(raw)).hexdigest() != marker.intent_sha256
+            or hashlib.sha256(_canonical_json(receipts_value)).hexdigest() != marker.receipts_sha256
+            or hashlib.sha256(_canonical_json(intent["publication"])).hexdigest() != marker.publication_binding_sha256):
+        _raise("intent_mismatch")
+    return marker, _intent_view(intent, sealed_value=raw), receipts
+
+
 def discard_unreferenced_controller_completion(
     project_root: Path,
     squad_dir: Path,
     completion_id: str,
+    *,
+    managed_state: dict | None = None,
 ) -> bool:
     """Discard one exact, valid stage after its caller proves no authority."""
     completion_id = _validate_completion_id(completion_id)
@@ -1535,9 +1558,15 @@ def discard_unreferenced_controller_completion(
         _raise("intent_mismatch")
     publication = intent["publication"]
     if "managed_discovery" in publication:
-        # Only authenticated completion release may dispose of these stages;
-        # absence of a pending Squad marker does not prove identity release.
-        return False
+        # A published stage still belongs exclusively to release recovery.
+        # The sole exception is a positively authenticated never-routed draft.
+        if managed_state is None or receipts["effects"]:
+            return False
+        from harness.discovery_completion import require_unpublished_orphan
+        try:
+            require_unpublished_orphan(project, squad, managed_state, intent)
+        except CompletionError:
+            return False
     if publication["kind"] == "external":
         from harness.squad_publication import (
             PublicationError,

@@ -2555,6 +2555,12 @@ class SquadStateStore:
             current = self._load_unlocked()
             try:
                 desired = advance_operation(current, binding, event, result)
+                if event == "prepare" and "managed_discovery_operation" not in current:
+                    # Selection and its one outer dispatch share this state
+                    # commit. Provider/operation replay must not charge again.
+                    counts = dict(current.get("phase_dispatch_counts") or {})
+                    counts["phase1-discover"] = counts.get("phase1-discover", 0) + 1
+                    desired["phase_dispatch_counts"] = counts
             except Exception:
                 raise StateAdvanceError("invalid discovery operation transition",
                     json_path="$.managed_discovery_operation", validator="discovery_operation") from None

@@ -3,7 +3,7 @@
 Digest preimages prove membership in protected accepted discovery state, not new
 authority. The caller owns execution leases and durable completion provenance.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import partial
 import hashlib
 import json
@@ -183,6 +183,44 @@ def authenticate(root, run, state, completion):
     raise CompletionError("intent_mismatch")
 
 
+def require_unpublished_orphan(root, run, state, intent):
+    """Authorize disposal, never promotion, of a sealed but never-routed draft."""
+    try:
+        binding = decode_binding(intent["publication"], completion_id=intent["completion_id"], state=state)
+        _require(binding is not None and state.get("phase") == "phase1-discover"
+            and not any(key in state for key in ("pending_controller_completion", "pending_external_publication")))
+        dispatch = state.get("last_dispatch") or {}
+        _require(dispatch.get("dispatch_id") != intent["completion_id"]
+            and dispatch.get("post_dispatch_complete") is not False)
+        selection = bootstrap_from_state(state)["selection"]
+        _require(str(root) == selection["project_root"] and str(run) == selection["run_dir"])
+        store = IdentityStore.open(root)
+        store.check_managed_context(spec_id=binding.spec_id, run_id=selection["run_id"], record=state["managed_identity"])
+        _require(store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id) is None
+            and store.pending_identity_publication(spec_id=binding.spec_id) is None)
+        try:
+            publication = load_prepared_publication(root, run, intent["publication"]["marker"])
+        except PublicationError as error:
+            if error.code != "stage_missing":
+                raise
+            # Disposal can stop between the external stage and completion
+            # stage. Prove the exact original sources still exist using the
+            # retained empty inspection transaction; missing is not release.
+            capture = load_prepared_publication(root, run, selection["capture_marker"])
+            with capture.inspect_sources(tree_paths=tuple(tree.path for tree in binding.sources.trees),
+                    file_paths=tuple(item.path for item in binding.sources.files)) as observed:
+                _require(not observed.publication.operations and snapshot_source_manifest(
+                    trees=observed.trees, files=observed.files) == snapshot_source_manifest(
+                    trees=binding.sources.trees, files=binding.sources.files))
+        else:
+            with publication.inspect() as images:
+                _require(images.promoted_prefix == 0 and all(item.current == item.preimage for item in images.operations))
+        return
+    except Exception:
+        pass
+    raise CompletionError("intent_mismatch")
+
+
 def _read_receipt(run, name):
     with DiscoveryReceiptFile(run, name) as file:
         raw = file._read()
@@ -250,19 +288,77 @@ def _require_applied(root, run, state, completion):
     _require(retained is not None and retained["state"] in {"applied", "released"})
     publication = load_prepared_publication(root, run, binding.sources.publication.marker)
     projected = project_publication_source_images(binding.sources)
-    # The existing completion context receipt owns this one authorized change.
-    # Every other captured source remains pinned through effects and release.
+    checkpoint = _checkpoint_projection(root, run, state, intent=completion.intent,
+        marker=completion.marker, receipts=completion.receipts, binding=binding)
+    # Context and exact checkpoint metadata have existing completion owners.
+    # All other captured sources remain pinned through effects and release.
     context = (run / "context").relative_to(root).as_posix()
     trees = tuple(tree for tree in projected.trees if tree.path != context)
     expected = snapshot_source_manifest(trees=trees, files=projected.files)
     with publication.inspect_sources(tree_paths=tuple(tree.path for tree in projected.trees),
             file_paths=tuple(item.path for item in projected.files)) as current:
-        _require(snapshot_source_manifest(trees=tuple(tree for tree in current.trees if tree.path != context),
+        _require(snapshot_source_manifest(trees=tuple(checkpoint(tree) for tree in current.trees if tree.path != context),
             files=current.files) == expected)
         original_context, = (tree for tree in projected.trees if tree.path == context)
         current_context, = (tree for tree in current.trees if tree.path == context)
         _context(completion, original_context, current_context)
     return binding
+
+
+def _checkpoint_projection(root, run, state, *, intent, marker, receipts, binding):
+    """Resolve Git proof before the source lock; projection checks captured bytes."""
+    from harness.phase_checkpoints import fresh_completion_checkpoint_ledger_image
+    plan = intent.effect_plan
+    if "checkpoint" not in plan:
+        return lambda tree: tree
+    selection = bootstrap_from_state(state)["selection"]
+    spec = selection["spec_path"]
+    target = Path(str(state.get("spec_dir") or ""))
+    if not target.is_absolute():
+        target = root / target
+    _require(target == root / spec)
+    original, = (tree for tree in binding.sources.trees if tree.path == spec)
+    metadata = spec + "/.echelon"
+    _require(not any(item.path == metadata or item.path.startswith(metadata + "/")
+        for item in (*original.directories, *original.files)))
+    step = marker.step
+    if step in plan and plan.index(step) < plan.index("checkpoint"):
+        return lambda tree: tree
+    _require(step == "complete" or step in plan)
+    pending = step == "checkpoint" and "checkpoint" not in receipts["effects"]
+    route = intent.route
+    artifacts, = project_publication_source_images(binding.baseline).trees
+    ledger = fresh_completion_checkpoint_ledger_image(project_root=root, spec_dir=root / spec,
+        phase=route["from_phase"], next_phase=route["to_phase"], run_id=selection["run_id"],
+        spec_id=selection["spec_id"], completion_id=marker.completion_id,
+        checkpoint_prestate=intent.checkpoint_prestate,
+        expected_receipt=receipts["effects"].get("checkpoint"),
+        allow_pending=pending, rewind=str(route.get("rewind_policy") or "supported"),
+        artifact_images={item.path: (item.image.mode, item.content) for item in artifacts.files})
+    return partial(_project_checkpoint_tree, spec=spec, ledger=ledger, pending=pending)
+
+
+def _project_checkpoint_tree(tree, *, spec, ledger, pending):
+    if tree.path != spec:
+        return tree
+    metadata = spec + "/.echelon"
+    directories = tuple(item for item in tree.directories
+        if item.path == metadata or item.path.startswith(metadata + "/"))
+    files = tuple(item for item in tree.files if item.path.startswith(metadata + "/"))
+    _require(len(directories) <= 1 and all(item.path == metadata and item.mode == 0o700 for item in directories))
+    names = {item.path: item for item in files}
+    _require(set(names) <= {metadata + "/checkpoints.lock", metadata + "/checkpoints.json"})
+    if ledger is not None:
+        # The commit follows creation of the directory and lock. Only the
+        # ledger write may still be pending once that commit exists.
+        _require(len(directories) == 1 and metadata + "/checkpoints.lock" in names)
+    if not pending:
+        _require(len(directories) == 1 and len(names) == 2 and ledger is not None)
+    for path, item in names.items():
+        expected = b"" if path.endswith("/checkpoints.lock") else ledger
+        _require(item.image.mode == 0o600 and expected is not None and item.content == expected)
+    return replace(tree, directories=tuple(item for item in tree.directories if item not in directories),
+        files=tuple(item for item in tree.files if item not in files))
 
 
 def _context(completion, original, current):
@@ -316,7 +412,13 @@ def _release(root, run, state_store, completion):
         and dispatch.get("completion_intent_sha256") == marker.intent_sha256
         and dispatch.get("completion_receipts_sha256") == marker.receipts_sha256
         and dispatch.get("completed_publication_binding_sha256") == marker.publication_binding_sha256)
-    payload = _json(dict(version=1, completion=marker.to_dict()))
+    retained_proof = dict(version=1, completion=marker.to_dict())
+    if "checkpoint" in completion.intent.effect_plan:
+        from harness.squad_completion import validate_retained_completion_proof
+        proof = dict(intent=completion.intent.to_dict(), receipts=completion.receipts)
+        validate_retained_completion_proof(marker.to_dict(), proof["intent"], proof["receipts"])
+        retained_proof.update(version=2, checkpoint=proof)
+    payload = _json(retained_proof)
     store = IdentityStore.open(root)
     retained = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
     _require(retained is not None)
@@ -333,3 +435,47 @@ def _release(root, run, state_store, completion):
             raise
     else:
         publication.discard()
+
+
+def released_checkpoint_projector(root, run, state):
+    """Prepare a checked spec-identity view after completion outbox cleanup.
+
+    Caller owns execution leases, then captures the complete tree under the
+    existing source inspector and calls the returned pure projection there.
+    Keep that full capture for read guards; only the authenticated identity view
+    omits checkpoint metadata. This does not admit other repair input domains.
+    """
+    from harness.squad_completion import validate_retained_completion_proof
+    try:
+        selection = bootstrap_from_state(state)["selection"]
+        _require(str(root) == selection["project_root"] and str(run) == selection["run_dir"])
+        store = IdentityStore.open(root)
+        observed = store.check_managed_context(spec_id=selection["spec_id"], run_id=selection["run_id"],
+            record=state["managed_identity"])
+        row = store.identity_publication(spec_id=selection["spec_id"], operation_id=observed["source_context"]["operation_id"])
+        _require(row is not None and row["state"] == "released"
+            and store.pending_identity_publication(spec_id=selection["spec_id"]) is None)
+        proof = _document(row["completion_payload"])
+        _closed(proof, ("version", "completion", "checkpoint"))
+        _require(type(proof["version"]) is int and proof["version"] == 2)
+        _closed(proof["checkpoint"], ("intent", "receipts"))
+        marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
+            proof["checkpoint"]["intent"], proof["checkpoint"]["receipts"])
+        _require("checkpoint" in intent.effect_plan)
+        binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
+        _require(binding is not None and row["request"] == encode_publication_request(binding.request)
+            and binding.operation_id == observed["source_context"]["operation_id"]
+            and asdict(store.identity_history(spec_id=binding.spec_id)) == binding.candidate["history"])
+        expected = project_publication_source_images(binding.baseline).manifest
+        _require(asdict(expected) == observed["source_context"]["manifest"])
+        project = _checkpoint_projection(root, run, state, intent=intent, marker=marker,
+            receipts=receipts, binding=binding)
+        def checked(tree):
+            _require(tree.path == selection["spec_path"])
+            projected = project(tree)
+            _require(snapshot_source_manifest(trees=(projected,), files=()) == expected)
+            return projected
+        return checked
+    except Exception:
+        pass
+    raise CompletionError("intent_mismatch")

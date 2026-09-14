@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from harness.git_first_restore import RestoreCommitEntry
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
-from echelon.git_helpers import GitHelperError, run_git
+from echelon.git_helpers import GitHelperError, run_git, run_git_hardened
 from echelon.strict_json import loads_strict_json
 from harness.controller_lock_order import controller_lock_order
 
@@ -1197,9 +1197,10 @@ def _bounded_completion_commit(
     *,
     identity: Mapping[str, str],
     checkpoint_head: str,
+    hardened: bool = False,
 ) -> dict[str, str] | None:
     try:
-        output = run_git(
+        output = (run_git_hardened if hardened else run_git)(
             project_root,
             "log",
             "--all",
@@ -1234,9 +1235,11 @@ def _bounded_completion_commit(
 def _show_completion_commit(
     project_root: Path,
     commit: str,
+    *,
+    hardened: bool = False,
 ) -> dict[str, str]:
     try:
-        output = run_git(
+        output = (run_git_hardened if hardened else run_git)(
             project_root,
             "show",
             "-s",
@@ -1299,6 +1302,78 @@ def _committed_checkpoint_receipt(
     commit: str,
 ) -> dict[str, object]:
     return {**common, "outcome": "committed", "commit": commit}
+
+
+def fresh_completion_checkpoint_ledger_image(
+    *, project_root: Path, spec_dir: Path, phase: str, next_phase: str,
+    run_id: str, spec_id: str, completion_id: str,
+    checkpoint_prestate: Mapping[str, object], expected_receipt: object | None,
+    allow_pending: bool, rewind: str = "supported",
+    artifact_images: Mapping[str, tuple[int, bytes]],
+) -> bytes | None:
+    """Read-only expected metadata for one fresh-spec completion.
+
+    The caller proves its captured ledger baseline is absent. This does not
+    create/recover a checkpoint, accept an arbitrary ledger, or inspect live
+    ledger bytes. It uses the same Git identity and serialization as the writer.
+    """
+    phase, next_phase, run_id, spec_id, completion_id, parent = _validate_completion_checkpoint_inputs(
+        spec_dir=spec_dir, phase=phase, next_phase=next_phase, run_id=run_id,
+        spec_id=spec_id, completion_id=completion_id, checkpoint_prestate=checkpoint_prestate,
+        fault_hook=None)
+    if type(allow_pending) is not bool or rewind not in {"supported", "none"}:
+        raise PhaseCheckpointError("invalid checkpoint metadata policy")
+    common = _checkpoint_receipt_common(completion_id=completion_id, run_id=run_id,
+        spec_id=spec_id, phase=phase, next_phase=next_phase)
+    expected = _validate_expected_checkpoint_receipt(expected_receipt, common=common,
+        spec_dir=spec_dir, checkpoint_head=parent)
+    if expected is None and not allow_pending:
+        raise PhaseCheckpointError("checkpoint receipt required")
+    identity = _completion_commit_identity(completion_id=completion_id, run_id=run_id,
+        spec_id=spec_id, phase=phase, next_phase=next_phase, source="auto")
+    record = _bounded_completion_commit(project_root, identity=identity, checkpoint_head=parent, hardened=True)
+    if expected is not None:
+        if expected["outcome"] != "committed":
+            raise PhaseCheckpointError("fresh checkpoint must commit artifacts")
+        retained = _show_completion_commit(project_root, expected["commit"], hardened=True)
+        if (not _record_has_exact_identity(retained, identity, parent)
+                or (record is not None and record["commit"] != retained["commit"])):
+            raise PhaseCheckpointError("checkpoint completion identity drift")
+        record = retained
+    if record is None:
+        if expected is not None:
+            raise PhaseCheckpointError("checkpoint commit missing")
+        return None
+    receipt = _committed_checkpoint_receipt(common, record["commit"])
+    if expected is not None and receipt != expected:
+        raise PhaseCheckpointError("checkpoint receipt mismatch")
+    # A valid trailer/parent is necessary but cannot certify different bytes.
+    # Compare raw Git blob identities: text-mode reads would normalize CRLF.
+    spec_path = spec_dir.relative_to(project_root).as_posix() + "/"
+    entries = run_git_hardened(project_root, "ls-tree", "-rz", "--full-tree",
+        record["commit"], "--", spec_path, text=False).stdout
+    found = set()
+    for entry in entries.split(b"\0"):
+        if not entry:
+            continue
+        header, raw_path = entry.split(b"\t", 1)
+        mode, kind, raw_oid = header.split(b" ")
+        path, oid = raw_path.decode("utf-8"), raw_oid.decode("ascii")
+        if path in found or path not in artifact_images or kind != b"blob" or _GIT_OBJECT_ID_PATTERN.fullmatch(oid) is None:
+            raise PhaseCheckpointError("checkpoint artifact membership mismatch")
+        expected_mode, content = artifact_images[path]
+        encoded_mode = b"100755" if expected_mode & 0o111 else b"100644"
+        blob = b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+        expected_oid = hashlib.new("sha1" if len(oid) == 40 else "sha256", blob).hexdigest()
+        if mode != encoded_mode or oid != expected_oid:
+            raise PhaseCheckpointError("checkpoint artifact image mismatch")
+        found.add(path)
+    if not found or found != set(artifact_images):
+        raise PhaseCheckpointError("checkpoint artifact membership mismatch")
+    checkpoint = _completion_checkpoint_from_commit(record=record, completion_id=completion_id,
+        run_id=run_id, spec_id=spec_id, phase=phase, next_phase=next_phase, source="auto",
+        rewind=rewind, rewind_reason="workflow-policy" if rewind == "none" else "")
+    return _checkpoint_ledger_bytes(CheckpointLedger(spec_id=spec_id, checkpoints=[checkpoint]))
 
 
 def _record_completion_checkpoint_unlocked(

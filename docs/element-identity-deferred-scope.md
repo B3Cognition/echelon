@@ -278,6 +278,18 @@ silently create a competing protocol or declare the entire backlog mandatory.
 
 ## Resume and change protocol
 
+Normal-entry work and the checkpoint/source interaction
+are recorded in [the normal-entry plan](superpowers/plans/2026-09-14-discovery-normal-entry.md).
+The user-approved checkpoint extension keeps the existing Git flow and ledger
+location. Fresh-discovery metadata is authenticated against exact Git artifact
+images and the completion receipt; the existing identity release payload retains
+the proof. Later spec-source/repair capture must use its checked identity projection
+while retaining the complete capture for read guards. This does not activate repair
+or cover later checkpoints over an existing ledger: those must extend the existing
+owner with authenticated preimages. Do not disable checkpoints, ignore the entire
+control directory, invent a second ledger, or rewrite managed source heads without
+publication authority.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

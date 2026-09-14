@@ -2116,6 +2116,7 @@ class SquadController:
                     self._project_root,
                     self._squad_dir,
                     entry.name,
+                    managed_state=state,
                 ):
                     return False
             except CompletionError:
@@ -2458,6 +2459,8 @@ class SquadController:
         execute: Callable[[], SquadResult],
         *,
         stop_after_recovered_manual: bool = False,
+        managed_discovery: Mapping[str, object] | None = None,
+        create_managed_discovery: bool = False,
     ) -> SquadResult:
         """Serialize controller execution for this run before touching state."""
 
@@ -2472,7 +2475,12 @@ class SquadController:
                     operation_id,
                 ):
                     state = self._state_store.load()
-                    if self._legacy_identity_execution_blocked(state):
+                    if managed_discovery is not None:
+                        try:
+                            self._admit_managed_discovery(managed_discovery, create_managed_discovery)
+                        except Exception:
+                            return self._managed_discovery_stop("managed_discovery_selection_requires_reconciliation")
+                    elif create_managed_discovery or self._legacy_identity_execution_blocked(state):
                         phase = state.get("phase")
                         return SquadResult(
                             status="blocked",
@@ -2491,6 +2499,8 @@ class SquadController:
                         or PENDING_EXTERNAL_PUBLICATION_KEY
                         in recovered_state
                     ):
+                        if managed_discovery is not None:
+                            return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
                         return SquadResult.from_state(recovered_state)
                     if (
                         stop_after_recovered_manual
@@ -2499,6 +2509,8 @@ class SquadController:
                     ):
                         return SquadResult.from_state(recovered_state)
                     if not self._cleanup_controller_completion_orphans():
+                        if managed_discovery is not None:
+                            return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
                         return SquadResult.from_state(
                             self._state_store.load()
                         )
@@ -6491,10 +6503,135 @@ class SquadController:
         user_message: str = "",
         mode: str = "semi",
         next_phase_override: str = "",
+        *,
+        managed_discovery: Mapping[str, object] | None = None,
+        create_managed_discovery: bool = False,
     ) -> SquadResult:
+        # Internal, independently selected capability. CLI/default selection is
+        # deliberately absent until the remaining managed producers are ready.
+        if managed_discovery is not None:
+            if user_message or next_phase_override:
+                return self._managed_discovery_stop("managed_discovery_override_not_admitted")
+            selected = deepcopy(managed_discovery)
+            return self._run_with_execution_lease(
+                lambda: self._run_managed_discovery_locked(selected),
+                managed_discovery=selected,
+                create_managed_discovery=create_managed_discovery,
+            )
         return self._run_with_execution_lease(
-            lambda: self._run_locked(user_message, mode, next_phase_override)
+            lambda: self._run_locked(user_message, mode, next_phase_override),
+            create_managed_discovery=create_managed_discovery,
         )
+
+    def _managed_discovery_stop(self, reason: str) -> SquadResult:
+        state = self._state_store.load()
+        return SquadResult("blocked", str(state.get("phase") or "unknown"),
+            self._squad_dir.name, reason)
+
+    def _admit_managed_discovery(self, selected, create):
+        """Authenticate independent selection before recovery; caller owns leases."""
+        from harness.discovery_bootstrap import bootstrap_discovery
+        from harness.discovery_bootstrap_state import bootstrap_from_state, validate_selection
+        from harness.discovery_operation_state import operation_from_state
+        from harness.element_identity_store import IdentityStore
+
+        if (type(selected) is not dict or set(selected) != {"bootstrap", "input_tree"}
+                or type(create) is not bool or type(selected["input_tree"]) is not str):
+            raise ValueError("invalid managed selection")
+        claim = validate_selection(selected["bootstrap"])
+        if (claim["project_root"], claim["run_dir"], claim["run_id"]) != (
+                str(self._project_root), str(self._squad_dir), self._squad_dir.name):
+            raise ValueError("independent run selection changed")
+        state = self._state_store.load()
+        retained = bootstrap_from_state(state)
+        if state.get("spec_dir"):
+            target = Path(str(state["spec_dir"]))
+            if not target.is_absolute():
+                target = self._project_root / target
+            if target != self._project_root / claim["spec_path"]:
+                raise ValueError("checkpoint target differs from selected spec")
+        if (create == (retained is not None) or (retained is not None and retained["selection"] != claim)
+                or self._unresolved_human_input_decision(state) is not None
+                or "retarget" in state):
+            raise ValueError("managed selection conflicts with retained state")
+        store = IdentityStore.open(self._project_root)
+        authority = store.audit()["authority"]
+        if any(authority[key] != claim[key] for key in ("workspace_uuid", "epoch_uuid")):
+            raise ValueError("independent namespace selection changed")
+        operation = operation_from_state(state)
+        count = (state.get("phase_dispatch_counts") or {}).get("phase1-discover", 0)
+        if operation is None and count != 0:
+            raise ValueError("fresh discovery cannot inherit earlier dispatches")
+        if operation is not None and operation["binding"]["input_tree"] != selected["input_tree"]:
+            raise ValueError("independent input selection changed")
+        if "managed_identity" not in state:
+            bootstrap_discovery(self._project_root, self._state_store,
+                **{key: claim[key] for key in ("spec_id", "run_id", "operation_id", "spec_path", "capture_marker")},
+                create=create)
+            state = self._state_store.load()
+        store.check_managed_context(spec_id=claim["spec_id"], run_id=claim["run_id"],
+            record=state["managed_identity"])
+
+    def _run_managed_discovery_locked(self, selected) -> SquadResult:
+        """One supported phase through existing operation, route and completion owners."""
+        from harness.discovery_operation import run_discovery_operation
+        from harness.discovery_operation_state import operation_from_state
+        from harness.discovery_publication import prepare_discovery_publication
+        from harness.element_identity_publication import encode_publication_request
+
+        state = self._state_store.load()
+        if state.get("phase") != "phase1-discover":
+            return self._managed_discovery_stop("managed_phase_not_supported")
+        if (state.get("status") == "blocked"
+                and state.get("blocked_reason") == "controller_state_contract_validation_failed"):
+            # Same retryable failure policy as ordinary routed execution. The
+            # retained operation still reauthenticates inputs and every receipt;
+            # this does not reset attempts, reservations or provider intent.
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            state = self._state_store.load()
+        if state.get("status") != "running" or self._cancelled or state.get("cancel_requested"):
+            return self._managed_discovery_stop("managed_discovery_not_running")
+        node = self._graph.get("phase1-discover")
+        paths = ("glossary.md", "mental-model.md", "boundaries.md", "assumptions.md",
+            "unknowns.md", "reference-architectures.md")
+        # This admission cannot authorize a judgment/provider fallback. The
+        # unchanged deterministic graph transition remains the routing owner.
+        if (node.type != "agent" or tuple(node.outputs) != paths
+                or node.transitions != [{"to": "phase1-synthesizer", "condition": "always"}]):
+            return self._managed_discovery_stop("managed_discovery_workflow_not_admitted")
+        budget = self._token_budget or state.get("token_budget", 0)
+        remaining = max(0, budget - state.get("token_usage", 0)) if budget else None
+        outcome = run_discovery_operation(self._project_root, self._state_store, self._provider,
+            input_tree=selected["input_tree"], artifact_paths=paths,
+            unowned_writable_paths=paths, intent={"kind": "create", "request": state.get("user_request") or state.get("user_message")},
+            create=operation_from_state(state) is None, token_budget=remaining)
+        if outcome.status != "reviewed":
+            return self._managed_discovery_stop(outcome.reason)
+        if self._cancelled:
+            return self._managed_discovery_stop("managed_discovery_interrupted")
+        completion_id = uuid.uuid4().hex
+        try:
+            package = prepare_discovery_publication(self._project_root, self._state_store,
+                self._provider, completion_id=completion_id)
+            snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
+            result = SquadAgentResult(exit_code=0, echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output="", duration_ms=0, timed_out=False)
+            prepared = self._prepare_phase_result(node, result, snapshot)
+            routing = self._construct_routing_decision_or_block(node, prepared, snapshot,
+                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                managed_discovery_request=encode_publication_request(package.request),
+                completion_id=completion_id, token_usage_delta=outcome.token_usage)
+            if routing is None:
+                return self._managed_discovery_stop("managed_discovery_routing_requires_reconciliation")
+            receipt = self._advance_prepared_result_or_block(node, routing.decision,
+                prepared_publication=package.publication)
+            if receipt is None:
+                return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
+        except Exception:
+            return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
+        return self._managed_discovery_stop("managed_phase_not_supported")
 
     def _resume_exhausted_lexicon_gate(self) -> bool:
         """Retry a deterministic Lexicon checkpoint after its evidence changes.
@@ -12411,6 +12548,11 @@ class SquadController:
         human_input_initial_status: str | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
+        # Managed discovery usage is already durable in its provider receipts.
+        # Only a successful route consumes that cumulative delta into run usage;
+        # a failed attempt to save the route must not bill a future replay.
+        failure_usage = (0 if "managed_identity" in self._state_store.load()
+            else decision.token_usage_delta)
         completion_marker = dict(
             decision.transaction_state_updates
         ).get(PENDING_CONTROLLER_COMPLETION_KEY)
@@ -12427,7 +12569,7 @@ class SquadController:
                     validator="completion_binding",
                 ),
                 decision=decision,
-                token_usage_delta=decision.token_usage_delta,
+                token_usage_delta=failure_usage,
             )
             return None
         completion_id = str(
@@ -12489,7 +12631,7 @@ class SquadController:
                 decision.from_phase,
                 exc,
                 decision=decision,
-                token_usage_delta=decision.token_usage_delta,
+                token_usage_delta=failure_usage,
             )
             return None
 
@@ -13813,6 +13955,9 @@ class SquadController:
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
+        managed_discovery_request: str | None = None,
+        completion_id: str | None = None,
+        token_usage_delta: int = 0,
     ) -> _PreparedControllerRouting | None:
         """Construct one route or record a redacted snapshot-bound failure."""
         with self._defer_routing_provider_usage() as usage:
@@ -13826,6 +13971,9 @@ class SquadController:
                     manual_phase_run=manual_phase_run,
                     conditional_skip=conditional_skip,
                     human_input_collector=routed_human_input,
+                    managed_discovery_request=managed_discovery_request,
+                    completion_id=completion_id,
+                    token_usage_delta=token_usage_delta,
                 )
                 return _PreparedControllerRouting(
                     decision=decision,
@@ -13887,6 +14035,9 @@ class SquadController:
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
         human_input_collector: list[PreparedHumanInput] | None = None,
+        managed_discovery_request: str | None = None,
+        completion_id: str | None = None,
+        token_usage_delta: int = 0,
     ) -> PreparedRoutingDecision:
         """Select and seal one route without mutating live success state."""
         self._matched_transition = None
@@ -14226,6 +14377,8 @@ class SquadController:
             ),
             judgments=tuple(judgment_results),
             quality_effect=quality_effect,
+            managed_discovery_request=managed_discovery_request,
+            completion_id=completion_id,
         )
         transaction_updates[PENDING_CONTROLLER_COMPLETION_KEY] = (
             completion.marker.to_dict()
@@ -14251,7 +14404,7 @@ class SquadController:
                 ),
                 token_usage_delta=(
                     self._deferred_provider_usage or {"tokens": 0}
-                )["tokens"],
+                )["tokens"] + token_usage_delta,
                 dispatch_id=completion.marker.completion_id,
             )
             if human_input_collector is not None and human_input_collector:

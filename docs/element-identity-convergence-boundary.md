@@ -975,3 +975,24 @@ the existing managed legacy-execution guard. No new failure appeared. Their exac
 names and disposition are retained in the plan, not hidden by deselection.
 Independent final review passed 21 targeted tests in 58.44s with no actionable
 findings. This is an offline local checkpoint, not installed/live acceptance.
+
+### Normal-entry integration and checkpoint contract (2026-09-14)
+
+The [normal-entry plan](superpowers/plans/2026-09-14-discovery-normal-entry.md)
+now connects explicit internal selection to normal Squad entry, real graph
+routing, reviewed publication and completion recovery. Six-artifact discovery
+passes scripted Claude/Codex and guided/semi/banzai checks, and stops before
+`phase1-synthesizer`. The seven obsolete managed-legacy guard expectations are
+reconciled. Read the plan for exact verification scope and remaining checks.
+
+The approved checkpoint extension preserves the existing Git writer and ledger
+location. Its sealed parent, completion identity, exact committed artifact bytes
+and receipt authenticate the fresh ledger image. Full source capture is retained;
+only exactly authenticated metadata is projected out of the spec identity view.
+The existing identity release payload retains that proof after temporary staging
+is removed. This is fresh-discovery support, not a blanket exception for arbitrary
+control files or existing ledgers. Later repair must reuse the checked projection
+and retain full source guards; it must not invent another ledger or rewrite heads.
+
+Accepted-baseline repair and full producer coverage remain required. No public
+activation switch, installation, migration or live-provider acceptance is claimed.
