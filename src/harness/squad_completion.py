@@ -3032,6 +3032,17 @@ def _validate_completion_context_receipt(
     prepared: PreparedControllerCompletion,
     staged: Mapping[str, bytes],
 ) -> dict[str, object]:
+    return validate_completion_context_images(receipt,
+        completion_id=prepared.intent.completion_id, images=staged)
+
+
+def validate_completion_context_images(
+    receipt: object, *, completion_id: str, images: Mapping[str, bytes],
+) -> dict[str, object]:
+    """Validate receipt-bound images, whether staged or freshly captured.
+
+    This validates bytes only; the caller authenticates the retaining completion.
+    """
     record = _validate_exact_dict(
         receipt,
         frozenset(
@@ -3051,7 +3062,7 @@ def _validate_completion_context_receipt(
     if (
         type(record["schema_version"]) is not int
         or record["schema_version"] != _SCHEMA_VERSION
-        or record["completion_id"] != prepared.intent.completion_id
+        or record["completion_id"] != completion_id
         or type(revision) is not int
         or revision < 0
         or revision > (1 << 63) - 1
@@ -3085,9 +3096,9 @@ def _validate_completion_context_receipt(
         ):
             _raise("receipts_mismatch")
         if (
-            name not in staged
-            or len(staged[name]) != size
-            or hashlib.sha256(staged[name]).hexdigest() != digest
+            name not in images
+            or len(images[name]) != size
+            or hashlib.sha256(images[name]).hexdigest() != digest
         ):
             _raise("stage_corrupt")
         validated_files.append(
@@ -3102,7 +3113,7 @@ def _validate_completion_context_receipt(
         )
     return {
         "schema_version": _SCHEMA_VERSION,
-        "completion_id": prepared.intent.completion_id,
+        "completion_id": completion_id,
         "source_state_revision": revision,
         "prepared_at": prepared_at,
         "files": validated_files,

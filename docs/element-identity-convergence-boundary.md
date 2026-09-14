@@ -1019,3 +1019,23 @@ source, preserve graph/context/evidence provenance, bind the selected unit to th
 existing operation/provider/publication/completion owners, and return to the
 requesting phase. The original renumbering/evidence end-to-end acceptance remains
 open. No new controller, allocator, migration or live activation is introduced.
+
+### Accepted-discovery repair input capture (2026-09-14)
+
+The [repair input plan](superpowers/plans/2026-09-14-discovery-repair-inputs.md)
+connects the selected repair baseline to the existing coherent source inspector.
+The reader authenticates accepted artifact/graph/checkpoint images against retained
+completion proof, and generated context against the same completion's context
+receipt. Original context is used only for the existing fresh-domain checks;
+consumers receive the verified current context. The full raw capture, including
+graph and checkpoint metadata, remains in the fingerprint and freshness guard.
+No file is regenerated, no ID is reallocated and no attempt or provider receipt
+is consumed by this reader. Fresh creation and unsupported-domain guards remain.
+
+This closes accepted-source admission only. The protected selection's `review_id`
+is still an association, not an authenticated requesting-review occurrence.
+Managed intervening producers and WHY1 are not enabled. Runtime integration must
+bind that real review origin, per-unit provider/reservation receipts and bounded
+attempts to the existing guarded publication/completion owners and exact return
+route. The original renumbering/evidence repair acceptance and full activation
+remain open; this read-only checkpoint must not be presented as either.

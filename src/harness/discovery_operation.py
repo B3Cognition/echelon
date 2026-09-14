@@ -62,7 +62,7 @@ def _overlap(left, right):
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def _capture(root, state_store, store, selected, input_tree, artifact_paths):
+def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None):
     spec_path = selected["selection"]["spec_path"]
     denied = (*CONTROL_ROOTS, *CONTROL_PATHS, str(state_store.squad_dir.relative_to(root)))
     if any(_overlap(input_tree, path) for path in (*denied, spec_path)):
@@ -70,15 +70,33 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
     prepared = load_prepared_publication(root, state_store.squad_dir, selected["selection"]["capture_marker"])
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
+    spec_view = runtime_view = None
+    if repair_unit is not None:
+        from harness.discovery_repair_state import repairs_from_state
+        from harness.discovery_completion import released_discovery_input_projectors
+        state = state_store.load()
+        repair = repairs_from_state(state)["units"][repair_unit]["selection"]
+        if tuple(repair["artifact_paths"]) != artifact_paths:
+            raise _Blocked("discovery_repair_scope_changed")
+        spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
+            source=repair["source"])
     with prepared.inspect_sources(tree_paths=(spec_path, input_tree, *runtime_trees),
             file_paths=(*template_paths, *runtime_files)) as sources:
         if sources.publication.operations:
             raise _Blocked("discovery_capture_contains_publication")
         state = state_store.load()
-        runtime, documents = admit_runtime_inputs(root, state_store.squad_dir, state, sources)
+        runtime, documents = admit_runtime_inputs(root, state_store.squad_dir, state,
+            sources if runtime_view is None else runtime_view(sources))
+        if runtime_view is not None:
+            # Admission used the authenticated original context. Model input
+            # must instead contain the just-validated current context bytes.
+            documents.update({item.path: item.content.decode("utf-8")
+                for tree in sources.trees if tree.path == runtime_trees[0] for item in tree.files})
         observed = store.check_managed_context(spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], record=state["managed_identity"])
         spec, = (tree for tree in sources.trees if tree.path == spec_path)
+        if spec_view is not None:
+            spec = spec_view(spec)
         inputs, = (tree for tree in sources.trees if tree.path == input_tree)
         if not inputs.exists:
             raise _Blocked("discovery_inputs_missing")
@@ -89,6 +107,10 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
         files = {}
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
+            if spec_view is not None and logical == "spec-artifact-graph.json":
+                # Exact derived bytes were authenticated above; it is not an
+                # editable Markdown artifact or provider-authored definition.
+                continue
             if logical not in DISCOVERY_ROLES:
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
@@ -104,6 +126,33 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
         digest = _hash(source_inputs)
     # Normal inspector exit authenticates paths and membership before handoff.
     return digest, files, evidence, history, templates, runtime, sources, source_inputs
+
+
+def capture_discovery_repair_inputs(project_root, state_store, unit_id):
+    """Read one selected accepted baseline; caller owns execution leases.
+
+    This grants no requesting-review provenance and does not select an operation,
+    consume attempts, dispatch providers or publish. The raw snapshot is retained
+    for subsequent input fingerprints and publication guards.
+    """
+    from harness.discovery_repair_state import repairs_from_state
+    try:
+        root = Path(project_root)
+        state = state_store.load()
+        selected = bootstrap_from_state(state)
+        if (selected is None or str(root) != selected["selection"]["project_root"]
+                or str(state_store.squad_dir) != selected["selection"]["run_dir"]):
+            raise ValueError("independent repair selection changed")
+        repair = repairs_from_state(state)["units"][unit_id]["selection"]
+        operation = operation_from_state(state)
+        result = _capture(root, state_store, IdentityStore.open(root), selected,
+            operation["binding"]["input_tree"], tuple(repair["artifact_paths"]), repair_unit=unit_id)
+        if state_store.load() != state:
+            raise ValueError("repair selection changed during capture")
+        return result
+    except Exception:
+        pass
+    raise DiscoveryInputError("discovery_repair_inputs_require_reconciliation")
 
 
 def _citations(artifacts, labels):

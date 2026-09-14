@@ -452,6 +452,19 @@ def released_checkpoint_projector(root, run, state):
 
 
 def released_discovery_projector(root, run, state, *, require_checkpoint=False):
+    return _released_discovery_projections(root, run, state, require_checkpoint=require_checkpoint)[0]
+
+
+def released_discovery_input_projectors(root, run, state, *, source):
+    """Bind a repair's source claim to retained spec and context proof.
+
+    Returned projections are pure captured-image checks. They do not grant
+    requesting-review provenance or repair execution authority.
+    """
+    return _released_discovery_projections(root, run, state, source=source)
+
+
+def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None):
     """Prepare a checked spec-identity view after completion outbox cleanup.
 
     Caller owns execution leases, then captures the complete tree under the
@@ -476,6 +489,11 @@ def released_discovery_projector(root, run, state, *, require_checkpoint=False):
         _closed(proof[field], ("intent", "receipts"))
         marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
             proof[field]["intent"], proof[field]["receipts"])
+        if source is not None:
+            _require(source == dict(dispatch_id=marker.completion_id,
+                completion_intent_sha256=marker.intent_sha256,
+                completion_receipts_sha256=marker.receipts_sha256,
+                completed_publication_binding_sha256=marker.publication_binding_sha256))
         _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
         binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
         _require(binding is not None and row["request"] == encode_publication_request(binding.request)
@@ -490,7 +508,38 @@ def released_discovery_projector(root, run, state, *, require_checkpoint=False):
             projected = project(tree)
             _require(snapshot_source_manifest(trees=(projected,), files=()) == expected)
             return projected
-        return checked
+        return checked, partial(_project_released_context, root=root, run=run,
+            binding=binding, marker=marker, receipts=receipts)
     except Exception:
         pass
     raise CompletionError("intent_mismatch")
+
+
+def _project_released_context(sources, *, root, run, binding, marker, receipts):
+    """Use authenticated preimages only for the original domain-admission checks.
+
+    Consumers still receive the actual postimage documents, and the raw capture
+    remains the publication/read fingerprint. Never regenerate live context.
+    """
+    from harness.squad_completion import validate_completion_context_images
+    context = (run / "context").relative_to(root).as_posix()
+    before, = (tree for tree in binding.sources.trees if tree.path == context)
+    actual, = (tree for tree in sources.trees if tree.path == context)
+    _require(actual.exists == before.exists and actual.directories == before.directories
+        and tuple(item.path for item in actual.files) == tuple(item.path for item in before.files))
+    receipt = receipts["effects"].get("context")
+    if receipt is None:
+        _require(actual == before)
+    else:
+        receipt = validate_completion_context_images(receipt, completion_id=marker.completion_id,
+            images={Path(item.path).name: item.content for item in actual.files})
+        rows = {item["name"]: item for item in receipt["files"]}
+        for original, current in zip(before.files, actual.files, strict=True):
+            row = rows[Path(current.path).name]
+            _require(row["preimage"] == dict(kind="file", sha256=original.image.sha256,
+                size_bytes=len(original.content)))
+            # The owner skips identical postimages, otherwise installs a private
+            # replacement. Do not accept arbitrary mode changes during repair.
+            mode = original.image.mode if current.content == original.content else 0o600
+            _require(current.image.mode == mode)
+    return replace(sources, trees=tuple(before if tree.path == context else tree for tree in sources.trees))

@@ -301,6 +301,15 @@ These are retention/selection prerequisites, not authenticated report provenance
 or a completed repair execution path. The subsequent runtime work must reuse
 them and must not reset the original operation or repair budgets.
 
+The [accepted repair input checkpoint](superpowers/plans/2026-09-14-discovery-repair-inputs.md)
+now reuses that retained proof and the existing source inspector. Checked spec
+and context projections are for admission only: consumers receive current
+receipt-verified context, and the complete raw tree remains the freshness guard.
+Do not replace this with graph omission, live context regeneration or a general
+exception allowing IDs in arbitrary runtime inputs. Requesting-review provenance,
+per-unit execution and guarded repair publication/return are still unimplemented;
+the opaque selected `review_id` must not become their authority by assumption.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
