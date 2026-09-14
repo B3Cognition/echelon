@@ -1,6 +1,6 @@
 # Host-serviced Inspection Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for inline execution or superpowers:subagent-driven-development if the user chooses delegation. Steps use checkbox (`- [ ]`) syntax for tracking. These shared-file tasks should execute sequentially.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for inline execution or superpowers:subagent-driven-development if the user chooses delegation. Steps use checkbox (`- [x]`) syntax for tracking. These shared-file tasks should execute sequentially.
 
 **Goal:** Expose the existing no-tools provider turns and bounded host reader for fulfillment to consume without activating fulfillment or altering triage.
 
@@ -55,7 +55,7 @@ def run_inspection_turn(self, private_cwd: str, prompt: str, *,
                         ) -> CliRunResult: ...
 ```
 
-- [ ] **1. Write direct/facade RED tests.** Unsupported backend and unavailable
+- [x] **1. Write direct/facade RED tests.** Unsupported backend and unavailable
   macOS host boundary must return exit 125 without either a generic or inspection
   backend launch. Cover invalid private cwd (missing, nonempty, symlink), timeout
   (bool, zero, negative, nonfinite at backend), empty/non-string prompt, unknown
@@ -77,9 +77,9 @@ def test_unsupported_inspection_never_falls_back(tmp_path):
     agent.assert_not_called()
 ```
 
-- [ ] **2. Run RED:** `python -m pytest tests/unit/test_inspection_turn.py -xq`
+- [x] **2. Run RED:** `python -m pytest tests/unit/test_inspection_turn.py -xq`
   using the absolute Python above. Record the missing operation failure.
-- [ ] **3. Implement validation and the optional operation.** Metadata is exactly
+- [x] **3. Implement validation and the optional operation.** Metadata is exactly
   `{"prompt_metadata":{"model_tier":tier,"effort":effort}}`. Accepted tiers are
   `fast`, `balanced`, `strong`; effort is `low`, `medium`, `high`. Reject extra
   fields rather than silently stripping unsafe options. The facade constructs
@@ -105,14 +105,14 @@ def run_inspection_turn(self, request):
   triage metadata admission, model mappings, native profile defaults, constrained
   RE capability or the general `supports_read_only_review` property. An explicit
   small facade helper may share result bookkeeping if needed; no dynamic registry.
-- [ ] **4. Verify both real adapter paths.** Reuse `_codex_wire`, `_claude_wire`
+- [x] **4. Verify both real adapter paths.** Reuse `_codex_wire`, `_claude_wire`
   and scripted subprocess patterns from `test_review_triage_provider.py`. Assert
   no-tools command settings, isolated configuration, neutral model/effort mapping,
   input/capture limits, timeout cleanup, final text normalization, rejection of
   tool events and preservation of failed-turn usage through the new facade.
   No actual CLI model call. Run the new file plus `test_review_triage_provider.py`,
   `test_llm_provider.py`, `test_ai_cli_backend.py` and `test_codex_screened_capture.py`.
-- [ ] **5. Check diff and commit** only Task 1 files:
+- [x] **5. Check diff and commit** only Task 1 files:
   `feat: expose neutral tool-disabled inspection turns`.
 
 ## Task 2: Shared bounded host reader with triage compatibility
@@ -150,7 +150,7 @@ class ReviewReadChannel(BoundedReadChannel):
         super().__init__({"worktree": worktree, "spec": spec_dir})
 ```
 
-- [ ] **1. Write consuming RED tests with real files.**
+- [x] **1. Write consuming RED tests with real files.**
 
 ```python
 def test_named_preparation_evidence_is_read_without_source_access(tmp_path):
@@ -169,13 +169,13 @@ def test_named_preparation_evidence_is_read_without_source_access(tmp_path):
   path, integer booleans, unsafe schemas, symlink/hard-link/FIFO, mutation while
   reading, retained-root behavior and explicit unavailability bounds. Reuse
   existing real-filesystem fixture techniques without copying parser algorithms.
-- [ ] **2. Run RED:** `python -m pytest tests/unit/test_inspection_io.py -xq`.
-- [ ] **3. Extract the existing algorithms once.** Move `ReviewReadChannel`'s
+- [x] **2. Run RED:** `python -m pytest tests/unit/test_inspection_io.py -xq`.
+- [x] **3. Extract the existing algorithms once.** Move `ReviewReadChannel`'s
   mechanics and filesystem-only helpers into `inspection_io.py`, naming the
   neutral class/error as above. Import shared descriptor helpers into triage's
   prose-capture code instead of leaving duplicate implementations. Preserve
   current exception messages/output payloads for existing operations.
-- [ ] **4. Add denied-path RED cases before implementing that guard.** Test a
+- [x] **4. Add denied-path RED cases before implementing that guard.** Test a
   denied file, denied subtree, false-prefix sibling, alias pointing into a denied
   tree, denied names in listings, and a separately supplied evidence alias that
   attempts to reopen the denied content. All denied read/list requests must fail
@@ -188,7 +188,7 @@ def test_named_preparation_evidence_is_read_without_source_access(tmp_path):
   omit directly denied children before reading their metadata; retain existing
   directory-size/output/mutation bounds. Do not build a new containment-policy
   loader: future fulfillment supplies its already-authorized paths.
-- [ ] **5. Verify and commit.** Run `test_inspection_io.py`,
+- [x] **5. Verify and commit.** Run `test_inspection_io.py`,
   `test_review_triage_io.py`, `test_review_triage.py`, `test_review_loop.py` and
   `test_prosaic_prompt_loader.py`; check no duplicate filesystem algorithms or
   changes to triage role loading/limits. Commit only this task's files as
@@ -204,7 +204,7 @@ evidence. No new production workflow belongs to this task.
 the existing scripted external process fixtures. **Produces:** Evidence that
 the two boundaries compose without native model tools, not a fulfillment result.
 
-- [ ] **1. Add a parametrized Claude/Codex acceptance test.** Create separate
+- [x] **1. Add a parametrized Claude/Codex acceptance test.** Create separate
   private invocation directories and actual worktree/spec/evidence roots. The
   first scripted model response is exactly:
 
@@ -219,13 +219,13 @@ the two boundaries compose without native model tools, not a fulfillment result.
   Inspect both commands and real capture parsing; assert source/spec/evidence
   bytes unchanged and per-turn usage retained. Keep this test driver in tests;
   Phase 2 will define its own role envelopes, turn budgets and failure policy.
-- [ ] **2. Cover rejection at the composed boundary.** A forbidden read produces
+- [x] **2. Cover rejection at the composed boundary.** A forbidden read produces
   no next turn. A native tool event, malformed provider final record, unavailable
   isolation, timeout or overflow cannot become successful inspection. A provider
   failure preserves observed usage and never enters a generic fallback. Use
   native macOS sandbox probes already established by provider tests where
   applicable; distinguish command-shape assertions from executed OS controls.
-- [ ] **3. Run the final affected batch after final production changes:**
+- [x] **3. Run the final affected batch after final production changes:**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_inspection_turn.py tests/unit/test_inspection_io.py tests/unit/test_host_serviced_inspection.py tests/unit/test_review_triage_provider.py tests/unit/test_review_triage_io.py tests/unit/test_review_triage.py tests/unit/test_review_loop.py tests/unit/test_llm_provider.py tests/unit/test_ai_cli_backend.py tests/unit/test_codex_screened_capture.py tests/unit/test_claude_delivery_scope.py tests/unit/test_delivery_slice_runner.py tests/unit/test_delivery_documentation.py tests/unit/test_fulfillment_preparation.py tests/unit/test_fulfillment_preparation_steps.py tests/unit/test_prosaic_prompt_loader.py -q
@@ -236,11 +236,11 @@ rg -n 'run_inspection_turn|BoundedReadChannel' src tests
   Confirm the only new non-test consumer of the shared reader is the compatible
   triage wrapper; no fulfillment/Ralph activation or Prosaic edits. Record
   pre-existing failures separately and stop on a required scope expansion.
-- [ ] **4. Request one independent read-only review** using requesting-code-review.
+- [x] **4. Request one independent read-only review** using requesting-code-review.
   Review protocol admission, actual no-tools profiles, forbidden-path aliases,
   extraction parity and lack of activation. Reuse fresh test receipts; correct
   demonstrated checkpoint defects with RED tests, not unrelated redesign.
-- [ ] **5. Record evidence and commit** tests/docs as
+- [x] **5. Record evidence and commit** tests/docs as
   `test: accept host-serviced inspection boundary`. State exact counts, scripted
   boundaries, unchanged legacy behavior and remaining Phase 2 work. Preserve
   this branch/worktree; no push, merge or installation.
@@ -257,5 +257,34 @@ distinct from model-accessible network tools.
 
 Inline execution is recommended for these sequential shared-file changes,
 consistent with the user's previous preference. Delegated execution is an
-alternative only if the user chooses it. No implementation has started with
-this plan.
+alternative only if the user chooses it. The user selected inline execution;
+all three tasks are complete. The branch/worktree is retained without integration.
+
+## Execution receipts (2026-09-14)
+
+- Baseline: 97 existing triage provider/IO tests passed in 1.65s.
+- Task 1: missing interface reproduced RED; 63 new tests passed, then 364
+  surrounding provider tests passed in 3.19s. Commit `1bf7ec12`.
+- Task 2: missing shared module and denied-path API reproduced RED. Six real
+  macOS case/Unicode alias cases also failed before the conservative normalized
+  component guard. 143 affected reader/triage/loader tests passed in 3.62s.
+  Commit `80c67750`; no existing tests changed.
+- Task 3: 15 composed cases passed in 0.61s, including the executed Claude
+  sandbox probe. The initial affected batch passed 718 tests in 29.06s.
+- Independent read-only review found a macOS firmlink denial bypass. Ten new
+  cases reproduced it before correction (both path directions, root, descendant,
+  read, listing and file). Device/inode-anchored normalized suffix comparisons
+  now supplement lexical checks; no native execution controls were changed.
+  Focused reader/triage/composed tests passed 111 cases in 1.45s. Commit
+  `bcedd7f3`. The same reviewer independently rechecked the original reproduction
+  and an absent-then-created denied leaf; no remaining findings.
+- Final affected batch after all production corrections: **728 passed in
+  29.34s**. `git diff --check` passed. Scope search found no new active workflow
+  calls, duplicate filesystem implementations or Prosaic changes. Only the
+  compatible triage wrapper is a production consumer of the shared reader.
+
+Model processes were scripted; provider builders/parsers and host reads were
+real. Claude's emitted macOS sandbox was executed, while Codex controls were
+asserted on its native command. No live model call, installation, workflow
+activation, push, merge or branch-wide acceptance is claimed. The next separate
+checkpoint is neutral semantic fulfillment mapping/judgment and its host owner.

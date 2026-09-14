@@ -565,9 +565,30 @@ define this prerequisite. The original fulfillment design now records the
 amendment so future work does not revert to generic `run_agent_result` or invent
 a second native read-tool policy.
 
-Only design/planning is complete. The new interfaces and reader extraction are
-not implemented. Existing triage/provider/read baseline tests passed 97 cases
-in 1.49s with scripted model processes; this is not acceptance of the proposed
-change. Existing delivery modes, triage semantics, Prosaic content and all
-fulfillment activation boundaries remain unchanged. Provider API transport is
-necessary and is distinct from prohibited model-accessible network tools.
+### Implemented and independently accepted
+
+Commits `1bf7ec12`, `80c67750` and `bcedd7f3` expose neutral optional no-tools
+turns for both Claude and Codex and extract the bounded reader with host-named
+roots and explicit denied paths. Native execution controls remain in the existing
+adapters. Triage retains its old constructor, policy, limits and semantics.
+
+Final affected acceptance: **728 tests passed in 29.34s**, including 15 composed
+cases with scripted model processes and real adapter preparation, capture and
+host reads. Claude's emitted macOS sandbox was also actually exercised against
+direct source reads/writes; Codex controls were checked in emitted commands.
+This is not live-provider, installed-bundle or whole-branch acceptance.
+
+Six case/Unicode alias regressions and ten macOS firmlink regressions were first
+reproduced, then fixed. Denial combines conservative normalized path components
+with filesystem-identity anchors, including listings and separately named roots.
+Independent review found the firmlink defect; focused re-review confirmed the
+fix and reported no remaining findings. Cross-read immutable evidence binding
+remains future workflow work, not a guarantee of this reader.
+
+This closes only the inspection prerequisite, not Phase 2 or original phase 4.
+Neutral semantic roles, their host controller and subsequent recovery/publication
+and delivery cutover remain deferred to their approved checkpoints. No active
+fulfillment caller, Prosaic content, AGENTS.md/CLAUDE.md, legacy build flow,
+mode/default or identity policy changed. No installation, live model call, push
+or merge occurred; the convergence branch/worktree is retained. Provider API
+transport remains necessary and distinct from prohibited model network tools.

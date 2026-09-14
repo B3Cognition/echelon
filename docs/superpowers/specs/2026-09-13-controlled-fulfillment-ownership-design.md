@@ -109,7 +109,9 @@ and Python-serviced bounded read requests. Reuse PR triage's existing provider
 and descriptor-read machinery through neutral interfaces; do not adopt its
 role semantics or workflow. See
 `docs/superpowers/specs/2026-09-14-host-serviced-inspection-design.md` and its
-implementation plan. This amendment is approved but not yet implemented.
+implementation plan. The reusable inspection boundary is implemented and
+independently accepted (728 affected tests); semantic roles and fulfillment
+orchestration have not yet adopted it. This does not complete Phase 2.
 
 Use explicit permitted read roots and the existing containment policy in the
 host read channel. Never load `.claude/agents`, read developer AGENTS.md/CLAUDE.md

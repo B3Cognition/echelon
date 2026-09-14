@@ -1,7 +1,7 @@
 # Host-serviced inspection boundary
 
-Status: reuse-based approach approved in conversation; recorded design and
-implementation plan prepared for the next execution checkpoint.
+Status: implemented, independently reviewed and accepted on 2026-09-14.
+This is the inactive inspection prerequisite, not fulfillment Phase 2 completion.
 Baseline: `bfd722cb`, `fix/delivery-controller-contract`.
 
 ## Purpose and decision
@@ -86,6 +86,15 @@ bypass the existing reader's checks. Do not add new globally inferred exclusions
 or change triage's current root policy. Fulfillment must supply its containment
 policy when it adopts this interface.
 
+Denials use conservative Unicode NFD/casefold component matching, including on
+case-sensitive volumes. Filesystem identity (device/inode) anchors at existing
+ancestors also cover macOS firmlink aliases and absent denied leaves. These
+metadata-only policy checks do not grant access; content still uses the original
+no-follow descriptor traversal. Identity lookup errors other than missing paths
+fail closed. Legacy triage supplies no exclusions and skips these identity checks.
+Policy matching may deny distinct case-sensitive spellings conservatively; it
+does not promise an immutable filesystem or cross-read snapshot.
+
 Preserve existing bounds: 1 MiB source file, 200 requested lines, 64 KiB encoded
 read/list output, 500 directory entries; a provider turn accepts 1 MiB input and
 captures at most 256 KiB output. Existing triage retains its 32-read limit.
@@ -109,3 +118,21 @@ live model call, push or merge belongs to this checkpoint. No AGENTS.md/CLAUDE.m
 or provider-specific Prosaic changes. Baseline evidence before this design:
 97 existing triage provider/read tests passed in 1.49s; this is not acceptance
 of the new interface or a live-provider claim.
+
+### Execution evidence
+
+Implementation commits: `1bf7ec12` (neutral optional turns), `80c67750` (shared
+reader), `bcedd7f3` (review-discovered filesystem-alias denial correction).
+The final affected batch passed **728 tests in 29.34s**. The 15 composed cases
+use scripted model processes with real adapters, capture and host-serviced files.
+One case actually executes Claude's emitted macOS sandbox and confirms direct
+source reads/writes are blocked; Codex native controls are command assertions,
+not a live-model or separate executed OS-profile claim.
+
+Test-first verification reproduced and fixed case/Unicode aliases (six cases)
+and the independent review's firmlink bypass (ten cases, both directions).
+Focused re-review independently rejected the original reproduction and a denied
+leaf created after channel construction; no remaining findings were reported.
+Existing tests were not weakened or edited. Scope search confirms only triage's
+compatibility wrapper consumes the shared reader in production, and no workflow
+calls the new inspection operation. The execution plan records all gates.
