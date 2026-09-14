@@ -100,7 +100,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
         digest = _hash(dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
             history=asdict(history), authority=observed, runtime=runtime))
     # Normal inspector exit authenticates paths and membership before handoff.
-    return digest, files, evidence, history, templates, runtime
+    return digest, files, evidence, history, templates, runtime, sources
 
 
 def _citations(artifacts, labels):
@@ -129,13 +129,20 @@ def _progress(artifacts, findings):
 
 def run_discovery_operation(project_root, state_store, executor, *, input_tree, artifact_paths,
         editable_revisions=(), unowned_writable_paths=(), intent, create=False,
-        token_budget=None, dispatch_limit=297) -> DiscoveryOperationResult:
+        token_budget=None, dispatch_limit=297, replay_only=False) -> DiscoveryOperationResult:
     """Compose at most three attempts; exact receipts make restart a read replay."""
     last = None
     retained_usage = read_discovery_usage(state_store)
     try:
         root = Path(project_root)
         state = state_store.load()
+        if type(replay_only) is not bool:
+            raise _Blocked("invalid_discovery_replay_mode")
+        if replay_only:
+            retained = operation_from_state(state)
+            if (create or retained is None or not retained["attempts"]
+                    or (retained["attempts"][-1]["result"] or {}).get("status") != "accepted"):
+                raise _Blocked("accepted_discovery_operation_required")
         selected = bootstrap_from_state(state)
         if selected is None or "managed_identity" not in state or str(root) != selected["selection"]["project_root"]:
             raise _Blocked("completed_discovery_bootstrap_required")
@@ -144,7 +151,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         if any(type(value) is not tuple for value in (artifact_paths, editable_revisions, unowned_writable_paths)):
             raise _Blocked("invalid_discovery_scope")
         store = IdentityStore.open(root)
-        fingerprint, before, evidence, retained_history, templates, runtime = _capture(root, state_store, store, selected, input_tree, artifact_paths)
+        fingerprint, before, evidence, retained_history, templates, runtime, _ = _capture(root, state_store, store, selected, input_tree, artifact_paths)
         binding = dict(operation_id=selected["selection"]["operation_id"], spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], input_tree=input_tree, artifact_paths=list(artifact_paths),
             editable_revisions=[list(pair) for pair in editable_revisions], unowned_writable_paths=list(unowned_writable_paths),
@@ -167,6 +174,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
             for number in (1, 2, 3):
                 current = operation_from_state(state_store.load())
                 if len(current["attempts"]) < number:
+                    if replay_only:
+                        raise _Blocked("discovery_attempt_receipt_missing")
                     state_store.advance_discovery_operation(binding, "begin")
                 proposal_assignment = DiscoveryAssignment(binding["operation_id"], f"attempt-{number}-propose",
                     binding["spec_id"], binding["run_id"], "propose", fingerprint, artifact_paths, editable_revisions)
@@ -177,7 +186,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     nonlocal last
                     last = run_discovery_step(root, state_store, executor, assignment, context,
                         roots={"inputs": root / input_tree}, check_inputs=check_inputs, create=fresh,
-                        token_budget=token_budget, dispatch_limit=dispatch_limit)
+                        token_budget=token_budget, dispatch_limit=dispatch_limit, replay_only=replay_only)
                     if last.reply is None:
                         raise _Blocked(last.reason)
                     return last.reply
@@ -185,7 +194,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     new_subjects=[dict(key="local-key", kind="U or A", subject="stable subject", caption="caption")],
                     revisions=[dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
-                mappings = journal.bind(proposal_assignment, proposal)
+                mappings = journal.bind(proposal_assignment, proposal, replay_only=replay_only)
                 reserved = [asdict(item) for item in mappings]
                 assigned = tuple(sorted({item.element_id for item in mappings} | {item["id"] for item in proposal["revisions"]}))
                 author_assignment = replace(proposal_assignment, dispatch_id=f"attempt-{number}-author", step="author", assigned_ids=assigned)
@@ -234,6 +243,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
                 saved = operation_from_state(state_store.load())["attempts"][number - 1]["result"]
                 if saved is None:
+                    if replay_only:
+                        raise _Blocked("discovery_attempt_receipt_missing")
                     state_store.advance_discovery_operation(binding, "finish", result=finished)
                 elif saved != finished:
                     raise _Blocked("discovery_attempt_receipt_changed")

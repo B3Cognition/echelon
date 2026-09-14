@@ -238,6 +238,21 @@ same-spelled allocations. Keep the existing explicit spec-scoped input-tree
 contract separate from these additional runtime domains.
 Typed evidence/investigation selection and guarded Squad publication/completion
 are still the next required integration work, not a new collector implementation.
+The [publication preparation checkpoint](superpowers/plans/2026-09-14-discovery-publication-preparation.md)
+now seals an accepted discovery candidate and its graph through the existing
+publication owner. Replay-only requires completed provider and reservation
+receipts; preparation cannot reconstruct missing records or consume another
+attempt. The v3 request retains a spec-only registered identity baseline and the
+complete runtime read set separately. Preserve both scopes: never widen genesis
+or use the smaller baseline as the publication guard. The supplied completion ID
+and returned recovery document are proposed association data, not durable Squad
+authority. Unbound staging is retryable; pending publications cannot be reselected.
+No canonical promotion, identity application, source-head advance, completion,
+positive Squad admission or rollout occurs in this production helper. Those
+connections remain required next work at the existing owners, including recovery
+before the next unsupported producer and admission of an existing derived graph
+when selecting a subsequent accepted repair. Do not mistake the fixture-only
+guarded publication test for that runtime integration.
 The provider recovery plan records exact verification and review receipts;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.

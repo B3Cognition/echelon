@@ -1,0 +1,168 @@
+"""Inactive reviewed-discovery publication preparation, without promotion.
+
+The caller owns Phase A/run leases. The returned package is a proposed handoff,
+not durable Squad completion authority. Full runtime dependencies guard source
+promotion; the identity source claim retains the registered spec-only selection.
+"""
+from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
+import re
+import uuid
+
+from echelon.spec_graph import render_spec_graph
+from echelon.spec_graph_captured import CapturedGraphMemory, build_captured_identity_graph
+from echelon.spec_graph_memory import GraphMemoryAudit
+from harness.discovery_bootstrap_state import bootstrap_from_state
+from harness.discovery_operation import ReviewedDiscoveryCandidate, _capture, run_discovery_operation
+from harness.discovery_operation_state import operation_from_state
+from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
+from harness.element_identity_publication import PublicationIntentRequest, PublicationSourceClaim
+from harness.element_identity_store import IdentityStore
+from harness.squad_publication import PreparedSquadPublication, SquadPublicationTransaction
+from harness.squad_source_baseline_codec import encode_initial_publication_sources
+from harness.squad_source_manifest import snapshot_source_manifest
+from harness.squad_source_projection import project_publication_source_images
+from harness.squad_source_snapshot import PublicationSourcesSnapshot
+from harness.state_transaction_namespace import (
+    PENDING_CONTROLLER_COMPLETION_KEY, PENDING_EXTERNAL_PUBLICATION_KEY, PRODUCT_INPUT_MUTATION_KEY,
+)
+
+
+@dataclass(frozen=True)
+class PreparedDiscoveryPublication:
+    publication: PreparedSquadPublication
+    sources: PublicationSourcesSnapshot
+    request: PublicationIntentRequest
+    candidate: ReviewedDiscoveryCandidate
+    graph: bytes
+
+
+def _selected(root, state_store, store):
+    state = state_store.load()
+    selected = bootstrap_from_state(state)
+    operation = operation_from_state(state)
+    if (selected is None or "managed_identity" not in state or operation is None
+            or not operation["attempts"] or (operation["attempts"][-1]["result"] or {}).get("status") != "accepted"
+            or state.get("phase") != "phase1-discover" or state.get("status") != "running"
+            or str(root) != selected["selection"]["project_root"]
+            or str(state_store.squad_dir) != selected["selection"]["run_dir"]
+            or any(key in state for key in (PENDING_CONTROLLER_COMPLETION_KEY,
+                PENDING_EXTERNAL_PUBLICATION_KEY, PRODUCT_INPUT_MUTATION_KEY))
+            or store.pending_identity_publication(spec_id=operation["binding"]["spec_id"]) is not None):
+        raise ValueError("accepted unbound discovery required")
+    return state, selected, operation
+
+
+def _replay(root, state_store, executor, binding):
+    result = run_discovery_operation(root, state_store, executor,
+        input_tree=binding["input_tree"], artifact_paths=tuple(binding["artifact_paths"]),
+        editable_revisions=tuple(tuple(pair) for pair in binding["editable_revisions"]),
+        unowned_writable_paths=tuple(binding["unowned_writable_paths"]), intent=binding["intent"], replay_only=True)
+    if result.status != "reviewed" or result.candidate is None:
+        raise ValueError("checked discovery replay required")
+    return result.candidate
+
+
+def _manifest(sources):
+    return snapshot_source_manifest(trees=sources.trees, files=sources.files)
+
+
+def _inspect(publication, original, writes, modes):
+    with publication.inspect_sources(tree_paths=tuple(tree.path for tree in original.trees),
+            file_paths=tuple(item.path for item in original.files)) as sources:
+        if _manifest(sources) != _manifest(original):
+            raise ValueError("reviewed source images changed")
+        operations = sources.publication.operations
+        if (sources.publication.promoted_prefix != 0 or len(operations) != len(writes)
+                or {op.target for op in operations} != set(writes)
+                or any(op.action != "write" or op.postimage.kind != "file"
+                    or op.postimage_bytes != writes[op.target]
+                    or op.postimage.mode != modes.get(op.target, 0o644) for op in operations)):
+            raise ValueError("sealed outputs differ from reviewed images")
+    return sources
+
+
+def _seal(root, run, writes, modes):
+    transaction = SquadPublicationTransaction.begin(root, run, uuid.uuid4().hex)
+    owned = {Path(path) for path in writes}
+    for index, (target, content) in enumerate(sorted(writes.items())):
+        staged = transaction.build_path(f"artifact-{index}")
+        staged.write_bytes(content)
+        staged.chmod(modes.get(target, 0o644))
+        transaction.add_write(Path(target), staged, owned_paths=owned)
+    return transaction.seal()
+
+
+def _graph(sources, candidate, selection):
+    # _capture admitted no configured memory wing or published RE. Report that
+    # actual boundary as unavailable, not a successful external memory audit.
+    audit = GraphMemoryAudit("returned", 1, None, "unavailable", 0, 0, 0,
+        (), (), (), (), (), (), (), ("memory_not_configured",))
+    graph = build_captured_identity_graph(spec_id=selection["spec_id"], lifecycle="phase_a",
+        generator_version="managed-discovery-v1", sources=project_publication_source_images(sources),
+        policy_paths=(), memory=(CapturedGraphMemory("canonical-spec", (), (), audit),),
+        re_artifacts=(), re_sources=(), history=candidate.history, spec_source_path=selection["spec_path"])
+    return render_spec_graph(graph)
+
+
+def prepare_discovery_publication(project_root, state_store, executor, *, completion_id) -> PreparedDiscoveryPublication:
+    """Seal a checked accepted candidate; ordinary errors expose no source text.
+
+    Interrupted preparations may leave unbound outbox stages. Only the existing
+    publication owner may discard them; pending publications are never reselected.
+    """
+    try:
+        return _prepare(project_root, state_store, executor, completion_id)
+    except Exception:
+        pass
+    raise ValueError("discovery publication preparation requires reconciliation")
+
+
+def _prepare(project_root, state_store, executor, completion_id):
+    if type(completion_id) is not str or re.fullmatch(r"[0-9a-f]{32}", completion_id) is None:
+        raise ValueError("invalid proposed completion ID")
+    root = Path(project_root)
+    store = IdentityStore.open(root)
+    state, selected, operation = _selected(root, state_store, store)
+    binding, selection = operation["binding"], selected["selection"]
+    candidate = _replay(root, state_store, executor, binding)
+    fingerprint, *_, original = _capture(root, state_store, store, selected,
+        binding["input_tree"], tuple(binding["artifact_paths"]))
+    if fingerprint != candidate.source_fingerprint:
+        raise ValueError("reviewed discovery inputs changed")
+    spec, = (tree for tree in original.trees if tree.path == selection["spec_path"])
+    modes = {item.path: item.image.mode for item in spec.files}
+    authored = {artifact.path: artifact.after_text for artifact in candidate.artifacts
+        if artifact.path in binding["artifact_paths"]}
+    if set(authored) != set(binding["artifact_paths"]) or any(text is None for text in authored.values()):
+        raise ValueError("reviewed discovery outputs missing")
+    writes = {selection["spec_path"] + "/" + name: text.encode("utf-8") for name, text in authored.items()}
+    provisional = _seal(root, state_store.squad_dir, writes, modes)
+    source_only = _inspect(provisional, original, writes, modes)
+    graph = _graph(source_only, candidate, selection)
+    writes[selection["spec_path"] + "/spec-artifact-graph.json"] = graph
+    publication = _seal(root, state_store.squad_dir, writes, modes)
+    sources = _inspect(publication, original, writes, modes)
+    if _graph(sources, candidate, selection) != graph:
+        raise ValueError("final projected graph changed")
+    # Recheck roles, replies, reservations, history and all runtime inputs after
+    # staging. Replay-only cannot fill in any missing accepted receipt.
+    if _replay(root, state_store, executor, binding) != candidate:
+        raise ValueError("reviewed discovery changed during staging")
+    if _selected(root, state_store, store) != (state, selected, operation):
+        raise ValueError("discovery publication selection changed")
+    sources = _inspect(publication, original, writes, modes)
+    observed = store.check_managed_context(spec_id=binding["spec_id"], run_id=binding["run_id"], record=state["managed_identity"])
+    baseline = PublicationSourcesSnapshot(sources.publication, (spec,), ())
+    recovery = json.dumps(dict(version=1, completion_id=completion_id, operation=operation,
+        candidate_sha256=candidate.candidate_sha256, source_fingerprint=candidate.source_fingerprint,
+        review=candidate.review, provider=state[DISCOVERY_TURNS_KEY], sources=encode_initial_publication_sources(sources),
+        graph_sha256=hashlib.sha256(graph).hexdigest()), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    context = observed["source_context"]
+    request = PublicationIntentRequest(publication.marker.manifest_sha256, recovery, candidate.operations,
+        PublicationSourceClaim(context["context_id"], context["operation_id"], encode_initial_publication_sources(baseline)),
+        proposed_history_sha256=candidate.history.sha256)
+    provisional.discard()
+    return PreparedDiscoveryPublication(publication, sources, request, candidate, graph)

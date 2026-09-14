@@ -879,3 +879,49 @@ Final independent review found no outstanding Critical or Important issues and
 independently passed 107 focused tests in 66.33s. Previous-run evolution selection
 remains a later caller duty; this checkpoint only captures the current run-local
 optional document and never infers a prior run.
+
+### Reviewed discovery publication preparation
+
+The [preparation plan](superpowers/plans/2026-09-14-discovery-publication-preparation.md)
+connects the retained accepted operation to the existing sealed publication and
+captured graph owners. It replays checked proposal/author/reviewer receipts,
+stages exact selected UTF-8 outputs with retained file modes, projects those
+images over proposed identity history and seals the resulting source-plus-graph
+package. Every sealed operation must match the expected target, action, bytes
+and mode; self-consistent staging alone does not establish reviewed content.
+A second graph projection and final role/receipt/source checks protect the
+handoff. Neither a supplied candidate nor a completion-ID string is authority.
+
+The identity source claim deliberately stays spec-only: registration fixed that
+selection at genesis. A separate complete source snapshot guards the spec,
+explicit input tree, templates, config, optional constitution, context, knowledge
+and evolution inputs. The proposed version-3 request retains that full snapshot
+in its recovery document while using the registered spec baseline for its source
+claim. Do not widen registration or later promote with only the spec snapshot.
+Memory is reported unavailable/not configured after real input admission, never
+as a successful collection audit. No external memory or RE collector runs.
+
+Host-only replay checks at the existing operation, provider-step and reservation
+owners forbid creation, new attempts, provider steps and reconstruction of missing
+or incomplete reservation receipts. Unbound staging retries use fresh transaction
+IDs without model calls, reservations or rewriting accepted provider receipts.
+Ordinary interrupted-operation recovery is unchanged. Existing pending identity
+or Squad publications/completions and product-input mutations block reselection.
+Preparation never promotes canonical
+bytes, applies identity changes, advances source heads or completes a phase.
+
+Guarded promotion is tested only with explicit temporary fixture authority.
+Production still needs a durable authenticated association to the existing Squad
+completion owner, guarded promotion/application, effect recovery and final release.
+It must recover pending work before rejecting the next unsupported producer.
+The returned recovery document is data for that association, not a shortcut around
+it. Subsequent repair selection must also admit the already-published derived
+graph through its existing owner; this helper does not select a new operation.
+Positive runtime admission, rollout and live-provider acceptance remain open.
+
+Final affected verification: **3,000 tests passed in 197.06s**, including all
+40 preparation cases. Independent review reproduced and helped close the
+pre-seal byte/mode binding gap and unnecessary replay receipt rewrites, then
+independently passed the 40-case suite in 59.82s with no outstanding Critical or
+Important issues. These receipts do not establish positive Squad admission or
+live-provider readiness.

@@ -195,13 +195,17 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
                 if intent["ids"] is not None and (retained is None or list(retained) != intent["ids"]):
                     raise ValueError("completed discovery reservation differs from authority")
 
-    def bind(self, assignment: DiscoveryAssignment, reply: dict) -> tuple[DiscoveryReservation, ...]:
+    def bind(self, assignment: DiscoveryAssignment, reply: dict, *, replay_only=False) -> tuple[DiscoveryReservation, ...]:
+        if type(replay_only) is not bool:
+            raise ValueError("invalid discovery reservation replay mode")
         self._authenticate()
         proposal = validate_discovery_reply(reply, assignment)
         if assignment.step != "propose" or proposal["action"] != "final":
             raise ValueError("discovery reservation requires a final proposal")
         records = self._data["proposals"]
         matching = [record for record in records if record["proposal"]["dispatch_id"] == assignment.dispatch_id]
+        if replay_only and (not matching or any(intent["ids"] is None for intent in matching[0]["intents"])):
+            raise ValueError("completed discovery reservation receipt required")
         if matching:
             record, = matching
             if record["proposal"] != proposal:

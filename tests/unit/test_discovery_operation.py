@@ -282,8 +282,8 @@ def test_completion_state_interruption_replays_without_new_calls(prepared, monke
 def test_reservation_handoff_interruption_reuses_saved_mapping(prepared, monkeypatch):
     from harness.discovery_reservations import DiscoveryReservationJournal
     actual = DiscoveryReservationJournal.bind
-    def crash(journal, *args):
-        actual(journal, *args)
+    def crash(journal, *args, **kwargs):
+        actual(journal, *args, **kwargs)
         raise Interrupted()
     executor = DiscoveryExecutor()
     with monkeypatch.context() as patch:

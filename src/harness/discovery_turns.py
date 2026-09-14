@@ -159,13 +159,17 @@ def _prompt(role, assignment, context, reads):
 
 
 def run_discovery_step(project_root, state_store, executor, assignment, context, *, roots, check_inputs,
-                       forbidden_paths=(), token_budget=None, dispatch_limit=297, create=False) -> DiscoveryStepResult:
+                       forbidden_paths=(), token_budget=None, dispatch_limit=297, create=False,
+                       replay_only=False) -> DiscoveryStepResult:
     """Replay or execute one bound semantic step; return cumulative operation usage."""
     usage = dict(tokens=0, known=False, dispatches=0)
     data = None
     preparation_deadline = time.time() + 300
     try:
+        if type(replay_only) is not bool or (replay_only and create):
+            raise _Blocked("invalid_provider_replay_mode")
         with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns") as file:
+            retained = []
             raw = file._read()
             file._raw = raw
             if raw is not None:
@@ -179,6 +183,9 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                 retained = [step for step in data["steps"] if step["assignment"]["dispatch_id"] == assignment.dispatch_id]
                 if retained and not (retained[0]["records"] and retained[0]["records"][-1]["accepted"]):
                     preparation_deadline = min(preparation_deadline, retained[0]["deadline"])
+            if replay_only and (not retained or not retained[0]["records"]
+                    or retained[0]["records"][-1]["accepted"] is not True):
+                raise _Blocked("accepted_provider_step_required")
             state = state_store.load()
             marker = state.get(DISCOVERY_TURNS_KEY)
             if marker is None and raw is None:
@@ -229,7 +236,8 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     limits = [limit for limit in (data["token_budget"], token_budget) if limit is not None]
                     data["token_budget"] = min(limits) if limits else None
                     data["dispatch_limit"] = min(data["dispatch_limit"], dispatch_limit)
-                    _save(file, data)
+                    if not replay_only:
+                        _save(file, data)
                 def verify(reads):
                     if check_inputs() != assignment.input_fingerprint:
                         raise _Blocked("discovery_provider_inputs_changed")
