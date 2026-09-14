@@ -1,6 +1,7 @@
 # Controlled fulfillment ownership: phased design
 
-Status: approved design; Phase 1 planning only, not implementation acceptance.
+Status: approved design; inactive Phase 1 preparation implemented and reviewed
+on 2026-09-14. Phases 2–4 are not implemented by this checkpoint.
 Baseline: `bffbf46b` on `fix/delivery-controller-contract`.
 
 ## Purpose and authorization
@@ -199,5 +200,9 @@ live-provider acceptance and branch-wide merge verification remain later gates.
 The requested next implementation checkpoint is Phase 1 only. Approval of this
 design fixes the intended end state and compatibility boundaries; it does not
 authorize silently widening a phase when a missing capability is discovered.
-After design approval, prepare the Phase 1 implementation plan against these
-existing modules and tests. No runtime code has changed with this document.
+The approved Phase 1 implementation plan is
+`docs/superpowers/plans/2026-09-13-fulfillment-preparation.md`; its executed
+checkpoint records 285 passing affected tests and the independent review.
+Shared CLI preparation steps and the bound callable are implemented; no active
+runner invokes that callable. Semantic execution, recovery, provider acceptance
+and delivery integration remain the separate phases above.

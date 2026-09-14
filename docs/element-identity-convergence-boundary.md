@@ -516,3 +516,35 @@ the documentation repair checkpoint. The positive real-loop fixture disables
 fulfillment refresh; it does not establish broader phase-4 or whole-branch merge
 acceptance. Remaining native entry/prose, rollout and bundle milestones above
 are unchanged; no deferred identity feature was activated.
+
+## Inactive fulfillment preparation checkpoint (2026-09-14)
+
+Commits `a4c963f0` and `8c1694b0` implement Phase 1 of the
+[controlled fulfillment design](superpowers/specs/2026-09-13-controlled-fulfillment-ownership-design.md).
+Existing deterministic preparation writers and their CLI state/degradation
+semantics now share narrow helpers. A separate callable validates an explicit,
+already initialized source/spec/run/scope context and executes the fixed
+preparation order. It preserves full canonical inventories and exact legacy,
+six-digit and seven-digit IDs in both full and scoped preparation. It rejects
+unsafe/mismatched inputs and existing semantic artifacts; it does not select a
+new run, reset lifecycle state or publish fulfillment success.
+
+Final affected acceptance: **285 tests passed in 8.31s**, including 60 consuming
+sequence cases and 26 shared-step cases. A missing-input CLI exit-code regression
+was reproduced and fixed before commit. Real writers, parsers, topology receipts
+and a real managed Git worktree were exercised with scripted external graph
+executables. The independent read-only review found no introduced
+Critical/Important defects. Scope search found no new sequence call from Ralph,
+`FulfillmentRunner` or the standalone spec CLI. The existing CLI uses only the
+extracted step helpers. See the
+[executed plan](superpowers/plans/2026-09-13-fulfillment-preparation.md)
+for exact test gates and limits.
+
+This is an inactive preparation checkpoint, **not closure of fulfillment
+orchestration ownership or original phase 4**. Neutral semantic mapping/judgment,
+full/scoped completion, recovery/publication/usage accounting, Claude/Codex
+provider acceptance and delivery cutover remain later phases. Existing observer
+option precedence and managed-worktree admission were reused, not redesigned.
+No provider adapter, Prosaic role, AGENTS.md/CLAUDE.md, legacy build flow, mode
+policy or identity activation changed. No installed-bundle refresh, live model
+run, graph installation, push, merge or branch-wide verification was performed.

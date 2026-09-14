@@ -81,6 +81,7 @@ def test_graph_runtime_unavailable_retains_degraded_artifacts(inputs, monkeypatc
 def test_absent_analysis_is_skipped_only_for_recorded_degradation(inputs, degraded):
     from harness import fulfillment_preparation_steps as steps
     spec, run, _ = inputs
+    (run / "requirement-audit.md").write_text("# Audit\n")
     (run / "state.json").write_text(json.dumps({"structural_evidence": "degraded" if degraded else "ready"}))
     if degraded:
         assert _map(steps, spec, run) is None
@@ -88,7 +89,7 @@ def test_absent_analysis_is_skipped_only_for_recorded_degradation(inputs, degrad
         assert payload["status"] == "skipped_degraded_codegraph"
         assert payload["requirements"] == []
     else:
-        with pytest.raises(OSError):
+        with pytest.raises(FileNotFoundError, match="codegraph-analysis.json"):
             _map(steps, spec, run)
         assert not (run / "codegraph-evidence-map.json").exists()
 
@@ -126,6 +127,28 @@ def test_cli_missing_map_input_retains_exit_two(inputs):
                            str(run / "map.json"), str(run / "map.md")])
     assert result.returncode == 2
     assert "missing required input:" in result.stderr
+
+
+@pytest.mark.parametrize("missing", ["requirement-audit.md", "codegraph-analysis.json", "tasks.md"])
+def test_map_missing_inputs_have_direct_and_cli_parity(inputs, missing):
+    from harness import fulfillment_preparation_steps as steps
+    from tests.unit.test_harness_main_fulfillment_artifacts import _run_harness
+    spec, run, _ = inputs
+    (run / "requirement-audit.md").write_text("# Audit\n")
+    (run / "codegraph-analysis.json").write_text("{}")
+    missing_path = (spec if missing == "tasks.md" else run) / missing
+    missing_path.unlink()
+    before = (run / "state.json").read_bytes()
+    with pytest.raises(FileNotFoundError, match=missing):
+        _map(steps, spec, run)
+    result = _run_harness(["write-codegraph-evidence-map", str(run / "requirement-audit.md"),
+                           str(run / "codegraph-analysis.json"), str(spec / "tasks.md"),
+                           str(run / "map.json"), str(run / "map.md")])
+    assert result.returncode == 2
+    assert result.stderr.strip() == f"missing required input: {missing_path}"
+    assert not (run / "map.json").exists()
+    assert not (run / "codegraph-evidence-map.json").exists()
+    assert (run / "state.json").read_bytes() == before
 
 
 @pytest.mark.parametrize("stale", [False, True])

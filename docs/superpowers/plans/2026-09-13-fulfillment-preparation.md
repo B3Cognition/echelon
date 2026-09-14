@@ -81,7 +81,7 @@ def load_preparation_observation(*, spec_dir: Path, verify_run_dir: Path,
 Here `None` from `prepare_evidence_map` means the existing explicit
 `skipped_degraded_codegraph` result, not success with inferred evidence.
 
-- [ ] **1. Characterize existing boundaries before extraction.** Run and retain
+- [x] **1. Characterize existing boundaries before extraction.** Run and retain
   results for the existing CLI artifact/graph tests and `test_fulfillment_runner.py`.
   Add direct-versus-CLI assertions to the new steps test file, starting with:
 
@@ -101,13 +101,13 @@ def test_inventory_step_preserves_run_fields_and_counts(tmp_path):
     assert state["keep"] == "sentinel"
 ```
 
-- [ ] **2. Run the new test and observe the missing helper failure.**
+- [x] **2. Run the new test and observe the missing helper failure.**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_fulfillment_preparation_steps.py -xq
 ```
 
-- [ ] **3. Extract, do not recreate, the existing behavior.** Move the writer-call
+- [x] **3. Extract, do not recreate, the existing behavior.** Move the writer-call
   and state-update portions of `_write_codegraph_evidence`,
   `_write_perlgraph_evidence`, `_write_canonical_requirements`,
   `_write_product_inventory`, `_write_requirement_audit`,
@@ -147,7 +147,7 @@ return result
   observation exception to the CLI diagnostic boundary, rather than SystemExit
   inside the library function.
 
-- [ ] **4. Cover both library and real CLI consumers.** Add parametrized direct
+- [x] **4. Cover both library and real CLI consumers.** Add parametrized direct
   helper cases for missing state, preserved unrelated fields, absent analysis
   with and without recorded degradation, missing audit/tasks, observer missing,
   malformed context and changed coverage map. Check exact existing state keys and
@@ -155,7 +155,7 @@ return result
   `test_harness_main_codegraph_evidence.py` and
   `test_harness_main_perlgraph_evidence.py`; never call installed graph services.
 
-- [ ] **5. Verify and commit this extraction separately.**
+- [x] **5. Verify and commit this extraction separately.**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_fulfillment_preparation_steps.py tests/unit/test_harness_main_fulfillment_artifacts.py tests/unit/test_harness_main_codegraph_evidence.py tests/unit/test_harness_main_perlgraph_evidence.py tests/unit/test_coverage_evidence.py -q
@@ -204,7 +204,7 @@ def prepare_fulfillment_inputs(context: FulfillmentPreparationContext) -> Prepar
     ...
 ```
 
-- [ ] **1. Build a real temporary source/spec/run fixture and write the admission
+- [x] **1. Build a real temporary source/spec/run fixture and write the admission
   test first.** Imports are `json`, `pytest`, the context/entry/error above and
   `init_verify_spec_run`. The following fixture is local to the new test file:
 
@@ -240,13 +240,13 @@ def test_wrong_spec_binding_is_rejected_before_writes(preparation_context):
     assert not (context.verify_run_dir / "canonical-requirements.json").exists()
 ```
 
-- [ ] **2. Run the new tests and observe the missing entry point failure.**
+- [x] **2. Run the new tests and observe the missing entry point failure.**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_fulfillment_preparation.py -xq
 ```
 
-- [ ] **3. Implement admission before any preparation write or graph call.**
+- [x] **3. Implement admission before any preparation write or graph call.**
   Add `_validate_context(context) -> dict[str, object]` in the sequence module.
   Require a regular, readable state JSON object with `status=in_progress`; exact
   spec ID, project/spec/workspace/run paths, scope/ordered scoped IDs and base full
@@ -287,7 +287,7 @@ load_preparation_observation(
     observation_path=context.observation_path)
 ```
 
-- [ ] **4. Compose the existing writers in fixed order.** No dynamic phase graph,
+- [x] **4. Compose the existing writers in fixed order.** No dynamic phase graph,
   plugin registry or provider parameter is needed. The body after admission uses:
 
 ```python
@@ -330,7 +330,7 @@ prepare_evidence_map(
   exceptions as graph degradation, mark lifecycle complete, or report fulfillment
   as passed. Preserve partial diagnostic artifacts on failure.
 
-- [ ] **5. Add consuming acceptance cases.** With real writers and fake external
+- [x] **5. Add consuming acceptance cases.** With real writers and fake external
   graph processes, assert the fixed helper order using pass-through spies and
   inspect every resulting artifact/state stamp. Add ready/degraded/unsupported
   graph cases, unavailable topology evidence, wrong source binding, malformed or
@@ -345,7 +345,7 @@ prepare_evidence_map(
   boundary only. Use the topology fixture patterns in `test_topology_evidence.py`
   for managed delivery worktrees rather than stubbing the topology validator.
 
-- [ ] **6. Verify and commit the callable without activation.**
+- [x] **6. Verify and commit the callable without activation.**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_fulfillment_preparation.py tests/unit/test_fulfillment_preparation_steps.py tests/unit/test_topology_evidence.py tests/unit/test_canonical_requirements.py tests/unit/test_product_inventory.py tests/unit/test_codegraph_evidence_mapper.py -q
@@ -363,13 +363,13 @@ convergence records. No new production feature belongs to this task.
 limits. The next phase can call `prepare_fulfillment_inputs` only with an admitted,
 explicit run context; it must supply its own semantic/recovery boundary.
 
-- [ ] **1. Run the complete affected batch once after final code changes.**
+- [x] **1. Run the complete affected batch once after final code changes.**
 
 ```bash
 /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_fulfillment_preparation.py tests/unit/test_fulfillment_preparation_steps.py tests/unit/test_harness_main_fulfillment_artifacts.py tests/unit/test_harness_main_codegraph_evidence.py tests/unit/test_harness_main_perlgraph_evidence.py tests/unit/test_canonical_requirements.py tests/unit/test_product_inventory.py tests/unit/test_codegraph_evidence_mapper.py tests/unit/test_coverage_evidence.py tests/unit/test_topology_evidence.py tests/unit/test_verify_spec_run_init.py tests/unit/test_fulfillment_runner.py tests/unit/test_scoped_verify.py tests/unit/test_verified_fulfillment_ledger.py tests/unit/test_cli_fulfillment_commands.py tests/unit/test_cli_spec_reconcile_fulfillment.py -q
 ```
 
-- [ ] **2. Check scope and actual consumers.**
+- [x] **2. Check scope and actual consumers.**
 
 ```bash
 git diff --check
@@ -382,14 +382,14 @@ rg -n 'prepare_fulfillment_inputs|fulfillment_preparation' src tests
   reconciliation and failure behavior must pass unchanged. Record pre-existing
   failures separately; do not widen this phase to unrelated repairs.
 
-- [ ] **3. Request one scoped independent review using requesting-code-review.**
+- [x] **3. Request one scoped independent review using requesting-code-review.**
   Give the reviewer the design, this plan and the exact diff. Focus on CLI state
   parity, source/run binding, graph-degradation classification, observer evidence
   and absence of activation. Reuse test receipts rather than rerunning unchanged
   suites. Fix demonstrated Phase 1 defects with a failing test; stop on a required
   design expansion.
 
-- [ ] **4. Record and commit evidence.** Update this checklist and the convergence
+- [x] **4. Record and commit evidence.** Update this checklist and the convergence
   boundary with actual test counts, reviewer result, external stubs and remaining
   phases. Say explicitly that semantic mapping, fulfillment completion, provider
   support acceptance and delivery cutover have not been exercised by preparation.
@@ -404,3 +404,32 @@ identity feature or activation flag is introduced.
 
 Choose inline execution with `executing-plans` for the sequential shared-file
 work, or explicitly choose subagent-driven execution with its review gates.
+
+## Executed checkpoint (2026-09-14)
+
+Executed inline as requested. Shared steps/CLI extraction: `a4c963f0`.
+Explicit preparation callable: `8c1694b0`. No active runner calls the sequence.
+
+- Baseline: 69 tests passed (existing CLI artifact/graph and fulfillment runner).
+- Both new modules first produced the expected missing-module RED result.
+- Extraction acceptance: 65 passed. A separate RED test caught and corrected
+  missing-map-input exit-code drift from 2 to 1 before the extraction commit.
+- Sequence acceptance: 138 passed across the planned Task 2 batch, including
+  60 consuming preparation cases. Admission diagnostic tests caught missing
+  source/observation context in error messages before that commit.
+- Final plan audit added three direct-versus-CLI cases for individually missing
+  audit, analysis and tasks. The steps file then passed 26 tests.
+- Final complete affected batch above: **285 passed in 8.31s**; no failures.
+  `git diff --check` passed. This is not a whole-repository test receipt.
+- One independent read-only review of `3270722c..8c1694b0` found no introduced
+  Critical/Important defects. It reused the earlier 282-test affected receipt;
+  the final three test-only additions were verified afterward. No production
+  code changed after review.
+
+Writers, parsers, state updates, topology receipt validation and managed Git
+worktree admission ran for real. External graph executables were scripted;
+there were no live models, graph runtime installation, provider acceptance,
+semantic mapping/judgment, fulfillment completion, delivery cutover, or push/merge.
+The existing explicit observation-option precedence and managed-worktree
+validator remain compatibility boundaries; later runner integration retains
+candidate/receipt admission and recovery ownership. Phases 2–4 remain separate.
