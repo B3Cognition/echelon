@@ -996,3 +996,26 @@ and retain full source guards; it must not invent another ledger or rewrite head
 
 Accepted-baseline repair and full producer coverage remain required. No public
 activation switch, installation, migration or live-provider acceptance is claimed.
+
+### Accepted-discovery retention for repair (2026-09-14)
+
+The user approved extending the preceding checkpoint so every new discovery
+release retains full completion proof, not only releases with a Git checkpoint.
+The [repair retention plan](superpowers/plans/2026-09-14-discovery-repair-retention.md)
+records the version-3 payload and exact version-1/version-2 cleanup compatibility.
+Old payloads stay immutable; version 1 cannot authorize a new repair by having its
+missing proof reconstructed. Version 2 retains its checkpoint-only interpretation.
+
+Protected repair selections and attempt records now have their own namespace in
+the existing Squad state owner; original discovery state and receipt paths are
+unchanged. The existing secure receipt-file owner supports isolated repair-unit
+paths. Finding order cannot create a new unit, changed instructions conflict,
+and unresolved work cannot acquire a second origin/budget. Saved-state validation
+enforces those cross-unit restrictions as well as normal transitions.
+
+This checkpoint does not yet select an authoritative requesting review or dispatch
+repair turns. Runtime admission must authenticate the exact origin and accepted
+source, preserve graph/context/evidence provenance, bind the selected unit to the
+existing operation/provider/publication/completion owners, and return to the
+requesting phase. The original renumbering/evidence end-to-end acceptance remains
+open. No new controller, allocator, migration or live activation is introduced.

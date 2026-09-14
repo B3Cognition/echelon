@@ -412,16 +412,13 @@ def _release(root, run, state_store, completion):
         and dispatch.get("completion_intent_sha256") == marker.intent_sha256
         and dispatch.get("completion_receipts_sha256") == marker.receipts_sha256
         and dispatch.get("completed_publication_binding_sha256") == marker.publication_binding_sha256)
-    retained_proof = dict(version=1, completion=marker.to_dict())
-    if "checkpoint" in completion.intent.effect_plan:
-        from harness.squad_completion import validate_retained_completion_proof
-        proof = dict(intent=completion.intent.to_dict(), receipts=completion.receipts)
-        validate_retained_completion_proof(marker.to_dict(), proof["intent"], proof["receipts"])
-        retained_proof.update(version=2, checkpoint=proof)
-    payload = _json(retained_proof)
     store = IdentityStore.open(root)
     retained = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
     _require(retained is not None)
+    # A release is immutable, including when cleanup resumes under newer code.
+    # Its old encoding is replayed exactly; it is never upgraded in storage.
+    version = _document(retained["completion_payload"])["version"] if retained["state"] == "released" else 3
+    payload = _release_payload(completion, version)
     if retained["state"] == "released":
         _require(retained["completion_payload"] == payload)
     else:
@@ -437,7 +434,24 @@ def _release(root, run, state_store, completion):
         publication.discard()
 
 
+def _release_payload(completion, version):
+    from harness.squad_completion import validate_retained_completion_proof
+    _require(type(version) is int and version in {1, 2, 3})
+    result = dict(version=version, completion=completion.marker.to_dict())
+    if version != 1:
+        _require(version == 3 or "checkpoint" in completion.intent.effect_plan)
+        proof = dict(intent=completion.intent.to_dict(), receipts=completion.receipts)
+        validate_retained_completion_proof(result["completion"], proof["intent"], proof["receipts"])
+        result["checkpoint" if version == 2 else "proof"] = proof
+    return _json(result)
+
+
 def released_checkpoint_projector(root, run, state):
+    """Compatibility reader for releases that actually performed a checkpoint."""
+    return released_discovery_projector(root, run, state, require_checkpoint=True)
+
+
+def released_discovery_projector(root, run, state, *, require_checkpoint=False):
     """Prepare a checked spec-identity view after completion outbox cleanup.
 
     Caller owns execution leases, then captures the complete tree under the
@@ -456,12 +470,13 @@ def released_checkpoint_projector(root, run, state):
         _require(row is not None and row["state"] == "released"
             and store.pending_identity_publication(spec_id=selection["spec_id"]) is None)
         proof = _document(row["completion_payload"])
-        _closed(proof, ("version", "completion", "checkpoint"))
-        _require(type(proof["version"]) is int and proof["version"] == 2)
-        _closed(proof["checkpoint"], ("intent", "receipts"))
+        _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3})
+        field = "checkpoint" if proof["version"] == 2 else "proof"
+        _closed(proof, ("version", "completion", field))
+        _closed(proof[field], ("intent", "receipts"))
         marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
-            proof["checkpoint"]["intent"], proof["checkpoint"]["receipts"])
-        _require("checkpoint" in intent.effect_plan)
+            proof[field]["intent"], proof[field]["receipts"])
+        _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
         binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
         _require(binding is not None and row["request"] == encode_publication_request(binding.request)
             and binding.operation_id == observed["source_context"]["operation_id"]

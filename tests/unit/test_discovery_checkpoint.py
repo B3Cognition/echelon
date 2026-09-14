@@ -198,10 +198,10 @@ def test_retained_completion_proof_rejects_changed_intent_receipts_or_marker(che
     row = checkpoint_case[2].identity_publication(spec_id="game",
         operation_id="discovery-completion-" + state["last_dispatch"]["dispatch_id"])
     saved = json.loads(row["completion_payload"])
-    assert saved["version"] == 2
+    assert saved["version"] == 3
     for damage in ("parent", "route", "receipt", "missing_effect", "marker", "extra"):
         proof = deepcopy(saved)
-        checkpoint = proof["checkpoint"]
+        checkpoint = proof["proof"]
         if damage == "parent": checkpoint["intent"]["checkpoint_prestate"]["head"] = "a" * 40
         elif damage == "route": checkpoint["intent"]["route"]["to_phase"] = "phase1-what"
         elif damage == "receipt": checkpoint["receipts"]["effects"]["checkpoint"]["commit"] = "a" * 40

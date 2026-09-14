@@ -2,6 +2,7 @@
 import fcntl
 import os
 from pathlib import Path
+import re
 import stat
 
 from harness.durable_json import write_text_atomic
@@ -14,9 +15,13 @@ _MAX_BYTES = 16 * 1024 * 1024
 class DiscoveryReceiptFile:
     """File/lock mechanics only; each owner validates its own payload."""
 
-    def __init__(self, run_dir: Path, name: str):
+    def __init__(self, run_dir: Path, name: str, *, repair_unit: str | None = None):
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
+        if repair_unit is not None:
+            if type(repair_unit) is not str or re.fullmatch(r"[0-9a-f]{64}", repair_unit) is None:
+                raise ValueError("invalid discovery repair receipt selection")
+            name = f"{name}-repair-{repair_unit}"
         self.name = name
         self.run_dir = Path(os.path.abspath(run_dir))
         self.path = self.run_dir / f"{name}.json"

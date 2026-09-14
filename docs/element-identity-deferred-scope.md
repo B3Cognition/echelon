@@ -290,6 +290,17 @@ owner with authenticated preimages. Do not disable checkpoints, ignore the entir
 control directory, invent a second ledger, or rewrite managed source heads without
 publication authority.
 
+The subsequent approved [repair retention extension](superpowers/plans/2026-09-14-discovery-repair-retention.md)
+supersedes the earlier choice to retain only minimal proof for new no-checkpoint
+releases. New releases retain full version-3 proof in the same identity row;
+already released version-1/version-2 payloads remain byte-for-byte unchanged.
+Version 1 remains insufficient for positive repair admission. Repair association
+and attempts are protected separately by Squad state, and the existing secure
+receipt files have strict per-unit namespaces; no original record is rotated.
+These are retention/selection prerequisites, not authenticated report provenance
+or a completed repair execution path. The subsequent runtime work must reuse
+them and must not reset the original operation or repair budgets.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
