@@ -206,6 +206,12 @@ live-provider acceptance and branch-wide merge verification remain later gates.
 
 ## Review decision
 
+On 2026-09-14, after acceptance of the inspection prerequisite, the user requested
+finishing all remaining implementation phases before live testing. Execution
+continues inline under `docs/superpowers/plans/2026-09-14-controlled-fulfillment-completion.md`.
+This supersedes the Phase-1-only execution limit below, not the design's scope,
+compatibility or separate live/installation/merge gates.
+
 The requested next implementation checkpoint is Phase 1 only. Approval of this
 design fixes the intended end state and compatibility boundaries; it does not
 authorize silently widening a phase when a missing capability is discovered.
