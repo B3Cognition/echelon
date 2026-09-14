@@ -256,8 +256,15 @@ same-subject revise in this slice. No general history UI, migration, new artifac
 domains or advanced lifecycle authoring is resumed.
 
 This defines the proposal/reservation and semantic-review handoff for discovery.
-The inactive semantic/translation checkpoint implements its wire shapes, not
-durable reservation binding or executed semantic review. It deliberately does
-not select a public activation configuration. The later
+The inactive checkpoints now implement wire shapes, durable reservation binding,
+selected bootstrap and receipt-backed execution of an individual semantic step.
+The [provider recovery plan](../plans/2026-09-14-discovery-provider-recovery.md)
+records the latter's tested boundary: shared secure receipt I/O, protected state
+selection, no-tools turns through neutral Prosaic roles, retained bounded reads,
+explicit checked-result receipts and cumulative accounting. A checked result is
+not semantic acceptance or publication authority. The integrated producer still
+must own complete input/domain capture, semantic ordering, independent candidate
+review, durable repair attempts and guarded Squad publication/completion.
+These checkpoints deliberately do not select a public activation configuration. The later
 all-family release checkpoint must decide that interface before rollout, without
 reinterpreting this internal acceptance capability as a user-facing mode.

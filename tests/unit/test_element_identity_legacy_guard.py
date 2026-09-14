@@ -200,8 +200,9 @@ def test_absent_authority_preserves_old_state_without_initialization_or_markdown
 
 
 @pytest.mark.parametrize("record", [None, False, {}, "", "untrusted", {"run_id": "unrelated"}])
-def test_any_present_managed_key_refuses_without_authority(tmp_path, record):
-    unchanged_error(lambda: guard(tmp_path, {"managed_identity": record}))
+@pytest.mark.parametrize("key", ["managed_identity", "managed_discovery_bootstrap", "managed_discovery_turns"])
+def test_any_present_managed_key_refuses_without_authority(tmp_path, record, key):
+    unchanged_error(lambda: guard(tmp_path, {key: record}))
     assert list(tmp_path.iterdir()) == []
 
 

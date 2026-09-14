@@ -151,8 +151,9 @@ def test_interrupted_allocator_replays_exact_request(managed, monkeypatch, kind,
 @pytest.mark.parametrize("when", ["before", "after"])
 def test_interrupted_intent_or_mapping_write_recovers_exact_ids(managed, monkeypatch, write_number, when):
     import harness.discovery_reservations as recovery
+    import harness.discovery_receipts as receipt_io
     root, run, store, _, assignment, proposal = managed
-    write = recovery.write_text_atomic
+    write = receipt_io.write_text_atomic
     calls = 0
     def interrupted(*args, **kwargs):
         nonlocal calls
@@ -166,7 +167,7 @@ def test_interrupted_intent_or_mapping_write_recovers_exact_ids(managed, monkeyp
     with recovery.DiscoveryReservationJournal(run) as journal:
         select(journal, managed, create=True)
         with monkeypatch.context() as patch:
-            patch.setattr(recovery, "write_text_atomic", interrupted)
+            patch.setattr(receipt_io, "write_text_atomic", interrupted)
             with pytest.raises(Interrupted):
                 journal.bind(assignment, proposal)
     with recovery.DiscoveryReservationJournal(run) as journal:

@@ -748,3 +748,40 @@ semantic execution and guarded Squad publication/completion/repair integration.
 Runtime admission must still prove the absence of unsupported RE/external-memory
 domains and capture the complete selected provider inputs. The original approved
 discovery-first scope and existing branch/worktree remain unchanged.
+
+### Inactive discovery provider-recovery checkpoint
+
+The [provider recovery plan](superpowers/plans/2026-09-14-discovery-provider-recovery.md)
+adds receipt-backed execution of one selected discovery semantic step through
+the existing no-tools inspection interface. Both provider selections use the
+same neutral Prosaic producer/reviewer profiles and host-serviced read boundary.
+It does not introduce provider-specific prose, native agents lookup or COMMANDER.
+
+The reservation journal's secure file/lock handling is shared without changing
+its schema or allocation behavior. Protected Squad state selects the provider
+receipt journal before initialization; a missing selected journal blocks instead
+of resetting accounting. Pending intents, replies/usage, serviced reads and
+checked final results are saved separately. Recovery never repeats an uncertain
+call or returns a final reply whose post-response checks were interrupted.
+Completed results replay with cumulative usage, not an additional charge.
+Unknown usage is explicit; token/dispatch ceilings only tighten across resume.
+
+Role loading and model dispatch share the persisted absolute step deadline;
+verification and receipt-write delays cannot launch an expired call or accept
+an expired reply. Independent review demonstrated deadline gaps, each reproduced
+before correction. The final re-review found no remaining substantive findings.
+Final affected acceptance: **1,096 tests passed in 76.20s**, including **68 new
+discovery-turn tests**. Whitespace checks passed. The checkpoint plan records the
+exact command, fault reproductions and test boundaries.
+
+This remains an inactive component checkpoint. Scripted model responses exercise
+real state, files, reads and SQLite authority; the new tests do not prove actual
+provider-facade or live execution. Accepted artifacts and registry history remain
+unchanged. Existing execution leases, complete input/domain capture, semantic
+ordering, candidate approval, durable repair units and Squad publication/completion
+remain the integrated caller's next work. A nine-step defensive receipt ceiling
+does not implement the three-attempt repair policy.
+
+No positive Squad discovery admission, installation, live game run, default/mode
+change, migration, push or merge occurred. The stopped smoke workspace, provider
+adapters, neutral role contents, AGENTS.md/CLAUDE.md and legacy build are untouched.

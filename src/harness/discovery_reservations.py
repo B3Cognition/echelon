@@ -7,18 +7,14 @@ Checksums detect corruption, not semantic approval or controller authority.
 from __future__ import annotations
 
 from copy import deepcopy
-import fcntl
 import hashlib
 import json
-import os
 from pathlib import Path
-import stat
 
 from harness.discovery_candidate import DiscoveryReservation
 from harness.discovery_semantics import DiscoveryAssignment, validate_discovery_reply
-from harness.durable_json import write_text_atomic
+from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.element_identity_lifecycle import text
-from harness.inspection_io import _open_root_directory
 
 
 _MAX_BYTES = 16 * 1024 * 1024
@@ -124,70 +120,16 @@ def _validate(data, binding):
     return known
 
 
-class DiscoveryReservationJournal:
+class DiscoveryReservationJournal(DiscoveryReceiptFile):
     """Serialize exact associations; a completed result is verified read-only."""
 
     def __init__(self, run_dir: Path):
-        self.run_dir = Path(os.path.abspath(run_dir))
-        self.path = self.run_dir / "discovery-reservations.json"
-        self._root = self._lock = None
-        self._data = self._binding = self._store = self._raw = None
-
-    def __enter__(self):
-        if self._root is not None:
-            raise ValueError("discovery reservation journal already open")
-        self._root = _open_root_directory(self.run_dir)
-        try:
-            self._lock = os.open("discovery-reservations.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                 0o600, dir_fd=self._root)
-            info = os.fstat(self._lock)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise ValueError("unsafe discovery reservation lock")
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BaseException:
-            self.__exit__()
-            raise
-        return self
+        super().__init__(run_dir, "discovery-reservations")
+        self._data = self._binding = self._store = None
 
     def __exit__(self, *args):
-        for field in ("_lock", "_root"):
-            descriptor = getattr(self, field)
-            if descriptor is not None:
-                os.close(descriptor)
-                setattr(self, field, None)
-        self._store = self._data = self._binding = self._raw = None
-
-    def _check_directory(self):
-        if self._root is None or self._lock is None:
-            raise ValueError("discovery reservation journal is not open")
-        current = _open_root_directory(self.run_dir)
-        try:
-            original, actual = os.fstat(self._root), os.fstat(current)
-            lock = os.stat("discovery-reservations.lock", dir_fd=current, follow_symlinks=False)
-            held = os.fstat(self._lock)
-            if ((original.st_dev, original.st_ino) != (actual.st_dev, actual.st_ino)
-                    or (lock.st_dev, lock.st_ino) != (held.st_dev, held.st_ino) or lock.st_nlink != 1):
-                raise ValueError("discovery reservation directory or lock changed")
-        finally:
-            os.close(current)
-
-    def _read(self):
-        self._check_directory()
-        try:
-            descriptor = os.open(self.path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self._root)
-        except FileNotFoundError:
-            return None
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > _MAX_BYTES:
-                raise ValueError("unsafe discovery reservation record")
-            with os.fdopen(descriptor, "rb", closefd=False) as stream:
-                raw = stream.read(_MAX_BYTES + 1)
-            if len(raw) > _MAX_BYTES:
-                raise ValueError("discovery reservation record exceeds limit")
-            return raw.decode("utf-8")
-        finally:
-            os.close(descriptor)
+        super().__exit__(*args)
+        self._store = self._data = self._binding = None
 
     def _save(self):
         _validate(self._data, self._binding)
@@ -195,10 +137,7 @@ class DiscoveryReservationJournal:
         if len(raw.encode("utf-8")) > _MAX_BYTES:
             raise ValueError("discovery reservation record exceeds limit")
         try:
-            self._check_directory()
-            write_text_atomic(self.path, raw, trusted_root=self.run_dir, expected_text=self._raw)
-            self._check_directory()
-            self._raw = raw
+            self._write(raw)
         except BaseException:
             # A failed fsync/replace can leave either image: only reopen may decide.
             self._store = None

@@ -196,7 +196,20 @@ source-exit-validation ordering defect; two RED regressions preceded its fix,
 and no review findings remain. Existing execution leases are caller-owned;
 positive Squad admission and full provider-input/domain selection still require
 runtime integration. This is not a new storage authority or public activation.
-Provider-turn recovery, executed semantic review and runtime wiring remain gaps;
+The [inactive provider recovery checkpoint](superpowers/plans/2026-09-14-discovery-provider-recovery.md)
+now binds individual semantic steps to neutral Prosaic roles, provider configuration,
+bootstrap authority, inputs and read policy. A protected state marker prevents
+missing receipts from resetting the operation. Pending calls, validated replies,
+host reads and checked final results have separate durable boundaries; unknown
+completion blocks, completed results replay and budgets only tighten. Shared
+secure file mechanics were extracted from the reservation journal without changing
+its schema or allocator behavior. No additional deferred capability is activated.
+
+Executed candidate approval and runtime wiring remain gaps: the caller must still
+capture all selected inputs/domains, order proposal/reservation/author/preview/
+review, persist the actual three-attempt repair unit and publish through the
+existing Squad completion owner. A checked provider reply is not that approval.
+The provider recovery plan records exact verification and review receipts;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.
 The final code extraction boundary and which deferred components remain necessary

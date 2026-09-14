@@ -5,6 +5,7 @@ import stat
 
 from harness.element_identity_lifecycle import text
 from harness.discovery_bootstrap_state import BOOTSTRAP_KEY
+from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
 from harness.element_identity_store import IdentityStore, IdentityStoreError
 
 
@@ -74,7 +75,7 @@ def require_legacy_identity_execution(
 ) -> None:
     """Permit legacy entry only in the absence of observed managed ownership."""
     try:
-        if type(state) is not dict or "managed_identity" in state or BOOTSTRAP_KEY in state:
+        if type(state) is not dict or any(key in state for key in ("managed_identity", BOOTSTRAP_KEY, DISCOVERY_TURNS_KEY)):
             raise ValueError("managed or invalid state cannot enter legacy execution")
         _require_existing_unmanaged_authority(
             project_root, run_dir=run_dir, state=state,
