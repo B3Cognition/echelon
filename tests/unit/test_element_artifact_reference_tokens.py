@@ -19,7 +19,7 @@ def parse(text):
     return parse_identity_artifact(path="notes.md", role="references", text=text)
 
 
-@pytest.mark.parametrize("family", ["AC", "FR", "NFR", "ISS", "U", "A", "T"])
+@pytest.mark.parametrize("family", ["AC", "FR", "NFR", "ISS", "U", "A", "T", "UI", "II"])
 @pytest.mark.parametrize("suffix", ["legacy", "001.other", "001-extra", "001_extra", "001é", "001*other", "001**other", "001`other", "001``other"])
 @pytest.mark.parametrize("wrapper", ["", "`", "**", "*", "__", "_"])
 def test_opaque_tokens_keep_whole_spelling_inside_balanced_wrappers(family, suffix, wrapper):

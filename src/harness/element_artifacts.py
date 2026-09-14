@@ -19,6 +19,7 @@ _ROLES = frozenset(
         "investigation",
         "evidence",
         "references",
+        "intent",
     }
 )
 

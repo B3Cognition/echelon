@@ -2633,6 +2633,39 @@ extras policy, canonical audit behavior and scanner/retarget behavior are retain
 Historical IDs and evidence are not relabeled, and no identity failure is waived
 in banzai or any other mode.
 
+## UI/II family extension (2026-09-14)
+
+The general identity authority now also accepts `UI` (explicit user intent) and
+`II` (inferred intent). They use the existing per-spec/family decimal counters,
+minimum-six-digit formatting, exact reservation replay and lifecycle records.
+Legacy spellings such as `UI-001` are retained, with padding aliases rejected.
+Neither the SQLite schema nor previous records/receipts are rewritten. Earlier
+seven-family versioned contracts in this document remain historical contracts;
+this extension does not reinterpret them or enable mixed-version binaries.
+
+The `intent` Markdown role recognizes four-column tables with headers
+`ID | Statement | Source / Context | Priority` for UI and
+`ID | Inference | Evidence | Confidence` for II. Headers require a matching
+separator; every definition row requires outer pipes and four nonempty cells.
+Escaped pipes remain cell text. The adapter retains exact row and ID spans,
+rejects malformed/ambiguous definitions, and ignores fenced/comment/quoted
+examples using the shared active-source scanner. Other roles do not adopt these
+rows as definitions. Source/evidence references belong to their row identity.
+
+Statement/inference wording is revision content, not the immutable registry
+subject; authorized same-subject revisions can change it. New headers and other
+unowned text need explicit existing candidate-scope permission. The shared
+reference lexer recognizes UI/II in all reference-bearing roles, so previously
+ignored mentions can now fail closed until explicitly reconciled. No automatic
+source migration, adoption or renumbering occurs. General history projection uses
+`UserIntent`/`InferredIntent` nodes; original reference assessments remain bound
+to their assessed revision after a later revision is published.
+
+Discovery's narrow policy remains U/A-only. Managed Tracker, source-chain and
+clarification routing are separate integration work, not enabled by this family
+extension. See the [checkpoint plan](superpowers/plans/2026-09-14-intent-identities.md)
+for verification and the convergence boundary for rollout limitations.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,

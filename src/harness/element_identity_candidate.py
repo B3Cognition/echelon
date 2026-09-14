@@ -10,7 +10,7 @@ from harness.element_artifacts import _validate_input
 SUPPORTED_ROLES = frozenset({"unknowns", "assumptions", "investigation", "evidence", "references"})
 IDENTITY_SUPPORTED_ROLES = SUPPORTED_ROLES | frozenset({
     "requirements", "tasks", "lexicon", "lexicon_projection", "glossary",
-    "evidence_inventory", "issues",
+    "evidence_inventory", "issues", "intent",
 })
 
 
@@ -84,7 +84,7 @@ _DISCOVERY_POLICY = _CandidatePolicy(
 )
 _IDENTITY_POLICY = _CandidatePolicy(
     "identity", IdentityEditScope, IDENTITY_SUPPORTED_ROLES,
-    ("U", "A", "FR", "NFR", "AC", "T", "ISS"), frozenset({"U", "A"}), True,
+    ("U", "A", "FR", "NFR", "AC", "T", "ISS", "UI", "II"), frozenset({"U", "A"}), True,
 )
 
 
@@ -146,7 +146,7 @@ def request(spec_id, artifacts, scope, changes):
 
 def identity_request(spec_id, artifacts, scope, changes, projection_sources, evidence_inventories,
                      issue_reports):
-    """Normalize the strict general request through its fixed seven-family policy."""
+    """Normalize the strict general request through its closed identity policy."""
     from harness.element_identity_bundle import _normalize
     from harness import element_identity_issue_candidate as issues
 

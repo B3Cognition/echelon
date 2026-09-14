@@ -11,10 +11,10 @@ from kernel.element_ids import decimal_to_int
 
 _NUMERIC_OR_COMPOSITE = r"[0-9]+(?:[A-Za-z][A-Za-z0-9_-]*)?"
 _TASK_VALUE = rf"(?:{_NUMERIC_OR_COMPOSITE}|S[0-9]{{2}}[A-Za-z]?)"
-_ID_CORE = rf"(?:(?:AC|FR|NFR|ISS|U|A)-{_NUMERIC_OR_COMPOSITE}|T-{_TASK_VALUE})"
+_ID_CORE = rf"(?:(?:AC|FR|NFR|ISS|UI|II|U|A)-{_NUMERIC_OR_COMPOSITE}|T-{_TASK_VALUE})"
 _SUPPORTED = re.compile(_ID_CORE)
-_SHAPED = re.compile(r"(?<!\w)[`*_]*(?:AC|FR|NFR|ISS|U|A|T)-[A-Za-z0-9]")
-_NUMERIC = re.compile(r"(?P<kind>AC|FR|NFR|ISS|U|A|T)-(?P<number>[0-9]+)")
+_SHAPED = re.compile(r"(?<!\w)[`*_]*(?:AC|FR|NFR|ISS|UI|II|U|A|T)-[A-Za-z0-9]")
+_NUMERIC = re.compile(r"(?P<kind>AC|FR|NFR|ISS|UI|II|U|A|T)-(?P<number>[0-9]+)")
 _LOCAL = re.compile(rf"investigation/(?P<id>{_ID_CORE})\.md")
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
 _DELIMITERS = frozenset(',;:!?()[]{}<>\"\'|=')

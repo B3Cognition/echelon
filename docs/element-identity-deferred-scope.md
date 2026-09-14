@@ -323,6 +323,26 @@ original renumbering/evidence acceptance, remain required convergence work.
 Do not skip these producers or fake a requesting review to demonstrate repair.
 Installation, migration and live acceptance remain separate approval boundaries.
 
+The approved [intent identity prerequisite](superpowers/plans/2026-09-14-intent-identities.md)
+now admits UI/II through the existing allocator, lifecycle, candidate/history and
+graph owners. Reuse this contract when integrating Tracker: author from exact
+reservations, preserve existing labels/subjects and revision-bound evidence, and
+classify its two native intent tables with the explicit `intent` role. Table
+headers and surrounding prose still require the existing unowned-text permission.
+Do not invent Tracker-local counters, rewrite old three-digit labels, substitute
+headings for table definitions, or silently adopt existing UI/II prose. The shared
+reference lexer now recognizes these families; unsupported or unregistered legacy
+mentions must be reconciled explicitly. Older binaries cannot read populated UI/II
+registries; no mixed-version rollout readiness is claimed.
+
+Managed Tracker execution is still pending, including native ALIGNED/DRIFT/
+STOP_AND_ASK routing through the existing human-input owner, exact producer input
+proof and publication/checkpoint continuation. The current managed domain is
+greenfield, whose native workflow skips Modeler; do not expand to brownfield just
+to exercise Modeler. Keep WHY1 and review-origin repair/return integration, then
+the original renumbering/evidence acceptance, as subsequent checkpoints. This
+prerequisite does not activate a producer or authorize a live trial.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

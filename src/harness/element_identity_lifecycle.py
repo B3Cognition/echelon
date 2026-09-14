@@ -6,7 +6,7 @@ import re
 from typing import TypeAlias
 
 
-_LABEL = re.compile(r"(AC|FR|NFR|ISS|U|A|T)-([A-Za-z0-9][A-Za-z0-9_.-]*)\Z")
+_LABEL = re.compile(r"(AC|FR|NFR|ISS|UI|II|U|A|T)-([A-Za-z0-9][A-Za-z0-9_.-]*)\Z")
 _REVISION = re.compile(r"[1-9][0-9]*\Z")
 
 

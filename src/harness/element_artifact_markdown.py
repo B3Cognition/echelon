@@ -28,7 +28,7 @@ _HEADING_RE = re.compile(
     re.ASCII,
 )
 _ANY_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>.*?)[ \t]*$")
-_DECLARATION_LABEL = r"(?:AC|FR|NFR|ISS|U|A|T)-[A-Za-z0-9][^\s:]*"
+_DECLARATION_LABEL = r"(?:AC|FR|NFR|ISS|UI|II|U|A|T)-[A-Za-z0-9][^\s:]*"
 _LOOSE_HEADING_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<marks>#{1,6})[ \t]+"
     rf"(?P<id>{_DECLARATION_LABEL})(?P<rest>.*)$"
@@ -129,6 +129,12 @@ def parse_markdown_source(text: str, role: str):
     declarations, declaration_diagnostics = _declarations(
         text, role, lines, line_starts, active
     )
+    if role == "intent":
+        from harness.element_artifact_intent import parse_intent_rows
+        rows, row_diagnostics = parse_intent_rows(text, lines, active)
+        declarations.extend(rows)
+        declarations.sort(key=lambda item: item.span.start)
+        declaration_diagnostics.extend(row_diagnostics)
     diagnostics.extend(declaration_diagnostics)
     unsupported_spans = [
         (diagnostic.span.start, diagnostic.span.end)

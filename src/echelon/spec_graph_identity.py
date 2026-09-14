@@ -29,6 +29,7 @@ _KINDS = {
     "AC": ("Requirement", "requirement_id"), "T": ("Task", "task_id"),
     "U": ("Unknown", "element_id"), "A": ("Assumption", "element_id"),
     "ISS": ("Issue", "element_id"),
+    "UI": ("UserIntent", "element_id"), "II": ("InferredIntent", "element_id"),
 }
 _ROWS = {
     "entities": "spec_id element_id kind subject ordinal status revision",

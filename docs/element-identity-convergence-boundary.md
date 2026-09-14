@@ -1069,3 +1069,28 @@ Read the plan for test/review results. This checkpoint does not activate Modeler
 Tracker, WHY1, review-origin selection or repair execution. The original
 renumbering/evidence repair acceptance remains open. No public/default activation,
 installation, workspace migration or live-provider readiness is claimed.
+
+### Intent identity prerequisite (2026-09-14)
+
+The approved [intent identity plan](superpowers/plans/2026-09-14-intent-identities.md)
+adds UI (explicit user intent) and II (inferred intent) to the existing identity
+authority before managed Tracker integration. Allocation, replay, lifecycle,
+candidate publication history and reference assessments use the same owners.
+New numeric IDs have at least six digits and no maximum width; imported spellings
+remain exact. The detached `intent` source role recognizes only the two existing
+Tracker table layouts. Malformed definitions reject; row edits cannot silently
+renumber, reclassify, delete or repurpose identities. Graph projection exposes
+distinct UserIntent/InferredIntent nodes with retained history and assessments.
+
+No database schema changes or saved-record rewrites are introduced. UI/II-looking
+text now participates in reference validation; previously ignored text may require
+explicit reconciliation, never automatic adoption. An older binary that lacks
+these families cannot open a registry containing them. Matching deployed code and
+reviewed source admission remain rollout prerequisites.
+
+This is an identity prerequisite, not Tracker execution or full activation.
+The current managed path is greenfield, where the native workflow skips Modeler;
+managed Tracker, ALIGNED/DRIFT/STOP_AND_ASK handling, retained producer-source
+continuation, WHY1 and authenticated review-triggered repair still require their
+own tested integration. Discovery remains U/A-only; default selection, provider
+dispatch, installation and the stopped game workspace are unchanged.

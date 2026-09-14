@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 
 _VERSION = 1
 _BUSY_SECONDS = 10
-_KINDS = frozenset({"AC", "FR", "NFR", "ISS", "U", "A", "T"})
-_LABEL = re.compile(r"(AC|FR|NFR|ISS|U|A|T)-([A-Za-z0-9][A-Za-z0-9_.-]*)\Z")
+_KINDS = frozenset({"AC", "FR", "NFR", "ISS", "U", "A", "T", "UI", "II"})
+_LABEL = re.compile(r"(AC|FR|NFR|ISS|UI|II|U|A|T)-([A-Za-z0-9][A-Za-z0-9_.-]*)\Z")
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 _DATABASE = "registry.sqlite3"
 _MARKER = "authority.json"
@@ -71,7 +71,7 @@ def _identifier(value, name):
 
 def _kind(value):
     if not isinstance(value, str) or value not in _KINDS:
-        raise IdentityStoreError("kind must be AC, FR, NFR, ISS, U, A, or T")
+        raise IdentityStoreError("kind must be AC, FR, NFR, ISS, U, A, T, UI, or II")
 
 
 def _integer(value):

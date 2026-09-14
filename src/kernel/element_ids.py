@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 
-_NUMERIC_ELEMENT_ID_RE = re.compile(r"(AC|FR|NFR|ISS|U|A|T)-(\d+)\Z")
+_NUMERIC_ELEMENT_ID_RE = re.compile(r"(AC|FR|NFR|ISS|UI|II|U|A|T)-(\d+)\Z")
 
 
 def decimal_to_int(value: str) -> int:
