@@ -655,3 +655,25 @@ proof of positive managed Squad execution. This checkpoint changes only design
 and scope records. The written design awaits user review before implementation
 planning; no source code, stopped smoke workspace, installation or live provider
 was changed.
+
+### Inactive discovery contract checkpoint
+
+The user approved the written design and inline implementation. The
+[executed contract plan](superpowers/plans/2026-09-14-discovery-producer-contracts.md)
+now provides closed proposal/author/review replies and pure translation into
+existing candidate artifacts and create/revise requests. Prosaic owns two new
+neutral profiles; Python owns assignment validation and materialization.
+Existing candidate/history preview remains the structural authority, and cannot
+be replaced by a translated descriptor or model verdict.
+
+Final affected acceptance: **551 tests passed in 28.36s**, including 94 new
+tests and real temporary SQLite candidate consumption. Both profiles passed
+actual Prosaic inspection without deployment. Independent review found no defects
+and exercised fresh U/A creation across all six output artifacts. Whitespace
+checks passed. This does not establish durable reservation binding, provider
+execution, semantic approval, managed Squad admission or publication/completion.
+
+Next is the approved durable operation/reservation/provider-turn checkpoint,
+then Squad publication/recovery and bounded repair acceptance. No live workspace,
+installation, public/default activation, legacy SCOUT, AGENTS.md/CLAUDE.md or
+legacy build changed. The existing branch/worktree remains the execution home.

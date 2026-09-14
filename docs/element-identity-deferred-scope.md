@@ -170,14 +170,18 @@ available; necessary integration is authorized by the subsequent instruction abo
 On 2026-09-14 the user approved a discovery-first integration approach after
 controlled-fulfillment closure. The
 [managed discovery design](superpowers/specs/2026-09-14-managed-discovery-integration-design.md)
-records the proposed producer/reservation/review contract for written review.
+records the producer/reservation/review contract, subsequently approved by the
+user. Its first inactive semantic/translation checkpoint is implemented in the
+[executed plan](superpowers/plans/2026-09-14-discovery-producer-contracts.md), with
+551 affected tests passing and a clean independent review.
 It reuses the necessary parts of DEFER-000002/000003/000004/000005 and only
 create/revise from DEFER-000001. No capability is activated by this record;
 public activation and the other producer families remain subsequent checkpoints.
 
-The producer proposal/reservation wire format, candidate placeholder convention,
-binding of proposals to reservation requests, semantic-review handoff, and exact
-activation configuration still require an integration decision. Reuse existing
+The producer wire shapes are now explicit: proposal handles stay out of authored
+Markdown, and the author uses supplied reserved IDs. Durable binding of proposals
+to reservation requests and executed semantic review remain implementation gaps;
+exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.
 The final code extraction boundary and which deferred components remain necessary
 dependencies also remain open. Record the decision before implementation; do not

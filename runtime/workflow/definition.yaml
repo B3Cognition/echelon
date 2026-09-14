@@ -31,6 +31,9 @@
 # Controlled fulfillment semantic profiles (Python-owned, not legacy routing):
 #   echelon.fulfillment-mapper, echelon.fulfillment-judge.
 # These inspect assigned evidence only; Python owns preparation and publication.
+# Inactive managed discovery semantic profiles (not legacy phase routing):
+#   echelon.discovery-producer, echelon.discovery-reviewer.
+# Their proposal/author/review contracts do not activate managed Squad execution.
 
 schema_version: 1
 controller_runtime_compatibility_version: 3

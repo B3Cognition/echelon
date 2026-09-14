@@ -1,9 +1,9 @@
 # Managed discovery: producer-to-publication integration
 
 Status: written integration design approved by the user on 2026-09-14.
-The first contract checkpoint is planned in
-`../plans/2026-09-14-discovery-producer-contracts.md`; runtime activation remains
-outside that checkpoint.
+The first contract checkpoint is implemented and independently reviewed in
+`../plans/2026-09-14-discovery-producer-contracts.md` (551 passing affected tests).
+Runtime activation remains outside that checkpoint.
 Baseline: `0db43e2a`, branch `fix/delivery-controller-contract`.
 
 ## Outcome and boundary
@@ -250,7 +250,9 @@ typed discovery/reference adapters. DEFER-000001 remains limited to create and
 same-subject revise in this slice. No general history UI, migration, new artifact
 domains or advanced lifecycle authoring is resumed.
 
-This proposes the exact proposal/reservation and semantic-review handoff for
-discovery. It deliberately does not select a public activation configuration. The later
+This defines the proposal/reservation and semantic-review handoff for discovery.
+The inactive semantic/translation checkpoint implements its wire shapes, not
+durable reservation binding or executed semantic review. It deliberately does
+not select a public activation configuration. The later
 all-family release checkpoint must decide that interface before rollout, without
 reinterpreting this internal acceptance capability as a user-facing mode.
