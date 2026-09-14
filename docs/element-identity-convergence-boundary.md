@@ -925,3 +925,53 @@ pre-seal byte/mode binding gap and unnecessary replay receipt rewrites, then
 independently passed the 40-case suite in 59.82s with no outstanding Critical or
 Important issues. These receipts do not establish positive Squad admission or
 live-provider readiness.
+
+### Reviewed discovery bound to existing completion
+
+The [completion-binding plan](superpowers/plans/2026-09-14-discovery-completion-binding.md)
+extends the existing external-publication completion envelope with a closed,
+versioned managed-discovery association. It retains the exact v3 identity request,
+complete source snapshot, and canonical inputs behind the existing candidate and
+source digests. Protected accepted operation/bootstrap/provider state authenticates
+those inputs; a supplied recovery document or hash alone grants no authority.
+The ordinary external-publication format remains unchanged.
+
+The existing completion drain now uses guarded source publication for this
+association: prepare the identity intent before promotion, apply it only after
+verified source/graph postimages, then drain existing completion effects. Both
+stages survive handoff and durable completion until identity release. Restart
+can finish release from the existing completed-dispatch receipt, including a
+crash after publication-stage cleanup. Orphan cleanup cannot discard managed
+recovery material or report readiness while that material remains unresolved.
+No new journal, allocator, publication loop or completion state machine is added.
+
+Context generation has an explicitly approved captured-input path in the existing
+builder. The existing completion generator callback receives only the selected
+reviewed artifact postimages, not live staging/canonical/WIP discovery. It renders
+their current-context snippets with the existing size limit, preserving the
+fresh pre-spec five-file/schema contract and empty feature/memory records. This
+is not general feature/memory admission. Legacy context generation is unchanged.
+The context receipt's preimages must match the reviewed capture; partial installs
+accept only those originals or their receipted replacements, and later steps
+require the replacements. All other captured sources remain pinned through
+completion and release. Callback preparation respects publication-before-completion
+lock ordering; generation consumes detached bytes inside the completion boundary.
+
+This connects the **existing completion owner**, exercised under real execution
+leases with scripted external processes. It does not yet enable managed entry
+through normal `SquadController.run`, select the next repair operation, run an
+unsupported next producer, install a bundle or establish live-provider readiness.
+The saved next phase is preserved. Positive managed admission must recover this
+bound work before rejecting unsupported dispatch, without weakening legacy
+exclusion. Existing unbound recovery-v1 preparation packages lack the new digest
+preimage proof; prepare a fresh checked association, never rewrite pending
+identity authority or reconstruct missing provider/reservation receipts.
+
+Final affected verification: **3,120 passed in 409.61s**, including all 50
+managed completion tests and 17 context-builder tests. The full Squad integration
+suite finished with **507 passed and 7 pre-existing failures in 411.66s**; each
+failure was also reproduced against the prior checkpoint and expects entry past
+the existing managed legacy-execution guard. No new failure appeared. Their exact
+names and disposition are retained in the plan, not hidden by deselection.
+Independent final review passed 21 targeted tests in 58.44s with no actionable
+findings. This is an offline local checkpoint, not installed/live acceptance.

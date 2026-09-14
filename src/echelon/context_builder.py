@@ -15,7 +15,8 @@ from echelon.context_metadata import (
     UseCaseMetadata,
     read_feature_metadata,
 )
-from echelon.context_reconciliation import reconcile_drawers
+from echelon.context_reconciliation import reconcile_drawers, reconcile_captured_drawers
+from harness.squad_source_snapshot import _source_path
 
 MAX_CONTEXT_SNIPPET_CHARS = 3000
 MAX_DRAWER_SNIPPET_CHARS = 1200
@@ -46,13 +47,25 @@ def build_run_context(
     drawers: Sequence[Any] = (),
     *,
     output_dir: Path | None = None,
+    captured_discovery_artifacts: dict[str, bytes] | None = None,
 ) -> ContextBuildResult:
+    """Build context, optionally from an admitted fresh discovery capture only.
+
+    The captured caller owns source/history authentication and exclusion of
+    prior features and external memory. This branch never discovers live inputs.
+    """
+    captured_current = None
+    if captured_discovery_artifacts is not None:
+        if drawers:
+            raise ValueError("captured discovery context cannot use memory drawers")
+        captured_current = _render_captured_discovery(captured_discovery_artifacts, run_dir.name)
     context_dir = output_dir if output_dir is not None else run_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
 
-    canonical_metadata = _canonical_metadata(project_root)
-    wip_metadata = _wip_metadata(run_dir)
-    reconciliation = reconcile_drawers(drawers, project_root)
+    canonical_metadata = _canonical_metadata(project_root) if captured_current is None else []
+    wip_metadata = _wip_metadata(run_dir) if captured_current is None else []
+    reconciliation = (reconcile_drawers(drawers, project_root) if captured_current is None
+        else reconcile_captured_drawers((), {}))
 
     (
         prior_context,
@@ -63,7 +76,8 @@ def build_run_context(
     ) = (context_dir / name for name in CONTEXT_OUTPUT_NAMES)
 
     prior_context.write_text(_render_prior(canonical_metadata, reconciliation.accepted), encoding="utf-8")
-    current_context.write_text(_render_current(wip_metadata, project_root, run_dir), encoding="utf-8")
+    current_context.write_text(_render_current(wip_metadata, project_root, run_dir)
+        if captured_current is None else captured_current, encoding="utf-8")
     feature_registry.write_text(
         json.dumps(
             {
@@ -100,6 +114,27 @@ def build_run_context(
             for drawer in reconciliation.accepted
         ),
     )
+
+
+def _render_captured_discovery(artifacts: dict[str, bytes], run_id: str) -> str:
+    try:
+        if type(artifacts) is not dict or not artifacts:
+            raise ValueError
+        texts = {}
+        for path, content in artifacts.items():
+            if type(path) is not str or _source_path(path).as_posix() != path or type(content) is not bytes:
+                raise ValueError
+            text = content.decode("utf-8")
+            if "\x00" in text:
+                raise ValueError
+            texts[path] = text
+        lines = ["# Current Feature Context", "", f"Run: `{run_id}`", "", "## Reviewed Discovery Artifacts", ""]
+        for path, text in sorted(texts.items()):
+            lines.extend((f"### {path}", _render_staged_content(text, MAX_CONTEXT_SNIPPET_CHARS), ""))
+        return "\n".join(lines).rstrip() + "\n"
+    except Exception:
+        pass
+    raise ValueError("invalid captured discovery context")
 
 
 def _canonical_metadata(project_root: Path) -> list[FeatureMetadata]:

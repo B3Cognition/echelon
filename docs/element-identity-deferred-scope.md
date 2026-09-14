@@ -253,6 +253,22 @@ connections remain required next work at the existing owners, including recovery
 before the next unsupported producer and admission of an existing derived graph
 when selecting a subsequent accepted repair. Do not mistake the fixture-only
 guarded publication test for that runtime integration.
+The [completion-binding checkpoint](superpowers/plans/2026-09-14-discovery-completion-binding.md)
+now associates the retained reviewed package with the existing Squad completion
+owner. Guarded publication prepares/applies the exact identity intent; completion
+effects finish before identity release and stage cleanup, with restart using the
+existing dispatch/completion receipts. Keep the full read guard separate from the
+registered spec-only source claim. The approved captured-input context-builder
+path renders selected reviewed postimages only; it must not reopen live workspace
+discovery, external collection or foreign feature admission. Receipt preimages
+remain tied to the reviewed context and postimages remain checked through release.
+Positive managed Squad entry, subsequent accepted repair selection, the full
+renumbering/evidence acceptance and actual provider-facade/mode acceptance remain
+open. Do not infer rollout or unsupported next-phase authority from completion
+success. Seven old Squad integration assertions still expect managed legacy
+dispatch; they reproduce on the prior checkpoint and need separate reconciliation
+with the existing negative guard, not removal of that guard.
+
 The provider recovery plan records exact verification and review receipts;
 exact public activation configuration still requires an integration decision. Reuse existing
 capabilities, but do not claim that storage APIs alone settle these interfaces.

@@ -1569,6 +1569,7 @@ class SquadController:
         quality_effect: Mapping[str, object] | None = None,
         resolution_decision_id: str | None = None,
         completion_id: str | None = None,
+        managed_discovery_request: str | None = None,
     ) -> PreparedControllerCompletion:
         """Seal all post-dispatch work before its authorizing state save."""
         if origin == "terminal":
@@ -1676,6 +1677,10 @@ class SquadController:
             if publication_marker is not None
             else {"kind": "none"}
         )
+        if managed_discovery_request is not None:
+            from harness.discovery_completion import decode_binding
+            publication["managed_discovery"] = dict(version=1, request=managed_discovery_request)
+            decode_binding(publication, completion_id=completion_id, state=snapshot.state)
         checkpoint_prestate = (
             self._completion_checkpoint_prestate()
             if "checkpoint" in effect_plan
@@ -1804,6 +1809,13 @@ class SquadController:
         prepared: PreparedControllerCompletion,
         state: Mapping[str, object],
     ) -> None:
+        context_options = {}
+        if prepared.marker.step == "context" and "managed_discovery" in prepared.intent.publication:
+            from harness.discovery_completion import context_generator
+            # Authenticate publication before acquiring the later completion
+            # lock; generation itself consumes only detached captured bytes.
+            context_options["context_generator"] = context_generator(
+                self._project_root, self._squad_dir, state, prepared)
         with controller_lock_order(
             "completion",
             str(prepared._transaction_root.absolute()),
@@ -1811,12 +1823,15 @@ class SquadController:
             self._apply_controller_completion_effect_ordered(
                 prepared,
                 state,
+                **context_options,
             )
 
     def _apply_controller_completion_effect_ordered(
         self,
         prepared: PreparedControllerCompletion,
         state: Mapping[str, object],
+        *,
+        context_generator=None,
     ) -> None:
         effect = prepared.marker.step
         existing = prepared.receipts["effects"].get(effect)
@@ -1884,6 +1899,11 @@ class SquadController:
             )
             return
         if effect == "context":
+            context_options = {}
+            if "managed_discovery" in prepared.intent.publication:
+                if context_generator is None:
+                    raise CompletionError("intent_mismatch")
+                context_options["generator"] = context_generator
             receipt = prepare_or_load_completion_context(
                 prepared,
                 project_root=self._project_root,
@@ -1897,7 +1917,7 @@ class SquadController:
                     )
                     or ""
                 ),
-                drawers=self._retrieve_mempalace_context_drawers(
+                drawers=[] if "managed_discovery" in prepared.intent.publication else self._retrieve_mempalace_context_drawers(
                     str(
                         state.get(
                             "user_request",
@@ -1908,6 +1928,7 @@ class SquadController:
                     str(state.get("run_id") or ""),
                     state,
                 ),
+                **context_options,
             )
             install_or_verify_completion_context(
                 prepared,
@@ -2091,11 +2112,12 @@ class SquadController:
             try:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                discard_unreferenced_controller_completion(
+                if not discard_unreferenced_controller_completion(
                     self._project_root,
                     self._squad_dir,
                     entry.name,
-                )
+                ):
+                    return False
             except CompletionError:
                 continue
         return not retained_id
@@ -2114,6 +2136,8 @@ class SquadController:
             except StateDurabilityError:
                 return CompletionRecoveryOutcome(False)
         if PENDING_CONTROLLER_COMPLETION_KEY not in state:
+            if "managed_identity" in state and PENDING_EXTERNAL_PUBLICATION_KEY not in state:
+                return self._recover_discovery_completion_release(state)
             if PENDING_EXTERNAL_PUBLICATION_KEY in state:
                 if PRODUCT_INPUT_MUTATION_KEY in state:
                     self._recover_pending_external_publication()
@@ -2159,6 +2183,10 @@ class SquadController:
         )
         try:
             publication = prepared.intent.publication
+            from harness import discovery_completion
+            self._state_store._require_controller_completion_provenance(
+                state, prepared.marker.to_dict(), prepared.intent.to_dict())
+            managed = discovery_completion.authenticate(self._project_root, self._squad_dir, state, prepared)
             has_persisted_publication = (
                 PENDING_EXTERNAL_PUBLICATION_KEY in state
             )
@@ -2205,7 +2233,10 @@ class SquadController:
                                 / "work/product-inputs"
                             ),
                         )
-                        staged_publication.publish()
+                        if managed is None:
+                            staged_publication.publish()
+                        else:
+                            discovery_completion.publish(self._project_root, self._squad_dir, state, prepared, staged_publication)
                         verified_product_input_tree_hash = (
                             require_product_input_mutation_postimage(
                                 self._project_root,
@@ -2275,7 +2306,8 @@ class SquadController:
                     except StateDurabilityError:
                         return outcome
                     try:
-                        staged_publication.discard()
+                        if managed is None:
+                            staged_publication.discard()
                     except PublicationError:
                         logger.warning(
                             "Could not discard handed-off publication stage",
@@ -2308,6 +2340,8 @@ class SquadController:
                     current_raw,
                 )
                 step = prepared.marker.step
+                if managed is not None:
+                    discovery_completion.require_applied(self._project_root, self._squad_dir, current_state, prepared)
                 if step == "awaiting_publication":
                     raise CompletionError("intent_mismatch")
                 if step == "complete":
@@ -2349,6 +2383,8 @@ class SquadController:
                         raise CompletionError("receipts_mismatch") from exc
                     if "retarget" in prepared.intent.effect_plan:
                         self._emit_pending_retarget_comparison()
+                    if managed is not None:
+                        discovery_completion.release(self._project_root, self._squad_dir, self._state_store, prepared)
                     self._discard_completed_controller_stage(prepared)
                     return CompletionRecoveryOutcome(
                         True,
@@ -2386,6 +2422,24 @@ class SquadController:
                 "stage_io",
             )
             return outcome
+
+    def _recover_discovery_completion_release(self, state) -> CompletionRecoveryOutcome:
+        """Finish release after the existing durable completion state save."""
+        from harness import discovery_completion
+        dispatch = state.get("last_dispatch")
+        if not isinstance(dispatch, dict) or dispatch.get("post_dispatch_complete") is not True:
+            return CompletionRecoveryOutcome(False)
+        try:
+            marker = dict(schema_version=1, completion_id=dispatch["dispatch_id"],
+                intent_sha256=dispatch["completion_intent_sha256"],
+                publication_binding_sha256=dispatch["completed_publication_binding_sha256"],
+                receipts_sha256=dispatch["completion_receipts_sha256"], origin="routed", step="complete")
+            prepared = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+            discovery_completion.release(self._project_root, self._squad_dir, self._state_store, prepared)
+            self._discard_completed_controller_stage(prepared)
+            return CompletionRecoveryOutcome(True, "routed", False, prepared.marker.completion_id)
+        except Exception:
+            return CompletionRecoveryOutcome(False)
 
     def _legacy_identity_execution_blocked(self, state: dict) -> bool:
         from harness.element_identity_legacy_guard import require_legacy_identity_execution

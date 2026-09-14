@@ -95,7 +95,7 @@ def _seal(root, run, writes, modes):
     return transaction.seal()
 
 
-def _graph(sources, candidate, selection):
+def _graph(sources, history, selection):
     # _capture admitted no configured memory wing or published RE. Report that
     # actual boundary as unavailable, not a successful external memory audit.
     audit = GraphMemoryAudit("returned", 1, None, "unavailable", 0, 0, 0,
@@ -103,7 +103,7 @@ def _graph(sources, candidate, selection):
     graph = build_captured_identity_graph(spec_id=selection["spec_id"], lifecycle="phase_a",
         generator_version="managed-discovery-v1", sources=project_publication_source_images(sources),
         policy_paths=(), memory=(CapturedGraphMemory("canonical-spec", (), (), audit),),
-        re_artifacts=(), re_sources=(), history=candidate.history, spec_source_path=selection["spec_path"])
+        re_artifacts=(), re_sources=(), history=history, spec_source_path=selection["spec_path"])
     return render_spec_graph(graph)
 
 
@@ -128,7 +128,7 @@ def _prepare(project_root, state_store, executor, completion_id):
     state, selected, operation = _selected(root, state_store, store)
     binding, selection = operation["binding"], selected["selection"]
     candidate = _replay(root, state_store, executor, binding)
-    fingerprint, *_, original = _capture(root, state_store, store, selected,
+    fingerprint, *_, original, source_inputs = _capture(root, state_store, store, selected,
         binding["input_tree"], tuple(binding["artifact_paths"]))
     if fingerprint != candidate.source_fingerprint:
         raise ValueError("reviewed discovery inputs changed")
@@ -141,11 +141,11 @@ def _prepare(project_root, state_store, executor, completion_id):
     writes = {selection["spec_path"] + "/" + name: text.encode("utf-8") for name, text in authored.items()}
     provisional = _seal(root, state_store.squad_dir, writes, modes)
     source_only = _inspect(provisional, original, writes, modes)
-    graph = _graph(source_only, candidate, selection)
+    graph = _graph(source_only, candidate.history, selection)
     writes[selection["spec_path"] + "/spec-artifact-graph.json"] = graph
     publication = _seal(root, state_store.squad_dir, writes, modes)
     sources = _inspect(publication, original, writes, modes)
-    if _graph(sources, candidate, selection) != graph:
+    if _graph(sources, candidate.history, selection) != graph:
         raise ValueError("final projected graph changed")
     # Recheck roles, replies, reservations, history and all runtime inputs after
     # staging. Replay-only cannot fill in any missing accepted receipt.
@@ -156,8 +156,9 @@ def _prepare(project_root, state_store, executor, completion_id):
     sources = _inspect(publication, original, writes, modes)
     observed = store.check_managed_context(spec_id=binding["spec_id"], run_id=binding["run_id"], record=state["managed_identity"])
     baseline = PublicationSourcesSnapshot(sources.publication, (spec,), ())
-    recovery = json.dumps(dict(version=1, completion_id=completion_id, operation=operation,
+    recovery = json.dumps(dict(version=2, completion_id=completion_id, operation=operation,
         candidate_sha256=candidate.candidate_sha256, source_fingerprint=candidate.source_fingerprint,
+        candidate_inputs=candidate.candidate_inputs, source_inputs=candidate.source_inputs,
         review=candidate.review, provider=state[DISCOVERY_TURNS_KEY], sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest()), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     context = observed["source_context"]

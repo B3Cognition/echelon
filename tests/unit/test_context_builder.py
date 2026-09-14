@@ -1,8 +1,57 @@
 from pathlib import Path
 import json
+import pytest
 
 from echelon.context_builder import build_run_context
 from echelon.context_metadata import artifact_hash
+
+
+def test_captured_discovery_context_uses_only_supplied_artifacts(tmp_path, monkeypatch):
+    run = tmp_path / "runs/first"
+    output = tmp_path / "frozen-context"
+    def forbidden(*args, **kwargs):
+        raise AssertionError("captured context attempted live source discovery")
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "glob", forbidden)
+        patch.setattr(Path, "read_text", forbidden)
+        patch.setattr(Path, "read_bytes", forbidden)
+        result = build_run_context(tmp_path, run, user_request="Build a game", output_dir=output,
+            captured_discovery_artifacts={
+                "specs/game/unknowns.md": b"### U-000001: Camera\r\nChoose projection.\r\n",
+                "specs/game/assumptions.md": b"### A-000001: Browser\nRuns in browser.\n",
+            })
+    current = result.current_context.read_text()
+    assert "Run: `first`" in current and "U-000001: Camera" in current and "A-000001: Browser" in current
+    assert "Choose projection." in current and "Runs in browser." in current
+    assert current.index("assumptions.md") < current.index("unknowns.md")
+    assert json.loads(result.feature_registry.read_text()) == {"user_request": "Build a game", "features": [], "wip_features": []}
+    assert json.loads(result.reconciliation_json.read_text()) == {"accepted_count": 0, "rejected": []}
+    assert result.accepted_drawer_ids == () and not (run / "context").exists()
+    assert len(list(output.iterdir())) == 5
+
+
+@pytest.mark.parametrize("artifacts", [{}, [], {"../foreign.md": b"secret"}, {"specs/game/unknowns.md": "not bytes"},
+    {"specs/game/unknowns.md": b"\xff"}, {"specs/game/unknowns.md": b"\x00"}, {"specs//game/unknowns.md": b"text"}])
+def test_invalid_captured_context_never_falls_back_or_writes(tmp_path, artifacts):
+    output = tmp_path / "output"
+    with pytest.raises(ValueError):
+        build_run_context(tmp_path, tmp_path / "run", output_dir=output, captured_discovery_artifacts=artifacts)
+    assert not output.exists()
+
+
+def test_captured_context_cannot_enable_memory_drawers(tmp_path):
+    output = tmp_path / "output"
+    with pytest.raises(ValueError):
+        build_run_context(tmp_path, tmp_path / "run", drawers=[{"content": "foreign"}], output_dir=output,
+            captured_discovery_artifacts={"specs/game/unknowns.md": b"Question"})
+    assert not output.exists()
+
+
+def test_captured_context_keeps_existing_snippet_limit(tmp_path):
+    result = build_run_context(tmp_path, tmp_path / "run", captured_discovery_artifacts={
+        "specs/game/unknowns.md": b"x" * 3000 + b"TRUNCATED"})
+    text = result.current_context.read_text()
+    assert "x" * 3000 in text and "TRUNCATED" not in text
 
 
 class Drawer:

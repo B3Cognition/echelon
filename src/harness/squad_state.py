@@ -5961,6 +5961,8 @@ class SquadStateStore:
         marker: dict[str, object],
         intent: dict[str, object],
     ) -> None:
+        from harness.discovery_completion import decode_binding
+        decode_binding(intent["publication"], completion_id=marker["completion_id"], state=state)
         route = intent["route"]
         if marker["origin"] == "terminal":
             if (
@@ -6124,7 +6126,7 @@ class SquadStateStore:
             or prefix_kind != "bound"
             or type(publication) is not dict
             or frozenset(dict.keys(publication))
-            != frozenset({"kind", "marker"})
+            != frozenset({"kind", "marker"} | ({"managed_discovery"} if "managed_discovery" in publication else set()))
             or publication["kind"] != "external"
             or publication["marker"] != expected_publication
         ):

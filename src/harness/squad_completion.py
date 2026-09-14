@@ -340,13 +340,18 @@ def _validate_publication(value: object) -> dict[str, object]:
         _validate_exact_dict(value, frozenset({"kind"}))
         return {"kind": "none"}
     if kind == "external":
-        _validate_exact_dict(value, frozenset({"kind", "marker"}))
+        managed = "managed_discovery" in value
+        _validate_exact_dict(value, frozenset({"kind", "marker"} | ({"managed_discovery"} if managed else set())))
         try:
             marker = validate_pending_external_publication(
                 dict.__getitem__(value, "marker")
             )
         except ValueError:
             _raise("intent_invalid")
+        if managed:
+            from harness.discovery_completion import decode_binding
+            decode_binding(value)
+            return {"kind": "external", "marker": marker, "managed_discovery": _clone_json(value["managed_discovery"])}
         return {"kind": "external", "marker": marker}
     _raise("intent_invalid")
 
@@ -595,6 +600,12 @@ def _validate_intent(
         dict.__getitem__(record, "publication")
     )
     route = _validate_route(dict.__getitem__(record, "route"))
+    if "managed_discovery" in publication:
+        from harness.discovery_completion import decode_binding
+        decode_binding(publication, completion_id=completion_id)
+        if (origin != "routed" or route.get("from_phase") != "phase1-discover"
+                or route.get("manual_phase_run") is not False or route.get("record_completion") is not True):
+            _raise("intent_invalid")
     if origin != route["kind"]:
         _raise("intent_invalid")
     effect_plan = _validate_effect_plan(
@@ -1523,6 +1534,10 @@ def discard_unreferenced_controller_completion(
     ):
         _raise("intent_mismatch")
     publication = intent["publication"]
+    if "managed_discovery" in publication:
+        # Only authenticated completion release may dispose of these stages;
+        # absence of a pending Squad marker does not prove identity release.
+        return False
     if publication["kind"] == "external":
         from harness.squad_publication import (
             PublicationError,

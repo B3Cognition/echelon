@@ -36,6 +36,8 @@ class ReviewedDiscoveryCandidate:
     source_fingerprint: str
     review: dict
     candidate_sha256: str
+    candidate_inputs: str
+    source_inputs: str
 
 
 @dataclass(frozen=True)
@@ -97,10 +99,11 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths):
         templates = {template_paths[item.path]: item.content.decode("utf-8") for item in sources.files if item.path in template_paths}
         if any("\x00" in content for content in (*files.values(), *evidence.values(), *templates.values())):
             raise _Blocked("discovery_source_not_text")
-        digest = _hash(dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
-            history=asdict(history), authority=observed, runtime=runtime))
+        source_inputs = dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
+            history=asdict(history), authority=observed, runtime=runtime)
+        digest = _hash(source_inputs)
     # Normal inspector exit authenticates paths and membership before handoff.
-    return digest, files, evidence, history, templates, runtime, sources
+    return digest, files, evidence, history, templates, runtime, sources, source_inputs
 
 
 def _citations(artifacts, labels):
@@ -151,7 +154,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         if any(type(value) is not tuple for value in (artifact_paths, editable_revisions, unowned_writable_paths)):
             raise _Blocked("invalid_discovery_scope")
         store = IdentityStore.open(root)
-        fingerprint, before, evidence, retained_history, templates, runtime, _ = _capture(root, state_store, store, selected, input_tree, artifact_paths)
+        fingerprint, before, evidence, retained_history, templates, runtime, _, source_inputs = _capture(root, state_store, store, selected, input_tree, artifact_paths)
         binding = dict(operation_id=selected["selection"]["operation_id"], spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], input_tree=input_tree, artifact_paths=list(artifact_paths),
             editable_revisions=[list(pair) for pair in editable_revisions], unowned_writable_paths=list(unowned_writable_paths),
@@ -237,8 +240,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                             findings = [dict(code="semantic_rejection", reason=review["reason"]),
                                 *(dict(id=row["id"], verdict=row["verdict"], reason=row["reason"]) for row in review["assessments"])]
                 verify()
-                candidate_digest = _hash(dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
-                    operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history)))
+                candidate_inputs = dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
+                    operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history))
+                candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
                 saved = operation_from_state(state_store.load())["attempts"][number - 1]["result"]
@@ -250,7 +254,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     raise _Blocked("discovery_attempt_receipt_changed")
                 verify()
                 if not findings:
-                    candidate = ReviewedDiscoveryCandidate(artifacts, operations, preview.history, fingerprint, review, candidate_digest)
+                    canonical = dict(sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+                    candidate = ReviewedDiscoveryCandidate(artifacts, operations, preview.history, fingerprint, review, candidate_digest,
+                        json.dumps(candidate_inputs, **canonical), json.dumps(source_inputs, **canonical))
                     return DiscoveryOperationResult("reviewed", "discovery_candidate_reviewed", last.token_usage, last.dispatch_count, candidate)
                 progress = _progress(authored["artifacts"], findings)
                 if progress == prior_progress:
