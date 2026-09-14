@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -16,7 +17,11 @@ from harness.deferred_scope import active_entries
 from harness.canonical_requirements import _category_for
 from harness.codegraph_evidence_mapper import RequirementRow, _is_runtime_threshold
 from harness.durable_json import write_json_atomic, write_text_atomic
-from harness.fulfillment_preparation import FulfillmentPreparationContext, prepare_fulfillment_inputs
+from harness.fulfillment_preparation import (
+    FulfillmentPreparationContext, PreparedFulfillmentInputs, _validate_context, prepare_fulfillment_inputs,
+)
+from harness.fulfillment_recovery import FulfillmentRecovery
+from harness.fulfillment_preparation_steps import load_preparation_observation
 from harness.fulfillment_semantics import (
     FulfillmentAssignment, parse_semantic_reply, render_fallback_report, render_implementation_map,
 )
@@ -83,7 +88,12 @@ def _files(root: Path, names) -> dict[str, str | None]:
 
 def _inputs(context) -> str:
     state = _json(context.verify_run_dir / "state.json")
+    _, observation = load_preparation_observation(
+        spec_dir=context.spec_dir, verify_run_dir=context.verify_run_dir,
+        observer_required=context.observer_required, observation_path=context.observation_path)
     return _digest({"product": product_evidence_fingerprint(context.project_root, excluded_roots=(context.spec_dir,)),
+                    "observation": (_files(observation.ref.path.parent, (observation.ref.path.name,))
+                                    if observation is not None else None),
                     "spec": _files(context.spec_dir, _SPEC_INPUTS),
                     "evidence": _files(context.verify_run_dir, _EVIDENCE_INPUTS),
                     "run": {key: state.get(key) for key in (
@@ -106,7 +116,18 @@ class ControlledFulfillment:
     def run(self, context: FulfillmentPreparationContext, *, forbidden_paths: tuple[Path, ...] = (),
             token_budget: float | None = None) -> ControlledFulfillmentResult:
         usage = {"tokens": 0, "known": True, "dispatches": 0}
+        stack = ExitStack()
         try:
+            try:
+                recovery = stack.enter_context(FulfillmentRecovery(context.verify_run_dir))
+                saved = recovery.load()
+                if saved is not None:
+                    usage.update(recovery.usage())
+                elif _json(context.verify_run_dir / "state.json").get("controlled_fulfillment_journal"):
+                    raise ValueError("fulfillment reconciliation required: expected journal is missing")
+            except (ValueError, OSError, TypeError, KeyError):
+                usage["known"] = False
+                raise
             if getattr(self._executor, "supports_inspection_turn", False) is not True:
                 raise ValueError("unsupported fulfillment inspection boundary")
             if token_budget is not None and (type(token_budget) not in {int, float}
@@ -121,7 +142,40 @@ class ControlledFulfillment:
                     raise ValueError(f"missing or invalid fulfillment role: {name}")
                 roles[step] = role
             _safe_outputs(context.verify_run_dir)
-            prepared = prepare_fulfillment_inputs(context)
+            operation_binding = _digest({
+                "context": {key: str(value) if isinstance(value, Path) else value for key, value in asdict(context).items()},
+                "roles": {step: asdict(role) for step, role in roles.items()},
+                "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
+                "provider": getattr(self._executor, "provider_id", self._executor.cli),
+                "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
+                "contract": "controlled-fulfillment-inspection-v1",
+            })
+            if saved is None:
+                state_path = context.verify_run_dir / "state.json"
+                state = _json(state_path)
+                _validate_context(context)
+                state["controlled_fulfillment_journal"] = recovery.path.name
+                write_json_atomic(state_path, state, trusted_root=context.verify_run_dir)
+                recovery.data = {"schema_version": 1, "binding": operation_binding, "phase": "preparing",
+                                 "inputs": None, "budget_limit": token_budget, "steps": {}, "outputs": {}}
+                recovery.save()
+                prepared = prepare_fulfillment_inputs(context)
+                recovery.data.update(phase="prepared", inputs=_inputs(context))
+                recovery.save()
+            else:
+                if saved["binding"] != operation_binding:
+                    raise ValueError("fulfillment reconciliation required: operation binding changed")
+                if saved["phase"] == "preparing":
+                    raise ValueError("fulfillment reconciliation required: preparation completion unknown")
+                if _inputs(context) != saved["inputs"]:
+                    raise ValueError("fulfillment reconciliation required: inputs changed")
+                ceilings = [value for value in (token_budget, saved["budget_limit"]) if value is not None]
+                token_budget = min(ceilings) if ceilings else None
+                saved["budget_limit"] = token_budget
+                recovery.save()
+                prepared = PreparedFulfillmentInputs(context.verify_run_dir,
+                    tuple(row["id"] for row in _json(context.verify_run_dir / "canonical-requirements.json")["requirements"]),
+                    context.scoped_ids, str(_json(context.verify_run_dir / "state.json").get("topology_evidence")))
             run = prepared.verify_run_dir
             binding = _inputs(context)
             canonical = _json(run / "canonical-requirements.json")["requirements"]
@@ -139,15 +193,23 @@ class ControlledFulfillment:
                     "evidence_files": list(_EVIDENCE_INPUTS), "spec_files": list(_SPEC_INPUTS)}
             roots = {"worktree": context.project_root, "spec": context.spec_dir, "evidence": run}
             denied = (*forbidden_paths, *(context.project_root / name for name in CONTROL_ROOTS | CONTROL_PATHS),
-                      run / "state.json", run / "controlled-fulfillment.json",
+                      run / "state.json", run / "controlled-fulfillment.json", run / "controlled-fulfillment.lock",
+                      run / "fulfillment-publication.json",
                       *(run / name for name in _STAGED_OUTPUTS),
                       context.spec_dir / "fulfillment-report.md", context.spec_dir / "fulfillment-gaps.md")
             with BoundedReadChannel(roots, forbidden_paths=denied) as channel:
+                if recovery.data["phase"] == "staged":
+                    if _files(run, _STAGED_OUTPUTS) != recovery.data["outputs"]:
+                        raise ValueError("fulfillment reconciliation required: staged artifacts changed")
+                    _verify_reads(channel, [record["read"] for step in recovery.data["steps"].values()
+                                           for record in step["records"] if record["read"] is not None])
+                    return ControlledFulfillmentResult(0, "staged", run / "fulfillment-report.staged.md",
+                        run / "fulfillment-gaps.staged.md", usage["tokens"] if usage["known"] else None, usage["dispatches"])
                 rows = []
                 all_reads = []
                 if assigned:
                     mapped, reads = self._dispatch("mapper", assigned, roles["mapper"], context, binding,
-                                                   data, channel, usage, token_budget)
+                                                   data, channel, usage, token_budget, recovery)
                     rows = mapped["rows"]
                     all_reads.extend(reads)
                     _verify_citations(rows, reads)
@@ -171,7 +233,8 @@ class ControlledFulfillment:
                 fallback = []
                 if fallback_ids:
                     judged, reads = self._dispatch("judge", fallback_ids, roles["judge"], context, binding,
-                        {**data, "implementation_map": rows, "judgment_prepass": prepass}, channel, usage, token_budget)
+                        {**data, "implementation_map": rows, "judgment_prepass": prepass, "mapper_reads": all_reads},
+                        channel, usage, token_budget, recovery)
                     fallback = judged["rows"]
                     all_reads.extend(reads)
                     for row in fallback:
@@ -215,20 +278,53 @@ class ControlledFulfillment:
                                        indent=2, sort_keys=True)
                                    if nonpassing else "\nNo actionable gaps.\n"),
                                   trusted_root=run)
+                recovery.data.update(phase="staged", outputs=_files(run, _STAGED_OUTPUTS))
+                recovery.save()
             return ControlledFulfillmentResult(0, "staged", report, gaps,
                 usage["tokens"] if usage["known"] else None, usage["dispatches"])
         except (ValueError, OSError, RuntimeError, TypeError, KeyError, AttributeError) as exc:
             return ControlledFulfillmentResult(2, str(exc), token_usage=usage["tokens"] if usage["known"] else None,
                                                 dispatch_count=usage["dispatches"])
+        finally:
+            stack.close()
 
-    def _dispatch(self, step, ids, role, context, binding, data, channel, usage, budget):
+    def _dispatch(self, step, ids, role, context, binding, data, channel, usage, budget, recovery):
         assignment = FulfillmentAssignment(context.verify_run_dir.name, step, uuid4().hex,
                                             _digest({"inputs": binding, "role": asdict(role), "data": data}), ids)
+        stored = recovery.data["steps"].get(step)
+        if stored is None:
+            stored = {"assignment": assignment.identity(), "deadline": time.time() + 300, "records": []}
+            recovery.data["steps"][step] = stored
+            recovery.save()
+        else:
+            identity = stored["assignment"]
+            if {**identity, "dispatch_id": assignment.dispatch_id} != assignment.identity():
+                raise ValueError("fulfillment reconciliation required: semantic assignment changed")
+            assignment = FulfillmentAssignment(**{key: value for key, value in identity.items() if key != "schema_version"})
         reads = []
-        deadline = time.monotonic() + 300
+        deadline = stored["deadline"]
+        cursor = 0
         while True:
+            if cursor < len(stored["records"]):
+                record = stored["records"][cursor]
+                cursor += 1
+                if record["error"]:
+                    raise ValueError(record["error"])
+                if record["reply"] is None:
+                    raise ValueError("fulfillment reconciliation required: external completion unknown")
+                accepted = record["reply"]
+                if accepted["action"] == "final":
+                    _verify_reads(channel, reads)
+                    return accepted, reads
+                if accepted["action"] == "blocked":
+                    raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
+                if record["read"] is None:
+                    raise ValueError("fulfillment reconciliation required: read completion unknown")
+                reads.append(record["read"])
+                _verify_reads(channel, reads)
+                continue
             _check_budget(usage, budget)
-            if time.monotonic() >= deadline:
+            if time.time() >= deadline:
                 raise ValueError("fulfillment inspection deadline exhausted")
             if _inputs(context) != binding:
                 raise ValueError("fulfillment inputs changed during inspection")
@@ -245,35 +341,49 @@ class ControlledFulfillment:
             prompt = role.body + "\nHOST_INPUT_JSON\n" + json.dumps(payload, allow_nan=False)
             if len(prompt.encode()) > 1024 * 1024:
                 raise ValueError("fulfillment inspection input exceeds provider limit")
+            record = {"reply": None, "read": None, "token_usage": None, "error": None}
+            stored["records"].append(record)
+            recovery.save()  # Durable intent before external execution.
+            cursor += 1
             with tempfile.TemporaryDirectory(prefix="echelon-fulfillment-inspection-") as private:
                 usage["dispatches"] += 1
                 try:
                     result = self._executor.run_inspection_turn(private, prompt,
                         frontmatter={key: role.frontmatter[key] for key in ("model_tier", "effort")},
-                        timeout_ms=max(1, int((deadline - time.monotonic()) * 1000)))
+                        timeout_ms=max(1, int((deadline - time.time()) * 1000)))
                 except BaseException:
                     usage["known"] = False
                     raise
             known = type(result.token_usage) is int and result.token_usage >= 0
             usage["known"] = usage["known"] and known
             usage["tokens"] += result.token_usage if known else 0
-            if result.exit_code != 0:
-                raise ValueError(f"fulfillment {step} provider failed: {result.stderr}")
-            _check_budget(usage, budget)
-            if time.monotonic() >= deadline:
-                raise ValueError("fulfillment inspection deadline exhausted")
-            if _inputs(context) != binding:
-                raise ValueError("fulfillment inputs changed during inspection")
-            _verify_reads(channel, reads)
-            accepted = parse_semantic_reply(result.stdout, assignment)
-            if accepted["action"] == "blocked":
-                raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
-            if accepted["action"] == "final":
-                return accepted, reads
-            if len(reads) >= 32:
-                raise ValueError("fulfillment inspection read limit exhausted")
-            request = accepted["request"]
-            reads.append({"request": request, "response": channel.request(request)})
+            record["token_usage"] = result.token_usage if known else None
+            try:
+                if result.exit_code != 0:
+                    raise ValueError(f"fulfillment {step} provider failed: {result.stderr}")
+                _check_budget(usage, budget)
+                if time.time() >= deadline:
+                    raise ValueError("fulfillment inspection deadline exhausted")
+                if _inputs(context) != binding:
+                    raise ValueError("fulfillment inputs changed during inspection")
+                _verify_reads(channel, reads)
+                accepted = parse_semantic_reply(result.stdout, assignment)
+                record["reply"] = accepted
+                if accepted["action"] == "blocked":
+                    raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
+                if accepted["action"] == "read":
+                    if len(reads) >= 32:
+                        raise ValueError("fulfillment inspection read limit exhausted")
+                    request = accepted["request"]
+                    record["read"] = {"request": request, "response": channel.request(request)}
+                    reads.append(record["read"])
+                recovery.save()
+                if accepted["action"] == "final":
+                    return accepted, reads
+            except (ValueError, OSError, RuntimeError, TypeError, KeyError, AttributeError) as exc:
+                record["error"] = str(exc) or type(exc).__name__
+                recovery.save()
+                raise
 
 
 def _check_budget(usage, budget):

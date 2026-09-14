@@ -76,7 +76,7 @@ assert not (context.spec_dir / 'fulfillment-report.md').exists()
 
 **Interfaces:** A fulfillment-local recovery record in the selected run owns binding, preparation digest, per-turn intent/result/usage and pending publication. Use existing `write_json_atomic` with the trusted workspace/run. Controller result adds cumulative `token_usage`, no reset on resumed calls. `publish_fulfillment_outputs(run_dir: Path, spec_dir: Path, outputs: dict[str, str]) -> None` admits exactly report/gaps names and replays exact pending bytes only.
 
-- [ ] Write RED tests for interrupted dispatch, validated receipt replay, changed role/profile/source/spec/evidence/scope, corrupt receipt and legacy in-flight state. Restart must neither reset state nor redispatch known/unknown completion.
+- [x] Write RED tests for interrupted dispatch, validated receipt replay, changed role/profile/source/spec/evidence/scope, corrupt receipt and legacy in-flight state. Restart must neither reset state nor redispatch known/unknown completion.
 
 ```python
 first = controller.run(context)
@@ -85,10 +85,10 @@ assert second.token_usage == first.token_usage
 assert executor.dispatch_count == first.dispatch_count
 ```
 
-- [ ] Persist run/step/dispatch identity, input fingerprints, admitted read transcript and token usage before moving to the next step. Refuse unknown completion and changed inputs. Preserve preparation outputs after their accepted digest rather than invoking the initializer or rerunning graphs on recovery.
-- [ ] Persist publication originals, exact intended bytes/hashes and state before the first canonical write. Accept each destination only at its original or pending hash; conflict blocks. Finish report and gaps before lifecycle/ledger acceptance. Test interruption before/after each write and pending-record corruption with real files.
-- [ ] Test zero-budget, unknown usage under finite budget, tightened budget on resume, and failed-call usage retention. Confirm recovery does not replenish read/turn/time allowances.
-- [ ] Run recovery plus Task 2 and durable JSON/lifecycle regressions; review and commit `feat: recover controlled fulfillment without redispatch`.
+- [x] Persist run/step/dispatch identity, input fingerprints, admitted read transcript and token usage before moving to the next step. Refuse unknown completion and changed inputs. Preserve preparation outputs after their accepted digest rather than invoking the initializer or rerunning graphs on recovery.
+- [x] Persist publication originals, exact intended bytes/hashes and state before the first canonical write. Accept each destination only at its original or pending hash; conflict blocks. Finish report and gaps before lifecycle/ledger acceptance. Test interruption before/after each write and pending-record corruption with real files.
+- [x] Test zero-budget, unknown usage under finite budget, tightened budget on resume, and failed-call usage retention. Confirm recovery does not replenish read/turn/time allowances.
+- [x] Run recovery plus Task 2 and durable JSON/lifecycle regressions; review and commit `feat: recover controlled fulfillment without redispatch`.
 
 ## Task 4 — Full/scoped runner integration with cache separation
 
@@ -124,6 +124,13 @@ approval gate between these already-approved phases. A required design expansion
 still stops for direction. Preserve branch/worktree; do not push or merge.
 
 ## Receipts
+
+- Task 3: **494 passed in 17.01s**, including 30 recovery cases and the
+  durable-write/lifecycle regressions. Independent review reproduced three
+  failures (early-admission accounting, CRLF originals, external observation
+  drift); seven RED cases preceded fixes. Focused re-review independently
+  confirmed all three fixes and reported no remaining findings. This remains
+  inactive until runner and delivery integration acceptance.
 
 - Baseline: 152 affected fulfillment/preparation/judgment/inspection tests passed
   in 4.07s. Task 1: missing module RED; 53 new semantic tests passed, followed by
