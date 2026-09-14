@@ -166,6 +166,7 @@ def init_verify_spec_run(
     reconcile: bool = False,
     dry_run: bool = False,
     timestamp: str | None = None,
+    verify_run_dir: Path | None = None,
 ) -> VerifySpecRunInitResult:
     project_root = project_root.resolve()
     spec_dir = spec_dir.resolve()
@@ -190,7 +191,7 @@ def init_verify_spec_run(
     if timestamp is not None:
         _require_safe_label("timestamp", timestamp)
     orchestration_root = _derive_orchestration_root(project_root, spec_dir)
-    verify_run_dir = _resolve_verify_run_dir(
+    verify_run_dir = Path(os.path.abspath(verify_run_dir)) if verify_run_dir is not None else _resolve_verify_run_dir(
         orchestration_root=orchestration_root,
         spec_id=spec_id,
         timestamp=timestamp,

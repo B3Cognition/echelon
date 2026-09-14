@@ -92,16 +92,16 @@ assert executor.dispatch_count == first.dispatch_count
 
 ## Task 4 — Full/scoped runner integration with cache separation
 
-**Files:** Modify `src/harness/fulfillment_runner.py`, `controlled_fulfillment.py`, `fulfillment_recovery.py`; create `tests/unit/test_controlled_fulfillment_runner.py`.
+**Files:** Modify `src/harness/fulfillment_runner.py`, `controlled_fulfillment.py`, `fulfillment_preparation.py`, `verify_spec_run.py`; isolate composition in `controlled_fulfillment_refresh.py`; create `tests/unit/test_controlled_fulfillment_runner.py`.
 
 **Interfaces:** `FulfillmentRunner(prompt_executor, *, controlled: bool = False)` keeps existing constructor behavior. `refresh` accepts optional containment-policy/budget/accounting context only for the controlled route. `FulfillmentRefreshResult` gains defaulted cumulative usage and operation identity fields without altering legacy consumers.
 
-- [ ] Write RED full/scoped tests through real `FulfillmentRunner.refresh`, using real reports, scoped plan/merge, lifecycle, ledger and cache. Controlled calls cannot resolve/execute legacy verify-spec prose.
-- [ ] Add early explicit controlled dispatch after existing common admission. Reuse full/scoped impact planning, full fallback, report validation, deferred-scope handling, reconciliation, stamping and ledger helpers. A controlled contract identity must separate both cache and ledger reuse from legacy evidence.
-- [ ] Select and durably bind the exact run before work; inspect existing recovery/state before any call to `init_verify_spec_run`. Keep explicit caller-run validation and source/workspace binding. Do not discover another run using “latest” during recovery.
-- [ ] Stage scoped rows, merge them over a pinned full-report snapshot and validate exact canonical IDs before publication. Preserve unaffected rows and base-full provenance. Full fallback still uses the controlled route. Test no-impact/cache and strict observer paths.
-- [ ] Test explicit reconciliation/dry-run, lifecycle completion only after publication, old cache rejection, changed input and publication conflicts. Feature-off and standalone CLI stay on their original path.
-- [ ] Run all fulfillment runner/reconciliation/ledger/scoped/judgment and prior new tests; review and commit `feat: integrate controlled full and scoped fulfillment`.
+- [x] Write RED full/scoped tests through real `FulfillmentRunner.refresh`, using real reports, scoped plan/merge, lifecycle, ledger and cache. Controlled calls cannot resolve/execute legacy verify-spec prose.
+- [x] Add early explicit controlled dispatch after existing common admission. Reuse full/scoped impact planning, full fallback, report validation, deferred-scope handling, reconciliation, stamping and ledger helpers. A controlled contract identity must separate both cache and ledger reuse from legacy evidence.
+- [x] Select and durably bind the exact run before work; inspect existing recovery/state before any call to `init_verify_spec_run`. Keep explicit caller-run validation and source/workspace binding. Do not discover another run using “latest” during recovery.
+- [x] Stage scoped rows, merge them over a pinned full-report snapshot and validate exact canonical IDs before publication. Preserve unaffected rows and base-full provenance. Full fallback still uses the controlled route. Test no-impact/cache and strict observer paths.
+- [x] Test explicit reconciliation/dry-run, lifecycle completion only after publication, old cache rejection, changed input and publication conflicts. Feature-off and standalone CLI stay on their original path.
+- [x] Run all fulfillment runner/reconciliation/ledger/scoped/judgment and prior new tests; review and commit `feat: integrate controlled full and scoped fulfillment`.
 
 ## Task 5 — Ralph opt-in, accounting and closure acceptance
 
@@ -124,6 +124,16 @@ approval gate between these already-approved phases. A required design expansion
 still stops for direction. Preserve branch/worktree; do not push or merge.
 
 ## Receipts
+
+- Task 4: **387 passed in 27.36s**, including 35 real runner cases. Independent
+  review exposed cache shortcuts around source/run identity, report content,
+  reconciliation and operation selection; RED tests preceded corrections and
+  focused re-review reported no remaining findings. Controlled refresh now
+  stages publication and ledger writes, separates semantic-profile provenance,
+  and never initializes an existing selected run. Automatic reconciliation
+  excludes host-mutated tasks only from path selection; exact task contents
+  remain admission-bound. Unknown interrupted reconciliation blocks rather
+  than resetting or guessing its effects. Delivery opt-in is not yet activated.
 
 - Task 3: **494 passed in 17.01s**, including 30 recovery cases and the
   durable-write/lifecycle regressions. Independent review reproduced three

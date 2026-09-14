@@ -92,7 +92,7 @@ def _regular_file(path: Path, *, required: bool = False) -> None:
         raise FulfillmentPreparationError(f"regular file required: {path.name}")
 
 
-def _validate_context(context: FulfillmentPreparationContext) -> dict[str, object]:
+def _validate_source_binding(context: FulfillmentPreparationContext) -> None:
     workspace = context.workspace_root.resolve(strict=True)
     source = _step("source root", context.source_root.resolve, strict=True)
     project = context.project_root.resolve(strict=True)
@@ -104,6 +104,21 @@ def _validate_context(context: FulfillmentPreparationContext) -> dict[str, objec
     if context.verify_run_dir.resolve() == workspace / "runs":
         raise FulfillmentPreparationError("verify run must be below runs")
     _contained_path(context.spec_dir, context.workspace_root, "spec")
+    matches = [item for item in discover_workspace(workspace).sources
+               if item.id == context.source_id and (workspace / item.path).resolve() == source]
+    if len(matches) != 1:
+        raise FulfillmentPreparationError("source identity does not match the workspace manifest")
+    if project != source:
+        _validate_harness_managed_worktree(project, workspace)
+    if not (set(spec_identity_aliases(context.spec_id)) &
+            set(spec_identity_aliases(context.spec_dir.name))):
+        raise FulfillmentPreparationError("spec identity does not match its directory")
+
+
+def _validate_context(context: FulfillmentPreparationContext) -> dict[str, object]:
+    _validate_source_binding(context)
+    workspace = context.workspace_root.resolve(strict=True)
+    project = context.project_root.resolve(strict=True)
     for name in _OUTPUTS:
         _regular_file(context.verify_run_dir / name, required=name == "state.json")
     for name in ("spec.md", "tasks.md", "plan.md", "coverage-map.md"):
@@ -113,12 +128,6 @@ def _validate_context(context: FulfillmentPreparationContext) -> dict[str, objec
         path = context.verify_run_dir / name
         if path.exists() or path.is_symlink():
             raise FulfillmentPreparationError(f"prior semantic artifact requires recovery: {name}")
-    matches = [item for item in discover_workspace(workspace).sources
-               if item.id == context.source_id and (workspace / item.path).resolve() == source]
-    if len(matches) != 1:
-        raise FulfillmentPreparationError("source identity does not match the workspace manifest")
-    if project != source:
-        _validate_harness_managed_worktree(project, workspace)
     if context.scope not in {"full", "scoped"}:
         raise FulfillmentPreparationError("unsupported verify scope")
     if context.scope == "full" and (context.scoped_ids or context.base_full_verify_commit):
@@ -146,9 +155,6 @@ def _validate_context(context: FulfillmentPreparationContext) -> dict[str, objec
     for key, value in expected.items():
         if state.get(key) != value:
             raise FulfillmentPreparationError(f"verify run {key} binding mismatch")
-    if not (set(spec_identity_aliases(context.spec_id)) &
-            set(spec_identity_aliases(context.spec_dir.name))):
-        raise FulfillmentPreparationError("spec identity does not match its directory")
     _step("coverage observation", load_preparation_observation,
         spec_dir=context.spec_dir, verify_run_dir=context.verify_run_dir,
         observer_required=context.observer_required, observation_path=context.observation_path)

@@ -106,6 +106,23 @@ def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _read_channel(context, forbidden_paths):
+    run = context.verify_run_dir
+    roots = {"worktree": context.project_root, "spec": context.spec_dir, "evidence": run}
+    denied = (*forbidden_paths, *(context.project_root / name for name in CONTROL_ROOTS | CONTROL_PATHS),
+              run / "state.json", run / "controlled-fulfillment.json", run / "controlled-fulfillment.lock",
+              run / "fulfillment-publication.json", run / "controlled-refresh.json",
+              *(run / name for name in (
+                  "task-requirement-map.candidates.json", "task-requirement-map-plan.json", "task-requirement-map-plan.md",
+                  "task-requirement-map-applied.json", "task-requirement-map-applied.md",
+                  "progress-reconciliation-candidates.json", "progress-reconciliation-plan.json", "progress-reconciliation-plan.md",
+                  "progress-reconciliation-applied.json", "progress-reconciliation-applied.md")),
+              *(run / name for name in _STAGED_OUTPUTS),
+              context.spec_dir / "verified-fulfillment-ledger.json",
+              context.spec_dir / "fulfillment-report.md", context.spec_dir / "fulfillment-gaps.md")
+    return BoundedReadChannel(roots, forbidden_paths=denied)
+
+
 class ControlledFulfillment:
     """Stage a full/scoped semantic result; no canonical writes or active callers."""
 
@@ -114,12 +131,12 @@ class ControlledFulfillment:
         self._project_dir = Path(project_dir)
 
     def run(self, context: FulfillmentPreparationContext, *, forbidden_paths: tuple[Path, ...] = (),
-            token_budget: float | None = None) -> ControlledFulfillmentResult:
+            token_budget: float | None = None, _recovery: FulfillmentRecovery | None = None) -> ControlledFulfillmentResult:
         usage = {"tokens": 0, "known": True, "dispatches": 0}
         stack = ExitStack()
         try:
             try:
-                recovery = stack.enter_context(FulfillmentRecovery(context.verify_run_dir))
+                recovery = _recovery or stack.enter_context(FulfillmentRecovery(context.verify_run_dir))
                 saved = recovery.load()
                 if saved is not None:
                     usage.update(recovery.usage())
@@ -191,13 +208,7 @@ class ControlledFulfillment:
             data = {"canonical_requirements": [row for row in canonical if row["id"] in scope],
                     "deterministic_map": deterministic, "coverage": _json(run / "coverage-evidence.json"),
                     "evidence_files": list(_EVIDENCE_INPUTS), "spec_files": list(_SPEC_INPUTS)}
-            roots = {"worktree": context.project_root, "spec": context.spec_dir, "evidence": run}
-            denied = (*forbidden_paths, *(context.project_root / name for name in CONTROL_ROOTS | CONTROL_PATHS),
-                      run / "state.json", run / "controlled-fulfillment.json", run / "controlled-fulfillment.lock",
-                      run / "fulfillment-publication.json",
-                      *(run / name for name in _STAGED_OUTPUTS),
-                      context.spec_dir / "fulfillment-report.md", context.spec_dir / "fulfillment-gaps.md")
-            with BoundedReadChannel(roots, forbidden_paths=denied) as channel:
+            with _read_channel(context, forbidden_paths) as channel:
                 if recovery.data["phase"] == "staged":
                     if _files(run, _STAGED_OUTPUTS) != recovery.data["outputs"]:
                         raise ValueError("fulfillment reconciliation required: staged artifacts changed")
