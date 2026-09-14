@@ -193,3 +193,37 @@ def test_filesystem_case_alias_cannot_bypass_denied_path(tmp_path, name, alias, 
         with BoundedReadChannel({"evidence": tmp_path}, forbidden_paths=(secret,)) as channel:
             with pytest.raises(InspectionReadError, match="denied"):
                 _read(channel, f"{alias}/audit.md")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("operation", ["root", "descendant", "read", "listing", "file"])
+def test_macos_firmlink_cannot_bypass_denied_path(tmp_path, reverse, operation):
+    from pathlib import Path
+    from harness.inspection_io import BoundedReadChannel, InspectionReadError
+    source = tmp_path.resolve()
+    alternate = Path("/System/Volumes/Data") / source.relative_to("/")
+    if not alternate.exists() or not os.path.samefile(source, alternate):
+        pytest.skip("filesystem does not expose macOS firmlink aliases")
+    (source / "secret/nested").mkdir(parents=True)
+    (source / "secret/audit.md").write_text("private")
+    if reverse:
+        source, alternate = alternate, source
+    denied = source / "secret"
+    root = alternate
+    if operation in {"root", "descendant"}:
+        root = alternate / "secret"
+        if operation == "descendant":
+            root = root / "nested"
+        with pytest.raises(InspectionReadError, match="denied"):
+            with BoundedReadChannel({"evidence": root}, forbidden_paths=(denied,)):
+                pytest.fail("denied alias was admitted")
+    else:
+        if operation == "file":
+            denied = denied / "audit.md"
+        with BoundedReadChannel({"evidence": root}, forbidden_paths=(denied,)) as channel:
+            if operation == "listing":
+                assert channel.request({"op": "list_directory", "root": "evidence", "path": "."}) == {
+                    "status": "ok", "entries": []}
+            else:
+                with pytest.raises(InspectionReadError, match="denied"):
+                    _read(channel, "secret/audit.md")

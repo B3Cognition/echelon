@@ -44,13 +44,22 @@ class BoundedReadChannel:
         except (TypeError, ValueError, OSError) as exc:
             raise InspectionReadError("inspection denied paths are invalid") from exc
         self._denied_parts = tuple(_policy_parts(path) for path in self._forbidden)
+        self._denied_locations = tuple(
+            location for path in self._forbidden for location in _policy_locations(path)
+        )
         if any(self._is_denied(path) for path in self._paths.values()):
             raise InspectionReadError("inspection read root is denied")
         self._roots: dict[str, int] = {}
 
     def _is_denied(self, path: Path) -> bool:
         parts = _policy_parts(path)
-        return any(parts[:len(denied)] == denied for denied in self._denied_parts)
+        if any(parts[:len(denied)] == denied for denied in self._denied_parts):
+            return True
+        return any(
+            identity == denied_identity and suffix[:len(denied_suffix)] == denied_suffix
+            for identity, suffix in (_policy_locations(path) if self._forbidden else ())
+            for denied_identity, denied_suffix in self._denied_locations
+        )
 
     def __enter__(self) -> BoundedReadChannel:
         if self._roots:
@@ -110,8 +119,32 @@ class BoundedReadChannel:
                 line_count=line_count,
             )
         parent = _policy_parts(candidate)
-        denied_names = frozenset(parts[-1] for parts in self._denied_parts if parts[:-1] == parent)
-        return _list_directory(self._roots[root], components, denied_names=denied_names)
+        denied_names = {parts[-1] for parts in self._denied_parts if parts[:-1] == parent}
+        for identity, suffix in (_policy_locations(candidate) if self._forbidden else ()):
+            denied_names.update(
+                denied_suffix[-1]
+                for denied_identity, denied_suffix in self._denied_locations
+                if identity == denied_identity and denied_suffix and denied_suffix[:-1] == suffix
+            )
+        return _list_directory(self._roots[root], components, denied_names=frozenset(denied_names))
+
+
+def _policy_locations(path: Path) -> tuple[tuple[tuple[int, int], tuple[str, ...]], ...]:
+    # Firmlinks (and other filesystem aliases) need identity, not realpath or
+    # spelling, comparisons. Anchor suffixes at every existing ancestor so an
+    # absent denied leaf is protected too. This metadata-only check grants no
+    # access: actual reads still traverse descriptor-pinned, no-follow paths.
+    locations = []
+    parts = _policy_parts(path)
+    for ancestor in (path, *path.parents):
+        try:
+            info = os.stat(ancestor, follow_symlinks=False)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as exc:
+            raise InspectionReadError("inspection denied-path identity is unavailable") from exc
+        locations.append(((info.st_dev, info.st_ino), parts[len(ancestor.parts):]))
+    return tuple(locations)
 
 
 def _policy_parts(path: Path) -> tuple[str, ...]:
