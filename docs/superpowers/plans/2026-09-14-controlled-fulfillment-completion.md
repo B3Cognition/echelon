@@ -1,6 +1,6 @@
 # Controlled Fulfillment Completion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for the user's selected inline execution. Steps use checkbox (`- [ ]`) syntax for tracking. Implement sequentially; use scoped independent read-only reviews at phase exits.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for the user's selected inline execution. Steps use checkbox (`- [x]`) syntax for tracking. Implement sequentially; use scoped independent read-only reviews at phase exits.
 
 **Goal:** Finish the approved controlled fulfillment path through full/scoped execution, recovery, and Ralph integration before live testing.
 
@@ -34,7 +34,7 @@ Python: `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python`. Existin
 
 **Interfaces:** `FulfillmentAssignment(run_id: str, step: str, dispatch_id: str, input_fingerprint: str, assigned_ids: tuple[str, ...])`, with `identity() -> dict`. `validate_semantic_result(value: object, assignment: FulfillmentAssignment) -> dict`; `render_implementation_map(rows: list[dict]) -> str`; `render_fallback_report(rows: list[dict]) -> str`.
 
-- [ ] Write RED tests for exact assignment binding, strict JSON objects, duplicate keys/IDs, omitted/extra IDs, schema version/type, step, invalid enums, booleans, newlines/table separators/control characters, invented TASK-PROGRESS and extra execution fields. Test rendered rows with real `_implementation_rows` and `_fallback_report_rows` consumers.
+- [x] Write RED tests for exact assignment binding, strict JSON objects, duplicate keys/IDs, omitted/extra IDs, schema version/type, step, invalid enums, booleans, newlines/table separators/control characters, invented TASK-PROGRESS and extra execution fields. Test rendered rows with real `_implementation_rows` and `_fallback_report_rows` consumers.
 
 ```python
 assignment = FulfillmentAssignment('run', 'judge', 'dispatch', 'a' * 64, ('FR-001', 'FR-1000000'))
@@ -45,10 +45,10 @@ value = {**assignment.identity(), 'action': 'final', 'rows': [
 assert validate_semantic_result(value, assignment)['rows'][1]['id'] == 'FR-1000000'
 ```
 
-- [ ] Run `python -m pytest tests/unit/test_fulfillment_semantics.py -xq`; confirm missing boundary RED.
-- [ ] Implement versioned assignment validation, closed result schemas, explicit blocked/read/final envelopes and literal safe cell rendering. Mapper rows use the existing ten columns; judge statuses exclude model-owned DEFERRED_SCOPE. Host-owned deterministic leads/semantics remain separate from new verified citations.
-- [ ] Author the two neutral roles with paired ALWAYS/NEVER rules. Transfer existing evidence, threshold, deferred/observer and bounded-inspection semantics. Request JSON replies, not file writes or phase dispatch. Include no invocation-specific delivery branch.
-- [ ] Run new tests plus `test_judgment_prepass.py`, `test_prosaic_prompt_loader.py`; commit `feat: define neutral fulfillment semantic contracts`.
+- [x] Run `python -m pytest tests/unit/test_fulfillment_semantics.py -xq`; confirm missing boundary RED.
+- [x] Implement versioned assignment validation, closed result schemas, explicit blocked/read/final envelopes and literal safe cell rendering. Mapper rows use the existing ten columns; judge statuses exclude model-owned DEFERRED_SCOPE. Host-owned deterministic leads/semantics remain separate from new verified citations.
+- [x] Author the two neutral roles with paired ALWAYS/NEVER rules. Transfer existing evidence, threshold, deferred/observer and bounded-inspection semantics. Request JSON replies, not file writes or phase dispatch. Include no invocation-specific delivery branch.
+- [x] Run new tests plus `test_judgment_prepass.py`, `test_prosaic_prompt_loader.py`; commit `feat: define neutral fulfillment semantic contracts`.
 
 ## Task 2 — Host-serviced semantic sequence and staged full result
 
@@ -56,7 +56,7 @@ assert validate_semantic_result(value, assignment)['rows'][1]['id'] == 'FR-10000
 
 **Interfaces:** `ControlledFulfillment(executor, project_dir: Path)`; `run(context: FulfillmentPreparationContext, *, forbidden_paths: tuple[Path, ...] = (), token_budget: float | None = None) -> ControlledFulfillmentResult`. Result includes `exit_code`, `reason`, `report_path`, `gaps_path`, `token_usage: int | None`, and dispatch evidence. Outputs stay in the explicit selected run; no canonical publication in this task.
 
-- [ ] Write RED consuming tests using `preparation_context` and `scripted_graph_tools` from the preparation tests. Script only external Prosaic/provider execution. Assert actual prepass/report row sets, exact IDs and unchanged source/spec outputs.
+- [x] Write RED consuming tests using `preparation_context` and `scripted_graph_tools` from the preparation tests. Script only external Prosaic/provider execution. Assert actual prepass/report row sets, exact IDs and unchanged source/spec outputs.
 
 ```python
 result = ControlledFulfillment(executor, context.workspace_root).run(context)
@@ -65,10 +65,10 @@ assert result.report_path.parent == context.verify_run_dir
 assert not (context.spec_dir / 'fulfillment-report.md').exists()
 ```
 
-- [ ] Run the new tests RED; implement preparation → mapper → mechanical prepass → optional judge → existing assembler. Bind prompt/role/evidence fingerprints and exact assigned IDs; use new private cwd for each no-tools turn. Permit only host-named worktree/spec/evidence roots and supplied exclusions. Use bounded structured reads, maximum 32 reads per semantic role, 300-second total role deadline, existing provider caps, and explicit failure at exhaustion.
-- [ ] Preserve graph candidates and their evidence semantics in host materialization; require direct-read citations for claimed verified evidence. Keep active deferred IDs out of model authority. No fallback IDs means no judge dispatch. Use existing `summarize_task_progress` for host-owned TASK-PROGRESS eligibility, retaining task/case context in gaps.
-- [ ] Test malformed/tool/provider/timeout/overflow/denied-read failure, absent roles, unsupported providers, input mutation, strict observation, graph degradation, finite/unknown budget and unsuccessful usage. All invalid paths retain prior canonical outputs.
-- [ ] Run new tests with preparation, judgment, inspection and triage regressions; obtain scoped independent read-only review; commit `feat: stage Python-owned fulfillment results`.
+- [x] Run the new tests RED; implement preparation → mapper → mechanical prepass → optional judge → existing assembler. Bind prompt/role/evidence fingerprints and exact assigned IDs; use new private cwd for each no-tools turn. Permit only host-named worktree/spec/evidence roots and supplied exclusions. Use bounded structured reads, maximum 32 reads per semantic role, 300-second total role deadline, existing provider caps, and explicit failure at exhaustion.
+- [x] Preserve graph candidates and their evidence semantics in host materialization; require direct-read citations for claimed verified evidence. Keep active deferred IDs out of model authority. No fallback IDs means no judge dispatch. Use existing `summarize_task_progress` for host-owned TASK-PROGRESS eligibility, retaining task/case context in gaps.
+- [x] Test malformed/tool/provider/timeout/overflow/denied-read failure, absent roles, unsupported providers, input mutation, strict observation, graph degradation, finite/unknown budget and unsuccessful usage. All invalid paths retain prior canonical outputs.
+- [x] Run new tests with preparation, judgment, inspection and triage regressions; obtain scoped independent read-only review; commit `feat: stage Python-owned fulfillment results`.
 
 ## Task 3 — Durable semantic recovery and exact publication
 
@@ -122,3 +122,26 @@ decisions/host reads/validation real and script only external boundaries. The us
 has selected inline completion; there is no new execution-choice or live-test
 approval gate between these already-approved phases. A required design expansion
 still stops for direction. Preserve branch/worktree; do not push or merge.
+
+## Receipts
+
+- Baseline: 152 affected fulfillment/preparation/judgment/inspection tests passed
+  in 4.07s. Task 1: missing module RED; 53 new semantic tests passed, followed by
+  97 affected tests in 0.77s. Both new artifacts were successfully inspected by
+  the real installed Prosaic CLI without deployment. Commit `fb234103`.
+- Task 2: missing controller RED, then actual staged report/prepass consumption.
+  Ten safety RED cases covered unsafe staged destinations, final-turn evidence
+  mutation and unknown usage on a lost process response. Independent review
+  found judge-citation admission, selected-run-state binding and host-created
+  evidence-listing drift; eight RED cases reproduced these before correction.
+  Focused re-review independently reproduced the fixes and found no remaining
+  findings. Additional RED cases retained runtime threshold classification when
+  CodeGraph degrades and coverage test-case IDs in repair context.
+- Final Tasks 1–2 affected batch: **417 passed in 11.72s**, including 41 new
+  controller cases and six real Claude/Codex adapter/capture cases with scripted
+  model processes. This is staged, inactive acceptance only; no canonical
+  publication, recovery, Ralph integration or live-provider claim.
+- A final review reproduction showed the legacy audit parser omits literal
+  `---` inside requirement text. Threshold classification now consumes canonical
+  structured rows through the existing classifier. The original reproduction
+  and degraded-threshold test pass; focused review reported no remaining findings.
