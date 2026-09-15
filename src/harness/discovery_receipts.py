@@ -20,12 +20,12 @@ class DiscoveryReceiptFile:
         from harness.discovery_producer import producer_key
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
-        if producer == "tracker":
+        if producer in {"tracker", "why1"}:
             if (type(round_operation_id) is not str
-                    or re.fullmatch(r"tracker-[0-9a-f]{32}", round_operation_id) is None
+                    or re.fullmatch(producer + r"-[0-9a-f]{32}", round_operation_id) is None
                     or repair_unit is not None):
                 raise ValueError("Tracker receipts require an exact round operation")
-            name = name.replace("discovery-", "tracker-", 1) + "-" + round_operation_id
+            name = name.replace("discovery-", producer + "-", 1) + "-" + round_operation_id
         else:
             producer_key(producer, "operation")
             if round_operation_id is not None:

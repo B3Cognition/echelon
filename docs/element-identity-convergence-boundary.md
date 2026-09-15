@@ -1194,3 +1194,41 @@ regression groups. Model/Prosaic processes are scripted, while state, identity,
 publication, checkpoint and completion owners are real. This is not a full-suite,
 live-provider, installation or activation claim. WHY1, authenticated review-origin
 repair/return and the original renumbering/evidence acceptance remain next.
+
+### Managed WHY1 completed (2026-09-15)
+
+This supersedes the pending WHY1 status above. The approved
+[managed WHY1 plan](superpowers/plans/2026-09-15-managed-why1.md) extends internal
+greenfield selection through assumption challenge. It publishes assumption-review.md,
+optional issues.md and justified new unknown definitions. Assumptions and existing
+unknown definitions stay read-only, including exact bytes and historical evidence.
+New U/ISS labels use the existing six-digit-minimum, unbounded-width authority;
+issue titles/subjects remain immutable. Historical issue-report occurrences keep
+their recorded revisions even when the current identity head has advanced.
+
+Reports and routing are bound to exact captured inputs, including existing
+reasoning context, candidate review and accepted completion proof. PASS reaches
+Constitution; FAIL/BLOCKED use native Discovery iteration/forced-convergence
+routing. Neither destination executes in this checkpoint. STOP_AND_ASK reuses
+the existing human-input owner, unchanged guided/semi/Banzai eligibility and
+protected round/clarification publication. Tracker and prior WHY1 questions,
+IDs, journals, evidence and cumulative charges survive re-entry and recovery.
+
+The completion owner admits v6 WHY1 and v7 clarification bindings while preserving
+old formats. Before publication, missing selected journals and changed sources
+fail closed. After release, retained database completion proof remains authority;
+mutable process journals cannot replace that proof. A review-origin Discovery
+route stops explicitly rather than replaying the already accepted initial run.
+
+All 44 current WHY1 acceptance cases have passing partitioned results, including
+Codex/Claude × guided/semi/Banzai × checkpoints off/on. The linked plan records
+exact results, test-expectation corrections, independent review and affected
+regressions (558 shared, 571 execution/input, 29 quality/template and six existing
+Tracker acceptance cases). External provider processes are scripted; core state,
+identity, publication and recovery owners are real. No full-suite or live-run
+claim is made. Public/default selection, deployment and activation are unchanged.
+
+Authenticated review-origin repair/return remains next, followed by downstream
+managed continuation and the original renumbering/evidence acceptance. Do not
+replace the completed source, identity, clarification or round owners to implement
+those boundaries. Constitution execution and rollout are not completed here.

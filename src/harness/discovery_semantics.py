@@ -16,6 +16,7 @@ DISCOVERY_ROLES = {
     "boundaries.md": "references", "reference-architectures.md": "references",
 }
 TRACKER_OUTPUTS = {"user-intent.md": "intent", "stakeholder-model.md": "references"}
+WHY1_OUTPUTS = {"assumption-review.md": "references", "issues.md": "issues", "unknowns.md": "unknowns"}
 _MAX_REPLY_BYTES = 256 * 1024
 
 
@@ -23,11 +24,22 @@ def artifact_roles(producer):
     from harness.discovery_producer import producer_key
     # Semantic decoding is not producer selection. Tracker execution remains
     # closed until its retained round/publication owners admit it separately.
-    if producer != "tracker":
+    if producer not in {"tracker", "why1"}:
         producer_key(producer, "operation")
     return DISCOVERY_ROLES if producer == "discovery" else {
         **DISCOVERY_ROLES, "contradictions-and-gaps.md": "references", "risks.md": "references",
-        **({**TRACKER_OUTPUTS, "feature-policy-reconciliation.md": "references"} if producer == "tracker" else {})}
+        **({**TRACKER_OUTPUTS, "feature-policy-reconciliation.md": "references"} if producer in {"tracker", "why1"} else {}),
+        **(WHY1_OUTPUTS if producer == "why1" else {})}
+
+
+def identity_kinds(producer):
+    if producer == "why1":
+        return {"U", "ISS"}
+    return {"UI", "II"} if producer == "tracker" else {"U", "A"}
+
+
+def optional_artifacts(producer):
+    return {"issues.md"} if producer == "why1" else {"stakeholder-model.md"} if producer == "tracker" else set()
 
 
 def _plain(value):
@@ -39,7 +51,7 @@ def _plain(value):
 
 def _discovery_id(value, producer="discovery"):
     label(value)
-    kinds = {"UI", "II"} if producer == "tracker" else {"U", "A"}
+    kinds = identity_kinds(producer)
     if value.split("-", 1)[0] not in kinds:
         raise ValueError("Tracker supports only UI/II identities" if producer == "tracker"
             else "discovery supports only U/A identities")
@@ -78,6 +90,9 @@ class DiscoveryAssignment:
         if self.producer == "tracker" and ("user-intent.md" not in self.artifact_paths
                 or not set(self.artifact_paths) <= set(TRACKER_OUTPUTS)):
             raise ValueError("Tracker can author only its assigned intent outputs")
+        if self.producer == "why1" and ("assumption-review.md" not in self.artifact_paths
+                or not set(self.artifact_paths) <= set(WHY1_OUTPUTS)):
+            raise ValueError("WHY1 can author only its review, issues and unknown additions")
         if type(self.editable_revisions) is not tuple or type(self.assigned_ids) is not tuple:
             raise ValueError("discovery selections must be immutable tuples")
         selected = []
@@ -85,17 +100,19 @@ class DiscoveryAssignment:
             if type(pair) is not tuple or len(pair) != 2:
                 raise ValueError("invalid editable revision")
             _discovery_id(pair[0], self.producer)
+            if self.producer == "why1" and not pair[0].startswith("ISS-"):
+                raise ValueError("WHY1 cannot revise existing unknowns or assumptions")
             revision(pair[1])
             selected.append(pair[0])
         for item in self.assigned_ids:
             _discovery_id(item, self.producer)
         if len(set(selected)) != len(selected) or len(set(self.assigned_ids)) != len(self.assigned_ids):
             raise ValueError("duplicate discovery selection")
-        if self.producer == "tracker" and self.step == "review":
+        if self.producer in {"tracker", "why1"} and self.step == "review":
             if (type(self.routing) is not tuple or len(self.routing) != 4
                     or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
                 raise ValueError("Tracker review requires exact immutable routing")
-            _tracker_routing(dict(self.routing))
+            _tracker_routing(dict(self.routing), self.producer)
         elif self.routing is not None:
             raise ValueError("routing can be bound only to a Tracker review")
         result = dict(schema_version=1, operation_id=self.operation_id, dispatch_id=self.dispatch_id,
@@ -103,7 +120,7 @@ class DiscoveryAssignment:
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
         if self.producer != "discovery":
-            result.update(schema_version=3 if self.producer == "tracker" else 2, producer=self.producer)
+            result.update(schema_version=4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
         if self.routing is not None:
             result["routing"] = dict(self.routing)
         return result
@@ -118,11 +135,12 @@ def _proposal(value, assignment):
         _object(item, ("key", "kind", "subject", "caption"))
         if type(item["key"]) is not str or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", item["key"]):
             raise ValueError("invalid discovery proposal handle")
-        if type(item["kind"]) is not str or item["kind"] not in (
-                {"UI", "II"} if assignment.producer == "tracker" else {"U", "A"}):
+        if type(item["kind"]) is not str or item["kind"] not in identity_kinds(assignment.producer):
             raise ValueError("invalid discovery proposal kind")
         for field in ("subject", "caption"):
             _plain(item[field])
+        if assignment.producer == "why1" and item["kind"] == "ISS" and item["subject"] != item["caption"]:
+            raise ValueError("issue subject must equal its immutable report title")
         keys.append(item["key"])
     for item in value["revisions"]:
         _object(item, ("id", "expected_revision"))
@@ -140,20 +158,22 @@ def _proposal(value, assignment):
 def _author(value, assignment):
     _object(value["artifacts"], assignment.artifact_paths)
     for path, content in value["artifacts"].items():
-        if assignment.producer == "tracker" and path == "stakeholder-model.md" and content is None:
+        if path in optional_artifacts(assignment.producer) and content is None:
             continue
         if type(content) is not str or "\x00" in content:
             raise ValueError("discovery artifact must be exact UTF-8 text without NUL")
         content.encode("utf-8")
-    if assignment.producer == "tracker":
-        if not value["artifacts"]["user-intent.md"].strip():
-            raise ValueError("Tracker requires nonblank intent output")
-        _tracker_routing(value["routing"])
+    if assignment.producer in {"tracker", "why1"}:
+        required = "assumption-review.md" if assignment.producer == "why1" else "user-intent.md"
+        if not value["artifacts"][required].strip():
+            raise ValueError("review/intent output must be nonblank")
+        _tracker_routing(value["routing"], assignment.producer)
 
 
-def _tracker_routing(value):
+def _tracker_routing(value, producer="tracker"):
     _object(value, ("verdict", "question", "recommended_answer", "risk_level"))
-    if type(value["verdict"]) is not str or value["verdict"] not in {"ALIGNED", "DRIFT", "STOP_AND_ASK"}:
+    verdicts = {"PASS", "FAIL", "STOP_AND_ASK", "BLOCKED"} if producer == "why1" else {"ALIGNED", "DRIFT", "STOP_AND_ASK"}
+    if type(value["verdict"]) is not str or value["verdict"] not in verdicts:
         raise ValueError("invalid Tracker routing verdict")
     if value["verdict"] != "STOP_AND_ASK":
         if any(value[key] is not None for key in ("question", "recommended_answer", "risk_level")):
@@ -214,7 +234,7 @@ def validate_discovery_reply(value: object, assignment: DiscoveryAssignment) -> 
             raise ValueError("invalid discovery action")
         extra = {"new_subjects", "revisions"} if assignment.step == "propose" else (
             {"artifacts"} if assignment.step == "author" else {"verdict", "reason", "assessments"})
-        if assignment.producer == "tracker" and assignment.step == "author":
+        if assignment.producer in {"tracker", "why1"} and assignment.step == "author":
             extra.add("routing")
         fields = extra if action == "final" else {"request"} if action == "read" else {"reason"}
         if action not in {"final", "read", "blocked"}:
@@ -238,9 +258,9 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
             raise ValueError("invalid saved discovery assignment")
         fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
             "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-        if value["schema_version"] in {2, 3}:
+        if value["schema_version"] in {2, 3, 4}:
             fields.add("producer")
-        if value["schema_version"] == 3 and value.get("step") == "review":
+        if value["schema_version"] in {3, 4} and value.get("step") == "review":
             fields.add("routing")
         _object(value, fields)
         if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
@@ -248,7 +268,7 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
         if any(type(pair) is not list or len(pair) != 2 for pair in value["editable_revisions"]):
             raise ValueError("invalid saved editable revision")
         if "routing" in value:
-            _tracker_routing(value["routing"])
+            _tracker_routing(value["routing"], value.get("producer"))
         selected = DiscoveryAssignment(**{key: (
             tuple(tuple(pair) for pair in item) if key == "editable_revisions"
             else tuple(item) if key in {"artifact_paths", "assigned_ids"}

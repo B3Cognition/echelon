@@ -137,7 +137,8 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     authored = {artifact.path: artifact.after_text for artifact in candidate.artifacts
         if artifact.path in binding["artifact_paths"]}
     missing = set(binding["artifact_paths"]) - set(authored)
-    if (missing and (producer != "tracker" or missing != {"stakeholder-model.md"})) or any(text is None for text in authored.values()):
+    from harness.discovery_semantics import optional_artifacts
+    if not missing <= optional_artifacts(producer) or any(text is None for text in authored.values()):
         raise ValueError("reviewed discovery outputs missing")
     writes = {selection["spec_path"] + "/" + name: text.encode("utf-8") for name, text in authored.items()}
     provisional = _seal(root, state_store.squad_dir, writes, modes)
@@ -164,9 +165,10 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         graph_sha256=hashlib.sha256(graph).hexdigest())
     if producer == "synthesizer":
         recovery_fields.update(version=3, producer=producer, source_completion=synthesis_source(state))
-    if producer == "tracker":
-        recovery_fields.update(version=4, producer=producer, source_completion=tracker_input_source(state),
-            resolution=tracker_round(state)["resolution"])
+    if producer in {"tracker", "why1"}:
+        recovery_fields.update(version=6 if producer == "why1" else 4, producer=producer,
+            source_completion=tracker_input_source(state, producer=producer),
+            resolution=tracker_round(state, producer=producer)["resolution"])
     recovery = json.dumps(recovery_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     context = observed["source_context"]
     request = PublicationIntentRequest(publication.marker.manifest_sha256, recovery, candidate.operations,

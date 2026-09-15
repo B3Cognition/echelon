@@ -12,11 +12,18 @@ SOURCE_FIELDS = ("dispatch_id", "completion_intent_sha256", "completion_receipts
 TRACKER_KEY = "managed_tracker_rounds"
 
 
-def tracker_rounds(state):
+def rounds_key(producer):
+    if producer not in {"tracker", "why1"}:
+        raise ValueError("unsupported round producer")
+    return "managed_" + producer + "_rounds"
+
+
+def tracker_rounds(state, producer="tracker"):
     """Validate retained selection structure; component owners validate payloads."""
-    value = state.get(TRACKER_KEY)
+    key = rounds_key(producer)
+    value = state.get(key)
     if value is None:
-        if TRACKER_KEY in state:
+        if key in state:
             raise ValueError("invalid Tracker rounds")
         return None
     if (type(value) is not dict or set(value) != {"schema_version", "active", "rounds"}
@@ -26,7 +33,7 @@ def tracker_rounds(state):
             or bootstrap_from_state(state) is None or "managed_identity" not in state):
         raise ValueError("invalid Tracker rounds")
     for operation_id, row in value["rounds"].items():
-        if (type(operation_id) is not str or re.fullmatch(r"tracker-[0-9a-f]{32}", operation_id) is None
+        if (type(operation_id) is not str or re.fullmatch(producer + r"-[0-9a-f]{32}", operation_id) is None
                 or type(row) is not dict or set(row) != {"source", "resolution", "operation", "turns", "predecessor"}):
             raise ValueError("invalid retained Tracker round")
         source = row["source"]
@@ -36,7 +43,7 @@ def tracker_rounds(state):
             size = 32 if key == "dispatch_id" else 64
             if type(digest) is not str or re.fullmatch(r"[0-9a-f]{%d}" % size, digest) is None:
                 raise ValueError("invalid Tracker parent digest")
-        if operation_id != "tracker-" + source["dispatch_id"]:
+        if operation_id != producer + "-" + source["dispatch_id"]:
             raise ValueError("Tracker round parent changed")
         resolution = row["resolution"]
         predecessor = row["predecessor"]
@@ -50,7 +57,7 @@ def tracker_rounds(state):
             decision = validate_blocked_decision(resolution["decision"])
             receipt = resolution["completion"]
             if (decision != resolution["decision"] or decision["status"] != "resolved"
-                    or decision["source_phase"] != "phase1-tracker" or type(receipt) is not dict
+                    or decision["source_phase"] != "phase1-" + producer or type(receipt) is not dict
                     or receipt.get("decision_id") != decision["id"]):
                 raise ValueError("invalid Tracker resolved decision")
             if (set(receipt) != {"schema_version", "decision_id", "completion_id", "intent_sha256",
@@ -81,8 +88,8 @@ def tracker_rounds(state):
     return deepcopy(value)
 
 
-def tracker_round(state, operation_id=None):
-    rounds = tracker_rounds(state)
+def tracker_round(state, operation_id=None, *, producer="tracker"):
+    rounds = tracker_rounds(state, producer)
     if rounds is None:
         if operation_id is not None:
             raise ValueError("Tracker round not retained")
@@ -93,8 +100,8 @@ def tracker_round(state, operation_id=None):
     return rounds["rounds"][key]
 
 
-def tracker_input_source(state, operation_id=None):
-    row = tracker_round(state, operation_id)
+def tracker_input_source(state, operation_id=None, *, producer="tracker"):
+    row = tracker_round(state, operation_id, producer=producer)
     if row["resolution"] is None:
         return row["source"]
     receipt = row["resolution"]["completion"]
@@ -104,24 +111,24 @@ def tracker_input_source(state, operation_id=None):
 
 
 def producer_component(state, producer, suffix, *, operation_id=None):
-    if producer != "tracker":
+    if producer not in {"tracker", "why1"}:
         if operation_id is not None and operation_id != producer_operation_id(state, producer):
             raise ValueError("producer operation changed")
         return state.get(producer_key(producer, suffix))
     if suffix not in {"operation", "turns"}:
         raise ValueError("invalid Tracker component")
-    row = tracker_round(state, operation_id)
+    row = tracker_round(state, operation_id, producer=producer)
     return None if row is None else row[suffix]
 
 
 def with_producer_component(state, producer, suffix, value):
-    if producer != "tracker":
+    if producer not in {"tracker", "why1"}:
         return {**state, producer_key(producer, suffix): value}
-    rounds = tracker_rounds(state)
+    rounds = tracker_rounds(state, producer)
     if rounds is None or suffix not in {"operation", "turns"}:
         raise ValueError("Tracker round must be selected")
     rounds["rounds"][rounds["active"]][suffix] = deepcopy(value)
-    return {**state, TRACKER_KEY: rounds}
+    return {**state, rounds_key(producer): rounds}
 
 
 def producer_key(producer, suffix):
@@ -131,15 +138,15 @@ def producer_key(producer, suffix):
 
 
 def producer_phase(producer):
-    if producer == "tracker":
-        return "phase1-tracker"
+    if producer in {"tracker", "why1"}:
+        return "phase1-" + producer
     producer_key(producer, "operation")
     return "phase1-discover" if producer == "discovery" else "phase1-synthesizer"
 
 
 def producer_role(producer, role):
-    if producer == "tracker" and role in {"producer", "reviewer"}:
-        return "echelon.tracker-" + role
+    if producer in {"tracker", "why1"} and role in {"producer", "reviewer"}:
+        return "echelon." + producer + "-" + role
     producer_key(producer, "operation")
     if role not in {"producer", "reviewer"}:
         raise ValueError("unsupported semantic role")
@@ -162,11 +169,11 @@ def synthesis_source(state):
 
 
 def producer_operation_id(state, producer, operation_id=None):
-    if producer == "tracker":
-        row = tracker_round(state, operation_id)
+    if producer in {"tracker", "why1"}:
+        row = tracker_round(state, operation_id, producer=producer)
         if row is None:
             raise ValueError("Tracker round not selected")
-        return "tracker-" + row["source"]["dispatch_id"]
+        return producer + "-" + row["source"]["dispatch_id"]
     producer_key(producer, "operation")
     if producer == "discovery":
         return bootstrap_from_state(state)["selection"]["operation_id"]

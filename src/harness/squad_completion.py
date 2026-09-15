@@ -607,7 +607,7 @@ def _validate_intent(
         binding = decode_binding(publication, completion_id=completion_id)
         clarification = binding.clarification
         if clarification:
-            if (origin != "resolution" or route.get("from_phase") != "phase1-tracker"
+            if (origin != "resolution" or route.get("from_phase") != producer_phase(binding.producer)
                     or route.get("decision_id") != binding.recovery["resolution"]["id"]
                     or route.get("to_phase") != binding.candidate["route"]):
                 _raise("intent_invalid")
@@ -617,6 +617,12 @@ def _validate_intent(
         if binding.producer == "tracker" and not clarification and route.get("to_phase") != (
                 "phase1-tracker" if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK" else "phase1-why1"):
             _raise("intent_invalid")
+        if binding.producer == "why1" and not clarification:
+            verdict = binding.candidate["routing"]["verdict"]
+            destinations = ({"phase1-why1"} if verdict == "STOP_AND_ASK" else
+                {"phase1-constitution"} if verdict == "PASS" else {"phase1-discover", "phase1-constitution"})
+            if route.get("to_phase") not in destinations:
+                _raise("intent_invalid")
     if origin != route["kind"]:
         _raise("intent_invalid")
     effect_plan = _validate_effect_plan(

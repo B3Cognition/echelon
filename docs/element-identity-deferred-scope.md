@@ -417,6 +417,38 @@ remain subsequent convergence work. Brownfield expansion, installation, migratio
 and live-provider acceptance remain outside this completed boundary. Do not
 reimplement the completed Tracker seams when continuing those items.
 
+**WHY1 disposition, 2026-09-15: completed for the approved managed greenfield
+review boundary.** This supersedes the pending WHY1 references above without
+erasing prerequisite history. See the [completed WHY1 plan](superpowers/plans/2026-09-15-managed-why1.md)
+for 44 passing partitioned acceptance cases, affected regression results and
+independent review evidence. Internal selection executes WHY1 and stops at its
+native destination; public/default selection and installation remain unchanged.
+
+Reuse the existing `managed_why1_rounds` protected predecessor chain, exact
+round-local journals, v4 semantic assignments and v6/v7 completion bindings.
+The first parent is accepted Tracker; later rounds require the exact resolved
+WHY1 decision and existing human receipt. Keep Tracker and earlier WHY1
+clarifications in authenticated ancestry, not mutable copies or parsed Markdown.
+Existing automatic-answer eligibility, iterative dispatch caps and cumulative
+usage accounting remain authoritative. Codex/Claude share neutral Prosaic roles.
+
+WHY1 publishes findings, not upstream repairs. Existing assumptions and unknown
+definitions are read-only; justified U/ISS additions use the existing allocator
+and stable six-digit-minimum IDs with no application width cap. Reuse native
+issue-report contexts and exact historical occurrence revisions, not current
+head revisions substituted for old evidence. The captured reasoning journal is
+read-only evidence, not another decision ledger. Preserve before-publication
+source/journal guards and after-release immutable database completion authority.
+
+Next integrate authenticated review-origin repair/return; initial Discovery
+completion must never be replayed as repair. Preserve native FAIL/BLOCKED
+iteration/forced-convergence routing and the explicit unsupported-repair guard
+until that admission is verified. Constitution execution, subsequent managed
+continuation, original renumbering/evidence acceptance and rollout remain open.
+WHY1's report PASS is not proof that downstream work ran or activation occurred.
+Do not broaden into brownfield, change legacy build, add provider-native prose,
+or replace these completed owners when resuming the next boundary.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
