@@ -510,6 +510,37 @@ new inputs. This checkpoint does not complete downstream continuation, original
 renumbering/evidence acceptance, installation or activation. Keep the original
 stopped browser-game workspace unchanged; live acceptance is not implied.
 
+**Repair dependency refresh, 2026-09-15: step-1 retention boundary completed.**
+The inline checkpoint-3 design is staged as retained rounds, changed-dependency
+refresh, then requesting-review re-entry. See the
+[round-retention plan](superpowers/plans/2026-09-15-repair-refresh-rounds.md).
+Reuse the existing shared round owner and its protected Squad transitions;
+Synthesis's new round collection references the original flat operation rather
+than copying/replacing it. Tracker/WHY1 refresh rows explicitly distinguish
+repair from human resolution and preserve their predecessor rows.
+
+The current inactive association admits only an authenticated released repair
+as its source, with exact prior producer completion and full-state comparison.
+It does not select which dependencies need execution, accept newly refreshed
+producer output, or permit non-null operation/turn slots. Those boundaries belong
+to step 2; do not lift validation guards merely to replay an old producer. Keep
+ordinary completion encodings and original journals unchanged.
+
+Refresh rows contribute no human answer. Preserve clarification history through
+their predecessors. Before enabling new producer/clarification execution, bind
+historical WHY1's Tracker ancestry to the exact original accepted parent, not
+the mutable active Tracker selector; inactive-row traversal alone will not prove
+that later boundary. Selection does not consume or reset budgets. No new
+controller, attempt ledger, allocation authority, provider role or rollout is
+authorized by this retention work.
+
+Verification: 3 new cases plus 359 distinct affected regression cases passed in
+offline partitions. Independent review's clarification-history finding was
+reproduced with real Tracker and WHY1 resolutions and fixed before completion;
+the fresh combined acceptance passed in 499.66s. The linked plan records exact
+results and overlap. This supersedes only the pending retention prerequisite,
+not the open changed-dependency execution/re-review or activation boundaries.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

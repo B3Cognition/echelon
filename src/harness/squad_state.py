@@ -2310,6 +2310,7 @@ class SquadStateStore:
         _synthesis_from_state(value)
         _tracker_from_state(value)
         _tracker_from_state(value, "why1")
+        _tracker_from_state(value, "synthesizer")
         return value
 
     def load(self) -> dict:
@@ -2449,6 +2450,7 @@ class SquadStateStore:
         synthesis_update: str | None = None,
         tracker_update: str | None = None,
         why1_update: str | None = None,
+        synthesis_round_update: str | None = None,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
@@ -2459,6 +2461,7 @@ class SquadStateStore:
         _synthesis_from_state(state)
         _tracker_from_state(state)
         _tracker_from_state(state, "why1")
+        _tracker_from_state(state, "synthesizer")
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2514,7 +2517,7 @@ class SquadStateStore:
             if old != new and (synthesis_update != component or (component != "operation" and old is not None)):
                 raise StateAdvanceError("synthesis state requires its owning transition",
                     json_path="$.managed_synthesizer_" + component, validator="synthesizer") from None
-        for round_producer, update in (("tracker", tracker_update), ("why1", why1_update)):
+        for round_producer, update in (("tracker", tracker_update), ("why1", why1_update), ("synthesizer", synthesis_round_update)):
             old_rounds = _tracker_from_state(current_state, round_producer)
             new_rounds = _tracker_from_state(next_state, round_producer)
             if old_rounds != new_rounds:
@@ -2681,6 +2684,49 @@ class SquadStateStore:
 
     def prepare_why1_round(self, source: dict) -> dict:
         return self.prepare_tracker_round(source, producer="why1")
+
+    def prepare_refresh_round(self, producer, source, refresh, *, expected_state):
+        """Retain an inactive round after caller-authenticated repair publication."""
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            try:
+                if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
+                        or current.get("status") != "running" or current.get("phase") != "phase1-why1"
+                        or current.get("mode") != "greenfield"
+                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}):
+                    raise ValueError("refresh requires the exact accepted state")
+                dispatch = current.get("last_dispatch") or {}
+                if (dispatch.get("phase_id") != "phase1-discover" or dispatch.get("post_dispatch_complete") is not True
+                        or source != {key: dispatch.get(key) for key in SOURCE_FIELDS}):
+                    raise ValueError("refresh requires the current repair completion")
+                rounds = _tracker_from_state(current, producer)
+                operation_id = producer + "-" + source["dispatch_id"]
+                if rounds is not None and operation_id in rounds["rounds"]:
+                    row = rounds["rounds"][operation_id]
+                    if rounds["active"] != operation_id or row["source"] != source or row.get("refresh") != refresh:
+                        raise ValueError("refresh selection changed")
+                    return self._confirm_durable_state_unlocked(current)
+                previous = operation_from_state(current, producer)
+                if previous is None:
+                    raise ValueError("refresh requires a previous accepted producer")
+                predecessor = previous["binding"]["operation_id"]
+                if rounds is None:
+                    if producer != "synthesizer":
+                        raise ValueError("refresh cannot replace first producer admission")
+                    rounds = dict(schema_version=1, active=operation_id, rounds={})
+                else:
+                    predecessor = rounds["active"]
+                rounds["active"] = operation_id
+                rounds["rounds"][operation_id] = dict(source=deepcopy(source), refresh=deepcopy(refresh),
+                    resolution=None, predecessor=predecessor, operation=None, turns=None)
+                desired = {**current, rounds_key(producer): rounds}
+                _tracker_from_state(desired, producer)
+            except Exception:
+                raise StateAdvanceError("invalid repair refresh selection", validator="refresh_round") from None
+            written = self._save_unlocked(desired, **{
+                "synthesis_round_update" if producer == "synthesizer" else producer + "_update": "select"})
+            return self._confirm_durable_state_unlocked(written)
 
     def prepare_tracker_round(self, source: dict, *, producer="tracker") -> dict:
         """Select a fresh retained round; caller authenticates completion files."""

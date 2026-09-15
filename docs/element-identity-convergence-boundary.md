@@ -1335,3 +1335,42 @@ affected regression partitions passed 144, 393 and 25 cases (562 distinct cases)
 Independent read-only review cleared the checkpoint after test-first corrections.
 The linked plan records exact durations and overlapping reruns separately. These
 are offline selected tests with real core owners, not full-suite/live acceptance.
+
+### Repair dependency refresh: retained rounds (2026-09-15)
+
+The user approved the inline checkpoint-3 design: retain refresh rounds, refresh
+only dependencies whose bound inputs changed, then rerun the requesting WHY1.
+This first step implements inactive round retention only. The
+[retention plan](superpowers/plans/2026-09-15-repair-refresh-rounds.md) records its
+verification and review; execution and re-review remain guarded.
+
+Synthesis refresh rows use the existing round owner under
+`managed_synthesizer_rounds`; the original flat Synthesis source, operation and
+turn marker are not copied or changed. Tracker/WHY1 retain their original rows
+and add a closed `refresh` association instead of pretending repair is a human
+clarification. Each new row binds the selected repair unit, its released source,
+the exact predecessor operation and predecessor completion proof. Current source
+must be the actual released Discovery→WHY1 repair. Changed captured artifacts,
+templates/context, publication evidence or concurrent state changes reject.
+
+Selection consumes no allocation, attempt, dispatch or tokens. New operation and
+turn slots must remain null: preparation does not grant execution authority.
+Original completion formats and provider roles are unchanged. The controller
+still stops at `managed_repair_dependency_refresh_not_supported`.
+
+The next step must select dependencies from authenticated changed inputs and
+connect their actual refreshed output/recovery owners. Once new producer rounds
+can execute, historical WHY1 clarification readers must pin their original
+Tracker ancestry, not whichever Tracker round is currently active. Re-review
+and downstream continuation are not established by inactive retention tests.
+
+Step 1 is complete and independently reviewed: all three new retention cases
+passed (2 in 210.52s and the combined clarification history case in 499.66s),
+plus 359 distinct affected regression cases in overlapping 336/66-case groups.
+Review caught a history-reader assumption that a null resolution ends the chain;
+the real combined test reproduced lost Tracker evidence before the fix. Refresh
+rows now traverse their predecessor without contributing a human answer. Both
+historical and newly selected WHY1 reads preserve the original answers. The plan
+records exact evidence and overlap. All provider responses were scripted; core
+state, identity, publication, completion and recovery were real. Nothing was
+installed, migrated, activated, pushed or merged.

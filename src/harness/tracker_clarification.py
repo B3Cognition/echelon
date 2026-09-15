@@ -42,6 +42,10 @@ def previous_records(state, operation_id, producer="tracker"):
             raise ValueError("invalid clarification ancestry")
         seen.add(operation_id)
         row = rounds[operation_id]
+        if "refresh" in row:
+            # An inactive refresh is not a human answer or a new history root.
+            operation_id = row["predecessor"]
+            continue
         resolution = row["resolution"]
         if resolution is None:
             break

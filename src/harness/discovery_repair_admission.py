@@ -145,3 +145,74 @@ def prepare_why1_discovery_repair(project_root, state_store):
     selection = dict(source=source, origin=dict(review_id=source["dispatch_id"], return_phase="phase1-why1"),
         findings=findings, artifact_paths=paths, editable_revisions=revisions)
     return state_store.prepare_discovery_repair(selection, expected_state=state)
+
+
+def prepare_repair_refresh_round(project_root, state_store, producer):
+    """Authenticate an inactive refresh association under caller execution leases.
+
+    This checkpoint admits the released repair as source, not refreshed producer
+    output. Dependency selection, execution and re-review remain guarded. The
+    state owner retains associations only; immutable completion proof supplies
+    their authority and is read again even for an exact retry.
+    """
+    from harness.discovery_bootstrap_state import bootstrap_from_state
+    from harness.discovery_completion import _retained_input_projection, released_discovery_input_projectors
+    from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds
+    from harness.element_identity_store import IdentityStore
+    from harness.squad_publication import load_prepared_publication
+
+    try:
+        _require(producer in {"synthesizer", "tracker", "why1"})
+        root = Path(project_root)
+        state = state_store.load()
+        selected = bootstrap_from_state(state)["selection"]
+        _require(str(root) == selected["project_root"] and str(state_store.squad_dir) == selected["run_dir"]
+            and state.get("phase") == "phase1-why1" and state.get("status") == "running"
+            and state.get("mode") == "greenfield"
+            and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
+            and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved"})
+        dispatch = state["last_dispatch"]
+        _require(dispatch.get("phase_id") == "phase1-discover" and dispatch.get("post_dispatch_complete") is True)
+        source = {key: dispatch[key] for key in SOURCE_FIELDS}
+        identity = IdentityStore.open(root)
+        binding, project_spec, project_context = _retained_input_projection(root, state_store.squad_dir, state, identity,
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source, require_checkpoint=False,
+            required_route=("phase1-discover", "phase1-why1"))
+        _require(binding.producer == "discovery" and binding.repair_unit is not None)
+        # Full retained ancestry verifies the requesting WHY1 and repair findings.
+        released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
+        prepared = load_prepared_publication(root, state_store.squad_dir, selected["capture_marker"])
+        with prepared.inspect_sources(tree_paths=tuple(tree.path for tree in binding.sources.trees),
+                file_paths=tuple(item.path for item in binding.sources.files)) as sources:
+            _require(not sources.publication.operations)
+            spec, = (tree for tree in sources.trees if tree.path == selected["spec_path"])
+            project_spec(spec)
+            projected = project_context(sources)
+            _require(projected.files == binding.sources.files
+                and tuple(tree for tree in projected.trees if tree.path != selected["spec_path"])
+                == tuple(tree for tree in binding.sources.trees if tree.path != selected["spec_path"]))
+        unit = binding.repair_unit
+        parent = binding.recovery["source_completion"]
+        seen = set()
+        while True:
+            _require(parent["dispatch_id"] not in seen)
+            seen.add(parent["dispatch_id"])
+            previous, _, _ = _retained_input_projection(root, state_store.squad_dir, state, identity,
+                operation_id="discovery-completion-" + parent["dispatch_id"], source=parent, require_checkpoint=False)
+            if previous.producer == producer and not previous.clarification:
+                break
+            parent = previous.recovery.get("source_completion")
+            _require(parent is not None)
+        rounds = tracker_rounds(state, producer)
+        if rounds is None:
+            _require(producer == "synthesizer")
+            predecessor = state["managed_synthesizer_operation"]["binding"]["operation_id"]
+        else:
+            active = rounds["rounds"][rounds["active"]]
+            predecessor = (active["predecessor"] if rounds["active"] == producer + "-" + source["dispatch_id"]
+                else rounds["active"])
+        _require(predecessor == previous.recovery["operation"]["binding"]["operation_id"])
+        refresh = dict(repair_unit=unit, repair_source=source, predecessor_source=parent)
+    except Exception:
+        raise ValueError("repair refresh requires unchanged released repair and producer ancestry") from None
+    return state_store.prepare_refresh_round(producer, source, refresh, expected_state=state)
