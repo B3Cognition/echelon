@@ -16,7 +16,7 @@
 
 ## Checkpoint B: Ordered refresh execution (still part of approved scope)
 
-- [ ] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
+- [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
 - [ ] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
 - [ ] Execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round.
 - [ ] Pin historical WHY1 clarification ancestry to its accepted Tracker parent before allowing new Tracker questions. Preserve old answers and native caps, cumulative accounting, retry/no-progress/unknown-completion behavior.
@@ -90,3 +90,49 @@ All provider responses were scripted; state, identity, publication, completion,
 retained ancestry and recovery owners were real. This is not a full-suite or
 live-provider/activation claim. Checkpoint A is complete and independently
 reviewed; checkpoint B remains open within the user's existing approval.
+
+## Checkpoint B: selection and receipt isolation slice
+
+After checkpoint A, verification fixtures escaped their temporary repositories
+through inherited Git environment variables. Recovery and the reviewed fix are
+recorded in [the isolation incident](2026-09-15-git-fixture-isolation.md), commit
+`404d0472`. Working files were preserved; this did not change the refresh design.
+
+The first checkpoint-B slice separates active Synthesis refresh selection from
+the original flat run. Default component readers select the active refresh;
+historical proof readers and the flat-state protection owner explicitly select
+the original operation. Unknown explicit selections cannot fall back to that
+original. The existing receipt owner retains original filenames and gives each
+refresh its own round files/locks, reservations and usage reads. Admission counts
+the original plus retained round operations, not just the active empty slot.
+
+This slice does **not** lift the null-operation/null-turn constraint or the
+controller refresh guard. Actual-input completion proofs, read-only post-WHY1
+capture, ordered execution, clarification ancestry pinning and unchanged-input
+skips remain required before dispatch. Do not publish a refresh using the old
+Synthesis v3 proof/source or grant round writes using the flat-state permissions.
+
+Verification:
+
+- Initial RED reproduced six selection/namespace failures (6 failed, 7 passed in
+  0.85s). A separate usage case reproduced reading the original receipt (0.41s),
+  and count tests reproduced rejecting count 1 while admitting count 0 (2 failed,
+  1 passed in 1.30s).
+- Final 17 new focused cases plus 63 existing round/receipt cases pass: 80 in
+  6.10s, including the flat-owner assertion.
+- Final-code original Synthesis across both providers/all modes, Discovery
+  completion/recovery and operation regressions pass: 103 in 498.27s. A prior
+  103-case run and smaller reruns overlap and are not added to the total.
+- Real offline repair-input/retention partition passes: 15 in 1098.87s, including
+  both provider bindings, exact retries, proof/source tampering, unchanged old
+  records and the combined Tracker/WHY1 human-history case. An earlier superseded
+  run was interrupted and is not counted.
+- Independent review confirmed the count correction and found no further issues
+  in this slice. Whitespace checks pass.
+
+Final evidence is 17 new cases plus 181 distinct existing cases (198 total), all
+passing. This first selection/receipt slice is complete and independently reviewed;
+checkpoint B as a whole remains unfinished within the existing approval. Next is
+actual-input completion proof/capture and ordered execution through the existing
+owners, including the clarification-ancestry prerequisite. No installation,
+live-provider spending or full activation is established by these offline tests.

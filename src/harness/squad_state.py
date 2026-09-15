@@ -306,8 +306,10 @@ def _discovery_repairs_from_state(state: dict) -> dict | None:
 
 def _synthesis_from_state(state):
     try:
-        return (synthesis_source(state), operation_from_state(state, "synthesizer"),
-                discovery_turns_from_state(state, "synthesizer"))
+        source = synthesis_source(state)
+        original = None if source is None else "synthesis-" + source["dispatch_id"]
+        return (source, operation_from_state(state, "synthesizer", operation_id=original),
+                discovery_turns_from_state(state, "synthesizer", operation_id=original))
     except Exception:
         pass
     raise StateAdvanceError("invalid synthesis state", json_path="$.managed_synthesizer_source",

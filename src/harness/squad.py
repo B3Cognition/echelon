@@ -6683,10 +6683,16 @@ class SquadController:
             expected = int(operation is not None) + sum("execution" in row for row in repairs["units"].values())
             if count != expected:
                 raise ValueError("Discovery repair dispatch history requires reconciliation")
-        if (selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}
-                and operation_from_state(state, "synthesizer") is None
-                and (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != 0):
-            raise ValueError("fresh synthesis cannot inherit earlier dispatches")
+        if selected.get("through_phase", "phase1-synthesizer") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}:
+            from harness.discovery_producer import synthesis_source, tracker_rounds
+            source = synthesis_source(state)
+            original_id = None if source is None else "synthesis-" + source["dispatch_id"]
+            original = operation_from_state(state, "synthesizer", operation_id=original_id)
+            rounds = tracker_rounds(state, "synthesizer")
+            expected = int(original is not None) + (0 if rounds is None else sum(
+                row["operation"] is not None for row in rounds["rounds"].values()))
+            if (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != expected:
+                raise ValueError("Synthesis dispatch history requires reconciliation")
         if selected.get("through_phase") in {"phase1-tracker", "phase1-why1"}:
             from harness.discovery_producer import tracker_rounds
             rounds = tracker_rounds(state)

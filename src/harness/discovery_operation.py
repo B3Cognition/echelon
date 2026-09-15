@@ -15,6 +15,7 @@ from harness.discovery_candidate import author_artifacts, build_discovery_change
 from harness.discovery_inputs import DiscoveryInputError, admit_runtime_inputs, runtime_input_paths
 from harness.discovery_operation_state import operation_from_state
 from harness.discovery_reservations import DiscoveryReservationJournal
+from harness.discovery_receipts import receipt_round_operation_id
 from harness.discovery_semantics import DiscoveryAssignment, artifact_roles
 from harness.discovery_producer import producer_component, producer_operation_id, synthesis_source, tracker_input_source
 from harness.discovery_turns import read_discovery_usage, run_discovery_step
@@ -255,7 +256,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
             if check_inputs() != fingerprint:
                 raise _Blocked("discovery_operation_inputs_changed")
         with DiscoveryReservationJournal(state_store.squad_dir, **producer_args,
-                round_operation_id=binding["operation_id"] if producer in {"tracker", "why1"} else None) as journal:
+                round_operation_id=receipt_round_operation_id(producer, binding["operation_id"])) as journal:
             journal.select(store, spec_id=binding["spec_id"], run_id=binding["run_id"],
                 operation_id=binding["operation_id"], managed_identity=state["managed_identity"], create=create)
             history_rows = json.loads(retained_history.payload)

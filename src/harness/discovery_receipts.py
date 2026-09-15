@@ -12,6 +12,19 @@ from harness.inspection_io import _open_root_directory
 _MAX_BYTES = 16 * 1024 * 1024
 
 
+def receipt_round_operation_id(producer, operation_id):
+    """Keep original Synthesis filenames; refreshes use the existing round journal."""
+    if producer == "synthesizer":
+        if type(operation_id) is not str:
+            raise ValueError("synthesis receipt selection required")
+        if re.fullmatch(r"synthesis-[0-9a-f]{32}", operation_id):
+            return None
+        if re.fullmatch(r"synthesizer-[0-9a-f]{32}", operation_id) is None:
+            raise ValueError("invalid synthesis receipt selection")
+        return operation_id
+    return operation_id if producer in {"tracker", "why1"} else None
+
+
 class DiscoveryReceiptFile:
     """File/lock mechanics only; each owner validates its own payload."""
 
@@ -20,16 +33,16 @@ class DiscoveryReceiptFile:
         from harness.discovery_producer import producer_key
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
-        if producer in {"tracker", "why1"}:
+        if producer in {"tracker", "why1"} or (producer == "synthesizer" and round_operation_id is not None):
             if (type(round_operation_id) is not str
                     or re.fullmatch(producer + r"-[0-9a-f]{32}", round_operation_id) is None
                     or repair_unit is not None):
-                raise ValueError("Tracker receipts require an exact round operation")
+                raise ValueError("producer receipts require an exact round operation")
             name = name.replace("discovery-", producer + "-", 1) + "-" + round_operation_id
         else:
             producer_key(producer, "operation")
             if round_operation_id is not None:
-                raise ValueError("only Tracker receipts have rounds")
+                raise ValueError("producer receipts do not support rounds")
         if producer == "synthesizer":
             if repair_unit is not None:
                 raise ValueError("synthesis repair receipts not supported")

@@ -581,6 +581,19 @@ exact results and overlap. Binding tests do not establish ordered execution,
 re-review, original smoke acceptance or rollout; checkpoint B remains approved
 and unfinished.
 
+**Checkpoint-B selection/receipt slice, 2026-09-15.** Active Synthesis reads now
+select the retained refresh round; explicit original-operation reads preserve
+flat state protection and old completion proofs. Original receipt filenames stay
+unchanged; refreshes use the existing round journal namespace and separate usage
+reads. Cumulative admission counts include the original operation rather than
+treating an empty refresh as absent history. No format migration or copied
+original round is needed. Execution slots and the controller guard remain closed;
+the rest of checkpoint B above is still approved and required. Do not interpret
+this compatibility/selection checkpoint as actual refresh or Tracker activation.
+The slice is complete and independently reviewed, with 198 selected offline cases
+passing (17 new plus 181 distinct regressions); see the input/refresh plan for
+durations, overlap and the still-open execution boundary.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

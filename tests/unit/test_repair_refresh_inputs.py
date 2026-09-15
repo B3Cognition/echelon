@@ -160,6 +160,15 @@ def test_refresh_input_is_authenticated_once_without_dispatch(checkpoint_case, p
     before = raced
     saved = bind_input(root, store)
     row = tracker_round(saved, producer="synthesizer")
+    from harness.discovery_producer import producer_operation_id, producer_component
+    from harness.discovery_operation_state import operation_from_state
+    from harness.discovery_turns import read_discovery_usage
+    original_id = saved["managed_synthesizer_operation"]["binding"]["operation_id"]
+    assert producer_operation_id(saved, "synthesizer") == saved["managed_synthesizer_rounds"]["active"]
+    assert operation_from_state(saved, "synthesizer") is None
+    assert producer_component(saved, "synthesizer", "turns") is None
+    assert operation_from_state(saved, "synthesizer", operation_id=original_id) == saved["managed_synthesizer_operation"]
+    assert read_discovery_usage(store, "synthesizer") == dict(token_usage=0, dispatch_count=0)
     bound = row["execution_input"]
     assert bound["source"] == row["refresh"]["repair_source"]
     assert bound["dependencies"]["changed"] == [

@@ -14,9 +14,9 @@ import tempfile
 import time
 
 from harness.discovery_bootstrap_state import bootstrap_from_state
-from harness.discovery_receipts import DiscoveryReceiptFile
+from harness.discovery_receipts import DiscoveryReceiptFile, receipt_round_operation_id
 from harness.discovery_semantics import DiscoveryAssignment, decode_discovery_assignment, parse_discovery_reply, validate_discovery_reply
-from harness.discovery_producer import producer_component, producer_operation_id, producer_role
+from harness.discovery_producer import producer_component, producer_operation_id, producer_role, synthesis_source
 from harness.element_identity_store import IdentityStore
 from harness.inspection_io import BoundedReadChannel
 from harness.product_inventory import CONTROL_PATHS, CONTROL_ROOTS
@@ -164,7 +164,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
             raise _Blocked("invalid_provider_replay_mode")
         producer = assignment.producer
         with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer, repair_unit=repair_unit,
-                round_operation_id=assignment.operation_id if producer in {"tracker", "why1"} else None) as file:
+                round_operation_id=receipt_round_operation_id(producer, assignment.operation_id)) as file:
             retained = []
             raw = file._read()
             file._raw = raw
@@ -361,8 +361,13 @@ def read_discovery_usage(state_store, producer="discovery", *, repair_unit=None)
     try:
         state = state_store.load()
         marker = producer_component(state, producer, "turns", repair_unit=repair_unit)
+        # Before original Synthesis admission there is no operation ID yet.
+        # Once selected, resolve the active namespace even if its marker is null.
+        round_id = None
+        if producer in {"tracker", "why1"} or (producer == "synthesizer" and synthesis_source(state) is not None):
+            round_id = receipt_round_operation_id(producer, producer_operation_id(state, producer))
         with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer, repair_unit=repair_unit,
-                round_operation_id=producer_operation_id(state, producer) if producer in {"tracker", "why1"} else None) as file:
+                round_operation_id=round_id) as file:
             raw = file._read()
             if raw is None and marker is None:
                 return dict(token_usage=0, dispatch_count=0)

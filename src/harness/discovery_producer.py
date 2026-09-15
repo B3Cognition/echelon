@@ -189,10 +189,15 @@ def producer_component(state, producer, suffix, *, operation_id=None, repair_uni
             return None
         return deepcopy(execution["turns"] if suffix == "turns" else dict(
             schema_version=1, binding=execution["binding"], attempts=row["attempts"]))
-    if producer == "synthesizer" and operation_id is not None and operation_id.startswith("synthesizer-"):
+    if producer == "synthesizer":
         if suffix not in {"operation", "turns"}:
             raise ValueError("invalid synthesis round component")
-        return tracker_round(state, operation_id, producer=producer)[suffix]
+        if synthesis_source(state) is None and operation_id is None and rounds_key(producer) not in state:
+            return state.get(producer_key(producer, suffix))
+        selected = producer_operation_id(state, producer, operation_id)
+        if selected.startswith("synthesizer-"):
+            return tracker_round(state, selected, producer=producer)[suffix]
+        return state.get(producer_key(producer, suffix))
     if producer not in {"tracker", "why1"}:
         if operation_id is not None and operation_id != producer_operation_id(state, producer):
             raise ValueError("producer operation changed")
@@ -214,7 +219,7 @@ def with_producer_component(state, producer, suffix, value, *, repair_unit=None)
             raise ValueError("repair turns are immutable")
         row["execution"]["turns"] = deepcopy(value)
         return updated
-    if producer not in {"tracker", "why1"}:
+    if producer not in {"tracker", "why1"} and not (producer == "synthesizer" and rounds_key(producer) in state):
         return {**state, producer_key(producer, suffix): value}
     rounds = tracker_rounds(state, producer)
     if rounds is None or suffix not in {"operation", "turns"}:
@@ -278,7 +283,15 @@ def producer_operation_id(state, producer, operation_id=None, *, repair_unit=Non
     source = synthesis_source(state)
     if source is None:
         raise ValueError("synthesis source not selected")
-    return "synthesis-" + source["dispatch_id"]
+    original = "synthesis-" + source["dispatch_id"]
+    if operation_id == original:
+        return original
+    if operation_id is not None or rounds_key(producer) in state:
+        row = tracker_round(state, operation_id, producer=producer)
+        if row is None:
+            raise ValueError("synthesis round not selected")
+        return producer + "-" + row["source"]["dispatch_id"]
+    return original
 
 
 def identity_spec_tree(tree):

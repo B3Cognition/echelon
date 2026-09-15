@@ -14,7 +14,7 @@ from harness.discovery_bootstrap_state import BOOTSTRAP_KEY, bootstrap_from_stat
 from harness.discovery_inputs import admit_runtime_inputs
 from harness.discovery_operation_state import DISCOVERY_OPERATION_KEY, operation_from_state
 from harness.discovery_publication import _graph
-from harness.discovery_receipts import DiscoveryReceiptFile
+from harness.discovery_receipts import DiscoveryReceiptFile, receipt_round_operation_id
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
 from harness.discovery_producer import producer_component, producer_phase, producer_role, synthesis_source, identity_spec_tree, tracker_round, tracker_input_source
 from harness.element_identity_json import strict_json, _unique_object
@@ -184,7 +184,7 @@ def _decode(publication, completion_id, state):
         and op.postimage.mode == modes.get(op.target, 0o644) for op in operations))
     if state is not None:
         bootstrap = bootstrap_from_state(state)
-        op_id = selected["operation_id"] if producer in {"tracker", "why1"} else None
+        op_id = selected["operation_id"] if producer != "discovery" else None
         _require(bootstrap is not None and operation_from_state(state, producer, operation_id=op_id, repair_unit=repair_unit) == operation
             and state.get("managed_identity") == genesis
             and producer_component(state, producer, "turns", operation_id=op_id, repair_unit=repair_unit) == recovery["provider"])
@@ -324,8 +324,10 @@ def _receipts(root, run, state, binding, store):
         return
     from harness.discovery_turns import _validate
     from harness.discovery_reservations import _validate as validate_reservations
-    operation_id = binding.recovery["operation"]["binding"]["operation_id"] if binding.producer in {"tracker", "why1"} else None
-    turns = _read_receipt(run, "discovery-turns", binding.producer, operation_id=operation_id, repair_unit=binding.repair_unit)
+    selected_id = binding.recovery["operation"]["binding"]["operation_id"]
+    operation_id = selected_id if binding.producer != "discovery" else None
+    round_id = receipt_round_operation_id(binding.producer, selected_id)
+    turns = _read_receipt(run, "discovery-turns", binding.producer, operation_id=round_id, repair_unit=binding.repair_unit)
     _validate(turns)
     _require(_hash(turns["binding"]) == producer_component(state, binding.producer, "turns", operation_id=operation_id, repair_unit=binding.repair_unit)["binding_sha256"]
         and turns["binding"]["authority"] == binding.source["authority"])
@@ -344,7 +346,7 @@ def _receipts(root, run, state, binding, store):
         and replies["review"] == binding.recovery["review"] and replies["review"]["verdict"] == "accept")
     if binding.producer in {"tracker", "why1"}:
         _require(replies["author"]["routing"] == binding.candidate["routing"] == replies["review"]["routing"])
-    reservations = _read_receipt(run, "discovery-reservations", binding.producer, operation_id=operation_id, repair_unit=binding.repair_unit)
+    reservations = _read_receipt(run, "discovery-reservations", binding.producer, operation_id=round_id, repair_unit=binding.repair_unit)
     _require(reservations["binding"]["context"] == binding.source["authority"])
     known = validate_reservations(reservations, reservations["binding"], binding.producer)
     _require([asdict(known[item["key"]][1]) for item in replies["propose"]["new_subjects"]] == binding.candidate["reservations"])

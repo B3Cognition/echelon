@@ -1412,3 +1412,26 @@ regression cases passed in offline partitions, including both provider paths,
 tampered proof, real CAS race, exact retry and the combined prior clarification
 history. The linked plan records exact results and overlap. This is a local
 binding checkpoint, not completed ordered refresh execution or activation.
+
+### Repair refresh: Synthesis selection and receipt isolation (2026-09-15)
+
+The first checkpoint-B slice makes active Synthesis refresh rounds independently
+selectable without replacing the original flat operation, source or turn marker.
+Historical completion replay and flat-state protection explicitly address the
+original operation. Refresh reservations, turn receipts and usage reads use the
+existing round namespace; original filenames remain unchanged. Admission checks
+the retained original plus all round operations against cumulative dispatch count.
+
+This is still a closed execution boundary: refresh operation and turn slots must
+remain null. Actual-input proof/capture, Synthesis-first execution, subsequent
+Tracker binding, unchanged-input skips and pinned historical clarification ancestry
+remain unfinished in the approved checkpoint B. The existing controller refresh
+guard stays in place. No role/prose, provider adapter, ID format, mode, installation
+or live workspace is changed by this slice. The linked input/refresh plan records
+verification and independent review.
+
+The selection/receipt slice is complete: 17 new and 181 distinct existing cases
+pass (198 total), including real offline Codex/Claude repair binding, original
+Synthesis in all three modes, completion recovery and combined Tracker/WHY1
+clarification history. Independent review cleared the count correction. The
+remaining checkpoint-B execution boundary above is unchanged.
