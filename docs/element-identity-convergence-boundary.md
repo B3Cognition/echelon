@@ -1094,3 +1094,24 @@ managed Tracker, ALIGNED/DRIFT/STOP_AND_ASK handling, retained producer-source
 continuation, WHY1 and authenticated review-triggered repair still require their
 own tested integration. Discovery remains U/A-only; default selection, provider
 dispatch, installation and the stopped game workspace are unchanged.
+
+### Detached clarification preparation (2026-09-15)
+
+Task 1 of the approved [managed Tracker plan](superpowers/plans/2026-09-15-managed-tracker.md)
+separates reconciliation rendering from the legacy filesystem wrapper and adds
+immutable clarification candidates from captured decision records, exact receipt/
+policy preimages and Markdown text. It reuses existing policy derivation and
+reconciliation semantics; source requirements and their IDs are never rewritten.
+Exact latest-decision retry returns identical output, conflicting history rejects,
+and new decisions append without replacing earlier records. Markdown receipt text
+is not parsed as decision authority. Unproven legacy receipt/policy files require
+explicit reconciliation, not automatic adoption.
+
+This is preparation only. No managed resolver, live context generation, decision
+admission, Tracker round, publication or routing is enabled. The existing legacy
+execution exclusion remains intact. The following integration must authenticate
+the records against the human-input owner, guard all captured images, publish
+through the current transaction/completion owners and retain each Tracker round.
+The two initial normal Tracker acceptance cases still fail at unsupported managed
+selection and remain uncommitted integration work; they are not covered by the
+passing preparation checkpoint. Full Tracker integration and activation are open.

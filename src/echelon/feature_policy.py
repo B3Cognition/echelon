@@ -220,13 +220,26 @@ def render_feature_policy(policy: Mapping[str, Any]) -> str:
 
 def reconcile_feature_artifacts(spec_dir: Path, policy: Mapping[str, Any]) -> dict[str, Any]:
     """Record stale policy contradictions without erasing their provenance."""
+    artifacts = {
+        artifact.relative_to(spec_dir).as_posix(): artifact.read_text(encoding="utf-8", errors="replace")
+        for artifact in sorted(spec_dir.rglob("*.md"))
+        if artifact.name != RECONCILIATION_FILENAME
+    }
+    report, text = render_feature_policy_reconciliation(artifacts, policy)
+    (spec_dir / RECONCILIATION_FILENAME).write_text(text, encoding="utf-8")
+    return report
+
+
+def render_feature_policy_reconciliation(
+    artifacts: Mapping[str, str], policy: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Render the existing reconciliation from captured text, without I/O."""
     scope = policy.get("scope")
     descoped = scope if isinstance(scope, Mapping) else {}
     findings: list[dict[str, str]] = []
-    for artifact in sorted(spec_dir.rglob("*.md")):
-        if artifact.name == RECONCILIATION_FILENAME:
+    for path, text in sorted(artifacts.items(), key=lambda item: Path(item[0])):
+        if Path(path).name == RECONCILIATION_FILENAME:
             continue
-        text = artifact.read_text(encoding="utf-8", errors="replace")
         lowered = text.lower()
         for feature, terms in _REJECTED_TERMS.items():
             if descoped.get(feature) != "descoped":
@@ -234,7 +247,7 @@ def reconcile_feature_artifacts(spec_dir: Path, policy: Mapping[str, Any]) -> di
             for term in terms:
                 if term in lowered:
                     findings.append({
-                        "artifact": artifact.relative_to(spec_dir).as_posix(),
+                        "artifact": path,
                         "term": term,
                         "policy_key": feature,
                         "status": "refuted",
@@ -257,5 +270,4 @@ def reconcile_feature_artifacts(spec_dir: Path, policy: Mapping[str, Any]) -> di
             f"- `{item['artifact']}`: `{item['term']}` is **{item['status']}** by `{item['policy_key']}`."
             for item in findings
         )
-    (spec_dir / RECONCILIATION_FILENAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return report
+    return report, "\n".join(lines) + "\n"

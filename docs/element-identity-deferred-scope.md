@@ -343,6 +343,25 @@ to exercise Modeler. Keep WHY1 and review-origin repair/return integration, then
 the original renumbering/evidence acceptance, as subsequent checkpoints. This
 prerequisite does not activate a producer or authorize a live trial.
 
+The [managed Tracker plan](superpowers/plans/2026-09-15-managed-tracker.md) now records
+the approved clarification/re-entry extension. Its first checkpoint is detached
+candidate preparation: reuse `prepare_clarification_candidate` and the extracted
+existing reconciliation renderer. Do not reimplement policy inference or derive
+past decisions by parsing the rendered Markdown receipt. Its `previous` records
+must come from authenticated human-input history, with exact receipt/policy
+preimages guarded by the publisher. The helper alone grants no decision/source
+authority and does not safely replace the current resolver on its own.
+
+Next integrate guarded clarification publication and separate immutable Tracker
+rounds, then normal provider dispatch/verdict routing. Stage context from captured
+projected inputs using the existing completion owner; do not call the legacy
+resolver's live context regeneration on a managed run. Existing requirement
+content is preserved by reconciliation: the legacy mutation is the report write,
+not a rewrite of the original requirements. Keep all current managed-exclusion
+guards until a specific admitted path proves source, decision and recovery
+ownership. The initial two provider acceptance tests remain intentionally RED and
+uncommitted until that path reaches WHY1 without executing it.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
