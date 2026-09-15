@@ -17262,26 +17262,37 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         print(f"[re] reason: {reason}")
 
 
-def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tuple[str, ...]]:
+def _capture_re_knowledge_authority(
+    workspace: Path,
+) -> tuple[object, object, tuple[str, ...], tuple[object, ...]]:
     """Freeze all declared sources for one ordinary reviewed request."""
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidencePolicyV1,
+        capture_structural_source,
+    )
 
     manifest = discover_workspace(workspace)
     source_ids = tuple(sorted(source.id for source in manifest.sources))
     if not source_ids:
         raise ValueError("needs attention: the workspace declares no sources to analyze")
+    structural_observations: list[object] = []
+    structural_policy = StructuralEvidencePolicyV1.defaults()
     snapshot = capture_workspace_snapshot(
         workspace,
         manifest.sources,
         _re_v2_snapshot_root(workspace),
+        source_observer=lambda source: structural_observations.append(
+            capture_structural_source(source, workspace, structural_policy)
+        ),
     )
     partition = build_workspace_partition_catalog(
         snapshot,
         manifest,
         _re_v22_partition_authorities(),
     )
-    return snapshot, partition, source_ids
+    return snapshot, partition, source_ids, tuple(structural_observations)
 
 
 def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str], ...]:
@@ -17320,7 +17331,9 @@ def _create_or_resume_re_knowledge_analysis(
         if active is not None
         else None
     )
-    snapshot, partition, source_ids = _capture_re_knowledge_authority(workspace)
+    snapshot, partition, source_ids, structural_observations = (
+        _capture_re_knowledge_authority(workspace)
+    )
     if intent is not None and (
         intent.get("snapshot_id") != getattr(snapshot, "snapshot_id", None)
         or intent.get("workspace_partition_id") != getattr(partition, "identity", None)
@@ -17405,6 +17418,7 @@ def _create_or_resume_re_knowledge_analysis(
             source_depths=tuple(sorted(depths.items())),
             token_limit=token_limit,
             active_ms_limit=active_ms_limit,
+            structural_observations=structural_observations,
             config=config,
         ),
     )
@@ -17508,6 +17522,10 @@ def _run_re_knowledge_refresh_action(
     from dataclasses import replace
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidencePolicyV1,
+        capture_structural_source,
+    )
 
     workspace_manifest = discover_workspace(workspace)
     declared = tuple(source.id for source in workspace_manifest.sources)
@@ -17521,10 +17539,15 @@ def _run_re_knowledge_refresh_action(
     selected_roots = tuple(
         source for source in workspace_manifest.sources if source.id in set(selected)
     )
+    structural_observations: list[object] = []
+    structural_policy = StructuralEvidencePolicyV1.defaults()
     snapshot = capture_workspace_snapshot(
         workspace,
         selected_roots,
         _re_v2_snapshot_root(workspace),
+        source_observer=lambda source: structural_observations.append(
+            capture_structural_source(source, workspace, structural_policy)
+        ),
     )
     selected_manifest = replace(workspace_manifest, sources=selected_roots)
     partition = build_workspace_partition_catalog(
@@ -17633,6 +17656,7 @@ def _run_re_knowledge_refresh_action(
                 source_depths=tuple(sorted(depth_by_source.items())),
                 token_limit=analysis_token_limit,
                 active_ms_limit=analysis_active_ms_limit,
+                structural_observations=tuple(structural_observations),
                 config=config,
             ),
         )

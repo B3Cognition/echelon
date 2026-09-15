@@ -33,6 +33,10 @@ from harness.re_v2.knowledge_discovery import DiscoveryBoundary, DiscoveryError
 from harness.re_v2.knowledge_dispatch import DiscoveryController
 from harness.re_v2.knowledge_evidence import EvidenceSelectorV1
 from harness.re_v2.knowledge_review_dispatch import DiscoveryReviewController
+from harness.re_v2.knowledge_structure import (
+    StructuralSourceObservationV1,
+    bind_structural_evidence,
+)
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
 from harness.re_v2.protocol_22.provider import (
@@ -91,6 +95,7 @@ class ReviewedAnalysisCreationOptions:
     source_depths: tuple[tuple[str, str], ...]
     token_limit: int
     active_ms_limit: int
+    structural_observations: tuple[StructuralSourceObservationV1, ...] = ()
     config: HarnessConfig | None = None
     backend: object | None = None
     discovery_agent_bytes: bytes | None = None
@@ -117,6 +122,16 @@ class ReviewedAnalysisCreationOptions:
         ):
             raise KnowledgeCreationError("invalid-reviewed-analysis-depths")
         object.__setattr__(self, "source_depths", depths)
+        observations = tuple(self.structural_observations)
+        observed_ids = tuple(row.source_id for row in observations)
+        if observations and (
+            any(not isinstance(row, StructuralSourceObservationV1) for row in observations)
+            or observed_ids != tuple(sorted(set(observed_ids)))
+            or set(observed_ids)
+            != {source.source_id for source in self.workspace_partition.sources}
+        ):
+            raise KnowledgeCreationError("invalid-reviewed-analysis-structure")
+        object.__setattr__(self, "structural_observations", observations)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +142,10 @@ class KnowledgeCreationResultV1:
     reason_code: str | None = None
 
 
-def _creation_intent(options: ReviewedAnalysisCreationOptions) -> dict[str, object]:
+def _creation_intent(
+    options: ReviewedAnalysisCreationOptions,
+    structural_catalog_id: str | None,
+) -> dict[str, object]:
     return {
         "schema_version": 1,
         "kind": "reviewed_analysis_creation_intent",
@@ -140,12 +158,21 @@ def _creation_intent(options: ReviewedAnalysisCreationOptions) -> dict[str, obje
         "source_depths": [list(row) for row in options.source_depths],
         "token_limit": options.token_limit,
         "active_ms_limit": options.active_ms_limit,
+        **(
+            {"structural_catalog_id": structural_catalog_id}
+            if structural_catalog_id is not None
+            else {}
+        ),
     }
 
 
-def _record_creation_intent(paths: ReV2Paths, options: ReviewedAnalysisCreationOptions) -> None:
+def _record_creation_intent(
+    paths: ReV2Paths,
+    options: ReviewedAnalysisCreationOptions,
+    structural_catalog_id: str | None,
+) -> None:
     path = paths.root / "knowledge-creation.json"
-    expected = canonical_json_bytes(_creation_intent(options))
+    expected = canonical_json_bytes(_creation_intent(options, structural_catalog_id))
     if path.exists() or path.is_symlink():
         if path.is_symlink() or not path.is_file():
             raise KnowledgeCreationError("unsafe-reviewed-analysis-creation-intent")
@@ -288,7 +315,25 @@ def create_or_resume_reviewed_analysis(
     request_dir = workspace / "runs" / options.request_run_id
     paths = ReV2Paths.for_run(request_dir)
     paths.root.mkdir(parents=True, exist_ok=True)
-    _record_creation_intent(paths, options)
+    objects = ObjectStore(paths.objects)
+    structural_catalog = (
+        bind_structural_evidence(
+            options.snapshot.snapshot_id,
+            {
+                source.source_id: source.source_content_id
+                for source in options.workspace_partition.sources
+            },
+            options.structural_observations,
+            objects,
+        )
+        if options.structural_observations
+        else None
+    )
+    _record_creation_intent(
+        paths,
+        options,
+        structural_catalog.identity if structural_catalog is not None else None,
+    )
     existing = _existing_result(workspace, options)
     if existing is not None:
         return existing
@@ -299,7 +344,6 @@ def create_or_resume_reviewed_analysis(
     depths = dict(options.source_depths)
     if set(depths) != set(selected_ids):
         raise KnowledgeCreationError("reviewed-analysis-depth-closure-mismatch")
-    objects = ObjectStore(paths.objects)
     quarantine = ObjectStore(request_dir / "quarantine")
 
     bootstrap = build_snapshot_bootstrap(
@@ -340,6 +384,7 @@ def create_or_resume_reviewed_analysis(
             objects,
             quarantine,
             options.selection.domain_keys or None,
+            structural_catalog,
         )
         binding = _initial_binding(boundary, selected_sources[source_id])
         phases.append((DiscoveryAcquisition(paths, boundary, binding), boundary))

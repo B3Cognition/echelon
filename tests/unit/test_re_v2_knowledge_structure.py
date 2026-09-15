@@ -14,6 +14,7 @@ from harness.re_v2.knowledge_structure import (
     StructuralProviderExecutionV1,
     bind_structural_evidence,
     capture_structural_source,
+    project_structural_overview,
     project_structural_query,
     _wait_bounded,
 )
@@ -243,18 +244,55 @@ def test_structural_search_projection_is_bounded_and_provider_neutral(
         objects,
         StructuralQueryV1(1, "api", "search", "run", "both", (), 1, 10),
     )
-    value = json.loads(projection.provider_bytes)
+    value = json.loads(projection.provider_bytes())
 
-    assert value["kind"] == "structural_evidence_projection"
+    assert value["kind"] == "untrusted_structural_evidence"
     assert value["source_id"] == "api"
     assert value["providers"] == [
         {"complete": True, "provider": "codegraph", "status": "ready", "tool_version": "1.6.0"},
         {"complete": False, "provider": "perlgraph", "status": "not-applicable", "tool_version": None},
     ]
-    assert len(value["nodes"]) == 1
-    assert value["nodes"][0]["qualified_name"] == "api.run"
-    assert "repo_path" not in projection.provider_bytes.decode("utf-8")
-    assert len(projection.provider_bytes) <= 262_144
+    assert "api.run" in value["text"]
+    assert "repo_path" not in projection.provider_bytes().decode("utf-8")
+    assert len(projection.provider_bytes()) <= 262_144
+
+
+@pytest.mark.unit
+def test_structural_overview_is_bounded_persisted_and_replayable(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    observation = capture_structural_source(
+        _source(source_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=lambda *_args: StructuralProviderExecutionV1(
+            "completed", _codegraph_document(str(source_root))
+        ),
+    )
+    objects = ObjectStore(tmp_path / "objects")
+    catalog = bind_structural_evidence(
+        content_digest({"snapshot": "one"}),
+        {"api": content_digest({"source": "api"})},
+        (observation,),
+        objects,
+    )
+
+    projection = project_structural_overview(catalog, objects, "api", 25)
+    replayed = project_structural_overview(
+        catalog, objects, "api", 25, persist=False
+    )
+    value = json.loads(projection.provider_bytes())
+
+    assert replayed == projection
+    assert objects.read_blob(projection.projection_id) == projection.provider_bytes()
+    assert objects.read_blob(projection.mapping_receipt_id)
+    assert value["kind"] == "untrusted_structural_evidence"
+    assert value["disposition"] == "available"
+    assert value["path"] == "."
+    assert "api.run" in value["text"]
+    assert len(projection.provider_bytes()) <= 262_144
 
 
 @pytest.mark.unit

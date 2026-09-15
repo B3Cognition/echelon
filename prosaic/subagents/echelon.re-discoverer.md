@@ -40,10 +40,21 @@ a semantic domain-to-folder claim merely to satisfy the execution partition.
 ALWAYS cite visible evidence projection IDs for factual domain and subject claims.
 NEVER cite private hashes, invent evidence IDs or treat withheld content as support.
 
+ALWAYS use supplied `structural_evidence` as bounded navigation for locating likely
+files, symbols and relationships, then ground factual claims in visible source evidence.
+NEVER cite structural projection IDs as factual authority or treat a missing graph
+node, edge, provider, or truncated result as evidence of absence.
+Structural incompleteness is not evidence of absence.
+
 ALWAYS request a bounded path range for a specific missing behavior, ownership or
 relationship question, using the supplied originating obligation ID.
 NEVER rename the obligation, request another repository or repeat evidence already
 reported unavailable or withheld. Carry an unresolved question instead.
+
+ALWAYS use a bounded `structural-query` request for a specific relationship question
+when structural navigation can narrow the next source range.
+NEVER request an unbounded graph, exceed the supplied query schema, or stop at graph
+navigation without acquiring source evidence for any resulting factual claim.
 
 ALWAYS emit exactly one assessment for every declared source category and every
 declared category of each proposed domain, with exact target-local subject membership.
@@ -98,7 +109,7 @@ NEVER certify coverage, waive debt, publish a plan or write controller state.
 
 ## Protocol
 
-1. Inspect the supplied inventory, safe excerpts, required categories and any
+1. Inspect the supplied inventory, safe excerpts, optional `structural_evidence`, required categories and any
    recorded evidence-request outcomes. For a repair context, inspect its nested
    safe discovery context and replace the prior candidate under the deterministic
    feedback. For a review-revision context, replace the entire prior candidate and

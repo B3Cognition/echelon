@@ -342,7 +342,9 @@ def test_depth_refresh_creates_fresh_reviewed_analysis_instead_of_using_publishe
 
     monkeypatch.setattr(cli, "discover_workspace", lambda _root: manifest)
     monkeypatch.setattr(registry, "load_published_index", lambda _root: published)
-    monkeypatch.setattr(snapshot_module, "capture_workspace_snapshot", lambda *_a: snapshot)
+    monkeypatch.setattr(
+        snapshot_module, "capture_workspace_snapshot", lambda *_a, **_kw: snapshot
+    )
     monkeypatch.setattr(
         partition_module, "build_workspace_partition_catalog", lambda *_a: partition
     )

@@ -143,6 +143,13 @@ class StructuralProviderEvidenceV1:
     def to_json_dict(self) -> dict[str, object]:
         return asdict(self)
 
+    @classmethod
+    def from_json_dict(cls, value: Mapping[str, object]) -> "StructuralProviderEvidenceV1":
+        if not isinstance(value, dict) or set(value) != {
+            "provider", "status", "complete", "tool_version", "artifact_id", "reason_code"
+        }:
+            raise KnowledgeStructureError("invalid-structural-catalog")
+        return cls(**value)  # type: ignore[arg-type]
 
 @dataclass(frozen=True, slots=True)
 class StructuralSourceEvidenceV1:
@@ -156,6 +163,21 @@ class StructuralSourceEvidenceV1:
             "source_content_id": self.source_content_id,
             "providers": [provider.to_json_dict() for provider in self.providers],
         }
+
+    @classmethod
+    def from_json_dict(cls, value: Mapping[str, object]) -> "StructuralSourceEvidenceV1":
+        if not isinstance(value, dict) or set(value) != {
+            "source_id", "source_content_id", "providers"
+        } or not isinstance(value["providers"], list):
+            raise KnowledgeStructureError("invalid-structural-catalog")
+        return cls(
+            str(value["source_id"]),
+            str(value["source_content_id"]),
+            tuple(
+                StructuralProviderEvidenceV1.from_json_dict(row)
+                for row in value["providers"]
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +210,19 @@ class StructuralEvidenceCatalogV1:
     @property
     def identity(self) -> str:
         return content_digest(canonical_json_bytes(self.to_json_dict()))
+
+    @classmethod
+    def from_json_dict(cls, value: Mapping[str, object]) -> "StructuralEvidenceCatalogV1":
+        if not isinstance(value, dict) or set(value) != {
+            "schema_version", "snapshot_id", "policy_id", "sources"
+        } or not isinstance(value["sources"], list):
+            raise KnowledgeStructureError("invalid-structural-catalog")
+        return cls(
+            value["schema_version"],  # type: ignore[arg-type]
+            value["snapshot_id"],  # type: ignore[arg-type]
+            value["policy_id"],  # type: ignore[arg-type]
+            tuple(StructuralSourceEvidenceV1.from_json_dict(row) for row in value["sources"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,11 +258,18 @@ class StructuralQueryV1:
     def to_json_dict(self) -> dict[str, object]:
         return asdict(self)
 
+    def to_selector_json_dict(self) -> dict[str, object]:
+        return {"kind": "structural-query", **self.to_json_dict()}
+
 
 @dataclass(frozen=True, slots=True)
 class StructuralProjectionV1:
     projection_id: str
-    provider_bytes: bytes
+    mapping_receipt_id: str
+    _provider_bytes: bytes
+
+    def provider_bytes(self) -> bytes:
+        return self._provider_bytes
 
 
 def bind_structural_evidence(
@@ -274,9 +316,12 @@ def bind_structural_evidence(
                     tuple(sorted(providers, key=lambda row: row.provider)),
                 )
             )
-        return StructuralEvidenceCatalogV1(
+        catalog = StructuralEvidenceCatalogV1(
             1, snapshot_id, policy_ids.pop(), tuple(sources)
         )
+        if objects.put_blob(canonical_json_bytes(catalog.to_json_dict())) != catalog.identity:
+            raise KnowledgeStructureError("structural-evidence-store-mismatch")
+        return catalog
     except (KeyError, ReV2LedgerError, ValueError, OSError):
         raise KnowledgeStructureError("invalid-structural-evidence") from None
 
@@ -285,12 +330,113 @@ def project_structural_query(
     catalog: StructuralEvidenceCatalogV1,
     objects: ObjectStore,
     query: StructuralQueryV1,
+    *,
+    persist: bool = True,
 ) -> StructuralProjectionV1:
     """Return one bounded provider-neutral graph projection for an RE dispatch."""
 
     sources = {source.source_id: source for source in catalog.sources}
     if query.source_id not in sources:
         raise KnowledgeStructureError("unknown-structural-query-source")
+    topology = _load_topology(catalog, objects)
+    relation_filter = frozenset(query.relations)
+    try:
+        if query.operation == "search":
+            result = topology.search(query.source_id, query.selector, frozenset(), query.limit)
+        elif query.operation == "explain":
+            result = topology.explain(query.source_id, query.selector)
+        elif query.operation == "neighbors":
+            result = topology.neighbors(
+                query.source_id,
+                query.selector,
+                query.direction,
+                relation_filter,
+                query.limit,
+            )
+        else:
+            result = topology.impact(
+                query.source_id, query.selector, query.depth, relation_filter
+            )
+        nodes = tuple(getattr(result, "nodes", ()))
+        if not nodes and getattr(result, "node", None) is not None:
+            nodes = (result.node,)
+        relationships = tuple(getattr(result, "relationships", ()))
+        reason_code = None if nodes or relationships else "no-structural-match"
+        truncated = bool(getattr(result, "truncated", False))
+    except (TopologyProviderError, ValueError):
+        nodes, relationships = (), ()
+        reason_code, truncated = "unavailable-structural-selector", False
+    return _persist_projection(
+        catalog,
+        objects,
+        query.source_id,
+        query.to_json_dict(),
+        nodes,
+        relationships,
+        reason_code,
+        truncated,
+        persist=persist,
+    )
+
+
+def project_structural_overview(
+    catalog: StructuralEvidenceCatalogV1,
+    objects: ObjectStore,
+    source_id: str,
+    limit: int,
+    *,
+    persist: bool = True,
+) -> StructuralProjectionV1:
+    """Project a deterministic bounded source overview without an LLM query."""
+
+    try:
+        validate_source_id(source_id)
+    except ValueError:
+        raise KnowledgeStructureError("invalid-structural-overview") from None
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise KnowledgeStructureError("invalid-structural-overview")
+    if source_id not in {source.source_id for source in catalog.sources}:
+        raise KnowledgeStructureError("unknown-structural-query-source")
+    topology = _load_topology(catalog, objects)
+    candidates = tuple(
+        sorted(
+            (
+                node
+                for node in topology.nodes_by_id.values()
+                if getattr(node, "source_id", None) == source_id
+                and isinstance(node, (TopologyFile, TopologySymbol))
+            ),
+            key=lambda node: (node.type, node.id),
+        )
+    )
+    nodes = candidates[:limit]
+    node_ids = {node.id for node in nodes}
+    relationships = tuple(
+        row
+        for row in topology.relationships
+        if row.source_id in node_ids and row.target_id in node_ids
+    )[:limit]
+    return _persist_projection(
+        catalog,
+        objects,
+        source_id,
+        {
+            "schema_version": 1,
+            "operation": "overview",
+            "source_id": source_id,
+            "limit": limit,
+        },
+        nodes,
+        relationships,
+        None if nodes or relationships else "structural-evidence-unavailable",
+        len(candidates) > limit,
+        persist=persist,
+    )
+
+
+def _load_topology(
+    catalog: StructuralEvidenceCatalogV1, objects: ObjectStore
+) -> PublishedTopology:
     loaded = []
     for source in catalog.sources:
         for provider in source.providers:
@@ -305,7 +451,7 @@ def project_structural_query(
                 )
             except (ReV2LedgerError, OSError, UnicodeDecodeError, json.JSONDecodeError, TopologyProviderError):
                 raise KnowledgeStructureError("invalid-structural-catalog-artifact") from None
-    topology = PublishedTopology.from_loaded_providers(
+    return PublishedTopology.from_loaded_providers(
         loaded,
         generation=1,
         source_fingerprints={
@@ -313,37 +459,43 @@ def project_structural_query(
         },
         sources=(TopologySource(source.source_id) for source in catalog.sources),
     )
-    relation_filter = frozenset(query.relations)
-    if query.operation == "search":
-        result = topology.search(query.source_id, query.selector, frozenset(), query.limit)
-    elif query.operation == "explain":
-        result = topology.explain(query.source_id, query.selector)
-    elif query.operation == "neighbors":
-        result = topology.neighbors(
-            query.source_id,
-            query.selector,
-            query.direction,
-            relation_filter,
-            query.limit,
-        )
-    else:
-        result = topology.impact(
-            query.source_id, query.selector, query.depth, relation_filter
-        )
-    nodes = tuple(getattr(result, "nodes", ()))
-    if not nodes and getattr(result, "node", None) is not None:
-        nodes = (result.node,)
-    relationships = tuple(getattr(result, "relationships", ()))
-    source = sources[query.source_id]
+
+
+def _persist_projection(
+    catalog: StructuralEvidenceCatalogV1,
+    objects: ObjectStore,
+    source_id: str,
+    query: Mapping[str, object],
+    nodes: tuple[object, ...],
+    relationships: tuple[TopologyRelationship, ...],
+    reason_code: str | None,
+    truncated: bool,
+    *,
+    persist: bool,
+) -> StructuralProjectionV1:
+    sources = {source.source_id: source for source in catalog.sources}
+    graph = {
+        "query": dict(query),
+        "nodes": [_node_json(node) for node in nodes],
+        "relationships": [_relationship_json(row) for row in relationships],
+        "truncated": truncated,
+    }
+    text = canonical_json_bytes(graph).decode("utf-8") if reason_code is None else ""
+    source = sources[source_id]
     payload = canonical_json_bytes(
         {
             "schema_version": 1,
-            "kind": "structural_evidence_projection",
+            "kind": "untrusted_structural_evidence",
             "snapshot_id": catalog.snapshot_id,
             "catalog_id": catalog.identity,
-            "source_id": query.source_id,
+            "source_id": source_id,
             "source_content_id": source.source_content_id,
-            "query": query.to_json_dict(),
+            "path": ".",
+            "byte_start": 0,
+            "byte_end": len(text.encode("utf-8")),
+            "disposition": "available" if reason_code is None else "withheld",
+            "reason_code": reason_code,
+            "text": text,
             "providers": [
                 {
                     "provider": provider.provider,
@@ -353,16 +505,35 @@ def project_structural_query(
                 }
                 for provider in source.providers
             ],
-            "nodes": [_node_json(node) for node in nodes],
-            "relationships": [_relationship_json(row) for row in relationships],
-            "truncated": bool(getattr(result, "truncated", False)),
         }
     )
     try:
         validate_provider_context(payload)
     except ValueError:
         raise KnowledgeStructureError("unsafe-structural-projection") from None
-    return StructuralProjectionV1(content_digest(payload), payload)
+    projection_id = content_digest(payload)
+    receipt = canonical_json_bytes(
+        {
+            "schema_version": 1,
+            "kind": "private_structural_evidence_mapping",
+            "snapshot_id": catalog.snapshot_id,
+            "catalog_id": catalog.identity,
+            "source_id": source_id,
+            "source_content_id": source.source_content_id,
+            "query": dict(query),
+            "projection_id": projection_id,
+        }
+    )
+    receipt_id = content_digest(receipt)
+    try:
+        if persist:
+            if objects.put_blob(payload) != projection_id or objects.put_blob(receipt) != receipt_id:
+                raise KnowledgeStructureError("structural-evidence-store-mismatch")
+        elif objects.read_blob(projection_id) != payload or objects.read_blob(receipt_id) != receipt:
+            raise KnowledgeStructureError("structural-evidence-store-mismatch")
+    except (OSError, ReV2LedgerError):
+        raise KnowledgeStructureError("structural-evidence-store-mismatch") from None
+    return StructuralProjectionV1(projection_id, receipt_id, payload)
 
 
 def _node_json(node: object) -> dict[str, object]:
@@ -679,5 +850,6 @@ __all__ = (
     "StructuralSourceObservationV1",
     "bind_structural_evidence",
     "capture_structural_source",
+    "project_structural_overview",
     "project_structural_query",
 )

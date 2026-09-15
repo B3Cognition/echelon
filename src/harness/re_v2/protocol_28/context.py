@@ -66,6 +66,50 @@ def _validate_safe_free_text(value: object) -> None:
             _validate_safe_free_text(item)
 
 
+def _reviewed_structural_evidence(bundle) -> dict[str, object] | None:
+    """Reproject authenticated discovery structure for detailed analysis."""
+    from harness.re_v2.knowledge_activation import ReviewedSubjectCatalogV1
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidenceCatalogV1,
+        project_structural_overview,
+    )
+
+    try:
+        subject_catalog = ReviewedSubjectCatalogV1.from_json_dict(
+            json.loads(bundle.objects[bundle.authority.subject_catalog_id])
+        )
+        proof = json.loads(bundle.objects[subject_catalog.replay_proof_id])
+        catalog_id = proof.get("structural_catalog_id")
+        if catalog_id is None:
+            return None
+        catalog = StructuralEvidenceCatalogV1.from_json_dict(
+            json.loads(bundle.objects[catalog_id])
+        )
+
+        class BundleReader:
+            def read_blob(self, object_id):
+                payload = bundle.objects[object_id]
+                if content_digest(payload) != object_id:
+                    raise Protocol28ContextError(
+                        "reviewed structural object hash mismatch"
+                    )
+                return payload
+
+        limit = 25 if bundle.authority.depth == "quick" else 75 if bundle.authority.depth == "standard" else 100
+        projection = project_structural_overview(
+            catalog,
+            BundleReader(),  # type: ignore[arg-type]
+            bundle.authority.source_id,
+            limit,
+            persist=False,
+        )
+        return json.loads(projection.provider_bytes())
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise Protocol28ContextError(
+            "reviewed structural evidence is invalid"
+        ) from None
+
+
 @dataclass(frozen=True, slots=True)
 class _Protocol28SizingInputs:
     """Private manifest-free input for deterministic preactivation sizing only."""
@@ -516,6 +560,9 @@ def _serialize_protocol_28_slice_context(
             ],
             'limits': 'Reviewed planning inputs only; analysis and reconciliation remain required.',
         }
+        structural_evidence = _reviewed_structural_evidence(bundle)
+        if structural_evidence is not None:
+            payload['structural_evidence'] = structural_evidence
     if context._uses_safe_evidence:
         _validate_safe_free_text(payload)
     encoded = canonical_json_bytes(payload)
