@@ -74,7 +74,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
   schema_version: 2,
   version: "2.0.0",
   tool: "codegraph",
-  tool_version: "1.4.1",
+  tool_version: "1.6.0",
   provider_status: "complete",
   complete: true,
   counts: {
@@ -129,7 +129,7 @@ fs.writeFileSync(outputPath, JSON.stringify({
     )
     package = runtime_dir / "node_modules/@colbymchenry/codegraph/package.json"
     package.parent.mkdir(parents=True)
-    package.write_text('{"version":"1.4.1"}\n', encoding="utf-8")
+    package.write_text('{"version":"1.6.0"}\n', encoding="utf-8")
     return bridge_path
 
 
@@ -172,7 +172,7 @@ def test_analysis_is_usable_rejects_noncanonical_symbol_locators(tmp_path: Path)
             "schema_version": 2,
             "version": "2.0.0",
             "tool": "codegraph",
-            "tool_version": "1.4.1",
+            "tool_version": "1.6.0",
             "provider_status": "complete",
             "complete": True,
             "counts": {

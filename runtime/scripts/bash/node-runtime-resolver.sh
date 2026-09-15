@@ -14,7 +14,7 @@ echelon_codegraph_runtime_ready() {
       process.exit(contract?.provider_artifact_schema_version === 2 &&
         contract?.exact_relationship_endpoints === true &&
         contract?.uncapped_symbols === true &&
-        sdk?.version === "1.4.1" ? 0 : 1);
+        sdk?.version === "1.6.0" ? 0 : 1);
     ' "$runtime_dir/package.json" \
       "$runtime_dir/node_modules/@colbymchenry/codegraph/package.json" 2>/dev/null
 }

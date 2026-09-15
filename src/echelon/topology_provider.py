@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
+from echelon.codegraph_contract import is_supported_codegraph_version
 from echelon.topology_model import (
     NODE_TYPES,
     RELATIONSHIP_TYPES,
@@ -698,7 +699,7 @@ def _validate_common_document(document: Mapping[str, object], provider: str) -> 
     if document.get("tool") != provider:
         raise TopologyProviderError(f"provider artifact tool does not match {provider!r}")
     tool_version = _require_string(document, "tool_version")
-    if provider == "codegraph" and tool_version != "1.4.1":
+    if provider == "codegraph" and not is_supported_codegraph_version(tool_version):
         raise TopologyProviderError("unsupported CodeGraph tool version")
     if provider == "codegraph" and document.get("version") != "2.0.0":
         raise TopologyProviderError("unsupported CodeGraph artifact version")

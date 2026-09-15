@@ -15,7 +15,7 @@ from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatc
 
 CODEGRAPH_RUNTIME_DIR = EXT_ROOT / "runtime" / "scripts" / "node" / "codegraph"
 CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
-CODEGRAPH_VERSION = "1.4.1"
+CODEGRAPH_VERSION = "1.6.0"
 
 
 def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
@@ -73,6 +73,12 @@ def test_codegraph_runtime_is_pinned_to_current_supported_release():
     assert f'require("{CODEGRAPH_PACKAGE}")' in adapter
     assert "vendor/codegraph" not in adapter
     assert f'CODEGRAPH_CLI_VERSION="{CODEGRAPH_VERSION}"' in install_script
+
+
+def test_bridge_declares_the_current_codegraph_tool_version() -> None:
+    integration_types = (CODEGRAPH_RUNTIME_DIR / "integration-types.js").read_text()
+
+    assert f'CODEGRAPH_TOOL_VERSION = "{CODEGRAPH_VERSION}"' in integration_types
 
 
 def test_bridge_emits_more_than_ten_thousand_symbols_without_truncation(
