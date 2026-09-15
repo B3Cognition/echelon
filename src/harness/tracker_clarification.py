@@ -113,7 +113,9 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         state_store.squad_dir.relative_to(root).as_posix(), resolved, previous, producer)
     spec_path = selection["spec_path"]
     report = "feature-policy-reconciliation.md"
-    artifacts = tuple(CandidateArtifact(name, artifact_roles(producer)[name], text,
+    from harness.discovery_producer import post_why1_context
+    post_review = post_why1_context(state, producer)
+    artifacts = tuple(CandidateArtifact(name, artifact_roles("why1" if post_review else producer)[name], text,
         candidate.reconciliation_text if name == report else text) for name, text in before.items())
     if report not in before:
         artifacts += (CandidateArtifact(report, "references", None, candidate.reconciliation_text),)
@@ -121,7 +123,7 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         for path, text in texts.items() if path != spec_path + "/" + report)
     scope_paths = (report, *(path for path in texts if path != spec_path + "/" + report))
     from harness.discovery_candidate import issue_report_changes
-    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer == "why1" else ((), ())
+    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer == "why1" or post_review else ((), ())
     preview = store.preview_identity_candidate(spec_id=selection["spec_id"], artifacts=artifacts,
         scope=IdentityEditScope(scope_paths, (), scope_paths), operations=(), issue_reports=reports)
     if preview.check.diagnostics or preview.history != history:

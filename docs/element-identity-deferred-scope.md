@@ -625,6 +625,22 @@ including both scripted providers and existing mode/restart paths. Independent
 review is closed. This completes the prerequisite, not automatic refresh or
 activation; provider calls were offline scripted responses.
 
+**Checkpoint-B Tracker actual-input execution (complete).**
+Bind Tracker to the current released Synthesis v9 result, not its immutable repair
+origin. Preserve the existing CAS, nearest-Tracker dependency comparison and
+historical human-input associations. Use the closed v10 proof for the first
+Tracker refresh; retain v4/v5 for subsequent clarification rounds. Authenticate
+the immediate Synthesis parent and nested repair ancestry independently during
+replay, including both producers' dependency comparisons. Post-WHY1 artifacts and
+reasoning are read-only context, never additional Tracker write roles. Automatic
+ordering and unchanged-input skips remain required; the unchanged-Synthesis
+branch must not be admitted by weakening the actual-parent check. No installation
+or activation is enabled by this slice.
+Final evidence: 13 new cases plus 356 distinct regressions passed (369 total),
+including both scripted provider paths and interrupted clarification recovery.
+Independent review is closed. The linked plan records exact durations and scope;
+automatic ordering, unchanged-input skips and whole-flow recovery remain open.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

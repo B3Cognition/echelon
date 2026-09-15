@@ -22,6 +22,10 @@ class RefreshExecutor(RepairExecutor):
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_refresh_publishes_from_repair_and_replays_immutable_ancestry(checkpoint_case, provider, monkeypatch):
+    publish_synthesis_refresh(checkpoint_case, provider, monkeypatch)
+
+
+def publish_synthesis_refresh(checkpoint_case, provider, monkeypatch, *, prepare_tracker=False):
     from harness.discovery_operation import run_discovery_operation
     from harness.discovery_publication import prepare_discovery_publication
     from harness.discovery_completion import decode_binding, released_discovery_input_projectors
@@ -49,6 +53,9 @@ def test_refresh_publishes_from_repair_and_replays_immutable_ancestry(checkpoint
     else:
         assert ctrl.run(managed_discovery=request, create_managed_discovery=True).phase == "phase1-discover"
     assert ctrl.run(managed_discovery=request).summary == "managed_repair_dependency_refresh_not_supported"
+    if prepare_tracker:
+        select_refresh(root, store, "tracker")
+        select_refresh(root, store, "why1")
     select_refresh(root, store, "synthesizer")
     bound = bind_input(root, store)
     original = {key: deepcopy(bound[key]) for key in (
@@ -155,3 +162,4 @@ def test_refresh_publishes_from_repair_and_replays_immutable_ancestry(checkpoint
     released_discovery_input_projectors(root, store.squad_dir, saved, source=source)
     assert len(executor.calls) == expected_calls
     assert not drain(controller(checkpoint_case, executor)).recovered
+    return executor, request

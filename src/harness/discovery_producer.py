@@ -144,17 +144,20 @@ def validate_refresh_round(state, producer, row):
     if "execution_input" in row:
         validate_refresh_input(producer, refresh, row["execution_input"])
     if row["operation"] is not None or row["turns"] is not None:
-        if (producer != "synthesizer" or "execution_input" not in row
+        if (producer not in {"synthesizer", "tracker"} or "execution_input" not in row
                 or not row["execution_input"]["dependencies"]["changed"]
                 or row["operation"] is None):
-            raise ValueError("refresh execution requires changed bound Synthesis inputs")
+            raise ValueError("refresh execution requires changed bound inputs")
 
 
 def validate_refresh_input(producer, refresh, bound):
     """Closed input shape shared by retained state and completion proofs."""
-    # Tracker still waits for the ordered execution owner to establish its parent.
-    if (producer != "synthesizer" or type(bound) is not dict or set(bound) != {"source", "dependencies"}
-            or bound["source"] != refresh["repair_source"]):
+    if (producer not in {"synthesizer", "tracker"} or type(bound) is not dict or set(bound) != {"source", "dependencies"}
+            or type(bound["source"]) is not dict or set(bound["source"]) != set(SOURCE_FIELDS)
+            or any(type(value) is not str or re.fullmatch(r"[0-9a-f]{%d}" % (32 if key == "dispatch_id" else 64), value) is None
+                for key, value in bound["source"].items())
+            or (producer == "synthesizer" and bound["source"] != refresh["repair_source"])
+            or (producer == "tracker" and bound["source"]["dispatch_id"] == refresh["repair_source"]["dispatch_id"])):
         raise ValueError("refresh execution input is not admitted")
     dependencies = bound["dependencies"]
     if (type(dependencies) is not dict or set(dependencies) != {"before_sha256", "after_sha256", "changed"}
@@ -181,12 +184,24 @@ def tracker_round(state, operation_id=None, *, producer="tracker"):
 
 def tracker_input_source(state, operation_id=None, *, producer="tracker"):
     row = tracker_round(state, operation_id, producer=producer)
+    if "refresh" in row:
+        if "execution_input" not in row:
+            raise ValueError("refresh execution input is not bound")
+        return deepcopy(row["execution_input"]["source"])
     if row["resolution"] is None:
         return row["source"]
     receipt = row["resolution"]["completion"]
     return dict(dispatch_id=receipt["completion_id"], completion_intent_sha256=receipt["intent_sha256"],
         completion_receipts_sha256=receipt["receipts_sha256"],
         completed_publication_binding_sha256=receipt["publication_binding_sha256"])
+
+
+def post_why1_context(state, producer):
+    """Refresh descendants retain read-only review context, not new write roles."""
+    if producer not in {"synthesizer", "tracker"}:
+        return False
+    rounds = tracker_rounds(state, producer)
+    return rounds is not None and any("refresh" in row for row in rounds["rounds"].values())
 
 
 def repair_record(state, producer, unit):

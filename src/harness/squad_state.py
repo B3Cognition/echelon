@@ -2778,18 +2778,28 @@ class SquadStateStore:
             current = self._load_unlocked()
             try:
                 dispatch = current.get("last_dispatch") or {}
-                if (producer != "synthesizer" or current != expected_state
+                if (producer not in {"synthesizer", "tracker"} or current != expected_state
                         or current.get("status") != "running" or current.get("phase") != "phase1-why1"
                         or current.get("mode") != "greenfield"
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}
-                        or dispatch.get("phase_id") != "phase1-discover" or dispatch.get("post_dispatch_complete") is not True
+                        or dispatch.get("phase_id") != ("phase1-discover" if producer == "synthesizer" else "phase1-synthesizer")
+                        or dispatch.get("post_dispatch_complete") is not True
                         or execution_input["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}):
                     raise ValueError("refresh input requires exact accepted state")
                 rounds = _tracker_from_state(current, producer)
                 row = rounds["rounds"][rounds["active"]]
                 if "refresh" not in row or row["operation"] is not None or row["turns"] is not None:
                     raise ValueError("inactive refresh required")
+                if producer == "tracker":
+                    synthesis = _tracker_from_state(current, "synthesizer")
+                    parent = synthesis["rounds"][synthesis["active"]]
+                    operation = parent["operation"]
+                    if (parent["refresh"]["repair_source"] != row["refresh"]["repair_source"]
+                            or parent["refresh"]["repair_unit"] != row["refresh"]["repair_unit"]
+                            or operation is None or not operation["attempts"]
+                            or (operation["attempts"][-1]["result"] or {}).get("status") != "accepted"):
+                        raise ValueError("Tracker requires the accepted Synthesis refresh")
                 if "execution_input" in row:
                     if row["execution_input"] != execution_input:
                         raise ValueError("refresh input is immutable")
@@ -2799,7 +2809,8 @@ class SquadStateStore:
                 _tracker_from_state(desired, producer)
             except Exception:
                 raise StateAdvanceError("invalid repair refresh input", validator="refresh_input") from None
-            written = self._save_unlocked(desired, synthesis_round_update="execution_input")
+            written = self._save_unlocked(desired, **{
+                "synthesis_round_update" if producer == "synthesizer" else "tracker_update": "execution_input"})
             return self._confirm_durable_state_unlocked(written)
 
     def prepare_tracker_round(self, source: dict, *, producer="tracker") -> dict:

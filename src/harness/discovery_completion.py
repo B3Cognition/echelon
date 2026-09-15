@@ -111,18 +111,19 @@ def _decode(publication, completion_id, state):
         return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
         "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256",
-        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9} else ()),
-        *(("resolution",) if recovery.get("version") in {4, 6} else ()),
+        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9, 10} else ()),
+        *(("resolution",) if recovery.get("version") in {4, 6, 10} else ()),
         *(("repair_unit",) if recovery.get("version") == 8 else ()),
-        *(("refresh", "execution_input", "predecessor") if recovery.get("version") == 9 else ())))
+        *(("refresh", "execution_input", "predecessor") if recovery.get("version") in {9, 10} else ())))
     producer = recovery.get("producer", "discovery")
     repair_unit = recovery.get("repair_unit")
-    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9}
+    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9, 10}
         and (recovery["version"] != 3 or producer == "synthesizer")
         and (recovery["version"] != 4 or producer == "tracker")
         and (recovery["version"] != 6 or producer == "why1")
         and (recovery["version"] != 8 or producer == "discovery")
         and (recovery["version"] != 9 or producer == "synthesizer")
+        and (recovery["version"] != 10 or producer == "tracker")
         and _json(recovery) == request.recovery_payload)
     if completion_id is not None:
         _require(recovery["completion_id"] == completion_id)
@@ -141,7 +142,9 @@ def _decode(publication, completion_id, state):
     selected = operation["binding"]
     if recovery["version"] == 3:
         _require(selected["operation_id"] == "synthesis-" + recovery["source_completion"]["dispatch_id"])
-    if recovery["version"] == 9:
+    if recovery["version"] == 4 and recovery["resolution"] is None:
+        _require(selected["operation_id"] == "tracker-" + recovery["source_completion"]["dispatch_id"])
+    if recovery["version"] in {9, 10}:
         refresh = recovery["refresh"]
         _closed(refresh, ("repair_unit", "repair_source", "predecessor_source"))
         _require(type(refresh["repair_unit"]) is str and re.fullmatch(r"[0-9a-f]{64}", refresh["repair_unit"]) is not None)
@@ -152,11 +155,13 @@ def _decode(publication, completion_id, state):
         validate_refresh_input(producer, refresh, recovery["execution_input"])
         _require(recovery["execution_input"]["dependencies"]["changed"]
             and recovery["source_completion"] == recovery["execution_input"]["source"]
-            and selected["operation_id"] == "synthesizer-" + refresh["repair_source"]["dispatch_id"]
+            and selected["operation_id"] == producer + "-" + refresh["repair_source"]["dispatch_id"]
             and type(recovery["predecessor"]) is str
-            and re.fullmatch(r"(?:synthesis|synthesizer)-[0-9a-f]{32}", recovery["predecessor"]) is not None
+            and re.fullmatch((r"(?:synthesis|synthesizer)" if producer == "synthesizer" else "tracker") + r"-[0-9a-f]{32}", recovery["predecessor"]) is not None
             and refresh["predecessor_source"]["dispatch_id"] != refresh["repair_source"]["dispatch_id"]
             and request.sources.expected_operation_id == "discovery-completion-" + recovery["source_completion"]["dispatch_id"])
+        if producer == "tracker":
+            _require(recovery["resolution"] is None)
     if recovery["version"] == 8:
         _require(type(repair_unit) is str and re.fullmatch(r"[0-9a-f]{64}", repair_unit) is not None
             and selected["operation_id"] == "discovery-repair-" + repair_unit
@@ -222,6 +227,9 @@ def _decode(publication, completion_id, state):
             row = tracker_round(state, selected["operation_id"], producer=producer)
             _require(tracker_input_source(state, selected["operation_id"], producer=producer) == recovery["source_completion"]
                 and row["resolution"] == recovery["resolution"])
+            _require(("refresh" in row) == (recovery["version"] == 10))
+            if recovery["version"] == 10:
+                _require(all(row[key] == recovery[key] for key in ("refresh", "execution_input", "predecessor")))
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
 
 
@@ -264,7 +272,7 @@ def authenticate(root, run, state, completion):
             spec_view, runtime_view = _released_discovery_projections(root, run, state,
                 source=binding.recovery["source_completion"], historical=True,
                 repair_child=binding if binding.repair_unit is not None else None,
-                refresh_child=binding if binding.recovery["version"] == 9 else None,
+                refresh_child=binding if binding.recovery["version"] in {9, 10} else None,
                 why1_child=binding if binding.producer == "why1" else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
@@ -627,10 +635,10 @@ def _require_repair_origin(state, child, parent):
     _require(claim["findings"] == findings and claim["artifact_paths"] == paths and claim["editable_revisions"] == revisions)
 
 
-def _require_refresh_dependencies(row, previous, source, sources, inputs, selection, run, root):
+def _require_refresh_dependencies(row, previous, source, sources, inputs, selection, run, root, *, producer="synthesizer"):
     from harness.discovery_refresh_inputs import refresh_dependency_comparison
     _require(source == row["refresh"]["predecessor_source"]
-        and previous.producer == "synthesizer"
+        and previous.producer == producer and not previous.clarification
         and previous.recovery["operation"]["binding"]["operation_id"] == row["predecessor"])
     comparison = refresh_dependency_comparison(previous, sources,
         history=IdentityHistorySnapshot(**inputs["history"]), runtime=inputs["runtime"],
@@ -638,20 +646,20 @@ def _require_refresh_dependencies(row, previous, source, sources, inputs, select
     _require(comparison == row["execution_input"]["dependencies"] and comparison["changed"])
 
 
-def _refresh_predecessor(root, run, state, row):
-    """Resolve the nearest accepted Synthesis in the already authenticated repair ancestry.
+def _refresh_predecessor(root, run, state, row, *, producer="synthesizer"):
+    """Resolve the nearest accepted producer in the authenticated repair ancestry.
 
     The capture caller first authenticates the full current chain. Resolve before
     entering source inspection: retained checkpoint proof may access Git.
     """
     store = IdentityStore.open(root)
-    source = row["execution_input"]["source"]
+    source = row["refresh"]["repair_source"]
     binding, _, _ = _retained_input_projection(root, run, state, store,
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase1-discover", "phase1-why1"))
     _require(binding.producer == "discovery" and binding.repair_unit == row["refresh"]["repair_unit"])
     seen = {source["dispatch_id"]}
-    while binding.producer != "synthesizer":
+    while binding.producer != producer or binding.clarification:
         source = binding.recovery["source_completion"]
         _require(source["dispatch_id"] not in seen)
         seen.add(source["dispatch_id"])
@@ -671,6 +679,18 @@ def _require_why1_tracker_parent(state, child, parent):
             and parent.recovery["operation"]["binding"]["operation_id"] == row["tracker_parent"])
 
 
+def _require_refresh_parent(child, parent, source):
+    refresh = child.recovery["refresh"]
+    _require(source == child.recovery["execution_input"]["source"])
+    if child.recovery["version"] == 9:
+        _require(parent.producer == "discovery" and parent.repair_unit == refresh["repair_unit"]
+            and source == refresh["repair_source"])
+    else:
+        _require(child.recovery["version"] == 10 and parent.producer == "synthesizer"
+            and parent.recovery["version"] == 9
+            and all(parent.recovery["refresh"][key] == refresh[key] for key in ("repair_unit", "repair_source")))
+
+
 def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None, historical=False, repair_child=None, refresh_child=None, why1_child=None):
     """Prepare a checked spec-identity view after completion outbox cleanup.
 
@@ -688,7 +708,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
         operation_id = "discovery-completion-" + source["dispatch_id"] if historical else observed["source_context"]["operation_id"]
         _require(historical or store.pending_identity_publication(spec_id=selection["spec_id"]) is None)
         seen, contexts = set(), []
-        child = pending_refresh = None
+        child, pending_refreshes = None, []
         while True:
             _require(operation_id not in seen)
             seen.add(operation_id)
@@ -701,15 +721,15 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                 _require_repair_origin(state, repair, binding)
             _require_why1_tracker_parent(state, why1_child if child is None else child, binding)
             refreshing = refresh_child if child is None else child
-            if refreshing is not None and refreshing.recovery["version"] == 9:
-                _require(pending_refresh is None and binding.producer == "discovery"
-                    and binding.repair_unit == refreshing.recovery["refresh"]["repair_unit"]
-                    and source == refreshing.recovery["refresh"]["repair_source"])
-                pending_refresh = refreshing
-            if pending_refresh is not None and binding.producer == "synthesizer":
-                _require_refresh_dependencies(pending_refresh.recovery, binding, source,
-                    pending_refresh.sources, pending_refresh.source, selection, run, root)
-                pending_refresh = None
+            if refreshing is not None and refreshing.recovery["version"] in {9, 10}:
+                _require_refresh_parent(refreshing, binding, source)
+                pending_refreshes.append(refreshing)
+            for pending_refresh in tuple(pending_refreshes):
+                if binding.producer == pending_refresh.producer and not binding.clarification:
+                    _require_refresh_dependencies(pending_refresh.recovery, binding, source,
+                        pending_refresh.sources, pending_refresh.source, selection, run, root,
+                        producer=pending_refresh.producer)
+                    pending_refreshes.remove(pending_refresh)
             if child is None:
                 expected = project_publication_source_images(binding.baseline).manifest
                 _require(historical or (asdict(expected) == observed["source_context"]["manifest"]
@@ -727,7 +747,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             contexts.append(context)
             source = binding.recovery.get("source_completion")
             if source is None:
-                _require(binding.producer == "discovery" and pending_refresh is None)
+                _require(binding.producer == "discovery" and not pending_refreshes)
                 break
             child = binding
             operation_id = "discovery-completion-" + source["dispatch_id"]

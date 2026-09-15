@@ -1477,3 +1477,24 @@ implementation and final verification: 364 distinct selected tests passed,
 including scripted Codex/Claude proof cases and existing mode/restart regressions.
 Independent review has no remaining findings. This is not full-suite or live
 acceptance; no installation or activation claim is made.
+
+### Repair refresh: Tracker actual-input execution (complete)
+
+Tracker's immutable repair origin is no longer its execution input. The existing
+admission owner authenticates the current released Synthesis v9 result, its full
+repair ancestry and nearest accepted Tracker, then binds once with full-state CAS.
+Historical WHY1 pins and the requesting WHY1 association remain prerequisites.
+
+The first refreshed Tracker uses a closed v10 completion proof. Replay checks its
+actual Synthesis parent and independently recomputes both Tracker and nested
+Synthesis dependencies. Original v4 Tracker proofs and v5 clarification proofs
+remain readable; a first-refresh v4 downgrade rejects. Refresh descendants retain
+WHY1 reports and reasoning as read-only context without expanding Tracker writes.
+
+Automatic ordering and unchanged-input skips remain closed. This slice admits
+only accepted changed Synthesis output, and does not enable WHY1 re-review,
+installation or live activation. Verification is recorded in the refresh plan.
+All 369 distinct selected offline tests passed (13 new plus 356 regressions),
+including both scripted providers, interrupted publication and post-refresh
+clarification recovery. Independent review has no remaining findings. This
+completes the prerequisite, not automatic refresh ordering or full activation.

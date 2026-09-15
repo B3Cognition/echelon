@@ -18,8 +18,9 @@
 
 - [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
 - [x] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
-- [ ] Execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round. Preserve native caps, cumulative accounting and retry/no-progress/unknown-completion behavior during automatic refresh.
+- [ ] Automatically execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round. Preserve native caps, cumulative accounting and retry/no-progress/unknown-completion behavior during automatic refresh.
 - [x] Implement the historical human-input prerequisite: pin WHY1 clarification ancestry to its accepted Tracker parent and preserve chronological Tracker→WHY1→new Tracker answers. The automatic route must invoke this prerequisite before allowing new Tracker questions.
+- [x] Bind and authenticate Tracker's accepted changed-Synthesis input, execute through existing owners with v10 proof and recover publication and subsequent clarification without rewriting historical answers. This prerequisite does not enable automatic refresh ordering or unchanged-input skips.
 - [ ] Verify interruption/recovery, unchanged-input skips and changed-parent rejection for Codex and Claude; stop before WHY1 re-review. Independent review and local commit.
 
 No installation, migration, live provider spending, push, merge, original smoke workspace, legacy build, AGENTS.md or CLAUDE.md edits. This plan does not represent checkpoint B as complete when only binding tests pass.
@@ -269,3 +270,58 @@ Only this historical human-input prerequisite is complete. Automatic ordering,
 Tracker actual-input execution and unchanged-input skips remain unfinished under
 the existing approval. Scripted offline verification is not a full-suite result,
 live acceptance, installation or activation.
+
+## Checkpoint B: Tracker actual-input proof/execution prerequisite (complete)
+
+Tracker refresh must bind the current released Synthesis v9 result, while retaining
+its original repair source and nearest accepted Tracker separately. The input
+owner reuses the existing full-state CAS and dependency comparison. Admission
+authenticates the complete current ancestry and requires the prior WHY1 root pin
+and same-repair WHY1 history association. No old record is rewritten.
+
+The first Tracker refresh needs a distinct closed proof (v10); it must reject a
+v4 downgrade and authenticate both the immediate refreshed Synthesis and the
+older Tracker dependency baseline. Subsequent Tracker clarification rounds keep
+their existing v4/v5 contracts and include read-only post-WHY1 context. Writable
+Tracker roles, attempt limits, receipts and accounting do not expand.
+
+Automatic ordering and unchanged-input skips remain guarded and are not
+implemented in this slice. This slice only admits a changed Synthesis predecessor;
+the unchanged-Synthesis branch remains an explicit ordered-execution task.
+
+Verification:
+
+- Starting clean HEAD `39f3aa9e`; 36 baseline checks passed in 3.48s.
+- Test-first failures reproduced Tracker's repair-source fallback and missing
+  input binding (two cases, 0.70s), inactive execution guard (1.16s), and missing
+  immediate-parent proof validation (0.38s). Real Codex admission initially
+  rejected at the old guard (273.18s), then passed in 286.09s. Real Claude capture
+  subsequently reproduced rejection of inherited human answers (699.47s).
+- The initial v10 Codex execution/publication/recovery reached a wrong test
+  expectation: unchanged intent correctly retains its old revision, rather than
+  fabricating another. The assertion was corrected, with no production change.
+  A superseded Claude run was terminated; partial/superseded runs are not counted
+  as final evidence.
+- Independent read-only review found no production issue. Its two coverage
+  recommendations were added: independent Tracker dependency recomputation and
+  post-binding source drift rejected before dispatch/accounting. The additional
+  real clarification case covers a third human answer and interrupted identity
+  application before subsequent Tracker continuation. Review is closed with no
+  remaining findings.
+- Final shared/regression partition: 366 passed in 559.04s, comprising 10 new
+  state/parent cases and 356 existing receipt, round, candidate, completion and
+  selected mode/restart cases. Earlier overlapping partitions are not added again.
+- Final scripted refresh execution/proof cases: Codex passed in 436.22s and
+  Claude passed in 953.26s. They cover input/proof tampering, independent
+  dependency recomputation, source drift before dispatch, interrupted identity
+  application, exact retry and unchanged intent revision preservation.
+- The real-controller Claude clarification/restart case passed in 1130.70s:
+  all three answers remain chronological, interrupted answer publication recovers,
+  and subsequent Tracker continuation adds no duplicate calls or charges.
+
+Final evidence is 13 new cases plus 356 distinct regressions (369 total).
+`git diff --check` passes. Earlier overlapping and superseded runs are not added
+again. Provider responses were scripted; this is not full-suite verification,
+live acceptance, installation or activation. Only this prerequisite is complete;
+automatic ordering, unchanged-input skips and their whole-flow recovery checks
+remain approved and unfinished. WHY1 re-review stays outside this checkpoint.
