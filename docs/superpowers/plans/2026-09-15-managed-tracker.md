@@ -43,6 +43,10 @@
 - [ ] Stage the Task 1 candidate and captured context through existing publication/completion owners. On source drift, stale decision or changed answer reject without promotion.
 - [ ] Retain separate Tracker round/receipt paths. Tie the next round to the exact resolved decision and accepted parent completion; preserve total token/dispatch accounting and prior receipts.
 - [ ] Extend retained source/context proof traversal across Synthesizer, Tracker and clarification completions, rejecting missing/cyclic/foreign ancestry. Never ignore unverified context or metadata.
+  - Discovery/Synthesizer prerequisite: verify the entire retained context chain
+    back to original admission inputs, with exact parent artifact/history links.
+    Tracker/clarification completion bindings still need their own integration;
+    this prerequisite does not complete this checklist item.
 - [ ] Test interruption before/after staging, route, promotion, context, receipt, release and cleanup; exact resume produces no duplicate IDs, charges or ledger append.
 
 ## Task 3: Normal Tracker execution and verification
@@ -89,3 +93,66 @@
 
 The normal Tracker acceptance file remains uncommitted pending Tasks 2/3. A
 passing preparation test group is not a passing managed Tracker run.
+
+## Task 2 source-ancestry prerequisite
+
+The existing released-completion reader projected only one context generation.
+After real Discovery and Synthesis completions, it therefore returned Discovery's
+generated identity-bearing context instead of original admission inputs. The
+regression reproduced both with and without checkpoint policy (2 failed in
+41.54s); extending the existing reader made those same cases pass (2 passed in
+42.05s). No runtime-domain check was removed or relaxed.
+
+The reader now follows exact retained completion associations iteratively,
+rejects repeated operation IDs, verifies each parent's accepted artifacts,
+identity history and context against the child's captured before-images, and
+returns a pure projection back to the original runtime context. Current raw
+captures, source guards and model evidence remain current; no live context,
+state, source history, receipt encoding, ID or budget is rewritten. Existing
+version-2 checkpoint proofs retain their original encoding; releases without a
+full proof remain inadmissible.
+
+This is a partial Task 2 checkpoint. Guarded human resolution, per-round Tracker
+state/receipts, Tracker-specific historical decoding and normal dispatch remain
+open. No new approval is required for those already-approved tasks. The pending
+normal Tracker acceptance file remains RED and is not part of this checkpoint.
+
+Independent read-only review found no outstanding Critical/Important/Minor issue.
+Its initial suggestion for direct multi-round cycle/relationship tests was checked
+against current reachable states: the closed Discovery encoding terminates the
+chain, only Synthesis can have a parent, and protected state plus the existing
+source owner reject mismatched parent/context/predecessor links before traversal.
+The reviewer agreed not to fake successful authority responses to reach defensive
+branches. Add those direct tests with retained Tracker rounds, when further links
+become representable; keep the current real stored-proof corruption tests now.
+
+Expanded ancestry verification: **13 passed in 302.26s** using
+`python -m pytest tests/unit/test_managed_source_ancestry.py -q --tb=short`.
+This includes both checkpoint modes, corrupted/missing/foreign parent proofs,
+current context/spec/ledger/source drift, and exact old version-2 proof retention.
+The two normal Tracker acceptance cases were rerun separately and remain expected
+RED at `managed_discovery_selection_requires_reconciliation` (2 failed in 0.85s).
+
+Broader regression verification: **201 passed in 1181.25s** using:
+```sh
+python -m pytest tests/unit/test_managed_synthesizer.py tests/unit/test_discovery_completion.py tests/unit/test_discovery_checkpoint.py tests/unit/test_discovery_repair_inputs.py tests/unit/test_discovery_repair_retention.py tests/unit/test_squad_identity_exclusion.py -q --tb=short
+```
+Together these are 214 passing selected checks, not a full-suite or Tracker
+acceptance claim. `git diff --check` passed. Only the source-ancestry code,
+its passing tests and these convergence records belong to this local checkpoint.
+
+Integration seams confirmed for the remaining Task 2 work:
+
+- `SquadController.apply_human_input_resolution` already validates the decision,
+  resolver and revision before committing a resolved postimage with an optional
+  prepared completion. Preserve that owner and its CAS boundary.
+- `squad_completion.py` currently permits resolution-origin completions only for
+  the quality effect and no publication. Its closed validator must explicitly
+  admit the managed clarification association; do not relabel a human resolution
+  as an ordinary routed dispatch or weaken all resolution validation.
+- `SquadStateStore.apply_human_input_state_resolution` must bind publication and
+  completion together with the exact resolved decision. Current quality-only
+  completion assumptions cannot be reused unchanged.
+- Completion release/recovery must select the existing human-resolution receipt
+  owner (`last_human_input_completion`), preserving `last_dispatch` as the parent
+  Tracker result. A second controller/decision ledger is not needed.

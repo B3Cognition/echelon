@@ -1115,3 +1115,22 @@ through the current transaction/completion owners and retain each Tracker round.
 The two initial normal Tracker acceptance cases still fail at unsupported managed
 selection and remain uncommitted integration work; they are not covered by the
 passing preparation checkpoint. Full Tracker integration and activation are open.
+
+### Retained context ancestry prerequisite (2026-09-15)
+
+The next partial Task 2 checkpoint extends the existing completion proof reader,
+not the producer or human-input admission surface. After Discovery and Synthesis,
+original runtime-domain admission now follows the entire retained context chain
+instead of rolling back only one generated context. Every parent is selected by
+its exact completion association; accepted artifacts, identity history and context
+must match the child's captured before-images. Traversal is iterative and rejects
+repeated operations. Full source captures and model evidence stay current; the
+projection neither writes original context back to disk nor discards read guards.
+Old version-2 checkpoint proof bytes remain unchanged and incomplete legacy proof
+cannot authorize continuation.
+
+This verifies ancestry for the two integrated producers only. It does not enable
+Tracker, create a resolved clarification, retain Tracker rounds or publish answers.
+Those remain approved work in the same plan, followed by WHY1/review-origin repair
+and the original renumbering/evidence acceptance. Default managed selection,
+provider abstraction, legacy managed-execution guards and installation are unchanged.

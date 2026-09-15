@@ -505,7 +505,6 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
     Keep that full capture for read guards; only the authenticated identity view
     omits checkpoint metadata. This does not admit other repair input domains.
     """
-    from harness.squad_completion import validate_retained_completion_proof
     try:
         selection = bootstrap_from_state(state)["selection"]
         _require(str(root) == selection["project_root"] and str(run) == selection["run_dir"])
@@ -513,40 +512,78 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
         observed = store.check_managed_context(spec_id=selection["spec_id"], run_id=selection["run_id"],
             record=state["managed_identity"])
         operation_id = "discovery-completion-" + source["dispatch_id"] if historical else observed["source_context"]["operation_id"]
-        row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
-        _require(row is not None and row["state"] == "released"
-            and (historical or store.pending_identity_publication(spec_id=selection["spec_id"]) is None))
-        proof = _document(row["completion_payload"])
-        _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3})
-        field = "checkpoint" if proof["version"] == 2 else "proof"
-        _closed(proof, ("version", "completion", field))
-        _closed(proof[field], ("intent", "receipts"))
-        marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
-            proof[field]["intent"], proof[field]["receipts"])
-        if source is not None:
-            _require(source == dict(dispatch_id=marker.completion_id,
-                completion_intent_sha256=marker.intent_sha256,
-                completion_receipts_sha256=marker.receipts_sha256,
-                completed_publication_binding_sha256=marker.publication_binding_sha256))
-        _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
-        binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
-        _require(binding is not None and row["request"] == encode_publication_request(binding.request)
-            and binding.operation_id == operation_id
-            and (historical or asdict(store.identity_history(spec_id=binding.spec_id)) == binding.candidate["history"]))
-        expected = project_publication_source_images(binding.baseline).manifest
-        _require(historical or asdict(expected) == observed["source_context"]["manifest"])
-        project = _checkpoint_projection(root, run, state, intent=intent, marker=marker,
-            receipts=receipts, binding=binding)
-        def checked(tree):
-            _require(tree.path == selection["spec_path"])
-            projected = project(tree)
-            _require(snapshot_source_manifest(trees=(projected,), files=()) == expected)
-            return projected
-        return checked, partial(_project_released_context, root=root, run=run,
-            binding=binding, marker=marker, receipts=receipts)
+        _require(historical or store.pending_identity_publication(spec_id=selection["spec_id"]) is None)
+        seen, contexts = set(), []
+        child = None
+        while True:
+            _require(operation_id not in seen)
+            seen.add(operation_id)
+            binding, project, context = _retained_input_projection(root, run, state, store,
+                operation_id=operation_id, source=source, require_checkpoint=require_checkpoint)
+            if child is None:
+                expected = project_publication_source_images(binding.baseline).manifest
+                _require(historical or (asdict(expected) == observed["source_context"]["manifest"]
+                    and asdict(store.identity_history(spec_id=binding.spec_id)) == binding.candidate["history"]))
+                selected_project = project
+            else:
+                # A digest-matching receipt is not sufficient: the child's
+                # captured before-images must be this parent's exact result.
+                _require(child.request.sources.expected_operation_id == binding.operation_id
+                    and child.request.sources.context_id == binding.request.sources.context_id
+                    and child.source["history"] == binding.candidate["history"])
+                spec, = (tree for tree in child.sources.trees if tree.path == selection["spec_path"])
+                _require(project(spec) == child.baseline.trees[0])
+                context(child.sources)
+            contexts.append(context)
+            source = binding.recovery.get("source_completion")
+            if source is None:
+                _require(binding.producer == "discovery")
+                break
+            child = binding
+            operation_id = "discovery-completion-" + source["dispatch_id"]
+            require_checkpoint = False
+        def original_runtime(sources):
+            for project_context in contexts:
+                sources = project_context(sources)
+            return sources
+        return selected_project, original_runtime
     except Exception:
         pass
     raise CompletionError("intent_mismatch")
+
+
+def _retained_input_projection(root, run, state, store, *, operation_id, source, require_checkpoint):
+    """Read one exact retained completion; ancestry selection stays with caller."""
+    from harness.squad_completion import validate_retained_completion_proof
+    selection = bootstrap_from_state(state)["selection"]
+    row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
+    _require(row is not None and row["state"] == "released")
+    proof = _document(row["completion_payload"])
+    _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3})
+    field = "checkpoint" if proof["version"] == 2 else "proof"
+    _closed(proof, ("version", "completion", field))
+    _closed(proof[field], ("intent", "receipts"))
+    marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
+        proof[field]["intent"], proof[field]["receipts"])
+    if source is not None:
+        _require(source == dict(dispatch_id=marker.completion_id,
+            completion_intent_sha256=marker.intent_sha256,
+            completion_receipts_sha256=marker.receipts_sha256,
+            completed_publication_binding_sha256=marker.publication_binding_sha256))
+    _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
+    binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
+    _require(binding is not None and row["request"] == encode_publication_request(binding.request)
+        and binding.operation_id == operation_id)
+    expected = project_publication_source_images(binding.baseline).manifest
+    project = _checkpoint_projection(root, run, state, intent=intent, marker=marker,
+        receipts=receipts, binding=binding)
+    def checked(tree):
+        _require(tree.path == selection["spec_path"])
+        projected = project(tree)
+        _require(snapshot_source_manifest(trees=(projected,), files=()) == expected)
+        return projected
+    return binding, checked, partial(_project_released_context, root=root, run=run,
+        binding=binding, marker=marker, receipts=receipts)
 
 
 def _project_released_context(sources, *, root, run, binding, marker, receipts):

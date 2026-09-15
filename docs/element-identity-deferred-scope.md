@@ -362,6 +362,17 @@ guards until a specific admitted path proves source, decision and recovery
 ownership. The initial two provider acceptance tests remain intentionally RED and
 uncommitted until that path reaches WHY1 without executing it.
 
+For the next producer's input admission, reuse the extended retained completion
+reader's full context-ancestry projection. The prior one-hop rollback left
+Discovery's generated identity references in the admission context after Synthesis.
+The partial Task 2 fix authenticates both retained generations and the exact
+parent artifact/history/context links; current raw captures and model evidence
+remain unchanged. Extend this same owner for future Tracker/clarification bindings
+and exact historical round selection. Do not bypass domain admission, erase
+generated context, reconstruct an earlier state by editing current producer keys,
+or invent another ancestry ledger. This prerequisite is not guarded answer/resume
+or a passing Tracker run; those tasks remain approved and open.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
