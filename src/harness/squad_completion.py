@@ -600,12 +600,22 @@ def _validate_intent(
         dict.__getitem__(record, "publication")
     )
     route = _validate_route(dict.__getitem__(record, "route"))
+    clarification = False
     if "managed_discovery" in publication:
         from harness.discovery_completion import decode_binding
         from harness.discovery_producer import producer_phase
         binding = decode_binding(publication, completion_id=completion_id)
-        if (origin != "routed" or route.get("from_phase") != producer_phase(binding.producer)
+        clarification = binding.clarification
+        if clarification:
+            if (origin != "resolution" or route.get("from_phase") != "phase1-tracker"
+                    or route.get("decision_id") != binding.recovery["resolution"]["id"]
+                    or route.get("to_phase") != binding.candidate["route"]):
+                _raise("intent_invalid")
+        elif (origin != "routed" or route.get("from_phase") != producer_phase(binding.producer)
                 or route.get("manual_phase_run") is not False or route.get("record_completion") is not True):
+            _raise("intent_invalid")
+        if binding.producer == "tracker" and not clarification and route.get("to_phase") != (
+                "phase1-tracker" if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK" else "phase1-why1"):
             _raise("intent_invalid")
     if origin != route["kind"]:
         _raise("intent_invalid")
@@ -626,7 +636,7 @@ def _validate_intent(
         ["mining", "retarget"],
     ):
         _raise("intent_invalid")
-    if origin == "resolution" and effect_plan != ["quality"]:
+    if origin == "resolution" and effect_plan != (["context"] if clarification else ["quality"]):
         _raise("intent_invalid")
     checkpoint_prestate = _validate_checkpoint_prestate(
         dict.__getitem__(record, "checkpoint_prestate"),
@@ -651,7 +661,7 @@ def _validate_intent(
         dict.__getitem__(record, "judgment_payload_sha256"),
     )
     if origin == "resolution" and (
-        publication != {"kind": "none"}
+        (not clarification and publication != {"kind": "none"})
         or judgments
         or judgment_digests
     ):

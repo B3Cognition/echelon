@@ -394,6 +394,29 @@ new allocations. Run-level cumulative accounting and missing-selected-journal
 guards still require integration; passing low-level journal tests do not imply
 that Tracker re-entry or controller dispatch is enabled.
 
+**Tracker disposition, 2026-09-15: completed for the approved managed greenfield
+boundary.** This supersedes the pending Tracker paragraphs above, retaining them
+as prerequisite history. See the [completed plan](superpowers/plans/2026-09-15-managed-tracker.md)
+for exact verification and review evidence. Internal selection now reaches WHY1
+through native Modeler skip and Tracker; default/public activation is unchanged.
+
+On resumption, reuse the connected `managed_tracker_rounds` predecessor chain,
+round-local existing journals, v4 Tracker and v5 human clarification completion
+proof, and the existing human-resolution CAS/publication/release owners. The
+human receipt remains distinct from its parent `last_dispatch`. Authenticate the
+exact parent operation/STOP decision and all three staging postimages, including
+absence, before deriving next-round inputs. Do not replace this with Markdown
+decision parsing, a second ledger, flat active journals or resettable counters.
+Clarification can derive WHAT from the existing reconciliation report; that route
+does not authorize repair execution. Existing automatic-answer eligibility and
+phase caps remain authoritative. Codex/Claude share neutral Prosaic roles.
+
+Tracker is no longer a deferred integration item. WHY1 and authenticated
+review-origin repair/return, then the original renumbering/evidence acceptance,
+remain subsequent convergence work. Brownfield expansion, installation, migration
+and live-provider acceptance remain outside this completed boundary. Do not
+reimplement the completed Tracker seams when continuing those items.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

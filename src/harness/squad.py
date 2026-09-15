@@ -1585,7 +1585,7 @@ class SquadController:
             effect_plan = tuple(effects)
             judgment_records: tuple[dict[str, object], ...] = ()
         elif origin == "resolution":
-            if not resolution_decision_id or quality_effect is None:
+            if not resolution_decision_id or (quality_effect is None and managed_discovery_request is None):
                 raise StateAdvanceError(
                     "human-input completion preparation is invalid",
                     json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
@@ -1597,7 +1597,7 @@ class SquadController:
                 "from_phase": from_phase,
                 "to_phase": to_phase,
             }
-            effect_plan = ("quality",)
+            effect_plan = ("context",) if managed_discovery_request is not None else ("quality",)
             judgment_records = ()
         else:
             route = {
@@ -1669,6 +1669,14 @@ class SquadController:
                     if self._active_retarget(self._state_store.load()):
                         effects.append("retarget")
                 effect_plan = tuple(effects)
+        if conditional_skip and from_phase == "phase1-modeler" and "managed_identity" in snapshot.state:
+            from harness.discovery_producer import tracker_round
+            if (to_phase != "phase1-tracker" or snapshot.state.get("mode") != "greenfield"
+                    or tracker_round(snapshot.state) is None or manual_phase_run or publication_marker is not None):
+                raise StateAdvanceError("managed Modeler skip not admitted")
+            # A native conditional skip has no authored output or changed
+            # context. Preserve the accepted Synthesis source for Tracker.
+            effect_plan = ()
         publication = (
             {
                 "kind": "external",
@@ -2430,13 +2438,31 @@ class SquadController:
         dispatch = state.get("last_dispatch")
         if not isinstance(dispatch, dict) or dispatch.get("post_dispatch_complete") is not True:
             return CompletionRecoveryOutcome(False)
+        human = state.get("last_human_input_completion")
+        if isinstance(human, dict) and "publication_binding_sha256" in human:
+            marker = dict(schema_version=1, completion_id=human["completion_id"],
+                intent_sha256=human["intent_sha256"], publication_binding_sha256=human["publication_binding_sha256"],
+                receipts_sha256=human["receipts_sha256"], origin="resolution", step="complete")
+            try:
+                prepared = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+            except CompletionError as error:
+                if error.code != "stage_missing":
+                    return CompletionRecoveryOutcome(False)
+            else:
+                try:
+                    discovery_completion.release(self._project_root, self._squad_dir, self._state_store, prepared)
+                    self._discard_completed_controller_stage(prepared)
+                    return CompletionRecoveryOutcome(True, "resolution", False, prepared.marker.completion_id)
+                except Exception:
+                    return CompletionRecoveryOutcome(False)
         try:
             marker = dict(schema_version=1, completion_id=dispatch["dispatch_id"],
                 intent_sha256=dispatch["completion_intent_sha256"],
                 publication_binding_sha256=dispatch["completed_publication_binding_sha256"],
                 receipts_sha256=dispatch["completion_receipts_sha256"], origin="routed", step="complete")
             prepared = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
-            discovery_completion.release(self._project_root, self._squad_dir, self._state_store, prepared)
+            if discovery_completion.authenticate(self._project_root, self._squad_dir, state, prepared) is not None:
+                discovery_completion.release(self._project_root, self._squad_dir, self._state_store, prepared)
             self._discard_completed_controller_stage(prepared)
             return CompletionRecoveryOutcome(True, "routed", False, prepared.marker.completion_id)
         except Exception:
@@ -4600,6 +4626,86 @@ class SquadController:
             route=route,
         )
 
+    def _managed_tracker_human_input(self, state):
+        """Authenticate the specific released STOP_AND_ASK, not legacy execution."""
+        if "managed_identity" not in state or state.get("phase") != "phase1-tracker":
+            return False
+        try:
+            from harness.discovery_completion import released_discovery_input_projectors, _document, decode_binding, authenticate
+            from harness.discovery_producer import SOURCE_FIELDS
+            from harness.element_identity_store import IdentityStore
+            decision = validate_blocked_decision(state["blocked_decision"])
+            dispatch = state["last_dispatch"]
+            if (decision["source_phase"] != "phase1-tracker" or decision["resolution_handler"] != "clarification_resume"
+                    or dispatch.get("phase_id") != "phase1-tracker"):
+                return False
+            source = {key: dispatch.get(key) for key in SOURCE_FIELDS}
+            store = IdentityStore.open(self._project_root)
+            retained = store.identity_publication(spec_id=state["managed_identity"]["spec_id"],
+                operation_id="discovery-completion-" + source["dispatch_id"])
+            if retained is not None and retained["state"] == "released":
+                if decision["status"] != "resolved":
+                    released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                proof = _document(retained["completion_payload"])
+                binding = decode_binding(proof["proof"]["intent"]["publication"], completion_id=source["dispatch_id"], state=state)
+            else:
+                marker = state.get(PENDING_CONTROLLER_COMPLETION_KEY)
+                if marker is None:
+                    if dispatch.get("post_dispatch_complete") is not True:
+                        return False
+                    marker = dict(schema_version=1, completion_id=source["dispatch_id"],
+                        intent_sha256=source["completion_intent_sha256"], receipts_sha256=source["completion_receipts_sha256"],
+                        publication_binding_sha256=source["completed_publication_binding_sha256"], origin="routed", step="complete")
+                prepared = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+                if PENDING_CONTROLLER_COMPLETION_KEY in state:
+                    self._state_store._require_controller_completion_provenance(state, marker, prepared.intent.to_dict())
+                # A completed marker above is bound by all four durable
+                # completion receipt fields. The pending-only provenance
+                # validator deliberately requires post_dispatch_complete=False.
+                binding = authenticate(self._project_root, self._squad_dir, state, prepared)
+            routing = binding.candidate["routing"]
+            return (binding.producer == "tracker" and not binding.clarification
+                and routing["verdict"] == "STOP_AND_ASK" and routing["question"] == decision["question"]
+                and routing["recommended_answer"] == decision.get("recommended_answer")
+                and routing["risk_level"] == decision.get("risk_level"))
+        except Exception:
+            return False
+
+    def _managed_clarification_resume_resolution(self, state, decision, policy, selected, resolution):
+        from datetime import datetime, timezone
+        from harness.tracker_clarification import prepare
+        from harness.element_identity_publication import encode_publication_request
+        if selected is not None or not self._managed_tracker_human_input(state):
+            raise HumanInputPolicyError("managed Tracker clarification requires reconciliation")
+        resolved_at = datetime.now(timezone.utc).isoformat()
+        resolved = build_human_input_resolution_postimage(decision, resolution, resolved_at=resolved_at)
+        completion_id = uuid.uuid4().hex
+        try:
+            publication, request, candidate = prepare(self._project_root, self._state_store,
+                state=state, resolved=resolved, completion_id=completion_id)
+        except Exception:
+            raise HumanInputPolicyError("managed Tracker clarification requires reconciliation") from None
+        report = json.loads(candidate.reconciliation_json)
+        route = self._validate_human_input_route("phase1-tracker", policy, allow_source_phase="phase1-tracker")
+        if report["requires_repair"]:
+            # As in the existing clarification owner, reconciliation can demand
+            # authoring repair. This is a derived report route, not a new
+            # provider-selectable target or an automatic-answer permission.
+            if "phase1-what" not in self._graph.all_phase_ids():
+                raise HumanInputPolicyError("clarification repair route is unavailable")
+            route = "phase1-what"
+        snapshot = self._state_store.capture_routing_snapshot(expected_phase="phase1-tracker")
+        if snapshot.state != state:
+            raise HumanInputPolicyError("managed Tracker clarification state changed")
+        completion = self._prepare_controller_completion(from_phase="phase1-tracker", to_phase=route,
+            snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
+            publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
+            completion_id=completion_id, managed_discovery_request=encode_publication_request(request))
+        return _HumanInputResolutionEffects(state_updates=dict(status="running", phase=route,
+            feature_policy=json.loads(candidate.policy_text), feature_policy_reconciliation=report,
+            context_dir=str(self._squad_dir / "context")), state_removals=frozenset(), route=route,
+            completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
+
     @staticmethod
     def _banzai_default_candidate_for_decision(
         state: Mapping[str, object],
@@ -5153,7 +5259,8 @@ class SquadController:
                 "human-input token usage delta is invalid"
             )
         state = self._state_store.load()
-        if self._legacy_identity_execution_blocked(state):
+        managed_tracker = self._managed_tracker_human_input(state)
+        if self._legacy_identity_execution_blocked(state) and not managed_tracker:
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             raise HumanInputPolicyError(
@@ -5206,6 +5313,8 @@ class SquadController:
             ),
         }
         handler = handlers.get(str(decision["resolution_handler"]))
+        if managed_tracker:
+            handler = self._managed_clarification_resume_resolution
         if handler is None:
             raise HumanInputPolicyError(
                 "human-input resolution handler is not registered"
@@ -6309,7 +6418,7 @@ class SquadController:
     def resume_pending_human_input(self) -> bool:
         """Recover an interrupted claim, then route one pending decision."""
         pending = self._state_store.load()
-        if self._legacy_identity_execution_blocked(pending):
+        if self._legacy_identity_execution_blocked(pending) and not self._managed_tracker_human_input(pending):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
@@ -6417,7 +6526,7 @@ class SquadController:
         if not isinstance(answer, str) or not answer.strip():
             raise HumanInputPolicyError("human-input answer is required")
         state = self._state_store.load()
-        if self._legacy_identity_execution_blocked(state):
+        if self._legacy_identity_execution_blocked(state) and not self._managed_tracker_human_input(state):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             if not self._drain_pending_controller_completion().recovered:
@@ -6536,7 +6645,7 @@ class SquadController:
         from harness.element_identity_store import IdentityStore
 
         if (type(selected) is not dict or set(selected) not in ({"bootstrap", "input_tree"}, {"bootstrap", "input_tree", "through_phase"})
-                or selected.get("through_phase", "phase1-synthesizer") != "phase1-synthesizer"
+                or selected.get("through_phase", "phase1-synthesizer") not in {"phase1-synthesizer", "phase1-tracker"}
                 or type(create) is not bool or type(selected["input_tree"]) is not str):
             raise ValueError("invalid managed selection")
         claim = validate_selection(selected["bootstrap"])
@@ -6552,7 +6661,8 @@ class SquadController:
             if target != self._project_root / claim["spec_path"]:
                 raise ValueError("checkpoint target differs from selected spec")
         if (create == (retained is not None) or (retained is not None and retained["selection"] != claim)
-                or self._unresolved_human_input_decision(state) is not None
+                or (self._unresolved_human_input_decision(state) is not None
+                    and not (selected.get("through_phase") == "phase1-tracker" and self._managed_tracker_human_input(state)))
                 or "retarget" in state):
             raise ValueError("managed selection conflicts with retained state")
         store = IdentityStore.open(self._project_root)
@@ -6563,10 +6673,16 @@ class SquadController:
         count = (state.get("phase_dispatch_counts") or {}).get("phase1-discover", 0)
         if operation is None and count != 0:
             raise ValueError("fresh discovery cannot inherit earlier dispatches")
-        if (selected.get("through_phase") == "phase1-synthesizer"
+        if (selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker"}
                 and operation_from_state(state, "synthesizer") is None
                 and (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != 0):
             raise ValueError("fresh synthesis cannot inherit earlier dispatches")
+        if selected.get("through_phase") == "phase1-tracker":
+            from harness.discovery_producer import tracker_rounds
+            rounds = tracker_rounds(state)
+            expected = 0 if rounds is None else sum(row["operation"] is not None for row in rounds["rounds"].values())
+            if (state.get("phase_dispatch_counts") or {}).get("phase1-tracker", 0) != expected:
+                raise ValueError("Tracker dispatch history requires reconciliation")
         if operation is not None and operation["binding"]["input_tree"] != selected["input_tree"]:
             raise ValueError("independent input selection changed")
         if "managed_identity" not in state:
@@ -6583,13 +6699,47 @@ class SquadController:
         from harness.discovery_operation_state import operation_from_state
         from harness.discovery_publication import prepare_discovery_publication
         from harness.element_identity_publication import encode_publication_request
-        from harness.discovery_producer import SOURCE_FIELDS, synthesis_source
+        from harness.discovery_producer import SOURCE_FIELDS, synthesis_source, tracker_round, producer_phase
         from harness.element_identity_store import IdentityStore
 
         state = self._state_store.load()
-        producer = "synthesizer" if state.get("phase") == "phase1-synthesizer" else "discovery"
-        if state.get("phase") not in {"phase1-discover", "phase1-synthesizer"} or (
-                producer == "synthesizer" and selected.get("through_phase") != "phase1-synthesizer"):
+        if state.get("phase") == "phase1-tracker" and selected.get("through_phase") == "phase1-tracker":
+            try:
+                if self._unresolved_human_input_decision(state) is not None:
+                    if not self.resume_pending_human_input():
+                        return self._managed_discovery_stop("human_clarification_required")
+                    state = self._state_store.load()
+                decision = state.get("blocked_decision") or {}
+                row = tracker_round(state)
+                if decision.get("status") == "resolved" and state.get("phase") == "phase1-tracker" and (
+                        row["resolution"] is None or row["resolution"]["decision"]["id"] != decision.get("id")):
+                    from harness.discovery_completion import released_discovery_input_projectors
+                    receipt = state["last_human_input_completion"]
+                    source = dict(dispatch_id=receipt["completion_id"], completion_intent_sha256=receipt["intent_sha256"],
+                        completion_receipts_sha256=receipt["receipts_sha256"],
+                        completed_publication_binding_sha256=receipt["publication_binding_sha256"])
+                    released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                    state = self._state_store.prepare_tracker_round({key: state["last_dispatch"][key] for key in SOURCE_FIELDS})
+            except Exception:
+                return self._managed_discovery_stop("managed_tracker_resolution_requires_reconciliation")
+        if state.get("phase") == "phase1-modeler" and selected.get("through_phase") == "phase1-tracker":
+            try:
+                from harness.discovery_completion import released_discovery_input_projectors
+                if tracker_round(state) is None:
+                    source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+                    released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                    self._state_store.prepare_tracker_round(source)
+                node = self._graph.get("phase1-modeler")
+                if (node.condition != "mode = brownfield" or node.transitions != [{"to": "phase1-tracker", "condition": "always"}]
+                        or not self._skip_phase_if_condition_false(node)):
+                    return self._managed_discovery_stop("managed_modeler_skip_not_admitted")
+                state = self._state_store.load()
+            except Exception:
+                return self._managed_discovery_stop("managed_tracker_selection_requires_reconciliation")
+        producer = {"phase1-synthesizer": "synthesizer", "phase1-tracker": "tracker"}.get(state.get("phase"), "discovery")
+        if state.get("phase") not in {"phase1-discover", "phase1-synthesizer", "phase1-tracker"} or (
+                producer != "discovery" and selected.get("through_phase") not in (
+                    {"phase1-synthesizer", "phase1-tracker"} if producer == "synthesizer" else {"phase1-tracker"})):
             return self._managed_discovery_stop("managed_phase_not_supported")
         if (state.get("status") == "blocked"
                 and state.get("blocked_reason") == "controller_state_contract_validation_failed"):
@@ -6602,36 +6752,46 @@ class SquadController:
             state = self._state_store.load()
         if state.get("status") != "running" or self._cancelled or state.get("cancel_requested"):
             return self._managed_discovery_stop("managed_discovery_not_running")
-        node = self._graph.get("phase1-discover" if producer == "discovery" else "phase1-synthesizer")
+        node = self._graph.get(producer_phase(producer))
         paths = ("glossary.md", "mental-model.md", "boundaries.md", "assumptions.md",
             "unknowns.md", "reference-architectures.md")
         successor = "phase1-synthesizer"
         if producer == "synthesizer":
             paths = (*paths[:-1], "contradictions-and-gaps.md", "risks.md")
             successor = "phase1-modeler"
+        if producer == "tracker":
+            paths = ("user-intent.md", "stakeholder-model.md")
+        transitions = ([{"to": "phase1-tracker", "condition": "verdict = STOP_AND_ASK"},
+            {"to": "phase1-why1", "condition": "verdict = ALIGNED OR verdict = DRIFT"}]
+            if producer == "tracker" else [{"to": successor, "condition": "always"}])
         # This admission cannot authorize a judgment/provider fallback. The
         # unchanged deterministic graph transition remains the routing owner.
         if (node.type != "agent" or tuple(node.outputs) != paths
-                or node.transitions != [{"to": successor, "condition": "always"}]):
+                or node.transitions != transitions):
             return self._managed_discovery_stop("managed_discovery_workflow_not_admitted")
         extra = {}
-        if producer == "synthesizer":
+        if producer in {"synthesizer", "tracker"}:
             try:
-                if synthesis_source(state) is None:
+                if producer == "synthesizer" and synthesis_source(state) is None:
                     from harness.discovery_completion import released_discovery_input_projectors
                     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
                     released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
                     state = self._state_store.prepare_synthesizer(source)
                 history = IdentityStore.open(self._project_root).identity_history(spec_id=selected["bootstrap"]["spec_id"])
                 extra = dict(producer=producer, editable_revisions=tuple(
-                    (row["element_id"], row["revision"]) for row in json.loads(history.payload)["entities"]))
+                    (row["element_id"], row["revision"]) for row in json.loads(history.payload)["entities"]
+                    if row["element_id"].split("-")[0] in ({"UI", "II"} if producer == "tracker" else {"U", "A"})))
             except Exception:
                 return self._managed_discovery_stop("managed_synthesizer_selection_requires_reconciliation")
         budget = self._token_budget or state.get("token_budget", 0)
+        if producer == "tracker" and operation_from_state(state, producer) is None and (
+                (state.get("phase_dispatch_counts") or {}).get(node.id, 0) >= _phase_dispatch_limit(
+                    node.id, max_iterations=self._max_iterations)):
+            return self._managed_discovery_stop("phase_dispatch_limit")
         remaining = max(0, budget - state.get("token_usage", 0)) if budget else None
         outcome = run_discovery_operation(self._project_root, self._state_store, self._provider,
             input_tree=selected["input_tree"], artifact_paths=paths,
-            unowned_writable_paths=paths, intent={"kind": "create" if producer == "discovery" else "synthesize", "request": state.get("user_request") or state.get("user_message")},
+            unowned_writable_paths=paths, intent={"kind": "create" if producer == "discovery" else "track" if producer == "tracker" else "synthesize", "request": state.get("user_request") or state.get("user_message")},
             create=operation_from_state(state, producer) is None, token_budget=remaining, **extra)
         if outcome.status != "reviewed":
             return self._managed_discovery_stop(outcome.reason)
@@ -6642,7 +6802,19 @@ class SquadController:
             package = prepare_discovery_publication(self._project_root, self._state_store,
                 self._provider, completion_id=completion_id, **({"producer": producer} if producer != "discovery" else {}))
             snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
-            result = SquadAgentResult(exit_code=0, echelon_result={"verdict": "DONE", "state_updates": {}},
+            result_payload = {"verdict": "DONE", "state_updates": {}}
+            if producer == "tracker":
+                authored_routing = json.loads(package.candidate.candidate_inputs)["routing"]
+                updates = {}
+                if authored_routing["verdict"] == "STOP_AND_ASK":
+                    updates = dict(status="blocked", blocked_reason="human_clarification_required",
+                        escalation_question=authored_routing["question"])
+                    if authored_routing["recommended_answer"] is not None:
+                        updates["escalation_recommended_answer"] = authored_routing["recommended_answer"]
+                    if authored_routing["risk_level"] is not None:
+                        updates["escalation_risk_level"] = authored_routing["risk_level"]
+                result_payload = dict(verdict=authored_routing["verdict"], state_updates=updates)
+            result = SquadAgentResult(exit_code=0, echelon_result=result_payload,
                 raw_output="", duration_ms=0, timed_out=False)
             prepared = self._prepare_phase_result(node, result, snapshot)
             routing = self._construct_routing_decision_or_block(node, prepared, snapshot,
@@ -6651,13 +6823,20 @@ class SquadController:
                 completion_id=completion_id, token_usage_delta=outcome.token_usage)
             if routing is None:
                 return self._managed_discovery_stop("managed_discovery_routing_requires_reconciliation")
+            human_input = routing.human_input or self._prepare_provider_human_input(node, prepared, snapshot)
             receipt = self._advance_prepared_result_or_block(node, routing.decision,
-                prepared_publication=package.publication)
+                prepared_publication=package.publication, human_input=human_input,
+                human_input_initial_status=(select_initial_decision_status(state["autonomy_mode"],
+                    self._validate_prepared_human_input(human_input), human_input)
+                    if human_input is not None else None))
             if receipt is None:
                 return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
         except Exception:
             return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
-        if producer == "discovery" and selected.get("through_phase") == "phase1-synthesizer":
+        if (producer == "discovery" and selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker"}) or (
+                producer == "synthesizer" and selected.get("through_phase") == "phase1-tracker"):
+            return self._run_managed_discovery_locked(selected)
+        if producer == "tracker" and self._unresolved_human_input_decision(self._state_store.load()) is not None:
             return self._run_managed_discovery_locked(selected)
         return self._managed_discovery_stop("managed_phase_not_supported")
 

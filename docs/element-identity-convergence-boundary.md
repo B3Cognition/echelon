@@ -1163,3 +1163,34 @@ Discovery/Synthesis formats and their working execution path remain unchanged.
 This is journal isolation, not protected round admission or controller integration.
 Parent completion/resolved-answer ownership, run-level accounting, publication and
 normal Tracker execution remain pending in the same approved plan. No activation.
+
+### Managed Tracker completed (2026-09-15)
+
+This supersedes the prerequisite-only Tracker status above. The approved
+[managed Tracker plan](superpowers/plans/2026-09-15-managed-tracker.md) now connects
+the internal greenfield run through native Modeler skip and Tracker to WHY1.
+Codex/Claude use neutral Prosaic roles; guided/semi/Banzai and both checkpoint
+settings pass the normal acceptance matrix. WHY1 is reached, not executed;
+public/default selection and deployment remain unchanged.
+
+ALIGNED/DRIFT and STOP_AND_ASK are authenticated routing, not prose instructions.
+The existing human-input owner handles sealed decisions and unchanged automatic
+eligibility. Detached clarification receipt, policy, reconciliation, graph and
+captured context publish through its existing CAS and completion transaction.
+The existing reconciliation report can require WHAT repair; that destination is
+derived and stops without executing WHAT or rewriting source requirements.
+
+Each protected Tracker round retains its exact accepted parent, resolved decision
+and human completion receipt. Prior journals, IDs, immutable subjects, historical
+evidence and charges are preserved; existing phase limits bound additional rounds.
+Full retained ancestry authenticates all staged answer/policy postimages. Initial
+unproven files, changed sources, mismatched associations and missing receipts fail
+closed. Recovery tests cover STOP and clarification transaction boundaries, exact
+re-entry and multiple questions. Review findings were fixed before completion.
+
+The linked plan records exact partitioned acceptance and regression evidence,
+including the 12-case provider/mode/checkpoint matrix and 615- and 115-case
+regression groups. Model/Prosaic processes are scripted, while state, identity,
+publication, checkpoint and completion owners are real. This is not a full-suite,
+live-provider, installation or activation claim. WHY1, authenticated review-origin
+repair/return and the original renumbering/evidence acceptance remain next.

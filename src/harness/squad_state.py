@@ -32,6 +32,7 @@ from harness.discovery_bootstrap_state import (
 )
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY, discovery_turns_from_state
 from harness.discovery_producer import SOURCE_KEY, SOURCE_FIELDS, synthesis_source, producer_key, producer_phase
+from harness.discovery_producer import TRACKER_KEY, tracker_rounds, producer_component, with_producer_component
 from harness.discovery_operation_state import advance_operation, operation_from_state
 from harness.discovery_repair_state import (
     DISCOVERY_REPAIRS_KEY, advance_repair, prepare_repair, repairs_from_state,
@@ -311,6 +312,19 @@ def _synthesis_from_state(state):
         pass
     raise StateAdvanceError("invalid synthesis state", json_path="$.managed_synthesizer_source",
         validator="synthesizer") from None
+
+
+def _tracker_from_state(state):
+    try:
+        rounds = tracker_rounds(state)
+        if rounds is not None:
+            for operation_id in rounds["rounds"]:
+                operation_from_state(state, "tracker", operation_id=operation_id)
+                discovery_turns_from_state(state, "tracker", operation_id=operation_id)
+        return rounds
+    except Exception:
+        pass
+    raise StateAdvanceError("invalid Tracker state", json_path="$.managed_tracker_rounds", validator="tracker") from None
 
 
 def _autonomous_default_candidate_from_state(
@@ -2294,6 +2308,7 @@ class SquadStateStore:
         _discovery_operation_from_state(value)
         _discovery_repairs_from_state(value)
         _synthesis_from_state(value)
+        _tracker_from_state(value)
         return value
 
     def load(self) -> dict:
@@ -2431,6 +2446,7 @@ class SquadStateStore:
         allow_discovery_operation_update: bool = False,
         allow_discovery_repair_update: bool = False,
         synthesis_update: str | None = None,
+        tracker_update: str | None = None,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
@@ -2439,6 +2455,7 @@ class SquadStateStore:
         _discovery_operation_from_state(state)
         _discovery_repairs_from_state(state)
         _synthesis_from_state(state)
+        _tracker_from_state(state)
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2494,6 +2511,22 @@ class SquadStateStore:
             if old != new and (synthesis_update != component or (component != "operation" and old is not None)):
                 raise StateAdvanceError("synthesis state requires its owning transition",
                     json_path="$.managed_synthesizer_" + component, validator="synthesizer") from None
+        old_rounds, new_rounds = _tracker_from_state(current_state), _tracker_from_state(next_state)
+        if old_rounds != new_rounds:
+            valid = tracker_update == "select" and new_rounds is not None
+            if old_rounds is not None and new_rounds is not None:
+                if tracker_update == "select":
+                    valid = (all(new_rounds["rounds"].get(key) == row for key, row in old_rounds["rounds"].items())
+                        and set(new_rounds["rounds"]) - set(old_rounds["rounds"]) == {new_rounds["active"]})
+                elif tracker_update in {"operation", "turns"} and old_rounds["active"] == new_rounds["active"]:
+                    check = deepcopy(new_rounds)
+                    active = old_rounds["active"]
+                    old = old_rounds["rounds"][active][tracker_update]
+                    check["rounds"][active][tracker_update] = old
+                    valid = check == old_rounds and (tracker_update == "operation" or old is None)
+            if not valid:
+                raise StateAdvanceError("Tracker rounds require their owning transition",
+                    json_path="$.managed_tracker_rounds", validator="tracker") from None
         if old_text is not None:
             bak = self._path.with_suffix(".json.bak")
             try:
@@ -2599,15 +2632,18 @@ class SquadStateStore:
     def prepare_discovery_turns(self, marker: dict, *, producer="discovery") -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
-            desired = {**current, producer_key(producer, "turns"): marker}
+            desired = with_producer_component(current, producer, "turns", marker)
             if producer == "discovery":
                 _discovery_turns_from_state(desired)
+            elif producer == "tracker":
+                _tracker_from_state(desired)
             else:
                 _synthesis_from_state(desired)
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
             written = self._save_unlocked(desired, allow_discovery_turn_initialization=producer == "discovery",
-                synthesis_update="turns" if producer == "synthesizer" else None)
+                synthesis_update="turns" if producer == "synthesizer" else None,
+                tracker_update="turns" if producer == "tracker" else None)
             return self._confirm_durable_state_unlocked(written)
 
     def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery") -> dict:
@@ -2615,7 +2651,7 @@ class SquadStateStore:
             current = self._load_unlocked()
             try:
                 desired = advance_operation(current, binding, event, result, producer)
-                if event == "prepare" and producer_key(producer, "operation") not in current:
+                if event == "prepare" and producer_component(current, producer, "operation") is None:
                     # Selection and its one outer dispatch share this state
                     # commit. Provider/operation replay must not charge again.
                     counts = dict(current.get("phase_dispatch_counts") or {})
@@ -2628,7 +2664,48 @@ class SquadStateStore:
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
             written = self._save_unlocked(desired, allow_discovery_operation_update=producer == "discovery",
-                synthesis_update="operation" if producer == "synthesizer" else None)
+                synthesis_update="operation" if producer == "synthesizer" else None,
+                tracker_update="operation" if producer == "tracker" else None)
+            return self._confirm_durable_state_unlocked(written)
+
+    def prepare_tracker_round(self, source: dict) -> dict:
+        """Select a fresh retained round; caller authenticates completion files."""
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            rounds = _tracker_from_state(current)
+            operation_id = "tracker-" + source.get("dispatch_id", "")
+            if rounds is not None and operation_id in rounds["rounds"]:
+                if rounds["active"] != operation_id or rounds["rounds"][operation_id]["source"] != source:
+                    raise StateAdvanceError("Tracker round selection changed", validator="tracker")
+                return self._confirm_durable_state_unlocked(current)
+            dispatch = current.get("last_dispatch") or {}
+            if (current.get("status") != "running" or current.get("phase") not in {"phase1-modeler", "phase1-tracker"}
+                    or current.get("mode") != "greenfield" or dispatch.get("post_dispatch_complete") is not True
+                    or source != {key: dispatch.get(key) for key in SOURCE_FIELDS}
+                    or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))):
+                raise StateAdvanceError("completed Tracker parent required", validator="tracker")
+            resolution = None
+            predecessor = None if rounds is None else rounds["active"]
+            if rounds is None:
+                previous = operation_from_state(current, "synthesizer")
+                if dispatch.get("phase_id") != "phase1-synthesizer" or previous is None:
+                    raise StateAdvanceError("accepted synthesis required", validator="tracker")
+                rounds = dict(schema_version=1, active=operation_id, rounds={})
+            else:
+                previous = operation_from_state(current, "tracker")
+                decision = validate_blocked_decision(current.get("blocked_decision"))
+                receipt = current.get("last_human_input_completion")
+                if (dispatch.get("phase_id") != "phase1-tracker" or decision["status"] != "resolved"
+                        or decision["source_phase"] != "phase1-tracker" or type(receipt) is not dict
+                        or receipt.get("decision_id") != decision["id"]):
+                    raise StateAdvanceError("completed Tracker clarification required", validator="tracker")
+                resolution = dict(decision=decision, completion=deepcopy(receipt))
+            if not previous["attempts"] or (previous["attempts"][-1]["result"] or {}).get("status") != "accepted":
+                raise StateAdvanceError("accepted Tracker parent required", validator="tracker")
+            rounds["active"] = operation_id
+            rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=resolution,
+                predecessor=predecessor, operation=None, turns=None)
+            written = self._save_unlocked({**current, TRACKER_KEY: rounds}, tracker_update="select")
             return self._confirm_durable_state_unlocked(written)
 
     def _update_discovery_repair(self, transition, *args, **kwargs) -> dict:
@@ -4329,10 +4406,13 @@ class SquadStateStore:
                 prefix_kind,
             ) = _validate_prepared_controller_completion(prepared)
             route = intent["route"]
+            from harness.discovery_completion import decode_binding
+            binding = decode_binding(intent["publication"], completion_id=marker["completion_id"])
+            clarification = binding is not None and binding.clarification
             if (
                 marker["origin"] != "resolution"
                 or prefix_kind != "bound"
-                or marker["step"] != "quality"
+                or marker["step"] != ("awaiting_publication" if clarification else "quality")
                 or type(route) is not dict
                 or route.get("kind") != "resolution"
                 or route.get("decision_id") != decision_id
@@ -4480,6 +4560,14 @@ class SquadStateStore:
                 desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
                     completion_marker
                 )
+                if "managed_discovery" in completion_intent["publication"]:
+                    from harness.discovery_completion import decode_binding
+                    binding = decode_binding(completion_intent["publication"],
+                        completion_id=completion_marker["completion_id"], state=before)
+                    if (not binding.clarification or binding.recovery["resolution"] != resolved
+                            or expected_resolved is None or PENDING_EXTERNAL_PUBLICATION_KEY in before):
+                        raise StateAdvanceError("clarification publication association changed", validator="completion_binding")
+                    desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
             return self._commit_human_input_state_unlocked(
                 before,
                 desired,
@@ -6049,8 +6137,11 @@ class SquadStateStore:
         marker: dict[str, object],
         intent: dict[str, object],
     ) -> None:
-        from harness.discovery_completion import decode_binding
-        decode_binding(intent["publication"], completion_id=marker["completion_id"], state=state)
+        from harness.discovery_completion import decode_binding, require_tracker_skip
+        if intent["publication"] == {"kind": "none"} and "managed_identity" in state:
+            require_tracker_skip(state, intent)
+        else:
+            decode_binding(intent["publication"], completion_id=marker["completion_id"], state=state)
         route = intent["route"]
         if marker["origin"] == "terminal":
             if (
@@ -6625,6 +6716,8 @@ class SquadStateStore:
                     "receipts_sha256": receipts_sha256,
                     "decision_id": route["decision_id"],
                 }
+                if "managed_discovery" in intent["publication"]:
+                    desired["last_human_input_completion"]["publication_binding_sha256"] = expected_marker["publication_binding_sha256"]
             if "retarget" in intent["effect_plan"]:
                 from echelon.spec_retarget_finalization import (
                     verify_retarget_finalization_receipt,

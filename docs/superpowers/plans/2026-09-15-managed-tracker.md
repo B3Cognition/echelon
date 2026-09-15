@@ -10,6 +10,10 @@
 
 **Spec:** Inline design approved twice in chat: managed Tracker after Synthesizer, native greenfield Modeler skip, Codex/Claude through Prosaic, UI/II reservations, ALIGNED/DRIFT/STOP_AND_ASK routing, existing clarification policies and guarded clarification/re-entry extension. No WHY1 execution or rollout.
 
+**Status:** Tasks 1–3 complete for the approved managed greenfield boundary.
+See the final integration section for current evidence; earlier partial statuses
+below are historical checkpoints, not outstanding Tracker work.
+
 ## Global constraints
 
 - Preserve exact old IDs, immutable subjects and historical evidence assessments.
@@ -39,19 +43,18 @@
 
 **Interfaces:** The existing human-input resolver consumes the detached candidate only after validating the exact pending decision, resolver, state revision and current parent completion. The existing `SquadPublicationTransaction` stages receipt, policy and reconciliation bytes; the existing completion context builder stages context from captured projected artifacts. The same identity publication/source claim binds the coherent before/after images and retained history. Extend protected producer selection with immutable per-round records, each binding a parent completion and resolved decision; historical completion readers select the exact retained round, never the mutable active round.
 
-- [ ] Add a real STOP_AND_ASK/answer/re-entry test through the normal controller API. Assert no live writes before the guarded publication is bound and no ordinary legacy execution is admitted.
-- [ ] Stage the Task 1 candidate and captured context through existing publication/completion owners. On source drift, stale decision or changed answer reject without promotion.
-- [ ] Retain separate Tracker round/receipt paths. Tie the next round to the exact resolved decision and accepted parent completion; preserve total token/dispatch accounting and prior receipts.
+- [x] Add a real STOP_AND_ASK/answer/re-entry test through the normal controller API. Assert no live writes before the guarded publication is bound and no ordinary legacy execution is admitted.
+- [x] Stage the Task 1 candidate and captured context through existing publication/completion owners. On source drift, stale decision or changed answer reject without promotion.
+- [x] Retain separate Tracker round/receipt paths. Tie the next round to the exact resolved decision and accepted parent completion; preserve total token/dispatch accounting and prior receipts.
   - [x] Add explicit round-scoped journal paths and exact v3 assignment recovery
-    to the existing receipt owners. Protected round selection and run-level
-    accounting integration are still pending; journal isolation alone grants no
-    next-round authority.
-- [ ] Extend retained source/context proof traversal across Synthesizer, Tracker and clarification completions, rejecting missing/cyclic/foreign ancestry. Never ignore unverified context or metadata.
-  - Discovery/Synthesizer prerequisite: verify the entire retained context chain
-    back to original admission inputs, with exact parent artifact/history links.
-    Tracker/clarification completion bindings still need their own integration;
-    this prerequisite does not complete this checklist item.
-- [ ] Test interruption before/after staging, route, promotion, context, receipt, release and cleanup; exact resume produces no duplicate IDs, charges or ledger append.
+    to the existing receipt owners. Protected selection now binds each namespace
+    to its parent completion and resolved decision; journal isolation alone still
+    grants no next-round authority.
+- [x] Extend retained source/context proof traversal across Synthesizer, Tracker and clarification completions, rejecting missing/cyclic/foreign ancestry. Never ignore unverified context or metadata.
+  - Discovery/Synthesizer prerequisite and Tracker/clarification integration both
+    verify the entire retained context chain back to original admission inputs,
+    with exact parent artifact/history and staged answer/policy links.
+- [x] Test interruption before/after staging, route, promotion, context, receipt, release and cleanup; exact resume produces no duplicate IDs, charges or ledger append.
 
 ## Task 3: Normal Tracker execution and verification
 
@@ -59,14 +62,14 @@
 
 **Interfaces:** Keep existing discovery/synthesis reply encodings exact. Tracker adds its own closed assignment/reply contract: explicit intent routing verdict, optional stakeholder output, UI/II proposal/reservations and exact row authoring. Authenticated routing output must be included in candidate/reviewer/completion binding, never substituted with DONE. Managed selection admits `through_phase: phase1-tracker` only through the existing internal entry; defaults remain unchanged.
 
-- [x] Add initial normal-entry acceptance: both provider cases currently fail at `managed_discovery_selection_requires_reconciliation`, before any dispatch.
+- [x] Add initial normal-entry acceptance: both provider cases first failed at `managed_discovery_selection_requires_reconciliation`, before any dispatch; the completed runtime acceptance now passes.
 - [x] Define the inactive Tracker semantic/candidate contract: exact version-3
   assignment, UI/II claims through existing identity preview, optional stakeholder
   absence and authored routing bound to review. Runtime wiring remains below.
-- [ ] Extend closed producer selection and native Modeler skip; preserve the workflow's Tracker output/verdict/human-input contracts.
-- [ ] Exercise required intent plus optional stakeholder output, UI/II creation/revision, preserved U/A evidence, ALIGNED/DRIFT continuation and STOP_AND_ASK through Task 2.
-- [ ] Verify both providers and all three autonomy modes, source tampering, semantic rejection, missing receipts, bounded retries and restart accounting.
-- [ ] Independent read-only review; run affected regressions. Record exact evidence and remaining WHY1/repair/live acceptance work in existing convergence records; commit only verified changes.
+- [x] Extend closed producer selection and native Modeler skip; preserve the workflow's Tracker output/verdict/human-input contracts.
+- [x] Exercise required intent plus optional stakeholder output, UI/II creation/revision, preserved U/A evidence, ALIGNED/DRIFT continuation and STOP_AND_ASK through Task 2.
+- [x] Verify both providers and all three autonomy modes, source tampering, semantic rejection, missing receipts, bounded retries and restart accounting.
+- [x] Independent read-only review; run affected regressions. Record exact evidence and remaining WHY1/repair/live acceptance work in existing convergence records; commit only verified changes.
 
 ## Initial evidence
 
@@ -281,3 +284,96 @@ These are 469 passing selected checks, not full-suite or live-provider acceptanc
 receipt tests and these three existing convergence records. No state round owner,
 controller dispatch, prose, provider adapter, deployment or game-workspace changes
 are included in this checkpoint.
+
+## Completed managed Tracker integration (2026-09-15)
+
+This section supersedes the earlier prerequisite-only status. Tasks 2/3 now
+connect the real controller, state, identity, publication and completion owners.
+The internal `through_phase: phase1-tracker` selection continues Discovery and
+Synthesis, performs the native greenfield Modeler skip and runs Tracker. ALIGNED
+and DRIFT reach WHY1 without executing it. Public/default selection is unchanged.
+
+Tracker's neutral producer/reviewer roles use Prosaic for both Codex and Claude.
+Authored routing remains bound through review, turn receipts, candidate hashes
+and completion proof. UI/II use the existing allocator and identity preview;
+revisions preserve exact labels, immutable subjects and historical evidence.
+Optional stakeholder absence remains absence, not an empty file or deletion.
+
+STOP_AND_ASK now creates the existing sealed version-3 human decision. Guided,
+semi and Banzai retain their existing eligibility rules and decision executor;
+there is no extra COMMANDER role. Missing recommendations still require a human.
+Answers are detached candidates published with captured context through the
+existing resolution CAS and completion transaction. The human completion receipt
+owns release; `last_dispatch` remains the parent Tracker result. A reconciliation
+finding can derive the existing WHAT repair destination; this implementation
+stops there and does not execute WHAT or rewrite original requirements.
+
+Protected `managed_tracker_rounds` retains one connected predecessor chain with
+exact accepted parent source, resolved decision and human completion association.
+Existing per-round operation/turn/reservation owners retain their records. Prior
+rounds, allocations and charges cannot be replaced or reset. New rounds obey the
+existing phase dispatch limit; retries reuse selected receipts and unknown usage
+fails closed. Clarification history is projected from authenticated decisions,
+never parsed out of rendered Markdown or stored in another decision ledger.
+
+Source proof traverses Synthesis, Tracker and human completions back to original
+admission. All three staged answer/policy files must match the authenticated
+parent postimages before re-entry; initial unproven staging is rejected. Full
+operation, decision, source and completion associations are checked together.
+Source drift before or after staging cannot promote. Pending and already-complete
+STOP recovery use their respective existing provenance contracts.
+
+Independent read-only review initially found missing staging-postimage checks,
+insufficient semantic association between completion/decision/operation, and a
+missing next-round phase cap. Each was corrected and tested; subsequent review
+found no remaining substantive issue. A final real-controller regression also
+reproduced an input tree named `evidence/context` being mistaken for runtime
+context. Selection now excludes the exact selected input/spec trees and requires
+one captured runtime context; no additional path or publication authority is added.
+
+Verification uses real state, identity, receipt, source/publication, checkpoint and
+completion owners; only model/Prosaic processes are scripted. No live-provider or
+full-repository-suite claim is made.
+
+- Normal Tracker: **12 passed in 674.79s**, Codex/Claude × guided/semi/Banzai ×
+  checkpoint off/on (`test_managed_tracker.py -k reaches_why1`).
+- Clarification recovery at six interruption points, multiple questions, existing
+  dispatch cap and ineligible Banzai: **9 passed in 1142.90s**
+  (`-k 'clarification_restart_is_exact or multiple_clarifications or next_round_honors or without_recommendation'`).
+- STOP recovery: accepted/staged/routed/promoted/context passed in the first run;
+  completed/released exposed a pending-only provenance check. After correction,
+  those final two cases passed in **125.14s**. All seven interruption points are
+  covered; neither IDs, charges nor checkpoint entries are duplicated.
+- Banzai clarification/re-entry with positive decision-token usage: **2 passed in
+  267.55s**, one per provider; cumulative usage includes the existing decision call.
+- DRIFT/II/optional stakeholder, semantic rejection, unknown usage and missing
+  selected receipts: **4 passed in 188.21s**. Initial unproven staging and source
+  drift after staging: **2 passed in 157.41s**. Derived WHAT repair route with
+  unchanged source Markdown/history: **1 passed in 72.80s**.
+- Existing completion/checkpoint/Synthesis regression group: **115 passed in
+  1106.80s** using
+  `python -m pytest tests/unit/test_discovery_completion.py tests/unit/test_discovery_checkpoint.py tests/unit/test_managed_synthesizer.py -x -q --tb=short`.
+- Clarification preparation, policy, human-input, exclusion, round-state,
+  candidate, operation, turn and reservation regressions: **615 passed in
+  111.89s** using
+  `python -m pytest tests/unit/test_clarification_candidate.py tests/unit/test_feature_policy.py tests/unit/test_human_input.py tests/unit/test_human_input_resolution_contract.py tests/unit/test_human_input_static_contract.py tests/unit/test_squad_identity_exclusion.py tests/integration/test_human_input_routing.py tests/unit/test_tracker_round_state.py tests/unit/test_tracker_candidate.py tests/unit/test_discovery_operation.py tests/unit/test_discovery_turns.py tests/unit/test_discovery_reservations.py -x -q --tb=short`.
+- Final focused human-resolution/exclusion/Tracker contract rerun: **169 passed
+  in 6.76s** using
+  `python -m pytest tests/unit/test_human_input_resolution_contract.py tests/unit/test_squad_identity_exclusion.py tests/unit/test_tracker_round_state.py tests/unit/test_tracker_candidate.py tests/unit/test_tracker_receipts.py -x -q --tb=short`.
+  This overlaps the earlier groups and is not an additional unique-test count.
+- Final Codex-guided/Claude-semi clarification, tampering/association rejection,
+  and `evidence/context` path rerun: **3 passed in 370.27s** using
+  `python -m pytest tests/unit/test_managed_tracker.py -k 'distinguishes_input_context or resumes_without' -x -q --tb=short`.
+
+All **43 Tracker acceptance cases** have passing partitioned execution evidence;
+this is not a claim of one uninterrupted full-file run. Independent review found
+no remaining substantive issue, including the final context selector and derived
+repair route. Compilation of all changed Python modules and `git diff --check`
+passed. The local commit contains only these verified Tracker changes and the
+three existing convergence records; retain the branch/worktree without rollout.
+
+Subsequent convergence remains WHY1, authenticated review-origin repair/return,
+and the original renumbering/evidence repair acceptance. Installation, workspace
+migration and live acceptance remain separate rollout work. No brownfield
+expansion, provider-specific adapter/prose, legacy build, developer instruction
+file, stopped game workspace, installation, activation, push or merge is included.

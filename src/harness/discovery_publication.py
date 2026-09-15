@@ -17,7 +17,7 @@ from echelon.spec_graph_memory import GraphMemoryAudit
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_operation import ReviewedDiscoveryCandidate, _capture, run_discovery_operation
 from harness.discovery_operation_state import operation_from_state
-from harness.discovery_producer import producer_key, producer_phase, synthesis_source, identity_spec_tree
+from harness.discovery_producer import producer_component, producer_phase, synthesis_source, identity_spec_tree, tracker_round, tracker_input_source
 from harness.element_identity_publication import PublicationIntentRequest, PublicationSourceClaim
 from harness.element_identity_store import IdentityStore
 from harness.squad_publication import PreparedSquadPublication, SquadPublicationTransaction
@@ -136,7 +136,8 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     modes = {item.path: item.image.mode for item in spec.files}
     authored = {artifact.path: artifact.after_text for artifact in candidate.artifacts
         if artifact.path in binding["artifact_paths"]}
-    if set(authored) != set(binding["artifact_paths"]) or any(text is None for text in authored.values()):
+    missing = set(binding["artifact_paths"]) - set(authored)
+    if (missing and (producer != "tracker" or missing != {"stakeholder-model.md"})) or any(text is None for text in authored.values()):
         raise ValueError("reviewed discovery outputs missing")
     writes = {selection["spec_path"] + "/" + name: text.encode("utf-8") for name, text in authored.items()}
     provisional = _seal(root, state_store.squad_dir, writes, modes)
@@ -155,14 +156,17 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         raise ValueError("discovery publication selection changed")
     sources = _inspect(publication, original, writes, modes)
     observed = store.check_managed_context(spec_id=binding["spec_id"], run_id=binding["run_id"], record=state["managed_identity"])
-    baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec) if producer == "synthesizer" else spec,), ())
+    baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec) if producer != "discovery" else spec,), ())
     recovery_fields = dict(version=2, completion_id=completion_id, operation=operation,
         candidate_sha256=candidate.candidate_sha256, source_fingerprint=candidate.source_fingerprint,
         candidate_inputs=candidate.candidate_inputs, source_inputs=candidate.source_inputs,
-        review=candidate.review, provider=state[producer_key(producer, "turns")], sources=encode_initial_publication_sources(sources),
+        review=candidate.review, provider=producer_component(state, producer, "turns"), sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest())
     if producer == "synthesizer":
         recovery_fields.update(version=3, producer=producer, source_completion=synthesis_source(state))
+    if producer == "tracker":
+        recovery_fields.update(version=4, producer=producer, source_completion=tracker_input_source(state),
+            resolution=tracker_round(state)["resolution"])
     recovery = json.dumps(recovery_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     context = observed["source_context"]
     request = PublicationIntentRequest(publication.marker.manifest_sha256, recovery, candidate.operations,

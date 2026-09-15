@@ -15,7 +15,7 @@ from harness.discovery_operation_state import DISCOVERY_OPERATION_KEY, operation
 from harness.discovery_publication import _graph
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.discovery_turn_state import DISCOVERY_TURNS_KEY
-from harness.discovery_producer import producer_key, producer_phase, producer_role, synthesis_source, identity_spec_tree
+from harness.discovery_producer import producer_component, producer_phase, producer_role, synthesis_source, identity_spec_tree, tracker_round, tracker_input_source
 from harness.element_identity_json import strict_json, _unique_object
 from harness.element_identity_publication import decode_publication_request, encode_publication_request
 from harness.element_identity_snapshot import IdentityHistorySnapshot
@@ -64,6 +64,10 @@ class DiscoveryCompletionBinding:
         return self.recovery.get("producer", "discovery")
 
     @property
+    def clarification(self):
+        return self.recovery["version"] == 5
+
+    @property
     def spec_id(self):
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -97,18 +101,28 @@ def _decode(publication, completion_id, state):
     _require(encode_publication_request(request) == raw and request.sources is not None
         and request.proposed_history_sha256 is not None)
     recovery = _document(request.recovery_payload)
+    if recovery.get("version") == 5:
+        from harness.tracker_clarification import decode_clarification_binding
+        return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
         "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256",
-        *(("producer", "source_completion") if recovery.get("version") == 3 else ())))
+        *(("producer", "source_completion") if recovery.get("version") in {3, 4} else ()),
+        *(("resolution",) if recovery.get("version") == 4 else ())))
     producer = recovery.get("producer", "discovery")
-    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3}
+    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4}
         and (recovery["version"] != 3 or producer == "synthesizer")
+        and (recovery["version"] != 4 or producer == "tracker")
         and _json(recovery) == request.recovery_payload)
     if completion_id is not None:
         _require(recovery["completion_id"] == completion_id)
     candidate = _document(recovery["candidate_inputs"])
     source = _document(recovery["source_inputs"])
-    _closed(candidate, ("artifacts", "proposal", "reservations", "operations", "history"))
+    _closed(candidate, ("artifacts", "proposal", "reservations", "operations", "history",
+        *(("routing",) if producer == "tracker" else ())))
+    if producer == "tracker":
+        from harness.discovery_semantics import _tracker_routing
+        _tracker_routing(candidate["routing"])
+        _require(recovery["review"]["routing"] == candidate["routing"])
     _closed(source, ("manifest", "history", "authority", "runtime"))
     _require(_json(candidate) == recovery["candidate_inputs"] and _hash(candidate) == recovery["candidate_sha256"]
         and _json(source) == recovery["source_inputs"] and _hash(source) == recovery["source_fingerprint"])
@@ -133,14 +147,17 @@ def _decode(publication, completion_id, state):
     genesis = authority["managed_identity"]
     spec_path = genesis["spec_path"]
     spec, = (tree for tree in sources.trees if tree.path == spec_path)
-    if producer == "synthesizer":
+    if producer != "discovery":
         spec = identity_spec_tree(spec)
     _require(baseline.trees == (spec,) and baseline.files == ()
         and request.sources.context_id == genesis["context_id"] == authority["source_context"]["context_id"]
         and request.sources.expected_operation_id == authority["source_context"]["operation_id"]
         and asdict(snapshot_source_manifest(trees=(spec,), files=())) == authority["source_context"]["manifest"])
     _require(type(candidate["artifacts"]) is dict and set(candidate["artifacts"]) == set(selected["artifact_paths"]))
-    writes = {spec_path + "/" + name: text.encode("utf-8") for name, text in candidate["artifacts"].items()}
+    omitted = {name for name, text in candidate["artifacts"].items() if text is None}
+    _require(not omitted or (producer == "tracker" and omitted == {"stakeholder-model.md"}
+        and all(item.path != spec_path + "/stakeholder-model.md" for item in spec.files)))
+    writes = {spec_path + "/" + name: text.encode("utf-8") for name, text in candidate["artifacts"].items() if text is not None}
     graph = _graph(sources, IdentityHistorySnapshot(**candidate["history"]), dict(spec_id=selected["spec_id"], spec_path=spec_path))
     _require(hashlib.sha256(graph).hexdigest() == recovery["graph_sha256"])
     writes[spec_path + "/spec-artifact-graph.json"] = graph
@@ -152,30 +169,57 @@ def _decode(publication, completion_id, state):
         and op.postimage.mode == modes.get(op.target, 0o644) for op in operations))
     if state is not None:
         bootstrap = bootstrap_from_state(state)
-        _require(bootstrap is not None and operation_from_state(state, producer) == operation
-            and state.get("managed_identity") == genesis and state.get(producer_key(producer, "turns")) == recovery["provider"])
+        op_id = selected["operation_id"] if producer == "tracker" else None
+        _require(bootstrap is not None and operation_from_state(state, producer, operation_id=op_id) == operation
+            and state.get("managed_identity") == genesis
+            and producer_component(state, producer, "turns", operation_id=op_id) == recovery["provider"])
         _require(all(bootstrap["selection"][key] == selected[key]
             for key in (("spec_id", "run_id", "operation_id") if producer == "discovery" else ("spec_id", "run_id"))))
         if producer == "synthesizer":
             _require(synthesis_source(state) == recovery["source_completion"])
+        if producer == "tracker":
+            row = tracker_round(state, selected["operation_id"])
+            _require(tracker_input_source(state, selected["operation_id"]) == recovery["source_completion"]
+                and row["resolution"] == recovery["resolution"])
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
+
+
+def require_tracker_skip(state, intent):
+    row = tracker_round(state)
+    route = intent["route"]
+    _require(row is not None and row["resolution"] is None and state.get("mode") == "greenfield"
+        and intent["origin"] == "routed" and route["from_phase"] == "phase1-modeler"
+        and route["to_phase"] == "phase1-tracker" and route["record_completion"] is True
+        and route["manual_phase_run"] is False and not intent["effect_plan"]
+        and intent["publication"] == {"kind": "none"}
+        and (state.get("last_dispatch") or {}).get("conditional_skip") is True)
+    return row
 
 
 def authenticate(root, run, state, completion):
     """Authenticate the saved completion association without live-source replay."""
     try:
+        if completion.intent.publication == {"kind": "none"} and "managed_identity" in state:
+            row = require_tracker_skip(state, completion.intent.to_dict())
+            released_discovery_input_projectors(root, run, state, source=row["source"])
+            return None
         binding = decode_binding(completion.intent.publication, completion_id=completion.marker.completion_id, state=state)
         if binding is None:
             return None
         route = completion.intent.route
-        _require(completion.intent.origin == "routed" and route["from_phase"] == producer_phase(binding.producer)
-            and route["manual_phase_run"] is False and route["record_completion"] is True
-            and set(completion.intent.effect_plan) <= {"journal", "timing", "checkpoint", "context"}
-            and "product_input_mutation" not in state)
+        _require("product_input_mutation" not in state)
+        if binding.clarification:
+            _require(completion.intent.origin == "resolution" and route["from_phase"] == "phase1-tracker"
+                and route["decision_id"] == binding.recovery["resolution"]["id"]
+                and completion.intent.effect_plan == ("context",))
+        else:
+            _require(completion.intent.origin == "routed" and route["from_phase"] == producer_phase(binding.producer)
+                and route["manual_phase_run"] is False and route["record_completion"] is True
+                and set(completion.intent.effect_plan) <= {"journal", "timing", "checkpoint", "context"})
         selection = bootstrap_from_state(state)["selection"]
         _require(str(root) == selection["project_root"] and str(run) == selection["run_dir"])
         input_view = binding.sources
-        if binding.producer == "synthesizer":
+        if binding.producer != "discovery":
             spec_view, runtime_view = _released_discovery_projections(root, run, state,
                 source=binding.recovery["source_completion"], historical=True)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
@@ -184,6 +228,9 @@ def authenticate(root, run, state, completion):
         runtime, _ = admit_runtime_inputs(root, run, state, input_view)
         _require(runtime == binding.source["runtime"])
         store = IdentityStore.open(root)
+        if binding.clarification:
+            from harness.tracker_clarification import require_parent
+            require_parent(state, binding, store)
         observed = store.check_managed_context(spec_id=binding.spec_id, run_id=state["run_id"], record=state["managed_identity"])
         pending = store.pending_identity_publication(spec_id=binding.spec_id)
         retained = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
@@ -241,8 +288,8 @@ def require_unpublished_orphan(root, run, state, intent):
     raise CompletionError("intent_mismatch")
 
 
-def _read_receipt(run, name, producer="discovery"):
-    with DiscoveryReceiptFile(run, name, producer=producer) as file:
+def _read_receipt(run, name, producer="discovery", *, operation_id=None):
+    with DiscoveryReceiptFile(run, name, producer=producer, round_operation_id=operation_id) as file:
         raw = file._read()
         value = json.loads(raw, object_pairs_hook=_unique_object)
         _closed(value, ("payload", "sha256"))
@@ -252,11 +299,16 @@ def _read_receipt(run, name, producer="discovery"):
 
 
 def _receipts(root, run, state, binding, store):
+    if binding.clarification:
+        # Human decision membership is checked by the closed binding decoder;
+        # the parent Tracker's retained proof is checked by ancestry traversal.
+        return
     from harness.discovery_turns import _validate
     from harness.discovery_reservations import _validate as validate_reservations
-    turns = _read_receipt(run, "discovery-turns", binding.producer)
+    operation_id = binding.recovery["operation"]["binding"]["operation_id"] if binding.producer == "tracker" else None
+    turns = _read_receipt(run, "discovery-turns", binding.producer, operation_id=operation_id)
     _validate(turns)
-    _require(_hash(turns["binding"]) == state[producer_key(binding.producer, "turns")]["binding_sha256"]
+    _require(_hash(turns["binding"]) == producer_component(state, binding.producer, "turns", operation_id=operation_id)["binding_sha256"]
         and turns["binding"]["authority"] == binding.source["authority"])
     from harness.prosaic_prompt_loader import ProsaicPromptLoader
     loader = ProsaicPromptLoader(root, timeout_s=10)
@@ -271,9 +323,11 @@ def _receipts(root, run, state, binding, store):
     _require(replies["propose"] == binding.candidate["proposal"]
         and replies["author"]["artifacts"] == binding.candidate["artifacts"]
         and replies["review"] == binding.recovery["review"] and replies["review"]["verdict"] == "accept")
-    reservations = _read_receipt(run, "discovery-reservations", binding.producer)
+    if binding.producer == "tracker":
+        _require(replies["author"]["routing"] == binding.candidate["routing"] == replies["review"]["routing"])
+    reservations = _read_receipt(run, "discovery-reservations", binding.producer, operation_id=operation_id)
     _require(reservations["binding"]["context"] == binding.source["authority"])
-    known = validate_reservations(reservations, reservations["binding"])
+    known = validate_reservations(reservations, reservations["binding"], binding.producer)
     _require([asdict(known[item["key"]][1]) for item in replies["propose"]["new_subjects"]] == binding.candidate["reservations"])
     for proposal in reservations["proposals"]:
         for intent in proposal["intents"]:
@@ -314,7 +368,7 @@ def _require_applied(root, run, state, completion):
     # All other captured sources remain pinned through effects and release.
     context = (run / "context").relative_to(root).as_posix()
     trees = tuple(tree for tree in projected.trees if tree.path != context)
-    if binding.producer == "synthesizer":
+    if binding.producer != "discovery":
         trees = tuple(identity_spec_tree(tree) if tree.path == binding.baseline.trees[0].path else tree for tree in trees)
     expected = snapshot_source_manifest(trees=trees, files=projected.files)
     with publication.inspect_sources(tree_paths=tuple(tree.path for tree in projected.trees),
@@ -336,7 +390,7 @@ def _checkpoint_projection(root, run, state, *, intent, marker, receipts, bindin
     original, = (tree for tree in binding.sources.trees if tree.path == spec)
     metadata = spec + "/.echelon"
     prior_ledger = None
-    if binding.producer == "synthesizer":
+    if binding.producer != "discovery":
         matches = [item.content for item in original.files if item.path == metadata + "/checkpoints.json"]
         prior_ledger = matches[0] if matches else None
     else:
@@ -419,7 +473,15 @@ def context_generator(root, run, state, completion):
     binding = require_applied(root, run, state, completion)
     _require(binding is not None)
     spec = binding.source["authority"]["managed_identity"]["spec_path"]
-    selected = {spec + "/" + name for name in binding.recovery["operation"]["binding"]["artifact_paths"]}
+    if binding.clarification:
+        projected = project_publication_source_images(binding.sources)
+        artifacts = {item.path: item.content for tree in projected.trees for item in tree.files
+            if tree.path == spec and item.path.endswith(".md")}
+        artifacts.update({item.path: item.content for item in projected.files
+            if item.path in binding.candidate["artifacts"] and item.path.endswith(".md")})
+        return partial(build_run_context, captured_discovery_artifacts=artifacts)
+    selected = {spec + "/" + name for name in binding.recovery["operation"]["binding"]["artifact_paths"]
+        if binding.candidate["artifacts"][name] is not None}
     projected = project_publication_source_images(binding.sources)
     artifacts = {item.path: item.content for tree in projected.trees for item in tree.files if item.path in selected}
     _require(set(artifacts) == selected)
@@ -439,6 +501,12 @@ def _release(root, run, state_store, completion):
     binding = authenticate(root, run, state, completion)
     _require(binding is not None)
     dispatch, marker = state.get("last_dispatch", {}), completion.marker
+    if binding.clarification:
+        receipt = state.get("last_human_input_completion", {})
+        _require(receipt.get("decision_id") == binding.recovery["resolution"]["id"])
+        dispatch = dict(post_dispatch_complete=True, dispatch_id=receipt.get("completion_id"),
+            completion_intent_sha256=receipt.get("intent_sha256"), completion_receipts_sha256=receipt.get("receipts_sha256"),
+            completed_publication_binding_sha256=receipt.get("publication_binding_sha256"))
     _require("pending_controller_completion" not in state and "pending_external_publication" not in state
         and marker.step == "complete" and dispatch.get("post_dispatch_complete") is True
         and dispatch.get("dispatch_id") == marker.completion_id
@@ -574,6 +642,14 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
     binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
     _require(binding is not None and row["request"] == encode_publication_request(binding.request)
         and binding.operation_id == operation_id)
+    if binding.clarification:
+        from harness.tracker_clarification import require_parent, require_resolution_receipt
+        require_parent(state, binding, store)
+        require_resolution_receipt(state, binding, marker)
+    elif binding.producer == "tracker":
+        selected_round = tracker_round(state, binding.recovery["operation"]["binding"]["operation_id"])
+        if selected_round["predecessor"] is not None:
+            _require(selected_round["resolution"] == binding.recovery["resolution"])
     expected = project_publication_source_images(binding.baseline).manifest
     project = _checkpoint_projection(root, run, state, intent=intent, marker=marker,
         receipts=receipts, binding=binding)
@@ -613,4 +689,14 @@ def _project_released_context(sources, *, root, run, binding, marker, receipts):
             # replacement. Do not accept arbitrary mode changes during repair.
             mode = original.image.mode if current.content == original.content else 0o600
             _require(current.image.mode == mode)
-    return replace(sources, trees=tuple(before if tree.path == context else tree for tree in sources.trees))
+    files = sources.files
+    if binding.producer == "tracker":
+        staging = (run / "staging").relative_to(root).as_posix()
+        names = {staging + "/" + name for name in ("user-clarifications.md", "feature-policy.json", "feature-policy.md")}
+        originals = {item.path: item for item in binding.sources.files if item.path in names}
+        projected = project_publication_source_images(binding.sources)
+        expected = {item.path: item for item in projected.files if item.path in names}
+        actual_files = {item.path: item for item in sources.files if item.path in names}
+        _require(set(originals) == names and actual_files == expected)
+        files = tuple(originals.get(item.path, item) for item in files)
+    return replace(sources, trees=tuple(before if tree.path == context else tree for tree in sources.trees), files=files)

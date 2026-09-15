@@ -27,7 +27,7 @@ def artifact_roles(producer):
         producer_key(producer, "operation")
     return DISCOVERY_ROLES if producer == "discovery" else {
         **DISCOVERY_ROLES, "contradictions-and-gaps.md": "references", "risks.md": "references",
-        **(TRACKER_OUTPUTS if producer == "tracker" else {})}
+        **({**TRACKER_OUTPUTS, "feature-policy-reconciliation.md": "references"} if producer == "tracker" else {})}
 
 
 def _plain(value):

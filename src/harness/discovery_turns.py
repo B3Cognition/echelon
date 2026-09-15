@@ -16,7 +16,7 @@ import time
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.discovery_semantics import DiscoveryAssignment, decode_discovery_assignment, parse_discovery_reply, validate_discovery_reply
-from harness.discovery_producer import producer_key, producer_operation_id, producer_role
+from harness.discovery_producer import producer_component, producer_operation_id, producer_role
 from harness.element_identity_store import IdentityStore
 from harness.inspection_io import BoundedReadChannel
 from harness.product_inventory import CONTROL_PATHS, CONTROL_ROOTS
@@ -163,7 +163,8 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
         if type(replay_only) is not bool or (replay_only and create):
             raise _Blocked("invalid_provider_replay_mode")
         producer = assignment.producer
-        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer) as file:
+        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer,
+                round_operation_id=assignment.operation_id if producer == "tracker" else None) as file:
             retained = []
             raw = file._read()
             file._raw = raw
@@ -182,7 +183,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     or retained[0]["records"][-1]["accepted"] is not True):
                 raise _Blocked("accepted_provider_step_required")
             state = state_store.load()
-            marker = state.get(producer_key(producer, "turns"))
+            marker = producer_component(state, producer, "turns")
             if marker is None and raw is None:
                 usage["known"] = True
             if type(create) is not bool or (create and (marker is not None or raw is not None)) or (
@@ -215,6 +216,8 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     "discovery-turns.json", "discovery-turns.lock", "discovery-reservations.json", "discovery-reservations.lock",
                     *(("synthesizer-turns.json", "synthesizer-turns.lock", "synthesizer-reservations.json", "synthesizer-reservations.lock")
                         if producer == "synthesizer" else ())))
+            if producer == "tracker":
+                denied += (state_store.squad_dir,)
             binding = dict(contract="discovery-inspection-v1", bootstrap=selected, authority=observed,
                 roles={name: asdict(role) for name, role in roles.items()},
                 provider=getattr(executor, "provider_id", executor.cli),
@@ -355,8 +358,9 @@ def read_discovery_usage(state_store, producer="discovery"):
     """
     try:
         state = state_store.load()
-        marker = state.get(producer_key(producer, "turns"))
-        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer) as file:
+        marker = producer_component(state, producer, "turns")
+        with DiscoveryReceiptFile(state_store.squad_dir, "discovery-turns", producer=producer,
+                round_operation_id=producer_operation_id(state, producer) if producer == "tracker" else None) as file:
             raw = file._read()
             if raw is None and marker is None:
                 return dict(token_usage=0, dispatch_count=0)

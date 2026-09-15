@@ -6,7 +6,7 @@ import re
 
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_semantics import DiscoveryAssignment
-from harness.discovery_producer import producer_key, producer_phase, producer_operation_id
+from harness.discovery_producer import producer_component, with_producer_component, producer_phase, producer_operation_id
 
 
 DISCOVERY_OPERATION_KEY = "managed_discovery_operation"
@@ -22,13 +22,13 @@ def _digest(value):
         raise ValueError("invalid discovery operation digest")
 
 
-def validate_binding(state, binding, producer="discovery"):
+def validate_binding(state, binding, producer="discovery", *, operation_id=None):
     _closed(binding, ("operation_id", "spec_id", "run_id", "input_tree", "artifact_paths",
         "editable_revisions", "unowned_writable_paths", "intent", "fingerprint"))
     selected = bootstrap_from_state(state)
     if selected is None or "managed_identity" not in state:
         raise ValueError("completed discovery bootstrap required")
-    if (binding["operation_id"] != producer_operation_id(state, producer)
+    if (binding["operation_id"] != producer_operation_id(state, producer, operation_id)
             or any(binding[key] != selected["selection"][key] for key in ("spec_id", "run_id"))):
         raise ValueError("discovery operation selection changed")
     if any(type(binding[key]) is not list for key in ("artifact_paths", "editable_revisions", "unowned_writable_paths")):
@@ -44,7 +44,7 @@ def validate_binding(state, binding, producer="discovery"):
     if len(set(unowned)) != len(unowned) or not set(unowned) <= set(binding["artifact_paths"]):
         raise ValueError("invalid discovery unowned scope")
     intent = binding["intent"]
-    if (type(intent) is not dict or intent.get("kind") not in ({"create", "repair"} if producer == "discovery" else {"synthesize"})
+    if (type(intent) is not dict or intent.get("kind") not in ({"create", "repair"} if producer == "discovery" else {"track"} if producer == "tracker" else {"synthesize"})
             or type(intent.get("request")) is not str or not intent["request"].strip()
             or (intent["kind"] == "repair" and (not intent.get("origin") or not intent.get("findings")))):
         raise ValueError("discovery requires an explicit bound origin")
@@ -52,15 +52,14 @@ def validate_binding(state, binding, producer="discovery"):
         raise ValueError("discovery selection exceeds limit")
 
 
-def operation_from_state(state, producer="discovery"):
-    key = producer_key(producer, "operation")
-    if key not in state:
+def operation_from_state(state, producer="discovery", *, operation_id=None):
+    value = producer_component(state, producer, "operation", operation_id=operation_id)
+    if value is None:
         return None
-    value = state[key]
     _closed(value, ("schema_version", "binding", "attempts"))
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise ValueError("invalid discovery operation version")
-    validate_binding(state, value["binding"], producer)
+    validate_binding(state, value["binding"], producer, operation_id=operation_id)
     attempts = value["attempts"]
     if type(attempts) is not list or len(attempts) > 3:
         raise ValueError("invalid discovery attempt count")
@@ -105,6 +104,6 @@ def advance_operation(state, binding, event, result=None, producer="discovery"):
         attempt["result"] = deepcopy(result)
     else:
         raise ValueError("invalid discovery operation transition")
-    updated = {**state, producer_key(producer, "operation"): retained}
+    updated = with_producer_component(state, producer, "operation", retained)
     operation_from_state(updated, producer)
     return updated

@@ -16,7 +16,7 @@ from harness.discovery_inputs import DiscoveryInputError, admit_runtime_inputs, 
 from harness.discovery_operation_state import operation_from_state
 from harness.discovery_reservations import DiscoveryReservationJournal
 from harness.discovery_semantics import DiscoveryAssignment, artifact_roles
-from harness.discovery_producer import producer_key, producer_operation_id, synthesis_source
+from harness.discovery_producer import producer_component, producer_operation_id, synthesis_source, tracker_input_source
 from harness.discovery_turns import read_discovery_usage, run_discovery_step
 from harness.element_artifacts import parse_identity_artifact
 from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
@@ -63,7 +63,7 @@ def _overlap(left, right):
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None, producer="discovery"):
+def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None, producer="discovery", source_completion=None):
     spec_path = selected["selection"]["spec_path"]
     denied = (*CONTROL_ROOTS, *CONTROL_PATHS, str(state_store.squad_dir.relative_to(root)))
     if any(_overlap(input_tree, path) for path in (*denied, spec_path)):
@@ -71,14 +71,17 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     prepared = load_prepared_publication(root, state_store.squad_dir, selected["selection"]["capture_marker"])
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
+    staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer == "tracker" else ()
     spec_view = runtime_view = None
-    if producer == "synthesizer":
+    if producer in {"synthesizer", "tracker"}:
         from harness.discovery_completion import released_discovery_input_projectors
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
         spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
-            source=synthesis_source(state))
+            source=source_completion if source_completion is not None else (
+                tracker_input_source(state) if producer == "tracker" else synthesis_source(state)))
     if repair_unit is not None:
         from harness.discovery_repair_state import repairs_from_state
         from harness.discovery_completion import released_discovery_input_projectors
@@ -89,10 +92,15 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
             source=repair["source"])
     with prepared.inspect_sources(tree_paths=(spec_path, input_tree, *runtime_trees),
-            file_paths=(*template_paths, *runtime_files)) as sources:
+            file_paths=(*template_paths, *runtime_files, *staging_paths)) as sources:
         if sources.publication.operations:
             raise _Blocked("discovery_capture_contains_publication")
         state = state_store.load()
+        if producer == "tracker":
+            from harness.discovery_producer import tracker_round
+            if tracker_round(state)["resolution"] is None and any(
+                    item.content is not None for item in sources.files if item.path in staging_paths):
+                raise _Blocked("unproven_tracker_clarification_inputs")
         runtime, documents = admit_runtime_inputs(root, state_store.squad_dir, state,
             sources if runtime_view is None else runtime_view(sources))
         if runtime_view is not None:
@@ -124,6 +132,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
             files[logical] = item.content.decode("utf-8")
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
         evidence.update(documents)
+        evidence.update({item.path: item.content.decode("utf-8") for item in sources.files
+            if item.path in staging_paths and item.content is not None})
         if any(item.content is None for item in sources.files if item.path in template_paths):
             raise _Blocked("discovery_template_missing")
         templates = {template_paths[item.path]: item.content.decode("utf-8") for item in sources.files if item.path in template_paths}
@@ -166,7 +176,7 @@ def capture_discovery_repair_inputs(project_root, state_store, unit_id):
 def _citations(artifacts, labels):
     citations = {}
     for artifact in artifacts:
-        if artifact.role not in {"unknowns", "assumptions"} or artifact.after_text is None:
+        if artifact.role not in {"unknowns", "assumptions", "intent"} or artifact.after_text is None:
             continue
         parsed = parse_identity_artifact(path=artifact.path, role=artifact.role, text=artifact.after_text)
         for declaration in parsed.declarations:
@@ -178,13 +188,16 @@ def _citations(artifacts, labels):
     return citations
 
 
-def _progress(artifacts, findings):
+def _progress(artifacts, findings, *, routing=None):
     def normalized(text):
         # Formatting and label changes alone cannot make a failed attempt progress.
-        return " ".join(re.sub(r"\b(?:U|A)-[0-9]+\b", "<identity>", text).split())
+        return None if text is None else " ".join(re.sub(r"\b(?:U|A|UI|II)-[0-9]+\b", "<identity>", text).split())
     content = {key: normalized(value) for key, value in artifacts.items()}
     rows = sorted(normalized(json.dumps(row, sort_keys=True, ensure_ascii=False)) for row in findings)
-    return _hash(dict(content=content, findings=rows))
+    record = dict(content=content, findings=rows)
+    if routing is not None:
+        record["routing"] = {key: normalized(value) for key, value in routing.items()}
+    return _hash(record)
 
 
 def run_discovery_operation(project_root, state_store, executor, *, input_tree, artifact_paths,
@@ -207,7 +220,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         selected = bootstrap_from_state(state)
         if selected is None or "managed_identity" not in state or str(root) != selected["selection"]["project_root"]:
             raise _Blocked("completed_discovery_bootstrap_required")
-        if type(create) is not bool or create == (producer_key(producer, "operation") in state):
+        if type(create) is not bool or create == (producer_component(state, producer, "operation") is not None):
             raise _Blocked("discovery_operation_selection_conflict")
         if any(type(value) is not tuple for value in (artifact_paths, editable_revisions, unowned_writable_paths)):
             raise _Blocked("invalid_discovery_scope")
@@ -223,7 +236,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         def verify():
             if check_inputs() != fingerprint:
                 raise _Blocked("discovery_operation_inputs_changed")
-        with DiscoveryReservationJournal(state_store.squad_dir, **producer_args) as journal:
+        with DiscoveryReservationJournal(state_store.squad_dir, **producer_args,
+                round_operation_id=binding["operation_id"] if producer == "tracker" else None) as journal:
             journal.select(store, spec_id=binding["spec_id"], run_id=binding["run_id"],
                 operation_id=binding["operation_id"], managed_identity=state["managed_identity"], create=create)
             history_rows = json.loads(retained_history.payload)
@@ -252,15 +266,22 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         raise _Blocked(last.reason)
                     return last.reply
                 proposal = turn(proposal_assignment, {**common, "reply_fields": dict(
-                    new_subjects=[dict(key="local-key", kind="U or A", subject="stable subject", caption="caption")],
+                    new_subjects=[dict(key="local-key", kind="UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
                     revisions=[dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
                 mappings = journal.bind(proposal_assignment, proposal, replay_only=replay_only)
                 reserved = [asdict(item) for item in mappings]
                 assigned = tuple(sorted({item.element_id for item in mappings} | {item["id"] for item in proposal["revisions"]}))
                 author_assignment = replace(proposal_assignment, dispatch_id=f"attempt-{number}-author", step="author", assigned_ids=assigned)
+                reply_fields = dict(artifacts={path: "exact UTF-8 artifact text" for path in artifact_paths})
+                if producer == "tracker":
+                    reply_fields["artifacts"]["stakeholder-model.md"] = "exact UTF-8 text, or null only when absent before and after"
+                    reply_fields["routing"] = dict(verdict="ALIGNED, DRIFT or STOP_AND_ASK",
+                        question="required nonblank question for STOP_AND_ASK; otherwise null",
+                        recommended_answer="optional nonblank answer for STOP_AND_ASK; otherwise null",
+                        risk_level="optional low, medium, high or critical alongside a STOP_AND_ASK recommendation; otherwise null")
                 authored = turn(author_assignment, {**common, "proposal": proposal, "reservations": reserved,
-                    "reply_fields": dict(artifacts={path: "exact UTF-8 artifact text" for path in artifact_paths})})
+                    "reply_fields": reply_fields})
                 verify()
                 artifacts, operations, preview, review = (), (), None, None
                 try:
@@ -279,17 +300,19 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     artifacts = tuple(sorted((*written,
                         *(CandidateArtifact(path, artifact_roles(producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
-                            if producer != "synthesizer" or not path.startswith(derived_context))), key=lambda item: item.path))
+                            if producer == "discovery" or not path.startswith(derived_context))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     preview = store.preview_identity_candidate(spec_id=binding["spec_id"], artifacts=artifacts,
-                        scope=IdentityEditScope(artifact_paths, assigned, unowned_writable_paths), operations=operations)
+                        scope=IdentityEditScope(tuple(path for path in artifact_paths if any(item.path == path for item in written)),
+                            assigned, tuple(path for path in unowned_writable_paths if any(item.path == path for item in written))), operations=operations)
                     findings = [asdict(row) for row in preview.check.diagnostics]
                     if not findings:
                         labels = tuple(sorted(change.element_id for change in changes))
                         citations = _citations(artifacts, labels)
                         source_citations = {path: f"source:{path}:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
                             for path, content in evidence.items()}
-                        review_assignment = replace(author_assignment, dispatch_id=f"attempt-{number}-review", step="review", assigned_ids=labels)
+                        review_assignment = replace(author_assignment, dispatch_id=f"attempt-{number}-review", step="review", assigned_ids=labels,
+                            routing=tuple(authored["routing"].items()) if producer == "tracker" else None)
                         review = turn(review_assignment, {**common, "proposal": proposal, "reservations": reserved,
                             "candidate": [asdict(item) for item in artifacts], "citations": citations,
                             "source_citations": source_citations,
@@ -307,6 +330,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 verify()
                 candidate_inputs = dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
                     operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history))
+                if producer == "tracker":
+                    candidate_inputs["routing"] = authored["routing"]
                 candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
@@ -323,7 +348,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     candidate = ReviewedDiscoveryCandidate(artifacts, operations, preview.history, fingerprint, review, candidate_digest,
                         json.dumps(candidate_inputs, **canonical), json.dumps(source_inputs, **canonical))
                     return DiscoveryOperationResult("reviewed", "discovery_candidate_reviewed", last.token_usage, last.dispatch_count, candidate)
-                progress = _progress(authored["artifacts"], findings)
+                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer == "tracker" else None)
                 if progress == prior_progress:
                     raise _Blocked("discovery_no_progress")
                 prior_progress = progress
