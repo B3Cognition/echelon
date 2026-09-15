@@ -17,7 +17,7 @@ from harness.discovery_operation_state import operation_from_state
 from harness.discovery_reservations import DiscoveryReservationJournal
 from harness.discovery_receipts import receipt_round_operation_id
 from harness.discovery_semantics import DiscoveryAssignment, artifact_roles
-from harness.discovery_producer import producer_component, producer_operation_id, synthesis_source, tracker_input_source
+from harness.discovery_producer import producer_component, producer_operation_id, synthesis_input_source, tracker_input_source
 from harness.discovery_turns import read_discovery_usage, run_discovery_step
 from harness.element_artifacts import parse_identity_artifact
 from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
@@ -65,6 +65,7 @@ def _overlap(left, right):
 
 
 def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None, producer="discovery", source_completion=None):
+    refresh = producer == "synthesizer" and "managed_synthesizer_rounds" in state_store.load()
     spec_path = selected["selection"]["spec_path"]
     denied = (*CONTROL_ROOTS, *CONTROL_PATHS, str(state_store.squad_dir.relative_to(root)))
     if any(_overlap(input_tree, path) for path in (*denied, spec_path)):
@@ -73,8 +74,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1"} or repair_unit is not None else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer == "why1" or repair_unit is not None else ()
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1"} or repair_unit is not None or refresh else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer == "why1" or repair_unit is not None or refresh else ()
     if producer == "why1":
         template_paths = {".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md",
@@ -90,7 +91,12 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         state = state_store.load()
         spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
             source=source_completion if source_completion is not None else (
-                tracker_input_source(state, producer=producer) if producer in {"tracker", "why1"} else synthesis_source(state)))
+                tracker_input_source(state, producer=producer) if producer in {"tracker", "why1"} else synthesis_input_source(state)))
+        if refresh:
+            from harness.discovery_completion import _refresh_predecessor, _require_refresh_dependencies
+            from harness.discovery_producer import tracker_round
+            refresh_row = tracker_round(state, producer=producer)
+            previous = _refresh_predecessor(root, state_store.squad_dir, state, refresh_row)
     if repair_unit is not None:
         from harness.discovery_repair_state import repairs_from_state
         from harness.discovery_completion import released_discovery_input_projectors
@@ -136,7 +142,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
                 # Exact derived bytes were authenticated above; it is not an
                 # editable Markdown artifact or provider-authored definition.
                 continue
-            if logical not in artifact_roles("why1" if repair_unit is not None else producer):
+            if logical not in artifact_roles("why1" if repair_unit is not None or refresh else producer):
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
@@ -158,6 +164,9 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
             raise _Blocked("discovery_source_not_text")
         source_inputs = dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
             history=asdict(history), authority=observed, runtime=runtime)
+        if refresh:
+            _require_refresh_dependencies(refresh_row, previous, refresh_row["refresh"]["predecessor_source"],
+                sources, source_inputs, selected["selection"], state_store.squad_dir, root)
         digest = _hash(source_inputs)
     # Normal inspector exit authenticates paths and membership before handoff.
     return digest, files, evidence, history, templates, runtime, sources, source_inputs
@@ -227,6 +236,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         root = Path(project_root)
         state = state_store.load()
         producer_args = {} if producer == "discovery" else {"producer": producer}
+        refresh = producer == "synthesizer" and "managed_synthesizer_rounds" in state
         if repair_unit is not None:
             producer_args["repair_unit"] = repair_unit
         if type(replay_only) is not bool:
@@ -321,12 +331,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     # evidence still uses the existing reference adapter.
                     derived_context = (state_store.squad_dir / "context").relative_to(root).as_posix() + "/"
                     artifacts = tuple(sorted((*written,
-                        *(CandidateArtifact(path, artifact_roles("why1" if repair_unit is not None else producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
+                        *(CandidateArtifact(path, artifact_roles("why1" if repair_unit is not None or refresh else producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
                             if (producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer == "why1" or repair_unit is not None else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer == "why1" or repair_unit is not None or refresh else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)

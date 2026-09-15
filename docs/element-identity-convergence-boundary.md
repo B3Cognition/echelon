@@ -1435,3 +1435,26 @@ pass (198 total), including real offline Codex/Claude repair binding, original
 Synthesis in all three modes, completion recovery and combined Tracker/WHY1
 clarification history. Independent review cleared the count correction. The
 remaining checkpoint-B execution boundary above is unchanged.
+
+### Repair refresh: actual-input Synthesis proof (2026-09-15)
+
+The next checkpoint-B slice supersedes the null execution-slot restriction for a
+changed, bound Synthesis refresh only. Existing operation/turn owners isolate its
+attempts and accounting; original state, receipts and input/origin remain exact.
+Capture authenticates the accepted repair, the nearest accepted Synthesis and
+their semantic dependency comparison. Post-WHY1 reports and human/reasoning
+context are read-only; Synthesis's writable roles do not expand.
+
+New refresh completion v9 binds actual input, immutable repair association and
+predecessor. Replay/recovery recompute the decision through retained ancestry;
+original v3 proofs cannot describe refresh operations. No proof migration or
+provider-specific prose is introduced. The controller refresh guard remains
+closed: automatic Synthesis-first ordering, Tracker input selection, unchanged
+skips and pinned historical clarification ancestry are still required. The linked
+plan records this low-level execution boundary and exact verification evidence.
+
+This slice is complete and independently reviewed: eight new cases and 343
+distinct regressions pass (351 total), including scripted Codex/Claude refresh,
+prior human answers, input/proof tampering and interrupted-publication recovery.
+Original provider/mode and shared completion checks pass. No installation,
+live-provider acceptance or full activation is established.

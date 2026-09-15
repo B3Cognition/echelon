@@ -234,7 +234,7 @@ def bind_repair_refresh_input(project_root, state_store, producer):
     from harness.discovery_bootstrap_state import bootstrap_from_state
     from harness.discovery_inputs import admit_runtime_inputs
     from harness.discovery_producer import tracker_round
-    from harness.discovery_refresh_inputs import dependency_view, compare_dependencies
+    from harness.discovery_refresh_inputs import refresh_dependency_comparison
     from harness.element_identity_snapshot import IdentityHistorySnapshot
     from harness.squad_publication import load_prepared_publication
     from harness.squad_source_projection import project_publication_source_images
@@ -268,20 +268,10 @@ def bind_repair_refresh_input(project_root, state_store, producer):
             _require(all(item == repair_files.get(item.path, previous_files.get(item.path))
                 for item in projected.files))
             runtime, _ = admit_runtime_inputs(root, state_store.squad_dir, state, runtime_view(sources))
-            # Compare the producer's dependency domain plus post-review human
-            # context. SAGE's templates are repair inputs, not Synthesis inputs.
-            context_files = {run_path + "/staging/" + name for name in (
-                "user-clarifications.md", "feature-policy.json", "feature-policy.md")}
-            context_files.add(run_path + "/reasoning-journal.jsonl")
-            file_paths = previous_files.keys() | context_files
-            old = dependency_view(trees=before.trees, files=before.files,
-                history=IdentityHistorySnapshot(**previous.candidate["history"]),
-                spec_path=spec_path, run_path=run_path, runtime=previous.source["runtime"])
-            new = dependency_view(trees=tuple(tree for tree in sources.trees if tree.path in previous_trees),
-                files=tuple(item for item in sources.files if item.path in file_paths),
+            dependencies = refresh_dependency_comparison(previous, sources,
                 history=IdentityHistorySnapshot(**binding.candidate["history"]),
                 spec_path=spec_path, run_path=run_path, runtime=runtime)
-            execution_input = dict(source=source, dependencies=compare_dependencies(old, new))
+            execution_input = dict(source=source, dependencies=dependencies)
         _require(state_store.load() == state)
     except Exception:
         raise ValueError("refresh input requires unchanged accepted dependencies") from None

@@ -64,3 +64,22 @@ def compare_dependencies(before, after):
     """Retain a deterministic decision, not a second source snapshot ledger."""
     return dict(before_sha256=_digest(before), after_sha256=_digest(after),
         changed=sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key)))
+
+
+def refresh_dependency_comparison(previous, sources, *, history, runtime, spec_path, run_path):
+    """Compare accepted predecessor postimages with the captured refresh input."""
+    from harness.element_identity_snapshot import IdentityHistorySnapshot
+    from harness.squad_source_projection import project_publication_source_images
+    before = project_publication_source_images(previous.sources)
+    tree_paths = {tree.path for tree in before.trees}
+    file_paths = {item.path for item in before.files}
+    file_paths.update(run_path + "/staging/" + name for name in (
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md"))
+    file_paths.add(run_path + "/reasoning-journal.jsonl")
+    old = dependency_view(trees=before.trees, files=before.files,
+        history=IdentityHistorySnapshot(**previous.candidate["history"]),
+        spec_path=spec_path, run_path=run_path, runtime=previous.source["runtime"])
+    new = dependency_view(trees=tuple(tree for tree in sources.trees if tree.path in tree_paths),
+        files=tuple(item for item in sources.files if item.path in file_paths), history=history,
+        spec_path=spec_path, run_path=run_path, runtime=runtime)
+    return compare_dependencies(old, new)

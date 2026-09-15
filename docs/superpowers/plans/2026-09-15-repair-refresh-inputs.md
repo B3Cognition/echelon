@@ -17,7 +17,7 @@
 ## Checkpoint B: Ordered refresh execution (still part of approved scope)
 
 - [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
-- [ ] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
+- [x] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
 - [ ] Execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round.
 - [ ] Pin historical WHY1 clarification ancestry to its accepted Tracker parent before allowing new Tracker questions. Preserve old answers and native caps, cumulative accounting, retry/no-progress/unknown-completion behavior.
 - [ ] Verify interruption/recovery, unchanged-input skips and changed-parent rejection for Codex and Claude; stop before WHY1 re-review. Independent review and local commit.
@@ -136,3 +136,69 @@ checkpoint B as a whole remains unfinished within the existing approval. Next is
 actual-input completion proof/capture and ordered execution through the existing
 owners, including the clarification-ancestry prerequisite. No installation,
 live-provider spending or full activation is established by these offline tests.
+
+## Checkpoint B: actual-input proof and low-level Synthesis execution slice
+
+This slice supersedes the earlier null-operation/null-turn boundary only for a
+Synthesis refresh with a bound, nonempty dependency change. The existing state
+owner permits writes only to its active operation/turn slots, preserves original
+flat records and immutable input/origin, and charges the existing cumulative
+dispatch count once. The existing three-attempt operation limit and round
+receipt/reservation journals remain the only execution authorities.
+
+Capture uses the actual bound accepted repair, not original Discovery. It
+authenticates the complete retained repair ancestry, resolves the nearest
+accepted Synthesis before entering source inspection, and recomputes the bound
+dependency comparison from that predecessor's accepted postimages. WHY1 reports,
+human staging/policy files and the reasoning journal are read-only inputs.
+Synthesis's writable artifact roles do not expand; issue report occurrence
+provenance survives unchanged reports.
+
+Refresh completions use a closed v9 proof containing `refresh`, `execution_input`
+and `predecessor`, with `source_completion` equal to the actual input. Replay and
+recovery authenticate the exact accepted repair and nearest previous Synthesis,
+recompute semantic dependencies, and enforce the WHY1 return destination. Original
+Synthesis retains v3 and explicitly rejects refresh operation IDs. No retained
+proof is rewritten or migrated.
+
+Automatic controller refresh remains guarded. The end-to-end test selects the
+inactive Synthesis phase explicitly, then uses the real operation, publication,
+completion, identity, retained-proof and recovery owners with scripted provider
+responses. It does not establish native controller sequencing or live acceptance.
+Next remains Synthesis-first controller ordering, Tracker's resulting actual
+input, unchanged-input skips and historical WHY1-to-Tracker clarification pinning.
+WHY1 re-review remains outside this checkpoint. No installation or live trial.
+
+This proof/capture slice is complete and independently reviewed. Checkpoint B as
+a whole remains unfinished within the existing approval.
+
+- Test-first failures reproduced the null-operation guard (1 failed, 3 passed in
+  0.63s), wrong flat-state write permission (1 failed in 0.49s), missing actual-input
+  reader, and original-input capture in a real Codex refresh (1 failed in 184.78s).
+- The initial end-to-end Codex publication then passed in 284.34s. Tests were
+  subsequently strengthened with pre-dispatch source drift, shape-valid v3
+  downgrade and v9 field tampering, independent dependency recomputation,
+  post-identity-apply interruption/recovery and prior Claude human answers.
+- Independent read-only review found no production issue and identified the
+  downgrade test's early field-shape rejection. The corrected case removes v9-only
+  fields to exercise the original-proof operation-ID boundary. A superseded test
+  run was explicitly interrupted while strengthening tests and is not counted.
+- Final Codex and guided Claude refresh cases both passed in 937.74s. Each rejects
+  changed live reports/templates before dispatch or accounting changes, rejects
+  altered completion fields and semantic decisions, and recovers after identity
+  application without duplicate calls, charges or revisions. Claude's earlier
+  Tracker/WHY1 answers reach the refresh evidence and remain byte-identical with
+  policy/reasoning context. Original Synthesis and report/receipt bytes stay exact.
+- Final focused and regression partition: 349 passed in 1396.83s, comprising six
+  new operation/state/input-reader cases and 343 existing selection, repair-input,
+  original Synthesis, Discovery completion and Squad completion cases. This
+  includes original Codex/Claude guided/semi/Banzai paths and recovery checks.
+- Independent review confirmed the corrected downgrade case and accurate scope
+  records, with no remaining findings. `git diff --check` passes.
+
+Final evidence is eight new cases plus 343 distinct regressions (351 total).
+Earlier RED/GREEN runs and partial progress overlap and are not added again.
+Provider responses were scripted; this is neither a full-suite result nor live
+acceptance/activation. Only this bounded actual-input proof/capture/execution
+slice is complete; the remaining ordered execution and clarification work above
+is still approved and required.

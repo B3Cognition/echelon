@@ -117,8 +117,8 @@ def validate_refresh_round(state, producer, row):
             or row["source"] != refresh["repair_source"]
             or refresh["predecessor_source"]["dispatch_id"] == row["source"]["dispatch_id"]
             or repair["selection"]["origin"] != dict(review_id=repair["selection"]["source"]["dispatch_id"], return_phase="phase1-why1")
-            or row["resolution"] is not None or row["operation"] is not None or row["turns"] is not None):
-        raise ValueError("refresh requires an accepted repair; execution is not admitted")
+            or row["resolution"] is not None):
+        raise ValueError("refresh requires an accepted repair")
     predecessor = row["predecessor"]
     if type(predecessor) is not str:
         raise ValueError("refresh requires a predecessor")
@@ -132,21 +132,29 @@ def validate_refresh_round(state, producer, row):
     if producer == "why1" and refresh["predecessor_source"] != repair["selection"]["source"]:
         raise ValueError("refresh must return to the requesting WHY1")
     if "execution_input" in row:
-        bound = row["execution_input"]
-        # Only the first Synthesis input is admitted at this checkpoint. The
-        # ordered execution owner must establish Tracker's refreshed parent.
-        if (producer != "synthesizer" or type(bound) is not dict or set(bound) != {"source", "dependencies"}
-                or bound["source"] != refresh["repair_source"]):
-            raise ValueError("refresh execution input is not admitted")
-        dependencies = bound["dependencies"]
-        if (type(dependencies) is not dict or set(dependencies) != {"before_sha256", "after_sha256", "changed"}
-                or any(type(dependencies[key]) is not str or re.fullmatch(r"[0-9a-f]{64}", dependencies[key]) is None
-                    for key in ("before_sha256", "after_sha256"))
-                or type(dependencies["changed"]) is not list
-                or any(type(key) is not str or not key for key in dependencies["changed"])
-                or dependencies["changed"] != sorted(set(dependencies["changed"]))
-                or (dependencies["before_sha256"] == dependencies["after_sha256"]) != (not dependencies["changed"])):
-            raise ValueError("invalid refresh dependency comparison")
+        validate_refresh_input(producer, refresh, row["execution_input"])
+    if row["operation"] is not None or row["turns"] is not None:
+        if (producer != "synthesizer" or "execution_input" not in row
+                or not row["execution_input"]["dependencies"]["changed"]
+                or row["operation"] is None):
+            raise ValueError("refresh execution requires changed bound Synthesis inputs")
+
+
+def validate_refresh_input(producer, refresh, bound):
+    """Closed input shape shared by retained state and completion proofs."""
+    # Tracker still waits for the ordered execution owner to establish its parent.
+    if (producer != "synthesizer" or type(bound) is not dict or set(bound) != {"source", "dependencies"}
+            or bound["source"] != refresh["repair_source"]):
+        raise ValueError("refresh execution input is not admitted")
+    dependencies = bound["dependencies"]
+    if (type(dependencies) is not dict or set(dependencies) != {"before_sha256", "after_sha256", "changed"}
+            or any(type(dependencies[key]) is not str or re.fullmatch(r"[0-9a-f]{64}", dependencies[key]) is None
+                for key in ("before_sha256", "after_sha256"))
+            or type(dependencies["changed"]) is not list
+            or any(type(key) is not str or not key for key in dependencies["changed"])
+            or dependencies["changed"] != sorted(set(dependencies["changed"]))
+            or (dependencies["before_sha256"] == dependencies["after_sha256"]) != (not dependencies["changed"])):
+        raise ValueError("invalid refresh dependency comparison")
 
 
 def tracker_round(state, operation_id=None, *, producer="tracker"):
@@ -263,6 +271,17 @@ def synthesis_source(state):
     if bootstrap_from_state(state) is None or "managed_identity" not in state:
         raise ValueError("synthesis requires managed discovery")
     return deepcopy(source)
+
+
+def synthesis_input_source(state, operation_id=None):
+    """Actual accepted parent; the original source and refresh origin never move."""
+    selected = producer_operation_id(state, "synthesizer", operation_id)
+    if selected.startswith("synthesis-"):
+        return synthesis_source(state)
+    row = tracker_round(state, selected, producer="synthesizer")
+    if "execution_input" not in row:
+        raise ValueError("Synthesis refresh input is not bound")
+    return deepcopy(row["execution_input"]["source"])
 
 
 def producer_operation_id(state, producer, operation_id=None, *, repair_unit=None):

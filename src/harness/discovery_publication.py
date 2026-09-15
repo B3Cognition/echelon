@@ -17,7 +17,7 @@ from echelon.spec_graph_memory import GraphMemoryAudit
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_operation import ReviewedDiscoveryCandidate, _capture, run_discovery_operation
 from harness.discovery_operation_state import operation_from_state
-from harness.discovery_producer import producer_component, producer_phase, synthesis_source, identity_spec_tree, tracker_round, tracker_input_source
+from harness.discovery_producer import producer_component, producer_phase, synthesis_input_source, identity_spec_tree, tracker_round, tracker_input_source
 from harness.element_identity_publication import PublicationIntentRequest, PublicationSourceClaim
 from harness.element_identity_store import IdentityStore
 from harness.squad_publication import PreparedSquadPublication, SquadPublicationTransaction
@@ -165,7 +165,10 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         review=candidate.review, provider=producer_component(state, producer, "turns", repair_unit=repair_unit), sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest())
     if producer == "synthesizer":
-        recovery_fields.update(version=3, producer=producer, source_completion=synthesis_source(state))
+        recovery_fields.update(version=3, producer=producer, source_completion=synthesis_input_source(state))
+        if binding["operation_id"].startswith("synthesizer-"):
+            row = tracker_round(state, binding["operation_id"], producer=producer)
+            recovery_fields.update(version=9, **{key: row[key] for key in ("refresh", "execution_input", "predecessor")})
     if producer in {"tracker", "why1"}:
         recovery_fields.update(version=6 if producer == "why1" else 4, producer=producer,
             source_completion=tracker_input_source(state, producer=producer),

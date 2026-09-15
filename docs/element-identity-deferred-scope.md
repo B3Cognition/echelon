@@ -594,6 +594,21 @@ The slice is complete and independently reviewed, with 198 selected offline case
 passing (17 new plus 181 distinct regressions); see the input/refresh plan for
 durations, overlap and the still-open execution boundary.
 
+**Checkpoint-B actual-input Synthesis proof slice, 2026-09-15.**
+This supersedes null operation/turn slots only for a changed, bound Synthesis
+refresh. Reuse existing attempt, receipt, publication and recovery owners; retain
+original flat state and immutable origin/input. New v9 completion proof binds
+the actual accepted repair and nearest accepted Synthesis and recomputes semantic
+dependencies during ancestry authentication. Original v3 proofs stay unchanged.
+WHY1 reports and human/reasoning inputs are read-only, not new Synthesis writes.
+Automatic controller sequencing remains closed. Tracker actual-input selection,
+unchanged skips and historical clarification pinning are still approved next
+work, not a new design or new approval gate. The linked plan records verification;
+this low-level boundary does not establish activation or WHY1 re-review.
+The slice is complete and independently reviewed, with eight new cases and 343
+distinct regressions passing (351 total), including both scripted provider paths,
+retained human answers, tampering rejection and publication restart recovery.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.
