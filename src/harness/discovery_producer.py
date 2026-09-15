@@ -37,7 +37,9 @@ def tracker_rounds(state, producer="tracker"):
     repair_units = set()
     for operation_id, row in value["rounds"].items():
         if (type(operation_id) is not str or re.fullmatch(producer + r"-[0-9a-f]{32}", operation_id) is None
-                or type(row) is not dict or set(row) != {"source", "resolution", "operation", "turns", "predecessor", *(("refresh",) if "refresh" in row else ())}):
+                or type(row) is not dict or set(row) != {"source", "resolution", "operation", "turns", "predecessor",
+                    *(("refresh",) if "refresh" in row else ()), *(("execution_input",) if "execution_input" in row else ())}
+                or ("execution_input" in row and "refresh" not in row)):
             raise ValueError("invalid retained Tracker round")
         source = row["source"]
         if type(source) is not dict or set(source) != set(SOURCE_FIELDS):
@@ -129,6 +131,22 @@ def validate_refresh_round(state, producer, row):
         raise ValueError("refresh predecessor must be accepted")
     if producer == "why1" and refresh["predecessor_source"] != repair["selection"]["source"]:
         raise ValueError("refresh must return to the requesting WHY1")
+    if "execution_input" in row:
+        bound = row["execution_input"]
+        # Only the first Synthesis input is admitted at this checkpoint. The
+        # ordered execution owner must establish Tracker's refreshed parent.
+        if (producer != "synthesizer" or type(bound) is not dict or set(bound) != {"source", "dependencies"}
+                or bound["source"] != refresh["repair_source"]):
+            raise ValueError("refresh execution input is not admitted")
+        dependencies = bound["dependencies"]
+        if (type(dependencies) is not dict or set(dependencies) != {"before_sha256", "after_sha256", "changed"}
+                or any(type(dependencies[key]) is not str or re.fullmatch(r"[0-9a-f]{64}", dependencies[key]) is None
+                    for key in ("before_sha256", "after_sha256"))
+                or type(dependencies["changed"]) is not list
+                or any(type(key) is not str or not key for key in dependencies["changed"])
+                or dependencies["changed"] != sorted(set(dependencies["changed"]))
+                or (dependencies["before_sha256"] == dependencies["after_sha256"]) != (not dependencies["changed"])):
+            raise ValueError("invalid refresh dependency comparison")
 
 
 def tracker_round(state, operation_id=None, *, producer="tracker"):

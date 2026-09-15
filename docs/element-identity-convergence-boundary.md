@@ -1374,3 +1374,41 @@ historical and newly selected WHY1 reads preserve the original answers. The plan
 records exact evidence and overlap. All provider responses were scripted; core
 state, identity, publication, completion and recovery were real. Nothing was
 installed, migrated, activated, pushed or merged.
+
+### Repair refresh: semantic input binding (2026-09-15)
+
+The user approved separating repair origin from actual accepted execution input,
+then refreshing affected Synthesis and evaluating Tracker against its accepted
+result. The [input/refresh plan](superpowers/plans/2026-09-15-repair-refresh-inputs.md)
+splits that implementation into tested checkpoints. Checkpoint A implements the
+binding foundation; checkpoint B's ordered execution remains open and already
+approved. Neither is permission to rerun WHY1 yet.
+
+Refresh rows may retain an optional, once-bound `execution_input` separate from
+their immutable repair origin and predecessor. The existing state owner enforces
+closed shape, full-state comparison, exact retry and no rebinding. Read-only
+admission reauthenticates the actual repair completion, full ancestry, predecessor
+postimages and live captured inputs even on retry. No original record or receipt
+is replaced; binding uses no attempts, IDs, dispatches or tokens.
+
+Dependency comparison uses accepted artifact/identity postimages, independent
+inputs, templates and admitted runtime/human context, not the whole-run capture
+fingerprint. Derived graph/checkpoint/runtime render bookkeeping is excluded only
+from the semantic decision, never from source authentication. Identity subjects,
+revisions, content, lineage and substantive evidence remain significant. The
+derived evidence checksum includes publication owner/index, so comparison omits
+it together with those bookkeeping fields after authenticating the original rows.
+
+Current admission binds only Synthesis's released repair input. Tracker binding
+remains closed so it cannot prematurely freeze the pre-Synthesis input. Operation
+and turn slots still remain null; the controller's unsupported-refresh guard has
+not changed. Checkpoint B must connect actual refreshed publication ancestry,
+ordered execution/unchanged skips, receipt recovery and pinned historical human
+context through the existing owners. No rollout or live acceptance is implied.
+
+Checkpoint A is complete and independently reviewed after a reproduced
+evidence-checksum normalization correction. All 12 new cases and 362 distinct
+regression cases passed in offline partitions, including both provider paths,
+tampered proof, real CAS race, exact retry and the combined prior clarification
+history. The linked plan records exact results and overlap. This is a local
+binding checkpoint, not completed ordered refresh execution or activation.

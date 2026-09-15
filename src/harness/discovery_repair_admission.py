@@ -155,6 +155,12 @@ def prepare_repair_refresh_round(project_root, state_store, producer):
     state owner retains associations only; immutable completion proof supplies
     their authority and is read again even for an exact retry.
     """
+    state, source, refresh, *_ = _repair_refresh_context(project_root, state_store, producer)
+    return state_store.prepare_refresh_round(producer, source, refresh, expected_state=state)
+
+
+def _repair_refresh_context(project_root, state_store, producer):
+    """Authenticate existing repair/predecessor owners without mutating state."""
     from harness.discovery_bootstrap_state import bootstrap_from_state
     from harness.discovery_completion import _retained_input_projection, released_discovery_input_projectors
     from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds
@@ -180,7 +186,7 @@ def prepare_repair_refresh_round(project_root, state_store, producer):
             required_route=("phase1-discover", "phase1-why1"))
         _require(binding.producer == "discovery" and binding.repair_unit is not None)
         # Full retained ancestry verifies the requesting WHY1 and repair findings.
-        released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
+        _, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
         prepared = load_prepared_publication(root, state_store.squad_dir, selected["capture_marker"])
         with prepared.inspect_sources(tree_paths=tuple(tree.path for tree in binding.sources.trees),
                 file_paths=tuple(item.path for item in binding.sources.files)) as sources:
@@ -215,4 +221,68 @@ def prepare_repair_refresh_round(project_root, state_store, producer):
         refresh = dict(repair_unit=unit, repair_source=source, predecessor_source=parent)
     except Exception:
         raise ValueError("repair refresh requires unchanged released repair and producer ancestry") from None
-    return state_store.prepare_refresh_round(producer, source, refresh, expected_state=state)
+    return state, source, refresh, binding, previous, project_spec, project_context, runtime_view
+
+
+def bind_repair_refresh_input(project_root, state_store, producer):
+    """Bind the first refresh's accepted inputs under caller execution leases.
+
+    Repair origin and execution input are separate retained facts. Synthesis
+    consumes this repair; Tracker must wait for ordered Synthesis execution (or
+    an authenticated unchanged-input decision). Never pre-bind stale Tracker.
+    """
+    from harness.discovery_bootstrap_state import bootstrap_from_state
+    from harness.discovery_inputs import admit_runtime_inputs
+    from harness.discovery_producer import tracker_round
+    from harness.discovery_refresh_inputs import dependency_view, compare_dependencies
+    from harness.element_identity_snapshot import IdentityHistorySnapshot
+    from harness.squad_publication import load_prepared_publication
+    from harness.squad_source_projection import project_publication_source_images
+
+    try:
+        _require(producer == "synthesizer")
+        root = Path(project_root)
+        state, source, refresh, binding, previous, project_spec, project_context, runtime_view = _repair_refresh_context(
+            root, state_store, producer)
+        row = tracker_round(state, producer=producer)
+        _require(row is not None and row.get("refresh") == refresh)
+        selected = bootstrap_from_state(state)["selection"]
+        spec_path = selected["spec_path"]
+        run_path = state_store.squad_dir.relative_to(root).as_posix()
+        before = project_publication_source_images(previous.sources)
+        previous_trees = {tree.path: tree for tree in before.trees}
+        previous_files = {item.path: item for item in before.files}
+        repair_trees = {tree.path: tree for tree in binding.sources.trees}
+        repair_files = {item.path: item for item in binding.sources.files}
+        prepared = load_prepared_publication(root, state_store.squad_dir, selected["capture_marker"])
+        with prepared.inspect_sources(tree_paths=tuple(sorted(previous_trees.keys() | repair_trees.keys())),
+                file_paths=tuple(sorted(previous_files.keys() | repair_files.keys()))) as sources:
+            _require(not sources.publication.operations)
+            spec, = (tree for tree in sources.trees if tree.path == spec_path)
+            project_spec(spec)
+            projected = project_context(sources)
+            # Authenticated repair captures are authoritative for their domains;
+            # additionally retained Synthesis templates must still be exact.
+            _require(all(tree == repair_trees.get(tree.path, previous_trees.get(tree.path))
+                for tree in projected.trees if tree.path != spec_path))
+            _require(all(item == repair_files.get(item.path, previous_files.get(item.path))
+                for item in projected.files))
+            runtime, _ = admit_runtime_inputs(root, state_store.squad_dir, state, runtime_view(sources))
+            # Compare the producer's dependency domain plus post-review human
+            # context. SAGE's templates are repair inputs, not Synthesis inputs.
+            context_files = {run_path + "/staging/" + name for name in (
+                "user-clarifications.md", "feature-policy.json", "feature-policy.md")}
+            context_files.add(run_path + "/reasoning-journal.jsonl")
+            file_paths = previous_files.keys() | context_files
+            old = dependency_view(trees=before.trees, files=before.files,
+                history=IdentityHistorySnapshot(**previous.candidate["history"]),
+                spec_path=spec_path, run_path=run_path, runtime=previous.source["runtime"])
+            new = dependency_view(trees=tuple(tree for tree in sources.trees if tree.path in previous_trees),
+                files=tuple(item for item in sources.files if item.path in file_paths),
+                history=IdentityHistorySnapshot(**binding.candidate["history"]),
+                spec_path=spec_path, run_path=run_path, runtime=runtime)
+            execution_input = dict(source=source, dependencies=compare_dependencies(old, new))
+        _require(state_store.load() == state)
+    except Exception:
+        raise ValueError("refresh input requires unchanged accepted dependencies") from None
+    return state_store.bind_refresh_input(producer, execution_input, expected_state=state)

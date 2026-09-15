@@ -541,6 +541,46 @@ the fresh combined acceptance passed in 499.66s. The linked plan records exact
 results and overlap. This supersedes only the pending retention prerequisite,
 not the open changed-dependency execution/re-review or activation boundaries.
 
+**Repair refresh input binding, 2026-09-15: step-2 checkpoint A.**
+The user approved immutable repair origin plus once-bound actual accepted input,
+semantic dependency comparison, Synthesis-first refresh and then Tracker against
+the resulting accepted input. The
+[input/refresh plan](superpowers/plans/2026-09-15-repair-refresh-inputs.md) records
+this scope and its test/review checkpoints. Ordered execution remains approved
+but unfinished; do not ask for the same approval or silently redefine this design.
+
+This checkpoint supersedes only the prohibition on retaining input selection:
+an inactive Synthesis refresh row may now retain closed
+`execution_input={source, dependencies}` via the existing state owner. `source`
+is the accepted input completion proof; `dependencies` contains before/after
+semantic fingerprints and sorted changed keys. The row's original `source` and
+`refresh.repair_source` remain its immutable repair cause. Do not replace those
+fields when the execution input later advances to a refreshed producer result.
+Old rows without this optional field remain valid without migration.
+
+Admission reauthenticates accepted completion ancestry and exact live source
+guards, including predecessor-only Synthesis templates, even on an exact retry.
+Compare predecessor **postimages**, not its captured before-images. Ignore only
+derived bookkeeping for dependency decisions; preserve full source protection
+and exact identity/evidence. Evidence payload checksums derive from publication
+owner/index as well as content and must not reintroduce bookkeeping changes into
+the semantic comparison. The authenticated original rows remain untouched.
+
+Only Synthesis's repair input is currently bindable. Tracker and WHY1 bindings,
+operation/turn initialization and refresh dispatch remain guarded. Checkpoint B
+must prove the actual resulting parent before binding Tracker, support unchanged
+skips through the existing owners, and pin historical WHY1's original Tracker
+clarification ancestry before fresh questions can execute. Retained associations
+or comparison digests alone are not dispatch/publication authority. Keep budgets,
+native modes, original receipts and neutral Prosaic/Claude/Codex behavior intact.
+No new controller, allocator, attempt ledger, role or activation is introduced.
+
+Checkpoint A is complete and independently reviewed: 12 new cases and 362
+distinct regression cases passed in offline partitions. See the linked plan for
+exact results and overlap. Binding tests do not establish ordered execution,
+re-review, original smoke acceptance or rollout; checkpoint B remains approved
+and unfinished.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

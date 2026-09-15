@@ -2532,6 +2532,11 @@ class SquadStateStore:
                         old = old_rounds["rounds"][active][update]
                         check["rounds"][active][update] = old
                         valid = check == old_rounds and (update == "operation" or old is None)
+                    elif update == "execution_input" and old_rounds["active"] == new_rounds["active"]:
+                        check = deepcopy(new_rounds)
+                        active = old_rounds["active"]
+                        check["rounds"][active].pop("execution_input", None)
+                        valid = "execution_input" not in old_rounds["rounds"][active] and check == old_rounds
                 if not valid:
                     raise StateAdvanceError("rounds require their owning transition",
                         json_path="$." + rounds_key(round_producer), validator=round_producer) from None
@@ -2726,6 +2731,36 @@ class SquadStateStore:
                 raise StateAdvanceError("invalid repair refresh selection", validator="refresh_round") from None
             written = self._save_unlocked(desired, **{
                 "synthesis_round_update" if producer == "synthesizer" else producer + "_update": "select"})
+            return self._confirm_durable_state_unlocked(written)
+
+    def bind_refresh_input(self, producer, execution_input, *, expected_state):
+        """Bind authenticated accepted inputs once; this grants no dispatch."""
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            try:
+                dispatch = current.get("last_dispatch") or {}
+                if (producer != "synthesizer" or current != expected_state
+                        or current.get("status") != "running" or current.get("phase") != "phase1-why1"
+                        or current.get("mode") != "greenfield"
+                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}
+                        or dispatch.get("phase_id") != "phase1-discover" or dispatch.get("post_dispatch_complete") is not True
+                        or execution_input["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}):
+                    raise ValueError("refresh input requires exact accepted state")
+                rounds = _tracker_from_state(current, producer)
+                row = rounds["rounds"][rounds["active"]]
+                if "refresh" not in row or row["operation"] is not None or row["turns"] is not None:
+                    raise ValueError("inactive refresh required")
+                if "execution_input" in row:
+                    if row["execution_input"] != execution_input:
+                        raise ValueError("refresh input is immutable")
+                    return self._confirm_durable_state_unlocked(current)
+                row["execution_input"] = deepcopy(execution_input)
+                desired = {**current, rounds_key(producer): rounds}
+                _tracker_from_state(desired, producer)
+            except Exception:
+                raise StateAdvanceError("invalid repair refresh input", validator="refresh_input") from None
+            written = self._save_unlocked(desired, synthesis_round_update="execution_input")
             return self._confirm_durable_state_unlocked(written)
 
     def prepare_tracker_round(self, source: dict, *, producer="tracker") -> dict:
