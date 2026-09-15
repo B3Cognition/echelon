@@ -161,6 +161,13 @@ adapter.getImpactRadius(cg, [adapter.symbolKey(source)], 3).then((entries) => {
     assert completed.returncode == 0, completed.stderr
 
 
+def test_adapter_initializes_empty_index_before_single_explicit_index_pass() -> None:
+    adapter = (CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js").read_text()
+
+    assert "index: false" in adapter
+    assert adapter.count("await cg.indexAll(") == 1
+
+
 def test_adapter_enforces_canonical_symbol_locator_contract(tmp_path: Path) -> None:
     script = """
 const assert = require('assert');
