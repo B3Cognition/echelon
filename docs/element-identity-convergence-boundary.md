@@ -1458,3 +1458,22 @@ distinct regressions pass (351 total), including scripted Codex/Claude refresh,
 prior human answers, input/proof tampering and interrupted-publication recovery.
 Original provider/mode and shared completion checks pass. No installation,
 live-provider acceptance or full activation is established.
+
+### Repair refresh: historical human-input prerequisite (complete)
+
+Initial WHY1 roots now pin their accepted Tracker operation. Legacy roots gain
+only that immutable association after retained-proof authentication and full-state
+CAS; old operations, human receipts and v5/v7 proofs stay unchanged. The actual
+proven parent is checked during pending completion and historical traversal.
+Refreshed Tracker history uses the same repair unit's existing WHY1 association
+to preserve Tracker→WHY1→new Tracker answer order without duplicating old answers.
+
+This prerequisite must run at released-repair admission, before Synthesis changes
+the accepted head. Automatic ordering, Tracker actual-input binding and
+unchanged-input skips remain approved and required, but are not enabled here.
+WHY1 re-review stays outside this checkpoint; initial-root pinning alone is not
+its later refresh history boundary. The linked input/refresh plan records the
+implementation and final verification: 364 distinct selected tests passed,
+including scripted Codex/Claude proof cases and existing mode/restart regressions.
+Independent review has no remaining findings. This is not full-suite or live
+acceptance; no installation or activation claim is made.

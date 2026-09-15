@@ -224,6 +224,34 @@ def _repair_refresh_context(project_root, state_store, producer):
     return state, source, refresh, binding, previous, project_spec, project_context, runtime_view
 
 
+def pin_why1_tracker_history(project_root, state_store):
+    """Bind a legacy WHY1 root to its proven Tracker before refreshed questions.
+
+    Caller owns execution leases. No historical proof or answer is rewritten;
+    state CAS adds only the immutable root association after full authentication.
+    """
+    from harness.discovery_completion import _retained_input_projection
+    from harness.discovery_producer import tracker_rounds
+    from harness.element_identity_store import IdentityStore
+
+    try:
+        root = Path(project_root)
+        state, *_ = _repair_refresh_context(root, state_store, "why1")
+        rounds = tracker_rounds(state, "why1")
+        operation_id, = (key for key, row in rounds["rounds"].items() if row["predecessor"] is None)
+        row = rounds["rounds"][operation_id]
+        source = row["source"]
+        parent, _, _ = _retained_input_projection(root, state_store.squad_dir, state, IdentityStore.open(root),
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False, required_route=("phase1-tracker", "phase1-why1"))
+        _require(parent.producer == "tracker" and not parent.clarification)
+        tracker_parent = parent.recovery["operation"]["binding"]["operation_id"]
+        _require(state_store.load() == state)
+    except Exception:
+        raise ValueError("WHY1 history requires its authenticated accepted Tracker parent") from None
+    return state_store.pin_why1_tracker_parent(operation_id, tracker_parent, source=source, expected_state=state)
+
+
 def bind_repair_refresh_input(project_root, state_store, producer):
     """Bind the first refresh's accepted inputs under caller execution leases.
 

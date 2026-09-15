@@ -38,9 +38,19 @@ def tracker_rounds(state, producer="tracker"):
     for operation_id, row in value["rounds"].items():
         if (type(operation_id) is not str or re.fullmatch(producer + r"-[0-9a-f]{32}", operation_id) is None
                 or type(row) is not dict or set(row) != {"source", "resolution", "operation", "turns", "predecessor",
-                    *(("refresh",) if "refresh" in row else ()), *(("execution_input",) if "execution_input" in row else ())}
+                    *(("refresh",) if "refresh" in row else ()), *(("execution_input",) if "execution_input" in row else ()),
+                    *(("tracker_parent",) if "tracker_parent" in row else ())}
                 or ("execution_input" in row and "refresh" not in row)):
             raise ValueError("invalid retained Tracker round")
+        if "tracker_parent" in row:
+            if (producer != "why1" or row["predecessor"] is not None or row["resolution"] is not None
+                    or "refresh" in row or type(row["tracker_parent"]) is not str):
+                raise ValueError("Tracker history belongs to the initial WHY1 root")
+            parents = tracker_rounds(state)
+            previous = None if parents is None else parents["rounds"].get(row["tracker_parent"], {}).get("operation")
+            if (previous is None or previous["binding"]["operation_id"] != row["tracker_parent"]
+                    or not previous["attempts"] or (previous["attempts"][-1]["result"] or {}).get("status") != "accepted"):
+                raise ValueError("WHY1 history requires a retained accepted Tracker")
         source = row["source"]
         if type(source) is not dict or set(source) != set(SOURCE_FIELDS):
             raise ValueError("invalid Tracker parent")

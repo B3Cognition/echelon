@@ -2539,6 +2539,13 @@ class SquadStateStore:
                         active = old_rounds["active"]
                         check["rounds"][active].pop("execution_input", None)
                         valid = "execution_input" not in old_rounds["rounds"][active] and check == old_rounds
+                    elif update == "tracker_parent" and round_producer == "why1":
+                        check = deepcopy(new_rounds)
+                        added = [key for key, row in check["rounds"].items()
+                            if "tracker_parent" in row and "tracker_parent" not in old_rounds["rounds"].get(key, {})]
+                        for key in added:
+                            del check["rounds"][key]["tracker_parent"]
+                        valid = len(added) == 1 and check == old_rounds
                 if not valid:
                     raise StateAdvanceError("rounds require their owning transition",
                         json_path="$." + rounds_key(round_producer), validator=round_producer) from None
@@ -2696,6 +2703,32 @@ class SquadStateStore:
     def prepare_why1_round(self, source: dict) -> dict:
         return self.prepare_tracker_round(source, producer="why1")
 
+    def pin_why1_tracker_parent(self, operation_id, tracker_parent, *, source, expected_state):
+        """Pin one legacy root after caller-authenticated retained parent proof."""
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            try:
+                if (current != expected_state or current.get("phase") != "phase1-why1"
+                        or current.get("status") != "running" or current.get("mode") != "greenfield"
+                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human"}):
+                    raise ValueError("exact settled WHY1 state required")
+                rounds = _tracker_from_state(current, "why1")
+                row = rounds["rounds"][operation_id]
+                if row["source"] != source or row["predecessor"] is not None or row["resolution"] is not None:
+                    raise ValueError("exact WHY1 root required")
+                if "tracker_parent" in row:
+                    if row["tracker_parent"] != tracker_parent:
+                        raise ValueError("WHY1 Tracker parent is immutable")
+                    return self._confirm_durable_state_unlocked(current)
+                row["tracker_parent"] = tracker_parent
+                desired = {**current, rounds_key("why1"): rounds}
+                _tracker_from_state(desired, "why1")
+            except Exception:
+                raise StateAdvanceError("invalid WHY1 Tracker parent", validator="why1_tracker_parent") from None
+            written = self._save_unlocked(desired, why1_update="tracker_parent")
+            return self._confirm_durable_state_unlocked(written)
+
     def prepare_refresh_round(self, producer, source, refresh, *, expected_state):
         """Retain an inactive round after caller-authenticated repair publication."""
         with self._lock(exclusive=True):
@@ -2808,6 +2841,8 @@ class SquadStateStore:
             rounds["active"] = operation_id
             rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=resolution,
                 predecessor=predecessor, operation=None, turns=None)
+            if producer == "why1" and predecessor is None:
+                rounds["rounds"][operation_id]["tracker_parent"] = previous["binding"]["operation_id"]
             written = self._save_unlocked({**current, rounds_key(producer): rounds},
                 tracker_update="select" if producer == "tracker" else None,
                 why1_update="select" if producer == "why1" else None)

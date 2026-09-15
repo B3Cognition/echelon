@@ -34,15 +34,27 @@ def _record(decision, producer="tracker"):
 
 
 def previous_records(state, operation_id, producer="tracker"):
+    return _previous_records(state, operation_id, producer, set())
+
+
+def _previous_records(state, operation_id, producer, seen):
     rounds = tracker_rounds(state, producer)["rounds"]
     # Follow protected round ancestry, not JSON object ordering.
-    records, seen = [], set()
+    records = []
     while True:
-        if operation_id in seen or operation_id not in rounds:
+        if (producer, operation_id) in seen or operation_id not in rounds:
             raise ValueError("invalid clarification ancestry")
-        seen.add(operation_id)
+        seen.add((producer, operation_id))
         row = rounds[operation_id]
         if "refresh" in row:
+            if producer == "tracker":
+                why1 = tracker_rounds(state, "why1")
+                matches = [] if why1 is None else [item for item in why1["rounds"].values()
+                    if item.get("refresh", {}).get("repair_unit") == row["refresh"]["repair_unit"]]
+                if len(matches) != 1:
+                    raise ValueError("Tracker refresh requires its requesting WHY1 history")
+                previous = _previous_records(state, matches[0]["predecessor"], "why1", seen)
+                return previous + tuple(reversed(records))
             # An inactive refresh is not a human answer or a new history root.
             operation_id = row["predecessor"]
             continue
@@ -56,7 +68,16 @@ def previous_records(state, operation_id, producer="tracker"):
         tracker = tracker_rounds(state)
         if tracker is None:
             raise ValueError("WHY1 requires retained Tracker ancestry")
-        previous = previous_records(state, tracker["active"])
+        parent = row.get("tracker_parent")
+        if parent is None:
+            # Legacy roots remain readable before refresh execution. An empty
+            # refresh association is not new history; never guess after one ran.
+            if any("refresh" in item and item["operation"] is not None for item in tracker["rounds"].values()):
+                raise ValueError("historical WHY1 Tracker parent must be pinned")
+            parent = tracker["active"]
+            while "refresh" in tracker["rounds"][parent]:
+                parent = tracker["rounds"][parent]["predecessor"]
+        previous = _previous_records(state, parent, "tracker", seen)
     return previous + tuple(reversed(records))
 
 

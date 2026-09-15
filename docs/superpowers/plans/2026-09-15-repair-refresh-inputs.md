@@ -18,8 +18,8 @@
 
 - [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
 - [x] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
-- [ ] Execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round.
-- [ ] Pin historical WHY1 clarification ancestry to its accepted Tracker parent before allowing new Tracker questions. Preserve old answers and native caps, cumulative accounting, retry/no-progress/unknown-completion behavior.
+- [ ] Execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round. Preserve native caps, cumulative accounting and retry/no-progress/unknown-completion behavior during automatic refresh.
+- [x] Implement the historical human-input prerequisite: pin WHY1 clarification ancestry to its accepted Tracker parent and preserve chronological Tracker→WHY1→new Tracker answers. The automatic route must invoke this prerequisite before allowing new Tracker questions.
 - [ ] Verify interruption/recovery, unchanged-input skips and changed-parent rejection for Codex and Claude; stop before WHY1 re-review. Independent review and local commit.
 
 No installation, migration, live provider spending, push, merge, original smoke workspace, legacy build, AGENTS.md or CLAUDE.md edits. This plan does not represent checkpoint B as complete when only binding tests pass.
@@ -202,3 +202,70 @@ Provider responses were scripted; this is neither a full-suite result nor live
 acceptance/activation. Only this bounded actual-input proof/capture/execution
 slice is complete; the remaining ordered execution and clarification work above
 is still approved and required.
+
+## Checkpoint B: historical human-input prerequisite (complete)
+
+The original `previous_records` prefixed WHY1 history with `tracker.active`.
+After a later Tracker answer, that would change historical v7 proof decoding.
+Also, a refreshed Tracker that retained only its own earlier answers would omit
+the intervening WHY1 answers and fail exact receipt/policy reconstruction.
+
+Initial WHY1 selection now retains an optional immutable `tracker_parent` on its
+root row, naming the accepted Tracker operation that supplied that root's source.
+Legacy roots can be pinned once through the existing state owner with full-state
+CAS after authenticating the complete released repair and the root's retained
+Tracker completion. No operation, answer, receipt or proof is rewritten. The
+pin is a state association, not independent proof authority: retained traversal
+and pending initial WHY1 authentication compare it with the actual proven parent.
+Pure decoding/state validation perform no new filesystem or database reads.
+
+WHY1 history uses that root pin. Legacy roots without it remain readable before
+Tracker refresh execution; empty associations alone do not invalidate history.
+At a Tracker refresh boundary, history uses the same repair unit's retained WHY1
+refresh association to select its requesting WHY1 predecessor, prefixes that
+complete history, and appends only subsequent Tracker answers. Missing/ambiguous
+associations and cross-producer cycles reject. This reuses protected round
+associations rather than introducing a second human-history ledger.
+
+**Ordering constraint:** call `pin_why1_tracker_history` at released-repair
+admission, before Synthesis executes. Its full authentication requires the repair
+to remain the current accepted head. Prepare the inactive WHY1 refresh association
+before a refreshed Tracker can ask questions. Initial-root pinning does not solve
+future WHY1 re-review's new history boundary; that remains outside this checkpoint.
+
+Automatic dispatch, Tracker actual-input binding and unchanged-input skips remain
+guarded and unfinished. This prerequisite adds no controller route or provider
+prose, makes no installation/live-provider changes, and is not full activation.
+
+Verification:
+
+- Starting clean HEAD `c5ee30f0`; 33 baseline checks passed in 2.47s.
+- Test-first failures reproduced the absent pin field (0.41s), absent initial
+  selection/legacy CAS owner (two cases, 0.48s), lost WHY1 answer and missing-origin
+  admission (two cases, 0.51s), and missing authenticated-parent helper (0.40s).
+- The initial real Codex legacy pin and historical v5/v7 replay passed in 390.84s.
+  Final tests additionally check damaged parent proof on retry and a valid-shaped
+  wrong pin through historical traversal before v7 answer comparison can mask it.
+- Independent review confirmed the existing-owner approach, chronological history,
+  immutable CAS boundary and pure parent check. It identified the traversal test
+  coverage gap above, which was addressed. The final provider run was restarted
+  after that test enhancement; superseded/partial runs are not final evidence.
+- Final shared regression partition: 346 passed in 171.72s, including 13 new
+  history/state cases and 333 existing receipt, round, candidate, selection and
+  completion checks.
+- Final scripted Codex proof case passed in 425.12s and Claude in 485.20s. Each
+  authenticates and pins a legacy root, rejects state races, damaged proofs,
+  changed live sources and a shape-valid wrong parent through retained traversal,
+  and preserves original v5/v7 proofs, receipts, accounting and answer chronology.
+- All 16 selected existing WHY1 mode, multiple-answer and WHY1/Tracker restart
+  cases passed in 2212.38s. These include Codex/Claude guided, semi and Banzai
+  paths with and without checkpoint metadata, plus interrupted clarification
+  promotion/release recovery.
+- Independent review is closed with no remaining findings. `git diff --check`
+  passes. Final evidence is 15 new cases plus 349 distinct regressions (364
+  total); earlier overlapping and superseded runs are not added again.
+
+Only this historical human-input prerequisite is complete. Automatic ordering,
+Tracker actual-input execution and unchanged-input skips remain unfinished under
+the existing approval. Scripted offline verification is not a full-suite result,
+live acceptance, installation or activation.

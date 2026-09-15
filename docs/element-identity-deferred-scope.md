@@ -609,6 +609,22 @@ The slice is complete and independently reviewed, with eight new cases and 343
 distinct regressions passing (351 total), including both scripted provider paths,
 retained human answers, tampering rejection and publication restart recovery.
 
+**Checkpoint-B historical human-input prerequisite (complete).**
+Pin each initial WHY1 root to its accepted Tracker operation, using the existing
+selection owner for new roots and a once-bound authenticated CAS for legacy roots.
+Do this at released-repair admission before Synthesis changes the current head.
+Old proofs/answers are not rewritten. Actual retained-parent checks—not the new
+state field alone—authenticate the relationship. A refreshed Tracker uses the
+same repair unit's existing WHY1 association as its complete historical answer
+prefix, then appends only its new answers. Do not reintroduce `tracker.active` as
+historical authority or create another human-history ledger. The automatic
+ordering/input/skip work remains approved and unfinished; future WHY1 re-review
+needs its own updated history boundary and remains outside this checkpoint.
+Final evidence: 15 new cases plus 349 distinct regressions passed (364 total),
+including both scripted providers and existing mode/restart paths. Independent
+review is closed. This completes the prerequisite, not automatic refresh or
+activation; provider calls were offline scripted responses.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

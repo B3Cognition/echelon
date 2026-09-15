@@ -264,7 +264,8 @@ def authenticate(root, run, state, completion):
             spec_view, runtime_view = _released_discovery_projections(root, run, state,
                 source=binding.recovery["source_completion"], historical=True,
                 repair_child=binding if binding.repair_unit is not None else None,
-                refresh_child=binding if binding.recovery["version"] == 9 else None)
+                refresh_child=binding if binding.recovery["version"] == 9 else None,
+                why1_child=binding if binding.producer == "why1" else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
             input_view = runtime_view(binding.sources)
@@ -661,7 +662,16 @@ def _refresh_predecessor(root, run, state, row):
     return binding
 
 
-def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None, historical=False, repair_child=None, refresh_child=None):
+def _require_why1_tracker_parent(state, child, parent):
+    if child is None or child.producer != "why1" or child.clarification:
+        return
+    row = tracker_round(state, child.recovery["operation"]["binding"]["operation_id"], producer="why1")
+    if "tracker_parent" in row:
+        _require(parent.producer == "tracker" and not parent.clarification
+            and parent.recovery["operation"]["binding"]["operation_id"] == row["tracker_parent"])
+
+
+def _released_discovery_projections(root, run, state, *, require_checkpoint=False, source=None, historical=False, repair_child=None, refresh_child=None, why1_child=None):
     """Prepare a checked spec-identity view after completion outbox cleanup.
 
     Caller owns execution leases, then captures the complete tree under the
@@ -689,6 +699,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                 required_route=("phase1-why1", "phase1-discover") if repairing else None)
             if repairing:
                 _require_repair_origin(state, repair, binding)
+            _require_why1_tracker_parent(state, why1_child if child is None else child, binding)
             refreshing = refresh_child if child is None else child
             if refreshing is not None and refreshing.recovery["version"] == 9:
                 _require(pending_refresh is None and binding.producer == "discovery"
