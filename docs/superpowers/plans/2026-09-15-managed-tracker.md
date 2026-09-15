@@ -42,6 +42,10 @@
 - [ ] Add a real STOP_AND_ASK/answer/re-entry test through the normal controller API. Assert no live writes before the guarded publication is bound and no ordinary legacy execution is admitted.
 - [ ] Stage the Task 1 candidate and captured context through existing publication/completion owners. On source drift, stale decision or changed answer reject without promotion.
 - [ ] Retain separate Tracker round/receipt paths. Tie the next round to the exact resolved decision and accepted parent completion; preserve total token/dispatch accounting and prior receipts.
+  - [x] Add explicit round-scoped journal paths and exact v3 assignment recovery
+    to the existing receipt owners. Protected round selection and run-level
+    accounting integration are still pending; journal isolation alone grants no
+    next-round authority.
 - [ ] Extend retained source/context proof traversal across Synthesizer, Tracker and clarification completions, rejecting missing/cyclic/foreign ancestry. Never ignore unverified context or metadata.
   - Discovery/Synthesizer prerequisite: verify the entire retained context chain
     back to original admission inputs, with exact parent artifact/history links.
@@ -220,3 +224,60 @@ These are 424 passing selected checks, not a full-suite or live-provider claim.
 `git diff --check` passed. Only the two semantic/candidate modules, passing new
 contract test file and the three existing convergence records belong to this
 local checkpoint; the pending normal Tracker acceptance file is excluded.
+
+## Tracker round receipt checkpoint
+
+The existing receipt file owner now requires an explicit canonical
+`round_operation_id` for Tracker and gives each reservation/turn journal a separate
+path. It never falls back to a flat Tracker journal or accepts a round on another
+producer. This is a namespace selector supplied by the caller, not proof that the
+round was authorized. The reservation owner checks that the selected operation
+matches that namespace and that both new and recovered proposals belong to the
+selected producer. UI/II use the same allocator and intent-before-allocation
+journal protocol; no new counter, allocation ledger or provider adapter is added.
+
+Both receipt owners now recover assignments through the shared exact decoder.
+Discovery v1 and Synthesis v2 retain their encodings; Tracker v3 retains optional
+stakeholder absence and the exact review routing object. Valid old assignments
+cannot absorb Tracker routing/round fields. Round-local turn counts/token usage
+remain in their existing records; this checkpoint does not aggregate them into
+run-level accounting or reset previous charges.
+
+The initial 17 tests failed at missing round selection and v3 recovery. Passing
+coverage exercises two reservation rounds against the real identity authority,
+replay with no additional allocations, interruption before/after allocation and
+each mapping write, cross-round replacement, missing and rehashed records,
+producer substitution, per-round turn usage and unchanged old assignment formats.
+These are journal-boundary tests, not completed Tracker/clarification runs.
+
+The remaining state owner must derive each round selection from the exact accepted
+parent completion and resolved human decision, retain immutable prior selections,
+and pass the selected operation explicitly to both journal owners. Historical
+completion readers must select the corresponding retained round instead of binding
+old receipts to the mutable active source. Wire cumulative run accounting, missing
+selected-receipt rejection, publication routing proof and guarded human resolution
+before opening controller selection. No round-state copy or second decision ledger
+is introduced here. The two normal Tracker tests still fail at unsupported managed
+selection (2 failed in 0.80s); they remain uncommitted pending integration.
+
+Independent review found no implementation defect. Its minor recovery-test gap
+was fixed with real valid Discovery/Synthesis donor journals: each replays under
+its own producer, then its exact bytes reject under the Tracker namespace without
+allocation or rewrite. The reviewer verified both cases and reports no outstanding
+Critical/Important/Minor findings.
+
+Final verification:
+
+- **365 passed in 18.66s**:
+  `python -m pytest tests/unit/test_tracker_receipts.py tests/unit/test_tracker_candidate.py tests/unit/test_discovery_reservations.py tests/unit/test_discovery_turns.py tests/unit/test_discovery_semantics.py tests/unit/test_discovery_candidate.py tests/unit/test_intent_identities.py -q --tb=short`
+- **92 passed in 45.22s**:
+  `python -m pytest tests/unit/test_discovery_operation.py tests/unit/test_squad_identity_exclusion.py -q --tb=short`
+- **12 passed, 27 deselected in 255.20s**, covering existing Synthesis across both
+  providers, all three autonomy modes and both checkpoint settings:
+  `python -m pytest tests/unit/test_managed_synthesizer.py -k normal_entry_publishes -q --tb=short`
+
+These are 469 passing selected checks, not full-suite or live-provider acceptance.
+`git diff --check` passed. Commit only the four receipt/semantic modules, new passing
+receipt tests and these three existing convergence records. No state round owner,
+controller dispatch, prose, provider adapter, deployment or game-workspace changes
+are included in this checkpoint.

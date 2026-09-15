@@ -384,6 +384,16 @@ ID; no new allocator or caption-as-subject identity rule is introduced. This
 inactive Task 3 dependency does not complete Task 2: round/state/receipt owners,
 guarded human resolution and normal Tracker execution still need integration.
 
+The existing receipt owners now support exact v3 recovery and explicit Tracker
+`round_operation_id` namespaces. Reuse these paths; do not introduce flat active
+Tracker journals or replace prior round files. The namespace is not authority:
+the protected state owner still needs to derive/bind it to the accepted parent
+completion and resolved decision, and historical readers must select that exact
+round. Existing allocator receipts recover interrupted UI/II mappings without
+new allocations. Run-level cumulative accounting and missing-selected-journal
+guards still require integration; passing low-level journal tests do not imply
+that Tracker re-entry or controller dispatch is enabled.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

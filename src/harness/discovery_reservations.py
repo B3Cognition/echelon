@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from harness.discovery_candidate import DiscoveryReservation
-from harness.discovery_semantics import DiscoveryAssignment, validate_discovery_reply
+from harness.discovery_semantics import DiscoveryAssignment, decode_discovery_assignment, validate_discovery_reply
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.element_identity_lifecycle import text
 
@@ -45,18 +45,12 @@ def _pairs(pairs):
 def _assignment(value):
     fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
               "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-    if value.get("schema_version") == 2:
+    if value.get("schema_version") in {2, 3}:
         fields.add("producer")
+    if value.get("schema_version") == 3 and value.get("step") == "review":
+        fields.add("routing")
     identity = {key: value[key] for key in fields if key in value}
-    _closed(identity, fields)
-    if any(type(identity[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
-        raise ValueError("invalid recovered discovery assignment")
-    assignment = DiscoveryAssignment(**{key: (tuple(tuple(pair) for pair in item) if key == "editable_revisions"
-        else tuple(item) if key in {"artifact_paths", "assigned_ids"} else item)
-        for key, item in identity.items() if key != "schema_version"})
-    if assignment.identity() != identity:
-        raise ValueError("invalid recovered discovery assignment")
-    return assignment
+    return decode_discovery_assignment(identity)
 
 
 def _intents(binding, proposal, known):
@@ -68,7 +62,7 @@ def _intents(binding, proposal, known):
         if previous is None:
             new.append(subject)
     result = []
-    for kind in ("A", "U"):
+    for kind in (("II", "UI") if proposal.get("producer") == "tracker" else ("A", "U")):
         keys = sorted(item["key"] for item in new if item["kind"] == kind)
         if keys:
             identity = {"binding": binding, "proposal_sha256": _digest(proposal), "kind": kind, "keys": keys}
@@ -76,7 +70,7 @@ def _intents(binding, proposal, known):
     return result
 
 
-def _validate(data, binding):
+def _validate(data, binding, producer=None):
     _closed(data, ("schema_version", "binding", "proposals"))
     if type(data["schema_version"]) is not int or data["schema_version"] != 1 or data["binding"] != binding:
         raise ValueError("discovery reservation selection changed")
@@ -87,6 +81,8 @@ def _validate(data, binding):
     for index, record in enumerate(records):
         _closed(record, ("proposal", "sha256", "intents"))
         assignment = _assignment(record["proposal"])
+        if producer is not None and assignment.producer != producer:
+            raise ValueError("discovery reservation producer changed")
         proposal = validate_discovery_reply(record["proposal"], assignment)
         if (assignment.step != "propose" or proposal["action"] != "final"
                 or (assignment.operation_id, assignment.spec_id, assignment.run_id) != (
@@ -95,7 +91,7 @@ def _validate(data, binding):
                 or assignment.dispatch_id in dispatches):
             raise ValueError("invalid discovery proposal association")
         dispatches.add(assignment.dispatch_id)
-        selected = (sorted(assignment.artifact_paths), sorted(assignment.editable_revisions))
+        selected = (assignment.producer, sorted(assignment.artifact_paths), sorted(assignment.editable_revisions))
         if scope is not None and selected != scope:
             raise ValueError("discovery reservation scope changed")
         scope = selected
@@ -125,8 +121,8 @@ def _validate(data, binding):
 class DiscoveryReservationJournal(DiscoveryReceiptFile):
     """Serialize exact associations; a completed result is verified read-only."""
 
-    def __init__(self, run_dir: Path, *, producer="discovery"):
-        super().__init__(run_dir, "discovery-reservations", producer=producer)
+    def __init__(self, run_dir: Path, *, producer="discovery", round_operation_id: str | None = None):
+        super().__init__(run_dir, "discovery-reservations", producer=producer, round_operation_id=round_operation_id)
         self._data = self._binding = self._store = None
 
     def __exit__(self, *args):
@@ -134,7 +130,7 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
         self._store = self._data = self._binding = None
 
     def _save(self):
-        _validate(self._data, self._binding)
+        _validate(self._data, self._binding, self.producer)
         raw = _canonical({"payload": self._data, "sha256": _digest(self._data)}) + "\n"
         if len(raw.encode("utf-8")) > _MAX_BYTES:
             raise ValueError("discovery reservation record exceeds limit")
@@ -149,6 +145,8 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
         if self._store is not None or type(create) is not bool:
             raise ValueError("invalid discovery reservation selection")
         text(operation_id, "operation_id")
+        if self.round_operation_id is not None and operation_id != self.round_operation_id:
+            raise ValueError("Tracker receipt round selection changed")
         self._check_directory()
         context = store.check_managed_context(spec_id=spec_id, run_id=run_id, record=managed_identity)
         binding = dict(operation_id=operation_id, spec_id=spec_id, run_id=run_id,
@@ -167,7 +165,7 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
                 data = envelope["payload"]
                 if envelope["sha256"] != _digest(data):
                     raise ValueError("checksum mismatch")
-                _validate(data, binding)
+                _validate(data, binding, self.producer)
             except (ValueError, TypeError, KeyError, RecursionError, OverflowError):
                 raise ValueError("invalid discovery reservation recovery record") from None
         self._store, self._data, self._binding, self._raw = store, data, binding, raw
@@ -189,7 +187,7 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
             record=binding["context"]["managed_identity"])
         if observed != binding["context"]:
             raise ValueError("discovery reservation source context changed")
-        _validate(self._data, binding)
+        _validate(self._data, binding, self.producer)
         for record in self._data["proposals"]:
             for intent in record["intents"]:
                 retained = self._store.reservation(spec_id=binding["spec_id"], kind=intent["kind"],
@@ -202,7 +200,7 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
             raise ValueError("invalid discovery reservation replay mode")
         self._authenticate()
         proposal = validate_discovery_reply(reply, assignment)
-        if assignment.step != "propose" or proposal["action"] != "final":
+        if assignment.producer != self.producer or assignment.step != "propose" or proposal["action"] != "final":
             raise ValueError("discovery reservation requires a final proposal")
         records = self._data["proposals"]
         matching = [record for record in records if record["proposal"]["dispatch_id"] == assignment.dispatch_id]
@@ -215,11 +213,11 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
         else:
             if any(intent["ids"] is None for record in records for intent in record["intents"]):
                 raise ValueError("previous discovery reservation must be recovered first")
-            known = _validate(self._data, self._binding)
+            known = _validate(self._data, self._binding, self.producer)
             record = dict(proposal=proposal, sha256=_digest(proposal), intents=_intents(self._binding, proposal, known))
             candidate = deepcopy(self._data)
             candidate["proposals"].append(record)
-            _validate(candidate, self._binding)
+            _validate(candidate, self._binding, self.producer)
             self._data = candidate
             self._save()  # Complete intent set precedes the first allocator call.
         for intent in record["intents"]:
@@ -233,5 +231,5 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
                 intent["ids"] = list(ids)
                 self._save()
         self._authenticate()
-        known = _validate(self._data, self._binding)
+        known = _validate(self._data, self._binding, self.producer)
         return tuple(known[item["key"]][1] for item in proposal["new_subjects"])

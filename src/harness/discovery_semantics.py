@@ -231,6 +231,36 @@ def validate_discovery_reply(value: object, assignment: DiscoveryAssignment) -> 
         raise ValueError("invalid discovery reply") from exc
 
 
+def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
+    """Recover an exact persisted assignment; this grants no execution authority."""
+    try:
+        if type(value) is not dict or type(value.get("schema_version")) is not int:
+            raise ValueError("invalid saved discovery assignment")
+        fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
+            "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
+        if value["schema_version"] in {2, 3}:
+            fields.add("producer")
+        if value["schema_version"] == 3 and value.get("step") == "review":
+            fields.add("routing")
+        _object(value, fields)
+        if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
+            raise ValueError("invalid saved discovery selection")
+        if any(type(pair) is not list or len(pair) != 2 for pair in value["editable_revisions"]):
+            raise ValueError("invalid saved editable revision")
+        if "routing" in value:
+            _tracker_routing(value["routing"])
+        selected = DiscoveryAssignment(**{key: (
+            tuple(tuple(pair) for pair in item) if key == "editable_revisions"
+            else tuple(item) if key in {"artifact_paths", "assigned_ids"}
+            else tuple(item.items()) if key == "routing" else item)
+            for key, item in value.items() if key != "schema_version"})
+        if selected.identity() != value:
+            raise ValueError("saved discovery assignment encoding changed")
+        return selected
+    except (TypeError, UnicodeError, RecursionError, OverflowError) as exc:
+        raise ValueError("invalid saved discovery assignment") from exc
+
+
 def parse_discovery_reply(raw: str, assignment: DiscoveryAssignment) -> dict:
     def pairs(items):
         result = {}

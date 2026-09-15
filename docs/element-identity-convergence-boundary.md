@@ -1151,3 +1151,15 @@ Tracker rounds, exact routing through receipt/candidate/completion proof, native
 Modeler skip and guarded clarification publication remain pending. The two normal
 Tracker acceptance cases are still RED. See the existing plan for test evidence;
 no installation, migration, live-provider run or activation is claimed.
+
+### Tracker round journal isolation (2026-09-15)
+
+Tracker reservation and turn journals now have explicit per-operation paths in
+the existing receipt owner. Exact v3 assignments survive recovery; reservation
+replay checks producer and operation and reuses the existing UI/II allocator.
+Two journal rounds retain separate mappings/usage, including interruption recovery.
+Discovery/Synthesis formats and their working execution path remain unchanged.
+
+This is journal isolation, not protected round admission or controller integration.
+Parent completion/resolved-answer ownership, run-level accounting, publication and
+normal Tracker execution remain pending in the same approved plan. No activation.

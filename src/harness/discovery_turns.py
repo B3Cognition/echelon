@@ -15,7 +15,7 @@ import time
 
 from harness.discovery_bootstrap_state import bootstrap_from_state
 from harness.discovery_receipts import DiscoveryReceiptFile
-from harness.discovery_semantics import DiscoveryAssignment, parse_discovery_reply, validate_discovery_reply
+from harness.discovery_semantics import DiscoveryAssignment, decode_discovery_assignment, parse_discovery_reply, validate_discovery_reply
 from harness.discovery_producer import producer_key, producer_operation_id, producer_role
 from harness.element_identity_store import IdentityStore
 from harness.inspection_io import BoundedReadChannel
@@ -66,17 +66,10 @@ def _limits(token_budget, dispatch_limit):
 
 
 def _assignment(value):
-    _closed(value, ("schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
-                    "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids",
-                    *(("producer",) if value.get("schema_version") == 2 else ())))
-    if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
-        raise _Blocked("invalid_provider_assignment")
-    selected = DiscoveryAssignment(**{key: (tuple(tuple(pair) for pair in item) if key == "editable_revisions"
-        else tuple(item) if key in {"artifact_paths", "assigned_ids"} else item)
-        for key, item in value.items() if key != "schema_version"})
-    if type(value["schema_version"]) is not int or selected.identity() != value:
-        raise _Blocked("invalid_provider_assignment")
-    return selected
+    try:
+        return decode_discovery_assignment(value)
+    except ValueError:
+        raise _Blocked("invalid_provider_assignment") from None
 
 
 def _sha(value):

@@ -15,12 +15,22 @@ _MAX_BYTES = 16 * 1024 * 1024
 class DiscoveryReceiptFile:
     """File/lock mechanics only; each owner validates its own payload."""
 
-    def __init__(self, run_dir: Path, name: str, *, repair_unit: str | None = None, producer="discovery"):
+    def __init__(self, run_dir: Path, name: str, *, repair_unit: str | None = None, producer="discovery",
+                 round_operation_id: str | None = None):
         from harness.discovery_producer import producer_key
-        producer_key(producer, "operation")
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
-        if producer != "discovery":
+        if producer == "tracker":
+            if (type(round_operation_id) is not str
+                    or re.fullmatch(r"tracker-[0-9a-f]{32}", round_operation_id) is None
+                    or repair_unit is not None):
+                raise ValueError("Tracker receipts require an exact round operation")
+            name = name.replace("discovery-", "tracker-", 1) + "-" + round_operation_id
+        else:
+            producer_key(producer, "operation")
+            if round_operation_id is not None:
+                raise ValueError("only Tracker receipts have rounds")
+        if producer == "synthesizer":
             if repair_unit is not None:
                 raise ValueError("synthesis repair receipts not supported")
             name = name.replace("discovery-", "synthesizer-", 1)
@@ -29,6 +39,8 @@ class DiscoveryReceiptFile:
                 raise ValueError("invalid discovery repair receipt selection")
             name = f"{name}-repair-{repair_unit}"
         self.name = name
+        self.producer = producer
+        self.round_operation_id = round_operation_id
         self.run_dir = Path(os.path.abspath(run_dir))
         self.path = self.run_dir / f"{name}.json"
         self._root = self._lock = None
