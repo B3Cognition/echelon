@@ -2813,6 +2813,41 @@ class SquadStateStore:
                 "synthesis_round_update" if producer == "synthesizer" else "tracker_update": "execution_input"})
             return self._confirm_durable_state_unlocked(written)
 
+    def activate_refresh_round(self, producer, *, expected_state):
+        """Select a bound changed-input phase after caller authentication; no charge."""
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            try:
+                phase = "phase1-" + producer
+                if (producer not in {"synthesizer", "tracker"} or current != expected_state
+                        or current.get("status") != "running" or current.get("mode") != "greenfield"
+                        or current.get("phase") not in {"phase1-why1", phase} or current.get("cancel_requested")
+                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
+                    raise ValueError("refresh activation requires a settled exact state")
+                rounds = _tracker_from_state(current, producer)
+                row = rounds["rounds"][rounds["active"]]
+                dispatch = current.get("last_dispatch") or {}
+                if ("refresh" not in row or not row["execution_input"]["dependencies"]["changed"]
+                        or row["execution_input"]["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}
+                        or dispatch.get("post_dispatch_complete") is not True
+                        or dispatch.get("phase_id") != ("phase1-discover" if producer == "synthesizer" else "phase1-synthesizer")):
+                    raise ValueError("refresh activation requires its actual accepted input")
+                why1 = _tracker_from_state(current, "why1")
+                history = why1["rounds"][why1["active"]]
+                if (any("tracker_parent" not in item for item in why1["rounds"].values() if item["predecessor"] is None)
+                        or any(history["refresh"][key] != row["refresh"][key] for key in ("repair_source", "repair_unit"))
+                        or history["operation"] is not None):
+                    raise ValueError("refresh activation requires pinned historical answers")
+                if current["phase"] == phase:
+                    return self._confirm_durable_state_unlocked(current)
+                if row["operation"] is not None or row["turns"] is not None:
+                    raise ValueError("refresh activation cannot replay an existing operation")
+            except Exception:
+                raise StateAdvanceError("invalid repair refresh activation", validator="refresh_activation") from None
+            written = self._save_unlocked({**current, "phase": phase})
+            return self._confirm_durable_state_unlocked(written)
+
     def prepare_tracker_round(self, source: dict, *, producer="tracker") -> dict:
         """Select a fresh retained round; caller authenticates completion files."""
         with self._lock(exclusive=True):

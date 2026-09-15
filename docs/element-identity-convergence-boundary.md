@@ -1498,3 +1498,21 @@ All 369 distinct selected offline tests passed (13 new plus 356 regressions),
 including both scripted providers, interrupted publication and post-refresh
 clarification recovery. Independent review has no remaining findings. This
 completes the prerequisite, not automatic refresh ordering or full activation.
+
+### Repair refresh: automatic changed-input ordering (complete)
+
+The existing controller now connects changed repair inputs to Synthesis and then
+Tracker, preserving the released repair origin separately from actual inputs.
+All historical human associations are prepared before Synthesis changes the
+accepted head. A phase-only CAS selects each bound producer; existing operation,
+receipt, publication and completion owners retain execution and accounting.
+Synthesis returns to WHY1 through v9 before Tracker is admitted. Accepted Tracker
+returns to WHY1 but does not start re-review.
+
+This slice leaves unchanged-input skips explicitly blocked. It is not complete
+checkpoint B, live-provider acceptance, installation or activation. The linked
+plan records final-stop source checking and full-controller recovery verification.
+All 311 distinct selected offline cases passed (15 new plus 296 regressions),
+including both provider paths, guided clarification, interrupted publication,
+exact retry and final-file tampering rejection. Independent review is clear.
+This supersedes the automatic controller guard only for changed-input refreshes.

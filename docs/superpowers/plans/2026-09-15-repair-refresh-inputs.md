@@ -18,10 +18,11 @@
 
 - [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
 - [x] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
-- [ ] Automatically execute changed Synthesis through existing owners, then evaluate Tracker from that accepted publication (or retain the same accepted head if Synthesis dependencies are unchanged). Never dispatch from the repair-origin field merely because it names the round. Preserve native caps, cumulative accounting and retry/no-progress/unknown-completion behavior during automatic refresh.
+- [x] Automatically execute changed Synthesis through existing owners, then evaluate and execute changed Tracker from that accepted publication. Preserve native caps, cumulative accounting, historical answers and interrupted execution/publication recovery; authenticate live sources again at the final stop.
+- [ ] Implement authenticated unchanged-input skips, retaining the same accepted head if Synthesis dependencies are unchanged before evaluating Tracker. Never dispatch from the repair-origin field merely because it names the round. Preserve the same caps, accounting and recovery behavior on skipped branches.
 - [x] Implement the historical human-input prerequisite: pin WHY1 clarification ancestry to its accepted Tracker parent and preserve chronological Tracker→WHY1→new Tracker answers. The automatic route must invoke this prerequisite before allowing new Tracker questions.
 - [x] Bind and authenticate Tracker's accepted changed-Synthesis input, execute through existing owners with v10 proof and recover publication and subsequent clarification without rewriting historical answers. This prerequisite does not enable automatic refresh ordering or unchanged-input skips.
-- [ ] Verify interruption/recovery, unchanged-input skips and changed-parent rejection for Codex and Claude; stop before WHY1 re-review. Independent review and local commit.
+- [ ] Verify unchanged-input skip combinations and whole-checkpoint interruption/recovery for Codex and Claude; stop before WHY1 re-review. Changed-input ordering/recovery is verified below. Independent review and local commit.
 
 No installation, migration, live provider spending, push, merge, original smoke workspace, legacy build, AGENTS.md or CLAUDE.md edits. This plan does not represent checkpoint B as complete when only binding tests pass.
 
@@ -325,3 +326,63 @@ again. Provider responses were scripted; this is not full-suite verification,
 live acceptance, installation or activation. Only this prerequisite is complete;
 automatic ordering, unchanged-input skips and their whole-flow recovery checks
 remain approved and unfinished. WHY1 re-review stays outside this checkpoint.
+
+## Checkpoint B: automatic changed-input ordering (complete)
+
+Wire the existing controller to prepare all repair associations and pin human
+history while the released repair is still the accepted head. Bind Synthesis,
+select its phase with full-state CAS, then publish back to WHY1 with the existing
+v9 route. Only after that release may Tracker bind the new accepted Synthesis
+and execute. Its existing v10 and subsequent clarification routes stay intact.
+Stop after accepted refreshed Tracker; do not execute the inactive WHY1 refresh.
+
+The activation transition changes only phase, not dispatch history, tokens,
+attempts, identity or receipts. Existing execution/publication owners must
+re-authenticate after interruptions. Cumulative caps must include Synthesis
+refreshes as well as Tracker and Discovery repairs.
+
+This checkpoint connects the changed-input branch only. Empty dependency changes
+still stop explicitly without executing a producer. Authenticated unchanged-input
+skips (especially Tracker following skipped Synthesis) remain required under the
+same approval; do not weaken the actual-parent requirement to enable that branch.
+
+Verification: starting clean HEAD `3bb9f71a`; 46 baseline tests
+passed in 5.16s. Activation initially failed because its state-owner method was
+absent (0.40s), then seven structural CAS/admission tests passed in 1.11s.
+Expanded activation/phase/cap coverage and shared regressions: 285 passed in
+10.85s (12 new structural cases and 273 existing cases). The full-controller
+Codex ordering test first reproduced the old stop (187.35s); both initial
+changed-input paths then passed (Codex 457.67s, Claude 462.26s). These runs
+precede the final-stop drift regression and are not final verification.
+
+Independent review found that the final completion stop authenticated retained
+ancestry but discarded its live-source projections. Add exact live-source
+inspection before reporting completion; changes to reports, intent, templates
+or generated context must reject even on retry. Full-controller interrupted
+selection/publication and guided Tracker clarification are tested separately.
+The terminal-file mutation reproduced the gap in 509.10s. The correction uses
+the existing source inspector and checked spec/context projections, exact
+remaining-source equality, and unchanged-state verification. Independent review
+is closed with no remaining findings.
+
+The first guided full-controller recovery test passed in 678.80s before that
+terminal correction and was rerun against the final code. The final shared
+partition passed all 285 cases in 13.29s. These counts overlap earlier partitions
+and must not be added again. Final Codex ordering/terminal-mutation verification
+passed in 473.07s. Three representative original mode cases passed in 307.02s:
+Codex Banzai Tracker, Claude guided Tracker without checkpoint metadata, and
+Codex semi WHY1. The final Claude ordering/recovery partition passed both cases
+in 999.45s, including final-file mutation checks and interrupted selection,
+Synthesis publication, human-answer publication and exact continuation. All
+15 new cases pass. The isolated repair compatibility partition passed all 20
+cases in 2948.24s, including prior mode paths, retry/no-progress/unknown-completion
+guards, publication recovery, source drift and combined Tracker/WHY1 answer
+history. Its test-only controller stops at released repair to keep those owner
+checks isolated; the new full-controller tests use no such override.
+
+Final evidence: 15 new cases plus 296 distinct existing cases (311 total).
+Earlier overlapping baseline/RED/GREEN runs are not added again. Independent
+review has no remaining findings and `git diff --check` passes. This completes
+automatic changed-input ordering, not all of checkpoint B: authenticated
+unchanged-input skips and their combined recovery checks remain approved work.
+No installation, migration, live-provider acceptance or activation is claimed.

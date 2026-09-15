@@ -641,6 +641,20 @@ including both scripted provider paths and interrupted clarification recovery.
 Independent review is closed. The linked plan records exact durations and scope;
 automatic ordering, unchanged-input skips and whole-flow recovery remain open.
 
+**Checkpoint-B automatic changed-input ordering (complete).**
+Reuse the controller and retained associations: prepare/pin while the released
+repair is current, activate bound changed Synthesis with phase-only CAS, publish
+v9 back to WHY1, then bind/activate Tracker from that accepted head. Authenticate
+the final Tracker publication and live sources before stopping short of WHY1
+re-review. Preserve ordinary caps, receipts, interruption and human-answer owners.
+The unchanged-input branch remains blocked, not implicitly skipped. Its explicit
+authenticated skip path remains approved follow-up work; do not weaken the
+changed-Synthesis parent contract or create a parallel completion ledger.
+Final evidence: 311 distinct selected offline cases passed (15 new plus 296
+regressions); independent review is clear. Both provider paths, final-file drift
+and full-controller interrupted clarification/publication recovery are covered.
+Only this changed-input slice is complete; skips and full activation remain open.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

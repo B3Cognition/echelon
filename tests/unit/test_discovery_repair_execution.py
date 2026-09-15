@@ -6,9 +6,33 @@ import json
 import pytest
 
 from tests.unit.test_why1_repair_admission import (
-    case, enrolled, turn_prepared, prepared, checkpoint_case, controller, selection,
+    case, enrolled, turn_prepared, prepared, checkpoint_case, controller as full_controller, selection,
     install_why1, RepairFindingExecutor,
 )
+
+
+def controller(prepared, executor):
+    """Stop at released repair for isolated repair/input/proof tests.
+
+    Automatic ordering is covered separately with the unmodified controller in
+    test_managed_repair_refresh. This fixture still authenticates the repair and
+    live sources; it only withholds selection of the next producer.
+    """
+    from types import MethodType
+    ctrl = full_controller(prepared, executor)
+    def stop_at_repair(self, selected):
+        state = self._state_store.load()
+        if ((state.get("last_dispatch") or {}).get("phase_id") == "phase1-discover"
+                and state.get("managed_discovery_repairs") is not None):
+            from harness.discovery_repair_admission import _repair_refresh_context
+            try:
+                _repair_refresh_context(self._project_root, self._state_store, "why1")
+            except Exception:
+                return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
+            return self._managed_discovery_stop("managed_repair_dependency_refresh_not_supported")
+        return None
+    ctrl._prepare_managed_repair_refresh = MethodType(stop_at_repair, ctrl)
+    return ctrl
 
 
 def selected_repair(prepared):
