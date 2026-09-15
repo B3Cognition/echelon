@@ -262,6 +262,38 @@ def test_provider_wait_stops_a_live_oversized_artifact(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_provider_wait_reports_bounded_live_progress(tmp_path: Path) -> None:
+    class BriefProcess:
+        pid = 4242
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls == 1 else 0
+
+    source_root = tmp_path / "source"
+    index_root = source_root / ".codegraph"
+    index_root.mkdir(parents=True)
+    (index_root / "codegraph.db").write_bytes(b"1234")
+    reports: list[tuple[str, int]] = []
+
+    reason = _wait_bounded(
+        BriefProcess(),  # type: ignore[arg-type]
+        source_root,
+        tmp_path / "output",
+        StructuralEvidencePolicyV1.defaults(),
+        provider="codegraph",
+        progress=lambda provider, size: reports.append((provider, size)),
+    )
+
+    assert reason is None
+    assert reports == [("codegraph", 4)]
+
+
+@pytest.mark.unit
 def test_structural_catalog_binds_artifact_to_snapshot_and_source_content(
     tmp_path: Path,
 ) -> None:

@@ -231,7 +231,16 @@ and secrets are excluded. Diagnostic commands are intentionally hidden from
 ordinary help; run `echelon admin commands` to discover them, including the
 read-only `echelon re analyze` baseline and cost report.
 
-When Node.js and npm are installed, RE analysis can include optional CodeGraph and PerlGraph artifacts; their absence does not block core RE or spec authoring.
+When Node.js and npm are installed, ordinary `echelon re run` and `echelon re
+refresh` use optional CodeGraph and PerlGraph evidence. Each tool runs against a
+temporary pinned source tree, under finite time, index, artifact, and log-size
+limits; it never indexes the mutable source checkout. Validated graph projections
+help discovery, review, and detailed analysis navigate symbols and relationships,
+but published claims still require screened source evidence. Graph omissions are
+never treated as proof of absence. Exact unchanged commits can reuse owner-private,
+schema-revalidated entries under `re/.cache/structural-v1/`; changed commits,
+policies, or tool versions acquire fresh evidence. Missing or degraded optional
+providers remain visible and do not block core RE or spec authoring.
 
 ```text
 re/

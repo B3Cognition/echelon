@@ -650,6 +650,7 @@ def _relationship_json(row: TopologyRelationship) -> dict[str, object]:
 StructuralProviderRunner = Callable[
     [str, Path, StructuralEvidencePolicyV1], StructuralProviderExecutionV1
 ]
+StructuralProgress = Callable[[str, int], None]
 
 
 def capture_structural_source(
@@ -659,6 +660,7 @@ def capture_structural_source(
     *,
     runner: StructuralProviderRunner | None = None,
     cache_root: Path | None = None,
+    progress: StructuralProgress | None = None,
 ) -> StructuralSourceObservationV1:
     """Capture optional structural providers from one pinned temporary source."""
 
@@ -677,6 +679,7 @@ def capture_structural_source(
             root,
             active_policy,
             runtime_root=Path(workspace_root),
+            progress=progress,
         )
     )
     providers: list[StructuralProviderObservationV1] = []
@@ -937,6 +940,7 @@ def _run_provider(
     policy: StructuralEvidencePolicyV1,
     *,
     runtime_root: Path,
+    progress: StructuralProgress | None = None,
 ) -> StructuralProviderExecutionV1:
     """Run one installed provider with finite time, output, and index storage."""
 
@@ -982,7 +986,14 @@ def _run_provider(
                     stderr=stderr,
                     start_new_session=True,
                 )
-                failure = _wait_bounded(process, source_root, output_root, policy)
+                failure = _wait_bounded(
+                    process,
+                    source_root,
+                    output_root,
+                    policy,
+                    provider=provider,
+                    progress=progress,
+                )
         except OSError:
             return StructuralProviderExecutionV1(
                 "failed", None, "provider-process-unavailable"
@@ -1011,16 +1022,32 @@ def _wait_bounded(
     source_root: Path,
     output_root: Path,
     policy: StructuralEvidencePolicyV1,
+    *,
+    provider: str = "provider",
+    progress: StructuralProgress | None = None,
 ) -> str | None:
     deadline = time.monotonic() + policy.timeout_seconds
-    index_root = source_root / ".codegraph"
+    next_progress = time.monotonic()
+    index_root = (
+        source_root / ".codegraph"
+        if provider == "codegraph"
+        else output_root / ".provider-index"
+    )
     while process.poll() is None:
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        if now >= deadline:
             _terminate_process_group(process)
             return "provider-time-limit"
-        if _tree_bytes(index_root, policy.max_index_bytes) > policy.max_index_bytes:
+        index_bytes = _tree_bytes(index_root, policy.max_index_bytes)
+        if index_bytes > policy.max_index_bytes:
             _terminate_process_group(process)
             return "provider-index-limit"
+        if progress is not None and now >= next_progress:
+            try:
+                progress(provider, index_bytes)
+            except Exception:
+                pass
+            next_progress = now + 15
         if _paths_bytes(
             (output_root / "stdout.bin", output_root / "stderr.bin"),
             policy.max_capture_bytes,

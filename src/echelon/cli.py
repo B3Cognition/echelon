@@ -17284,6 +17284,11 @@ def _re_structural_source_observer(
             workspace,
             policy,
             cache_root=cache_root,
+            progress=lambda provider, index_bytes: print(
+                f"[re] structure {source.source_id} · {provider} working · "
+                f"temporary index {index_bytes // (1024 * 1024)} MiB",
+                flush=True,
+            ),
         )
         observations.append(observation)
         providers = " · ".join(
