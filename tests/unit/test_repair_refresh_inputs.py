@@ -134,6 +134,63 @@ def test_input_owner_cannot_bind_without_a_retained_repair(enrolled):
     assert store.load() == before
 
 
+def test_text_identical_repair_still_refreshes_new_review_evidence(checkpoint_case):
+    """A no-op author must not hide the intervening WHY1 report and identities."""
+    from harness.discovery_producer import tracker_round
+
+    class NoopRepair(RepairExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            assignment = json.loads(args[1].split("\nHOST_INPUT_JSON\n", 1)[1])["assignment"]
+            if assignment["operation_id"].startswith("discovery-repair-") and assignment["step"] == "review":
+                from tests.unit.test_discovery_turns import ScriptedExecutor
+                response = ScriptedExecutor.run_inspection_turn(self, *args, **kwargs)
+                assert assignment["assigned_ids"] == []
+                return replace(response, stdout=json.dumps({**assignment, "action": "final",
+                    "verdict": "accept", "reason": "Existing question already records the required investigation.",
+                    "assessments": []}))
+            response = super().run_inspection_turn(*args, **kwargs)
+            reply = json.loads(response.stdout)
+            if reply["operation_id"].startswith("discovery-repair-") and reply["step"] == "author":
+                reply["artifacts"] = {"unknowns.md": self.calls[-1]["context"]["baseline"]["unknowns.md"]}
+            if reply["operation_id"].startswith("synthesizer-"):
+                if reply["step"] == "propose":
+                    reply["revisions"] = [dict(id="U-000001", expected_revision="2")]
+                elif reply["step"] == "author":
+                    reply["artifacts"] = {name: self.calls[-1]["context"]["baseline"][name]
+                        for name in reply["artifact_paths"]}
+            return replace(response, stdout=json.dumps(reply))
+
+    root, store, identity, _ = checkpoint_case
+    install_why1(checkpoint_case)
+    executor = NoopRepair("codex")
+    selected = {**selection(checkpoint_case), "through_phase": "phase1-why1"}
+    assert controller(checkpoint_case, executor).run(managed_discovery=selected,
+        create_managed_discovery=True).phase == "phase1-discover"
+    original = (root / "specs/game/unknowns.md").read_bytes()
+    entities = json.loads(identity.identity_history(spec_id="game").payload)["entities"]
+    assert controller(checkpoint_case, executor).run(managed_discovery=selected).summary == "managed_repair_dependency_refresh_not_supported"
+    assert (root / "specs/game/unknowns.md").read_bytes() == original
+    assert json.loads(identity.identity_history(spec_id="game").payload)["entities"] == entities
+    select_refresh(root, store, "synthesizer")
+    saved = bind_input(root, store)
+    row = tracker_round(saved, producer="synthesizer")
+    assert row["execution_input"]["dependencies"]["changed"] == [
+        "file:specs/game/assumption-review.md", "file:specs/game/issues.md",
+        "file:specs/game/user-intent.md", "identity"]
+    assert row["operation"] is None and row["turns"] is None
+    assert len(executor.calls) == 15
+    from tests.unit.test_discovery_completion import controller as full_controller
+    before_refresh = {path.name: path.read_bytes() for path in (root / "specs/game").glob("*.md")}
+    result = full_controller(checkpoint_case, executor).run(managed_discovery=selected)
+    assert result.summary == "managed_repair_refresh_complete", result
+    assert {path.name: path.read_bytes() for path in (root / "specs/game").glob("*.md")} == before_refresh
+    assert json.loads(identity.identity_history(spec_id="game").payload)["entities"] == entities
+    saved = store.load()
+    assert tracker_round(saved)["execution_input"]["dependencies"]["changed"] == [
+        "file:specs/game/assumption-review.md", "file:specs/game/issues.md", "identity"]
+    assert saved["token_usage"] == 147 and len(executor.calls) == 21
+
+
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_refresh_input_is_authenticated_once_without_dispatch(checkpoint_case, provider, monkeypatch):
     from harness.discovery_producer import tracker_round

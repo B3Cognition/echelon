@@ -386,3 +386,37 @@ review has no remaining findings and `git diff --check` passes. This completes
 automatic changed-input ordering, not all of checkpoint B: authenticated
 unchanged-input skips and their combined recovery checks remain approved work.
 No installation, migration, live-provider acceptance or activation is claimed.
+
+## Unchanged-skip reachability review (decision pending)
+
+At `1d4d58c1`, inspection of the supported first WHY1 repair cycle found a
+conflict between the skip checklist and the retained dependency contract.
+Original Synthesis and Tracker cannot consume WHY1 report artifacts. Repair
+admission requires an actionable FAIL with an authenticated active ISS occurrence.
+The nearest accepted Synthesis/Tracker ancestors therefore predate that report,
+while the comparator includes report files and full identity/evidence history.
+Both refresh inputs must differ even when repair and refreshed Synthesis preserve
+all authored text. A successful repair is not structurally required to create a
+new target revision; the intervening review evidence is sufficient.
+
+Independent read-only review confirmed this argument. Do not weaken the comparator,
+manufacture empty comparisons in controller tests, add an unused nested skip-proof
+format, or mark the skip checklist complete on that basis. The open choice is to
+defer skips while preserving the current evidence-sensitive behavior, or explicitly
+design narrower producer dependencies. Later repeated-review cycles must assess
+reachability again; this first-cycle argument is not a proof about all future runs.
+
+The user has been asked whether to defer the optimization and continue convergence.
+Until that choice is made, the approved checklist above remains unchanged. No
+production behavior, accepted proofs, rollout setting or provider prose changed.
+
+Verification: the nine existing pure dependency-comparison cases passed in 0.49s.
+The new real-owner characterization passed in 408.09s with scripted Codex replies:
+an accepted byte-identical repair and Synthesis preserve Markdown and entity heads,
+yet both bound comparisons include the new report files and identity history.
+The unmodified controller completes both refreshes with 21 total calls/147 tokens.
+Two preliminary runs failed because the inherited test reviewer assumed a changed
+U ID; unchanged candidates correctly receive an empty assigned-ID list. Only the
+test double was corrected to emit candidate-wide acceptance with no per-ID claims.
+Independent review cleared the final fixture and the limited reachability argument.
+These are ten distinct passing cases, not a full-suite or live-provider result.
