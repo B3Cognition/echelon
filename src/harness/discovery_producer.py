@@ -110,7 +110,24 @@ def tracker_input_source(state, operation_id=None, *, producer="tracker"):
         completed_publication_binding_sha256=receipt["publication_binding_sha256"])
 
 
-def producer_component(state, producer, suffix, *, operation_id=None):
+def repair_record(state, producer, unit):
+    if producer != "discovery" or type(unit) is not str or re.fullmatch(r"[0-9a-f]{64}", unit) is None:
+        raise ValueError("invalid repair selection")
+    return state["managed_discovery_repairs"]["units"][unit]
+
+
+def producer_component(state, producer, suffix, *, operation_id=None, repair_unit=None):
+    if repair_unit is not None:
+        row = repair_record(state, producer, repair_unit)
+        if operation_id is not None and operation_id != producer_operation_id(state, producer, repair_unit=repair_unit):
+            raise ValueError("repair operation changed")
+        execution = row.get("execution")
+        if suffix not in {"operation", "turns"}:
+            raise ValueError("invalid repair component")
+        if execution is None:
+            return None
+        return deepcopy(execution["turns"] if suffix == "turns" else dict(
+            schema_version=1, binding=execution["binding"], attempts=row["attempts"]))
     if producer not in {"tracker", "why1"}:
         if operation_id is not None and operation_id != producer_operation_id(state, producer):
             raise ValueError("producer operation changed")
@@ -121,7 +138,17 @@ def producer_component(state, producer, suffix, *, operation_id=None):
     return None if row is None else row[suffix]
 
 
-def with_producer_component(state, producer, suffix, value):
+def with_producer_component(state, producer, suffix, value, *, repair_unit=None):
+    if repair_unit is not None:
+        updated = deepcopy(state)
+        row = repair_record(updated, producer, repair_unit)
+        if suffix != "turns" or "execution" not in row:
+            raise ValueError("repair execution must be selected")
+        old = row["execution"]["turns"]
+        if old is not None and old != value:
+            raise ValueError("repair turns are immutable")
+        row["execution"]["turns"] = deepcopy(value)
+        return updated
     if producer not in {"tracker", "why1"}:
         return {**state, producer_key(producer, suffix): value}
     rounds = tracker_rounds(state, producer)
@@ -168,7 +195,13 @@ def synthesis_source(state):
     return deepcopy(source)
 
 
-def producer_operation_id(state, producer, operation_id=None):
+def producer_operation_id(state, producer, operation_id=None, *, repair_unit=None):
+    if repair_unit is not None:
+        repair_record(state, producer, repair_unit)
+        expected = "discovery-repair-" + repair_unit
+        if operation_id is not None and operation_id != expected:
+            raise ValueError("repair operation changed")
+        return expected
     if producer in {"tracker", "why1"}:
         row = tracker_round(state, operation_id, producer=producer)
         if row is None:

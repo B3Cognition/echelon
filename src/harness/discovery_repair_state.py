@@ -80,9 +80,15 @@ def repairs_from_state(state):
         and type(value["units"]) is dict and bool(value["units"]))
     sources, unfinished = set(), 0
     for unit, record in value["units"].items():
-        _closed(record, ("selection", "attempts"))
+        _closed(record, ("selection", "attempts", *(("execution",) if "execution" in record else ())))
         expected, selected = normalize_selection(state, record["selection"])
         _require(unit == expected and selected == record["selection"])
+        if "execution" in record:
+            from harness.discovery_operation_state import validate_binding
+            from harness.discovery_turn_state import discovery_turns_from_state
+            _closed(record["execution"], ("binding", "turns"))
+            validate_binding(state, record["execution"]["binding"], repair_unit=unit)
+            discovery_turns_from_state(state, repair_unit=unit)
         source = selected["source"]["dispatch_id"]
         _require(source not in sources)
         sources.add(source)

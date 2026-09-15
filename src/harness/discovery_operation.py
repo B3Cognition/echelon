@@ -72,12 +72,15 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1"} else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer == "why1" else ()
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1"} or repair_unit is not None else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer == "why1" or repair_unit is not None else ()
     if producer == "why1":
         template_paths = {".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md",
             ".echelon/runtime/templates/unknowns-template.md": "unknowns.md"}
+    if repair_unit is not None and state_store.load().get("managed_why1_rounds") is not None:
+        template_paths.update({".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
+            ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md"})
     spec_view = runtime_view = None
     if producer in {"synthesizer", "tracker", "why1"}:
         from harness.discovery_completion import released_discovery_input_projectors
@@ -132,7 +135,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
                 # Exact derived bytes were authenticated above; it is not an
                 # editable Markdown artifact or provider-authored definition.
                 continue
-            if logical not in artifact_roles(producer):
+            if logical not in artifact_roles("why1" if repair_unit is not None else producer):
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
@@ -215,31 +218,33 @@ def _progress(artifacts, findings, *, routing=None):
 
 def run_discovery_operation(project_root, state_store, executor, *, input_tree, artifact_paths,
         editable_revisions=(), unowned_writable_paths=(), intent, create=False,
-        token_budget=None, dispatch_limit=297, replay_only=False, producer="discovery") -> DiscoveryOperationResult:
+        token_budget=None, dispatch_limit=297, replay_only=False, producer="discovery", repair_unit=None) -> DiscoveryOperationResult:
     """Compose at most three attempts; exact receipts make restart a read replay."""
     last = None
-    retained_usage = read_discovery_usage(state_store, producer)
+    retained_usage = read_discovery_usage(state_store, producer, repair_unit=repair_unit)
     try:
         root = Path(project_root)
         state = state_store.load()
         producer_args = {} if producer == "discovery" else {"producer": producer}
+        if repair_unit is not None:
+            producer_args["repair_unit"] = repair_unit
         if type(replay_only) is not bool:
             raise _Blocked("invalid_discovery_replay_mode")
         if replay_only:
-            retained = operation_from_state(state, producer)
+            retained = operation_from_state(state, producer, repair_unit=repair_unit)
             if (create or retained is None or not retained["attempts"]
                     or (retained["attempts"][-1]["result"] or {}).get("status") != "accepted"):
                 raise _Blocked("accepted_discovery_operation_required")
         selected = bootstrap_from_state(state)
         if selected is None or "managed_identity" not in state or str(root) != selected["selection"]["project_root"]:
             raise _Blocked("completed_discovery_bootstrap_required")
-        if type(create) is not bool or create == (producer_component(state, producer, "operation") is not None):
+        if type(create) is not bool or create == (producer_component(state, producer, "operation", repair_unit=repair_unit) is not None):
             raise _Blocked("discovery_operation_selection_conflict")
         if any(type(value) is not tuple for value in (artifact_paths, editable_revisions, unowned_writable_paths)):
             raise _Blocked("invalid_discovery_scope")
         store = IdentityStore.open(root)
         fingerprint, before, evidence, retained_history, templates, runtime, _, source_inputs = _capture(root, state_store, store, selected, input_tree, artifact_paths, **producer_args)
-        binding = dict(operation_id=producer_operation_id(state, producer), spec_id=selected["selection"]["spec_id"],
+        binding = dict(operation_id=producer_operation_id(state, producer, repair_unit=repair_unit), spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], input_tree=input_tree, artifact_paths=list(artifact_paths),
             editable_revisions=[list(pair) for pair in editable_revisions], unowned_writable_paths=list(unowned_writable_paths),
             intent=deepcopy(intent), fingerprint=fingerprint)
@@ -260,7 +265,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     raise _Blocked("discovery_editable_revision_changed")
             feedback, prior_progress = None, None
             for number in (1, 2, 3):
-                current = operation_from_state(state_store.load(), producer)
+                current = operation_from_state(state_store.load(), producer, repair_unit=repair_unit)
                 if len(current["attempts"]) < number:
                     if replay_only:
                         raise _Blocked("discovery_attempt_receipt_missing")
@@ -274,7 +279,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     nonlocal last
                     last = run_discovery_step(root, state_store, executor, assignment, context,
                         roots={"inputs": root / input_tree}, check_inputs=check_inputs, create=fresh,
-                        token_budget=token_budget, dispatch_limit=dispatch_limit, replay_only=replay_only)
+                        token_budget=token_budget, dispatch_limit=dispatch_limit, replay_only=replay_only,
+                        **({"repair_unit": repair_unit} if repair_unit is not None else {}))
                     if last.reply is None:
                         raise _Blocked(last.reason)
                     return last.reply
@@ -282,6 +288,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     new_subjects=[dict(key="local-key", kind="U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
                     revisions=[dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
+                if repair_unit is not None and (proposal["new_subjects"] or
+                        sorted((row["id"], row["expected_revision"]) for row in proposal["revisions"]) != sorted(editable_revisions)):
+                    raise _Blocked("discovery_repair_proposal_outside_scope")
                 mappings = journal.bind(proposal_assignment, proposal, replay_only=replay_only)
                 reserved = [asdict(item) for item in mappings]
                 assigned = tuple(sorted({item.element_id for item in mappings} | {item["id"] for item in proposal["revisions"]}))
@@ -311,12 +320,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     # evidence still uses the existing reference adapter.
                     derived_context = (state_store.squad_dir / "context").relative_to(root).as_posix() + "/"
                     artifacts = tuple(sorted((*written,
-                        *(CandidateArtifact(path, artifact_roles(producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
+                        *(CandidateArtifact(path, artifact_roles("why1" if repair_unit is not None else producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
-                            if producer == "discovery" or not path.startswith(derived_context))), key=lambda item: item.path))
+                            if (producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer == "why1" else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer == "why1" or repair_unit is not None else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)
@@ -354,7 +363,10 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
-                saved = operation_from_state(state_store.load(), producer)["attempts"][number - 1]["result"]
+                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1"} else None)
+                if repair_unit is not None:
+                    finished["progress_sha256"] = progress
+                saved = operation_from_state(state_store.load(), producer, repair_unit=repair_unit)["attempts"][number - 1]["result"]
                 if saved is None:
                     if replay_only:
                         raise _Blocked("discovery_attempt_receipt_missing")
@@ -367,7 +379,6 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     candidate = ReviewedDiscoveryCandidate(artifacts, operations, preview.history, fingerprint, review, candidate_digest,
                         json.dumps(candidate_inputs, **canonical), json.dumps(source_inputs, **canonical))
                     return DiscoveryOperationResult("reviewed", "discovery_candidate_reviewed", last.token_usage, last.dispatch_count, candidate)
-                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1"} else None)
                 if progress == prior_progress:
                     raise _Blocked("discovery_no_progress")
                 prior_progress = progress

@@ -1294,3 +1294,44 @@ These are offline selected tests, not a full-suite or live-provider claim.
 Only external process responses are scripted in controller acceptance; source,
 identity, state, publication, checkpoint and completion owners are real.
 No installation, migration, provider spending, push, merge or activation occurred.
+
+### WHY1 → Discovery repair execution checkpoint (2026-09-15)
+
+The user approved checkpoint 2 and its narrowly scoped storage extension. This
+supersedes checkpoint 1's selection-only execution guard, not its authenticated
+scope, selection identity or budget semantics. The
+[execution plan](superpowers/plans/2026-09-15-discovery-repair-execution.md) records
+implementation, test-first corrections and independent review evidence.
+
+Each selected unit may now retain immutable `execution={binding, turns}` metadata.
+Its existing attempts are the only attempt ledger; old units without execution
+remain valid without migration. Existing operation, isolated journal, allocation,
+publication and completion owners execute the repair. Original producer records,
+receipts, exact IDs, immutable subjects and historical issue occurrences survive.
+This admission authorizes revisions to selected existing U/A targets only:
+new subjects and omitted targets stop before allocation or author execution.
+
+The v8 repair completion binds the exact selected unit to its actual released
+WHY1 FAIL route. Recovery recomputes the native finding selection from retained
+reviewed inputs, rather than trusting a stored association or current phase text.
+Source/graph/receipt guards protect publication; existing immutable completion
+proof protects released history. Native caps, cumulative usage, initial plus two
+retries, no-progress detection and unknown-completion blocking remain authoritative.
+Claude and Codex use the same neutral Prosaic path.
+
+Successful publication returns to the requesting WHY1 phase and stops at
+`managed_repair_dependency_refresh_not_supported`. This is a guarded return,
+not a re-review. Checkpoint 3 must refresh the dependencies affected by the repair
+and re-enter the exact requesting review without replaying old accepted producer
+records against revised inputs. Constitution, further managed continuation,
+original renumbering/evidence acceptance and full activation remain unfinished.
+No installation, migration, live-provider spending, push or merge is included.
+
+Verification: all 17 current repair execution cases passed in bounded partitions,
+including Codex guided, Claude Banzai and Codex semi; both U and A repair targets;
+interrupted publication; durable retries; unknown provider completion; missing or
+changed receipts/sources; pre-allocation scope; and invalid review origin. The
+affected regression partitions passed 144, 393 and 25 cases (562 distinct cases).
+Independent read-only review cleared the checkpoint after test-first corrections.
+The linked plan records exact durations and overlapping reruns separately. These
+are offline selected tests with real core owners, not full-suite/live acceptance.

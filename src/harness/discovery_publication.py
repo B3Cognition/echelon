@@ -39,10 +39,10 @@ class PreparedDiscoveryPublication:
     graph: bytes
 
 
-def _selected(root, state_store, store, producer="discovery"):
+def _selected(root, state_store, store, producer="discovery", *, repair_unit=None):
     state = state_store.load()
     selected = bootstrap_from_state(state)
-    operation = operation_from_state(state, producer)
+    operation = operation_from_state(state, producer, repair_unit=repair_unit)
     if (selected is None or "managed_identity" not in state or operation is None
             or not operation["attempts"] or (operation["attempts"][-1]["result"] or {}).get("status") != "accepted"
             or state.get("phase") != producer_phase(producer) or state.get("status") != "running"
@@ -55,11 +55,12 @@ def _selected(root, state_store, store, producer="discovery"):
     return state, selected, operation
 
 
-def _replay(root, state_store, executor, binding, producer="discovery"):
+def _replay(root, state_store, executor, binding, producer="discovery", *, repair_unit=None):
     result = run_discovery_operation(root, state_store, executor,
         input_tree=binding["input_tree"], artifact_paths=tuple(binding["artifact_paths"]),
         editable_revisions=tuple(tuple(pair) for pair in binding["editable_revisions"]),
-        unowned_writable_paths=tuple(binding["unowned_writable_paths"]), intent=binding["intent"], replay_only=True, producer=producer)
+        unowned_writable_paths=tuple(binding["unowned_writable_paths"]), intent=binding["intent"], replay_only=True,
+        producer=producer, repair_unit=repair_unit)
     if result.status != "reviewed" or result.candidate is None:
         raise ValueError("checked discovery replay required")
     return result.candidate
@@ -107,29 +108,29 @@ def _graph(sources, history, selection):
     return render_spec_graph(graph)
 
 
-def prepare_discovery_publication(project_root, state_store, executor, *, completion_id, producer="discovery") -> PreparedDiscoveryPublication:
+def prepare_discovery_publication(project_root, state_store, executor, *, completion_id, producer="discovery", repair_unit=None) -> PreparedDiscoveryPublication:
     """Seal a checked accepted candidate; ordinary errors expose no source text.
 
     Interrupted preparations may leave unbound outbox stages. Only the existing
     publication owner may discard them; pending publications are never reselected.
     """
     try:
-        return _prepare(project_root, state_store, executor, completion_id, producer)
+        return _prepare(project_root, state_store, executor, completion_id, producer, repair_unit=repair_unit)
     except Exception:
         pass
     raise ValueError("discovery publication preparation requires reconciliation")
 
 
-def _prepare(project_root, state_store, executor, completion_id, producer="discovery"):
+def _prepare(project_root, state_store, executor, completion_id, producer="discovery", *, repair_unit=None):
     if type(completion_id) is not str or re.fullmatch(r"[0-9a-f]{32}", completion_id) is None:
         raise ValueError("invalid proposed completion ID")
     root = Path(project_root)
     store = IdentityStore.open(root)
-    state, selected, operation = _selected(root, state_store, store, producer)
+    state, selected, operation = _selected(root, state_store, store, producer, repair_unit=repair_unit)
     binding, selection = operation["binding"], selected["selection"]
-    candidate = _replay(root, state_store, executor, binding, producer)
+    candidate = _replay(root, state_store, executor, binding, producer, repair_unit=repair_unit)
     fingerprint, *_, original, source_inputs = _capture(root, state_store, store, selected,
-        binding["input_tree"], tuple(binding["artifact_paths"]), producer=producer)
+        binding["input_tree"], tuple(binding["artifact_paths"]), producer=producer, repair_unit=repair_unit)
     if fingerprint != candidate.source_fingerprint:
         raise ValueError("reviewed discovery inputs changed")
     spec, = (tree for tree in original.trees if tree.path == selection["spec_path"])
@@ -151,17 +152,17 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         raise ValueError("final projected graph changed")
     # Recheck roles, replies, reservations, history and all runtime inputs after
     # staging. Replay-only cannot fill in any missing accepted receipt.
-    if _replay(root, state_store, executor, binding, producer) != candidate:
+    if _replay(root, state_store, executor, binding, producer, repair_unit=repair_unit) != candidate:
         raise ValueError("reviewed discovery changed during staging")
-    if _selected(root, state_store, store, producer) != (state, selected, operation):
+    if _selected(root, state_store, store, producer, repair_unit=repair_unit) != (state, selected, operation):
         raise ValueError("discovery publication selection changed")
     sources = _inspect(publication, original, writes, modes)
     observed = store.check_managed_context(spec_id=binding["spec_id"], run_id=binding["run_id"], record=state["managed_identity"])
-    baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec) if producer != "discovery" else spec,), ())
+    baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec) if producer != "discovery" or repair_unit is not None else spec,), ())
     recovery_fields = dict(version=2, completion_id=completion_id, operation=operation,
         candidate_sha256=candidate.candidate_sha256, source_fingerprint=candidate.source_fingerprint,
         candidate_inputs=candidate.candidate_inputs, source_inputs=candidate.source_inputs,
-        review=candidate.review, provider=producer_component(state, producer, "turns"), sources=encode_initial_publication_sources(sources),
+        review=candidate.review, provider=producer_component(state, producer, "turns", repair_unit=repair_unit), sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest())
     if producer == "synthesizer":
         recovery_fields.update(version=3, producer=producer, source_completion=synthesis_source(state))
@@ -169,6 +170,11 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         recovery_fields.update(version=6 if producer == "why1" else 4, producer=producer,
             source_completion=tracker_input_source(state, producer=producer),
             resolution=tracker_round(state, producer=producer)["resolution"])
+    if repair_unit is not None:
+        from harness.discovery_producer import repair_record
+        claim = repair_record(state, producer, repair_unit)["selection"]
+        recovery_fields.update(version=8, producer=producer, repair_unit=repair_unit,
+            source_completion=claim["source"])
     recovery = json.dumps(recovery_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     context = observed["source_context"]
     request = PublicationIntentRequest(publication.marker.manifest_sha256, recovery, candidate.operations,

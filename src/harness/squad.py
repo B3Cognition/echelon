@@ -6677,6 +6677,12 @@ class SquadController:
         count = (state.get("phase_dispatch_counts") or {}).get("phase1-discover", 0)
         if operation is None and count != 0:
             raise ValueError("fresh discovery cannot inherit earlier dispatches")
+        if state.get("managed_discovery_repairs") is not None:
+            from harness.discovery_repair_state import repairs_from_state
+            repairs = repairs_from_state(state)
+            expected = int(operation is not None) + sum("execution" in row for row in repairs["units"].values())
+            if count != expected:
+                raise ValueError("Discovery repair dispatch history requires reconciliation")
         if (selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}
                 and operation_from_state(state, "synthesizer") is None
                 and (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != 0):
@@ -6712,6 +6718,25 @@ class SquadController:
         from harness.element_identity_store import IdentityStore
 
         state = self._state_store.load()
+        repair_unit = None
+        # A released repair returns to its requester, but dependency refresh is
+        # a separate checkpoint. Authenticate that receipt before stopping;
+        # never replay the old accepted WHY1 round against revised inputs.
+        dispatch = state.get("last_dispatch") or {}
+        if dispatch.get("phase_id") == "phase1-discover" and state.get("managed_discovery_repairs") is not None:
+            try:
+                from harness.discovery_completion import _retained_input_projection, released_discovery_input_projectors
+                source = {key: dispatch[key] for key in SOURCE_FIELDS}
+                binding, _, _ = _retained_input_projection(self._project_root, self._squad_dir, state,
+                    IdentityStore.open(self._project_root), operation_id="discovery-completion-" + source["dispatch_id"],
+                    source=source, require_checkpoint=False, required_route=("phase1-discover", "phase1-why1"))
+                if (binding.repair_unit is None or state.get("phase") != "phase1-why1"
+                        or dispatch.get("post_dispatch_complete") is not True):
+                    raise ValueError("repair return changed")
+                released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+            except Exception:
+                return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
+            return self._managed_discovery_stop("managed_repair_dependency_refresh_not_supported")
         if (state.get("phase") in {"phase1-tracker", "phase1-why1"}
                 and selected.get("through_phase") in ({"phase1-tracker", "phase1-why1"}
                     if state["phase"] == "phase1-tracker" else {"phase1-why1"})):
@@ -6752,10 +6777,11 @@ class SquadController:
         if state.get("phase") == "phase1-discover" and state.get("managed_why1_rounds") is not None:
             try:
                 from harness.discovery_repair_admission import prepare_why1_discovery_repair
-                prepare_why1_discovery_repair(self._project_root, self._state_store)
+                state = prepare_why1_discovery_repair(self._project_root, self._state_store)
+                repair_unit, = (unit for unit, row in state["managed_discovery_repairs"]["units"].items()
+                    if row["selection"]["source"]["dispatch_id"] == state["last_dispatch"]["dispatch_id"])
             except Exception:
                 return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
-            return self._managed_discovery_stop("managed_review_repair_not_supported")
         if state.get("phase") == "phase1-why1" and selected.get("through_phase") == "phase1-why1":
             try:
                 from harness.discovery_completion import released_discovery_input_projectors
@@ -6810,6 +6836,16 @@ class SquadController:
                 or node.transitions != transitions):
             return self._managed_discovery_stop("managed_discovery_workflow_not_admitted")
         extra = {}
+        intent = {"kind": "create" if producer == "discovery" else "challenge" if producer == "why1" else "track" if producer == "tracker" else "synthesize",
+            "request": state.get("user_request") or state.get("user_message")}
+        unowned = paths
+        if repair_unit is not None:
+            claim = state["managed_discovery_repairs"]["units"][repair_unit]["selection"]
+            paths = tuple(claim["artifact_paths"])
+            unowned = ()
+            intent = dict(kind="repair", request="Repair the authenticated review findings within the selected scope.",
+                origin=claim["origin"], findings=claim["findings"])
+            extra = dict(repair_unit=repair_unit, editable_revisions=tuple(tuple(pair) for pair in claim["editable_revisions"]))
         if producer in {"synthesizer", "tracker", "why1"}:
             try:
                 if producer == "synthesizer" and synthesis_source(state) is None:
@@ -6824,15 +6860,15 @@ class SquadController:
             except Exception:
                 return self._managed_discovery_stop("managed_synthesizer_selection_requires_reconciliation")
         budget = self._token_budget or state.get("token_budget", 0)
-        if producer in {"tracker", "why1"} and operation_from_state(state, producer) is None and (
+        if (producer in {"tracker", "why1"} or repair_unit is not None) and operation_from_state(state, producer, repair_unit=repair_unit) is None and (
                 (state.get("phase_dispatch_counts") or {}).get(node.id, 0) >= _phase_dispatch_limit(
                     node.id, max_iterations=self._max_iterations)):
             return self._managed_discovery_stop("phase_dispatch_limit")
         remaining = max(0, budget - state.get("token_usage", 0)) if budget else None
         outcome = run_discovery_operation(self._project_root, self._state_store, self._provider,
             input_tree=selected["input_tree"], artifact_paths=paths,
-            unowned_writable_paths=paths, intent={"kind": "create" if producer == "discovery" else "challenge" if producer == "why1" else "track" if producer == "tracker" else "synthesize", "request": state.get("user_request") or state.get("user_message")},
-            create=operation_from_state(state, producer) is None, token_budget=remaining, **extra)
+            unowned_writable_paths=unowned, intent=intent,
+            create=operation_from_state(state, producer, repair_unit=repair_unit) is None, token_budget=remaining, **extra)
         if outcome.status != "reviewed":
             return self._managed_discovery_stop(outcome.reason)
         if self._cancelled:
@@ -6840,7 +6876,8 @@ class SquadController:
         completion_id = uuid.uuid4().hex
         try:
             package = prepare_discovery_publication(self._project_root, self._state_store,
-                self._provider, completion_id=completion_id, **({"producer": producer} if producer != "discovery" else {}))
+                self._provider, completion_id=completion_id, **({"producer": producer} if producer != "discovery" else {}),
+                **({"repair_unit": repair_unit} if repair_unit is not None else {}))
             snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
             result_payload = {"verdict": "DONE", "state_updates": {}}
             if producer in {"tracker", "why1"}:
@@ -6856,7 +6893,8 @@ class SquadController:
                 result_payload = dict(verdict=authored_routing["verdict"], state_updates=updates)
             result = SquadAgentResult(exit_code=0, echelon_result=result_payload,
                 raw_output="", duration_ms=0, timed_out=False)
-            prepared = self._prepare_phase_result(node, result, snapshot)
+            prepared = (prepare_phase_result(node, result, controller_updates={}, routing_override=claim["origin"]["return_phase"])
+                if repair_unit is not None else self._prepare_phase_result(node, result, snapshot))
             routing = self._construct_routing_decision_or_block(node, prepared, snapshot,
                 additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request),
@@ -6873,6 +6911,8 @@ class SquadController:
                 return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
         except Exception:
             return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
+        if repair_unit is not None:
+            return self._run_managed_discovery_locked(selected)
         if (producer == "discovery" and selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}) or (
                 producer == "synthesizer" and selected.get("through_phase") in {"phase1-tracker", "phase1-why1"}) or (
                 producer == "tracker" and selected.get("through_phase") == "phase1-why1"):

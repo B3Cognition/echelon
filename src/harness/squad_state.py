@@ -2634,11 +2634,13 @@ class SquadStateStore:
             written = self._save_unlocked(desired, synthesis_update="source")
             return self._confirm_durable_state_unlocked(written)
 
-    def prepare_discovery_turns(self, marker: dict, *, producer="discovery") -> dict:
+    def prepare_discovery_turns(self, marker: dict, *, producer="discovery", repair_unit=None) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
-            desired = with_producer_component(current, producer, "turns", marker)
-            if producer == "discovery":
+            desired = with_producer_component(current, producer, "turns", marker, repair_unit=repair_unit)
+            if repair_unit is not None:
+                _discovery_repairs_from_state(desired)
+            elif producer == "discovery":
                 _discovery_turns_from_state(desired)
             elif producer in {"tracker", "why1"}:
                 _tracker_from_state(desired, producer)
@@ -2647,17 +2649,18 @@ class SquadStateStore:
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
             written = self._save_unlocked(desired, allow_discovery_turn_initialization=producer == "discovery",
+                allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="turns" if producer == "synthesizer" else None,
                 tracker_update="turns" if producer == "tracker" else None,
                 why1_update="turns" if producer == "why1" else None)
             return self._confirm_durable_state_unlocked(written)
 
-    def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery") -> dict:
+    def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery", repair_unit=None) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
-                desired = advance_operation(current, binding, event, result, producer)
-                if event == "prepare" and producer_component(current, producer, "operation") is None:
+                desired = advance_operation(current, binding, event, result, producer, repair_unit=repair_unit)
+                if event == "prepare" and producer_component(current, producer, "operation", repair_unit=repair_unit) is None:
                     # Selection and its one outer dispatch share this state
                     # commit. Provider/operation replay must not charge again.
                     counts = dict(current.get("phase_dispatch_counts") or {})
@@ -2670,6 +2673,7 @@ class SquadStateStore:
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
             written = self._save_unlocked(desired, allow_discovery_operation_update=producer == "discovery",
+                allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="operation" if producer == "synthesizer" else None,
                 tracker_update="operation" if producer == "tracker" else None,
                 why1_update="operation" if producer == "why1" else None)

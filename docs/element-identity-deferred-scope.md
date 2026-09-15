@@ -482,6 +482,34 @@ downstream context through existing capture owners, without replaying or replaci
 the accepted initial Discovery/Synthesis/Tracker/WHY1 records. Keep the unsupported
 repair guard until that execution/publication boundary is independently verified.
 
+**WHY1 repair execution checkpoint, 2026-09-15: checkpoint 2 completed.**
+The user approved optional execution metadata on selected units. This explicitly
+supersedes the selection-only shape and unsupported-execution statements above;
+it does not replace selection identity, scope or the existing attempt ledger.
+See the [execution plan](superpowers/plans/2026-09-15-discovery-repair-execution.md)
+for verification and independent review evidence: all 17 current execution cases
+and 562 distinct affected regression cases passed in offline partitions.
+
+Reuse the selected unit's immutable binding/turn marker and existing attempts,
+the shared Discovery operation with explicit `repair_unit`, isolated receipts,
+and v8 completion proof. Old units and old completion encodings remain valid.
+The actual WHY1 FAIL route and native findings are reauthenticated from retained
+inputs during recovery. A stored selection alone, edited phase state or an
+unreviewed Discovery completion cannot authorize repair publication. Scope is
+selected existing U/A revisions only; reject additions and omissions before
+allocation. Do not introduce another allocator, attempt ledger, repair controller
+or provider-native role. Count a unit's first execution once; restart cannot
+reset dispatch, attempt, progress or token accounting.
+
+Publication now returns to WHY1 but deliberately guards dependency refresh and
+re-review. Checkpoint 3 remains open: derive affected dependencies from the exact
+published repair, preserve historical inputs/receipts/issue occurrences and
+re-enter the requesting review through existing owners. Do not lift the guard
+by replaying the original Discovery, Synthesis, Tracker or WHY1 records against
+new inputs. This checkpoint does not complete downstream continuation, original
+renumbering/evidence acceptance, installation or activation. Keep the original
+stopped browser-game workspace unchanged; live acceptance is not implied.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

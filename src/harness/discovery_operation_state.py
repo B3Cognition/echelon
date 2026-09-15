@@ -22,13 +22,13 @@ def _digest(value):
         raise ValueError("invalid discovery operation digest")
 
 
-def validate_binding(state, binding, producer="discovery", *, operation_id=None):
+def validate_binding(state, binding, producer="discovery", *, operation_id=None, repair_unit=None):
     _closed(binding, ("operation_id", "spec_id", "run_id", "input_tree", "artifact_paths",
         "editable_revisions", "unowned_writable_paths", "intent", "fingerprint"))
     selected = bootstrap_from_state(state)
     if selected is None or "managed_identity" not in state:
         raise ValueError("completed discovery bootstrap required")
-    if (binding["operation_id"] != producer_operation_id(state, producer, operation_id)
+    if (binding["operation_id"] != producer_operation_id(state, producer, operation_id, repair_unit=repair_unit)
             or any(binding[key] != selected["selection"][key] for key in ("spec_id", "run_id"))):
         raise ValueError("discovery operation selection changed")
     if any(type(binding[key]) is not list for key in ("artifact_paths", "editable_revisions", "unowned_writable_paths")):
@@ -48,18 +48,26 @@ def validate_binding(state, binding, producer="discovery", *, operation_id=None)
             or type(intent.get("request")) is not str or not intent["request"].strip()
             or (intent["kind"] == "repair" and (not intent.get("origin") or not intent.get("findings")))):
         raise ValueError("discovery requires an explicit bound origin")
+    if repair_unit is not None:
+        from harness.discovery_producer import repair_record
+        claim = repair_record(state, producer, repair_unit)["selection"]
+        if (intent["kind"] != "repair" or set(intent) != {"kind", "request", "origin", "findings"}
+                or any(binding[key] != claim[key] for key in ("artifact_paths", "editable_revisions"))
+                or binding["unowned_writable_paths"]
+                or any(intent[key] != claim[key] for key in ("origin", "findings"))):
+            raise ValueError("repair execution scope changed")
     if len(json.dumps(binding, sort_keys=True, allow_nan=False).encode("utf-8")) > 1024 * 1024:
         raise ValueError("discovery selection exceeds limit")
 
 
-def operation_from_state(state, producer="discovery", *, operation_id=None):
-    value = producer_component(state, producer, "operation", operation_id=operation_id)
+def operation_from_state(state, producer="discovery", *, operation_id=None, repair_unit=None):
+    value = producer_component(state, producer, "operation", operation_id=operation_id, repair_unit=repair_unit)
     if value is None:
         return None
     _closed(value, ("schema_version", "binding", "attempts"))
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise ValueError("invalid discovery operation version")
-    validate_binding(state, value["binding"], producer, operation_id=operation_id)
+    validate_binding(state, value["binding"], producer, operation_id=operation_id, repair_unit=repair_unit)
     attempts = value["attempts"]
     if type(attempts) is not list or len(attempts) > 3:
         raise ValueError("invalid discovery attempt count")
@@ -69,7 +77,9 @@ def operation_from_state(state, producer="discovery", *, operation_id=None):
             raise ValueError("invalid discovery attempt number")
         result = attempt["result"]
         if result is not None:
-            _closed(result, ("status", "candidate_sha256", "findings_sha256"))
+            _closed(result, ("status", "candidate_sha256", "findings_sha256", *(("progress_sha256",) if repair_unit is not None else ())))
+            if repair_unit is not None:
+                _digest(result["progress_sha256"])
             if type(result["status"]) is not str or result["status"] not in {"accepted", "rejected"}:
                 raise ValueError("invalid discovery attempt result")
             _digest(result["candidate_sha256"])
@@ -79,11 +89,26 @@ def operation_from_state(state, producer="discovery", *, operation_id=None):
     return deepcopy(value)
 
 
-def advance_operation(state, binding, event, result=None, producer="discovery"):
-    validate_binding(state, binding, producer)
-    retained = operation_from_state(state, producer)
+def advance_operation(state, binding, event, result=None, producer="discovery", *, repair_unit=None):
+    validate_binding(state, binding, producer, repair_unit=repair_unit)
+    retained = operation_from_state(state, producer, repair_unit=repair_unit)
     if retained is not None and retained["binding"] != binding:
         raise ValueError("discovery operation is immutable")
+    if repair_unit is not None:
+        from harness.discovery_repair_state import advance_repair, repairs_from_state
+        from harness.discovery_producer import repair_record
+        if event == "prepare" and result is None:
+            if retained is not None:
+                return deepcopy(state)
+            if state.get("phase") != "phase1-discover" or state.get("status") != "running":
+                raise ValueError("repair requires active discovery")
+            updated = deepcopy(state)
+            repair_record(updated, producer, repair_unit)["execution"] = dict(binding=deepcopy(binding), turns=None)
+            repairs_from_state(updated)
+            return updated
+        if retained is None:
+            raise ValueError("repair execution not selected")
+        return advance_repair(state, repair_unit, event, result)
     if event == "prepare" and result is None:
         if retained is None:
             if state.get("phase") != producer_phase(producer) or state.get("status") != "running":

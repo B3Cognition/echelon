@@ -121,8 +121,10 @@ def _validate(data, binding, producer=None):
 class DiscoveryReservationJournal(DiscoveryReceiptFile):
     """Serialize exact associations; a completed result is verified read-only."""
 
-    def __init__(self, run_dir: Path, *, producer="discovery", round_operation_id: str | None = None):
-        super().__init__(run_dir, "discovery-reservations", producer=producer, round_operation_id=round_operation_id)
+    def __init__(self, run_dir: Path, *, producer="discovery", round_operation_id: str | None = None, repair_unit=None):
+        super().__init__(run_dir, "discovery-reservations", producer=producer,
+            round_operation_id=round_operation_id, repair_unit=repair_unit)
+        self.repair_unit = repair_unit
         self._data = self._binding = self._store = None
 
     def __exit__(self, *args):
@@ -147,6 +149,8 @@ class DiscoveryReservationJournal(DiscoveryReceiptFile):
         text(operation_id, "operation_id")
         if self.round_operation_id is not None and operation_id != self.round_operation_id:
             raise ValueError("Tracker receipt round selection changed")
+        if self.repair_unit is not None and operation_id != "discovery-repair-" + self.repair_unit:
+            raise ValueError("repair receipt selection changed")
         self._check_directory()
         context = store.check_managed_context(spec_id=spec_id, run_id=run_id, record=managed_identity)
         binding = dict(operation_id=operation_id, spec_id=spec_id, run_id=run_id,

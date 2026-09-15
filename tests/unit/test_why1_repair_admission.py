@@ -35,6 +35,14 @@ REPORT = """# Issues — WHY1
 """
 
 
+def select_only(case):
+    from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
+    from harness.discovery_repair_admission import prepare_why1_discovery_repair
+    with PhaseAExecutionLock.acquire(case[0], "test-repair-admission"):
+        with SpecRunExecutionLock.acquire(case[1].squad_dir, "test-repair-admission"):
+            return prepare_why1_discovery_repair(case[0], case[1])
+
+
 class RepairFindingExecutor(Why1Executor):
     def __init__(self, provider="codex", *, report=REPORT, verdict="FAIL"):
         super().__init__(provider, finding=True, why_verdict=verdict)
@@ -189,7 +197,7 @@ def test_repair_selection_compare_and_swap_rejects_state_changed_after_authentic
 
 
 @pytest.mark.parametrize("provider,mode,checkpoint", [("codex", "guided", True), ("claude", "banzai", False)])
-def test_controller_selects_real_why1_finding_without_dispatching_repair(checkpoint_case, provider, mode, checkpoint):
+def test_admission_selects_real_why1_finding_without_dispatching_repair(checkpoint_case, provider, mode, checkpoint):
     root, store, identity, _ = checkpoint_case
     state = store.load()
     state["autonomy_mode"] = mode
@@ -206,8 +214,7 @@ def test_controller_selects_real_why1_finding_without_dispatching_repair(checkpo
     history = identity.identity_history(spec_id="game")
     files = {path: path.read_bytes() for path in (root / "specs/game").rglob("*") if path.is_file()}
     receipts = {path: path.read_bytes() for path in store.squad_dir.glob("*turns*.json")}
-    result = controller(checkpoint_case, executor).run(managed_discovery=request)
-    assert result.summary == "managed_review_repair_not_supported", result
+    select_only(checkpoint_case)
     saved = store.load()
     assert "managed_discovery_repairs" in saved
     unit, = saved["managed_discovery_repairs"]["units"].values()
@@ -222,7 +229,7 @@ def test_controller_selects_real_why1_finding_without_dispatching_repair(checkpo
     assert identity.identity_history(spec_id="game") == history
     assert all(path.read_bytes() == content for path, content in {**files, **receipts}.items())
     assert len(executor.calls) == 12 and saved["token_usage"] == 84
-    assert controller(checkpoint_case, executor).run(managed_discovery=request).summary == result.summary
+    select_only(checkpoint_case)
     assert store.load() == saved and len(executor.calls) == 12
 
 
@@ -252,11 +259,11 @@ def test_controller_refuses_changed_review_inputs_and_preserves_selected_attempt
         finally:
             if before is None: path.unlink()
             else: path.write_bytes(before)
-    assert controller(checkpoint_case, executor).run(managed_discovery=request).summary == "managed_review_repair_not_supported"
+    select_only(checkpoint_case)
     unit_id, = store.load()["managed_discovery_repairs"]["units"]
     store.advance_discovery_repair(unit_id, "begin")
     saved = store.load()
-    assert controller(checkpoint_case, executor).run(managed_discovery=request).summary == "managed_review_repair_not_supported"
+    select_only(checkpoint_case)
     assert SquadStateStore(store.squad_dir).load() == saved
     assert len(saved["managed_discovery_repairs"]["units"][unit_id]["attempts"]) == 1
     assert len(executor.calls) == 12 and identity.pending_identity_publication(spec_id="game") is None
