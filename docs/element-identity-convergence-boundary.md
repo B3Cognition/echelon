@@ -1232,3 +1232,65 @@ Authenticated review-origin repair/return remains next, followed by downstream
 managed continuation and the original renumbering/evidence acceptance. Do not
 replace the completed source, identity, clarification or round owners to implement
 those boundaries. Constitution execution and rollout are not completed here.
+
+### WHY1 repair request admission (2026-09-15)
+
+The user approved checkpoint 1 only: authenticate the requesting WHY1 finding
+and persist its permitted Discovery scope, without executing repair. This
+checkpoint is complete and independently reviewed; it does not complete the
+repair/return integration described above.
+
+Internal managed continuation now reads the exact released WHY1 completion and
+requires its authenticated FAIL route to Discovery. A phase-state edit cannot
+convert forced convergence to repair authority. The existing source capture and
+retained completion projections authenticate current artifacts, graph, generated
+context and unchanged review evidence/templates/staging/reasoning inputs. Native
+managed/human-input admission and both execution leases remain prerequisites.
+
+The existing SAGE fields, filtered through the identity Markdown parser's
+visibility rules, select one exact existing U/A declaration per actionable
+issue. This checkpoint admits only assumptions.md or unknowns.md and an explicit
+DISCOVER/SCOUT owner. Every actionable issue must fit; advisory entries grant no
+scope. Vague targets, cross-owner requests, hidden example metadata, missing
+provenance, stale issue revisions and ambiguous same-byte report identities stop.
+The full native issue occurrence and reviewed target revision/content/source
+digests are retained, without renumbering IDs or rewriting historical evidence.
+
+The existing repair selection shape and identity remain unchanged. Its source is
+the accepted WHY1 head, its review origin is that exact completion, and its return
+phase is WHY1. The existing state owner saves it with a full-state comparison;
+concurrent changes reject, and exact retry preserves all prior attempts and
+receipts. Selection consumes no attempt, dispatch, token allowance or allocation.
+Successful admission still returns `managed_review_repair_not_supported`.
+
+No repair producer, repair publication or dependency refresh is enabled here.
+Checkpoint 2 must connect the selected unit to the existing operation, isolated
+receipt, reservation and publication owners; checkpoint 3 must refresh changed
+dependencies and return to the requesting review. Original renumbering/evidence
+acceptance, downstream Constitution and activation remain unfinished.
+
+Verification from baseline `93cce484`:
+
+- Initial real controller acceptance failed because no repair selection existed;
+  source/CAS tests also reproduced missing entry points before implementation.
+- All 25 new `test_why1_repair_admission.py` cases have passing partitioned results:
+  21 scope/provenance/CAS cases in 6.88s; Codex guided/checkpoint-on and Claude
+  Banzai/checkpoint-off selection/replay in 216.35s; source-tampering/attempt
+  retention in 135.45s; forged forced-convergence route in 115.08s.
+- Existing proportional quality, repair retention/input capture, Squad completion,
+  Tracker rounds and WHY1 candidate/receipt regressions: 384 passed in 173.47s.
+  Existing WHY1 BLOCKED-routing regression: 1 passed in 112.14s.
+- Independent review reproduced stale/ambiguous same-text issue provenance;
+  both new tests failed before the fix. A further pair reproduced metadata in
+  comments/code examples selecting scope, then passed with native visibility
+  filtering. The reviewer cleared the final implementation and independently
+  passed 21 focused cases. Historical report display behavior was not changed.
+- Two test expectations were corrected without relaxing production behavior:
+  the existing SAGE parser raises its own integrity exception, and a real state
+  write updates `updated_at` alongside its revision. Original producer/receipt
+  fields remain exact. `git diff --check` passed.
+
+These are offline selected tests, not a full-suite or live-provider claim.
+Only external process responses are scripted in controller acceptance; source,
+identity, state, publication, checkpoint and completion owners are real.
+No installation, migration, provider spending, push, merge or activation occurred.

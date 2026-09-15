@@ -2722,9 +2722,12 @@ class SquadStateStore:
                 why1_update="select" if producer == "why1" else None)
             return self._confirm_durable_state_unlocked(written)
 
-    def _update_discovery_repair(self, transition, *args, **kwargs) -> dict:
+    def _update_discovery_repair(self, transition, *args, expected_state=None, **kwargs) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
+            if expected_state is not None and current != expected_state:
+                raise StateAdvanceError("discovery repair source state changed",
+                    json_path="$.managed_discovery_repairs", validator="discovery_repairs")
             try:
                 desired = transition(current, *args, **kwargs)
             except Exception:
@@ -2735,9 +2738,9 @@ class SquadStateStore:
             written = self._save_unlocked(desired, allow_discovery_repair_update=True)
             return self._confirm_durable_state_unlocked(written)
 
-    def prepare_discovery_repair(self, selection: dict) -> dict:
+    def prepare_discovery_repair(self, selection: dict, *, expected_state: dict | None = None) -> dict:
         """Persist association only; caller must authenticate source/review origin."""
-        return self._update_discovery_repair(prepare_repair, selection)
+        return self._update_discovery_repair(prepare_repair, selection, expected_state=expected_state)
 
     def advance_discovery_repair(self, unit_id: str, event: str, *, result: dict | None = None) -> dict:
         return self._update_discovery_repair(advance_repair, unit_id, event, result=result)

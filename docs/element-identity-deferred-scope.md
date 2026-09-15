@@ -449,6 +449,39 @@ WHY1's report PASS is not proof that downstream work ran or activation occurred.
 Do not broaden into brownfield, change legacy build, add provider-native prose,
 or replace these completed owners when resuming the next boundary.
 
+**WHY1 repair admission checkpoint, 2026-09-15: completed for the approved
+selection-only boundary.** The convergence record contains exact evidence:
+25 passing new cases in partitioned runs and 385 affected regression cases,
+with independent review findings fixed before completion. This does not change
+the open disposition of repair execution/return or activate another producer.
+
+Reuse `prepare_why1_discovery_repair` inside native managed admission under its
+existing execution leases. The retained completion reader authenticates the
+actual WHY1→Discovery route; current phase text, supplied review IDs and Markdown
+alone are not authority. The captured accepted source is the latest WHY1 head,
+not the initial Discovery completion. Preserve the existing source/context
+projection and exact review input comparisons when connecting execution.
+
+Repair findings use the existing selection's `key`/`detail` records to retain
+the complete native issue occurrence and exact reviewed target revision, source
+digest and content digest. Keys are deterministic association hashes, not new
+element IDs or counters. Current admission requires a single unambiguous retained
+report identity and current active ISS revision, even though historical display
+still supports old occurrences. Do not select the first equal-text historical
+report or transfer its evidence to the current issue head. Native-visible SAGE
+metadata identifies one existing U/A target per actionable issue; unsupported
+scope must stop, not silently widen to whole files or another owner.
+
+The existing repair-state shape, per-origin budget identity and three-attempt
+ceiling remain unchanged. Selection uses the owner's full-state comparison and
+does not begin an attempt. Future dispatch must reauthenticate source/origin and
+use the selected unit's existing isolated journals; the stored association alone
+is not permission. The older discovery-only repair input helper is not proof
+that execution can consume the post-WHY1 artifact set. Connect its read-only
+downstream context through existing capture owners, without replaying or replacing
+the accepted initial Discovery/Synthesis/Tracker/WHY1 records. Keep the unsupported
+repair guard until that execution/publication boundary is independently verified.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

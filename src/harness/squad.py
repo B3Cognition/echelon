@@ -6750,6 +6750,11 @@ class SquadController:
             except Exception:
                 return self._managed_discovery_stop("managed_tracker_selection_requires_reconciliation")
         if state.get("phase") == "phase1-discover" and state.get("managed_why1_rounds") is not None:
+            try:
+                from harness.discovery_repair_admission import prepare_why1_discovery_repair
+                prepare_why1_discovery_repair(self._project_root, self._state_store)
+            except Exception:
+                return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
             return self._managed_discovery_stop("managed_review_repair_not_supported")
         if state.get("phase") == "phase1-why1" and selected.get("through_phase") == "phase1-why1":
             try:

@@ -622,7 +622,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
     raise CompletionError("intent_mismatch")
 
 
-def _retained_input_projection(root, run, state, store, *, operation_id, source, require_checkpoint):
+def _retained_input_projection(root, run, state, store, *, operation_id, source, require_checkpoint, required_route=None):
     """Read one exact retained completion; ancestry selection stays with caller."""
     from harness.squad_completion import validate_retained_completion_proof
     selection = bootstrap_from_state(state)["selection"]
@@ -635,6 +635,10 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
     _closed(proof[field], ("intent", "receipts"))
     marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
         proof[field]["intent"], proof[field]["receipts"])
+    if required_route is not None:
+        _require(intent.origin == "routed" and intent.route["from_phase"] == required_route[0]
+            and intent.route["to_phase"] == required_route[1]
+            and intent.route["manual_phase_run"] is False and intent.route["record_completion"] is True)
     if source is not None:
         _require(source == dict(dispatch_id=marker.completion_id,
             completion_intent_sha256=marker.intent_sha256,

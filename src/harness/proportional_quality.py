@@ -309,6 +309,19 @@ def _safe_authoritative_sage_path(
     return issue_path, relative_path
 
 
+def sage_issue_fields(body: str) -> dict[str, str]:
+    """Parse the existing required SAGE fields; this grants no authority."""
+    fields = {
+        label: re.findall(
+            rf"(?m)^-?\s*\*\*{re.escape(label)}:\*\*\s*(\S[^\n]*)$", body,
+        )
+        for label in _SAGE_REQUIRED_ISSUE_FIELDS
+    }
+    if any(len(matches) != 1 for matches in fields.values()):
+        raise QualityCandidateIntegrityError("authoritative SAGE issue entry is malformed")
+    return {label: matches[0] for label, matches in fields.items()}
+
+
 def _parse_authoritative_sage_assessment_bytes(
     content: bytes,
 ) -> tuple[str, tuple[dict[str, str], ...]]:
@@ -370,18 +383,11 @@ def _parse_authoritative_sage_assessment_bytes(
             r"(?m)^-?\s*\*\*Type:\*\*\s*([a-z-]+)\s*$",
             body,
         )
-        required_fields = {
-            label: re.findall(
-                rf"(?m)^-?\s*\*\*{re.escape(label)}:\*\*\s*(\S[^\n]*)$",
-                body,
-            )
-            for label in _SAGE_REQUIRED_ISSUE_FIELDS
-        }
+        required_fields = sage_issue_fields(body)
         if (
             len(severity_matches) != 1
             or len(type_matches) != 1
             or type_matches[0] not in _SAGE_ISSUE_TYPES
-            or any(len(matches) != 1 for matches in required_fields.values())
         ):
             raise QualityCandidateIntegrityError(
                 "authoritative SAGE issue entry is malformed"
@@ -392,7 +398,7 @@ def _parse_authoritative_sage_assessment_bytes(
                 "title": heading.group(2).strip(),
                 "severity": severity_matches[0],
                 "type": type_matches[0],
-                "action_required": required_fields["Action Required"][0],
+                "action_required": required_fields["Action Required"],
             }
         )
     observed = {
