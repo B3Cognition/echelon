@@ -17262,29 +17262,61 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         print(f"[re] reason: {reason}")
 
 
+def _re_structural_source_observer(
+    workspace: Path, observations: list[object]
+):
+    """Build a visible bounded snapshot observer with validated cache reuse."""
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidencePolicyV1,
+        capture_structural_source,
+    )
+
+    policy = StructuralEvidencePolicyV1.defaults()
+    cache_root = workspace / "re" / ".cache" / "structural-v1"
+
+    def observe(source) -> None:
+        print(
+            f"[re] structure {source.source_id} · checking cache / bounded acquisition",
+            flush=True,
+        )
+        observation = capture_structural_source(
+            source,
+            workspace,
+            policy,
+            cache_root=cache_root,
+        )
+        observations.append(observation)
+        providers = " · ".join(
+            f"{provider.provider} {provider.status}"
+            for provider in observation.providers
+        )
+        mode = "reused" if observation.reused else "captured"
+        print(
+            f"[re] structure {source.source_id} · {mode} · {providers}",
+            flush=True,
+        )
+
+    return observe
+
+
 def _capture_re_knowledge_authority(
     workspace: Path,
 ) -> tuple[object, object, tuple[str, ...], tuple[object, ...]]:
     """Freeze all declared sources for one ordinary reviewed request."""
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
-    from harness.re_v2.knowledge_structure import (
-        StructuralEvidencePolicyV1,
-        capture_structural_source,
-    )
 
     manifest = discover_workspace(workspace)
     source_ids = tuple(sorted(source.id for source in manifest.sources))
     if not source_ids:
         raise ValueError("needs attention: the workspace declares no sources to analyze")
     structural_observations: list[object] = []
-    structural_policy = StructuralEvidencePolicyV1.defaults()
     snapshot = capture_workspace_snapshot(
         workspace,
         manifest.sources,
         _re_v2_snapshot_root(workspace),
-        source_observer=lambda source: structural_observations.append(
-            capture_structural_source(source, workspace, structural_policy)
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
         ),
     )
     partition = build_workspace_partition_catalog(
@@ -17522,10 +17554,6 @@ def _run_re_knowledge_refresh_action(
     from dataclasses import replace
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
-    from harness.re_v2.knowledge_structure import (
-        StructuralEvidencePolicyV1,
-        capture_structural_source,
-    )
 
     workspace_manifest = discover_workspace(workspace)
     declared = tuple(source.id for source in workspace_manifest.sources)
@@ -17540,13 +17568,12 @@ def _run_re_knowledge_refresh_action(
         source for source in workspace_manifest.sources if source.id in set(selected)
     )
     structural_observations: list[object] = []
-    structural_policy = StructuralEvidencePolicyV1.defaults()
     snapshot = capture_workspace_snapshot(
         workspace,
         selected_roots,
         _re_v2_snapshot_root(workspace),
-        source_observer=lambda source: structural_observations.append(
-            capture_structural_source(source, workspace, structural_policy)
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
         ),
     )
     selected_manifest = replace(workspace_manifest, sources=selected_roots)

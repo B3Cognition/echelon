@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,7 @@ from echelon.topology_model import (
     TopologySymbol,
     validate_source_id,
 )
+from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
 from echelon.topology_provider import (
     PublishedTopology,
     TopologyProviderError,
@@ -122,6 +124,16 @@ class StructuralProviderObservationV1:
     document_bytes: bytes | None
     reason_code: str | None
 
+    def __post_init__(self) -> None:
+        _validate_structural_provider_row(
+            self.provider,
+            self.status,
+            self.complete,
+            self.tool_version,
+            content_digest(self.document_bytes) if self.document_bytes is not None else None,
+            self.reason_code,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StructuralSourceObservationV1:
@@ -129,6 +141,25 @@ class StructuralSourceObservationV1:
     commit: str
     policy_id: str
     providers: tuple[StructuralProviderObservationV1, ...]
+    reused: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            validate_source_id(self.source_id)
+        except ValueError:
+            raise KnowledgeStructureError("invalid-structural-observation") from None
+        if (
+            not isinstance(self.commit, str)
+            or not self.commit
+            or not isinstance(self.policy_id, str)
+            or tuple(row.provider for row in self.providers) != ("codegraph", "perlgraph")
+            or type(self.reused) is not bool
+        ):
+            raise KnowledgeStructureError("invalid-structural-observation")
+        try:
+            digest_value(self.policy_id, "structural observation policy")
+        except ValueError:
+            raise KnowledgeStructureError("invalid-structural-observation") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +170,16 @@ class StructuralProviderEvidenceV1:
     tool_version: str | None
     artifact_id: str | None
     reason_code: str | None
+
+    def __post_init__(self) -> None:
+        _validate_structural_provider_row(
+            self.provider,
+            self.status,
+            self.complete,
+            self.tool_version,
+            self.artifact_id,
+            self.reason_code,
+        )
 
     def to_json_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -156,6 +197,15 @@ class StructuralSourceEvidenceV1:
     source_id: str
     source_content_id: str
     providers: tuple[StructuralProviderEvidenceV1, ...]
+
+    def __post_init__(self) -> None:
+        try:
+            validate_source_id(self.source_id)
+            digest_value(self.source_content_id, "structural source content")
+        except ValueError:
+            raise KnowledgeStructureError("invalid-structural-catalog") from None
+        if tuple(row.provider for row in self.providers) != ("codegraph", "perlgraph"):
+            raise KnowledgeStructureError("invalid-structural-catalog")
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -223,6 +273,32 @@ class StructuralEvidenceCatalogV1:
             value["policy_id"],  # type: ignore[arg-type]
             tuple(StructuralSourceEvidenceV1.from_json_dict(row) for row in value["sources"]),
         )
+
+
+def _validate_structural_provider_row(
+    provider: object,
+    status: object,
+    complete: object,
+    tool_version: object,
+    artifact_id: object,
+    reason_code: object,
+) -> None:
+    if (
+        provider not in {"codegraph", "perlgraph"}
+        or status not in {
+            "ready", "degraded", "empty", "unsupported", "unavailable", "not-applicable"
+        }
+        or type(complete) is not bool
+        or tool_version is not None and not isinstance(tool_version, str)
+        or reason_code is not None and not isinstance(reason_code, str)
+        or artifact_id is not None and not isinstance(artifact_id, str)
+    ):
+        raise KnowledgeStructureError("invalid-structural-provider")
+    if artifact_id is not None:
+        try:
+            digest_value(artifact_id, "structural artifact")
+        except ValueError:
+            raise KnowledgeStructureError("invalid-structural-provider") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -582,6 +658,7 @@ def capture_structural_source(
     policy: StructuralEvidencePolicyV1,
     *,
     runner: StructuralProviderRunner | None = None,
+    cache_root: Path | None = None,
 ) -> StructuralSourceObservationV1:
     """Capture optional structural providers from one pinned temporary source."""
 
@@ -589,6 +666,11 @@ def capture_structural_source(
         policy, StructuralEvidencePolicyV1
     ):
         raise KnowledgeStructureError("invalid-structural-source-request")
+    cache_key = _structural_cache_key(source, policy)
+    if cache_root is not None:
+        cached = _read_structural_cache(Path(cache_root), cache_key, source, policy)
+        if cached is not None:
+            return cached
     execute = runner or (
         lambda provider, root, active_policy: _run_provider(
             provider,
@@ -618,12 +700,177 @@ def capture_structural_source(
                 "failed", None, "provider-execution-failed"
             )
         providers.append(_normalize_execution(source.source_id, provider, execution, policy))
-    return StructuralSourceObservationV1(
+    observation = StructuralSourceObservationV1(
         source.source_id,
         source.commit,
         policy.identity,
         tuple(providers),
     )
+    if cache_root is not None:
+        _write_structural_cache(Path(cache_root), cache_key, source, observation, policy)
+    return observation
+
+
+def _structural_cache_key(
+    source: MaterializedWorkspaceSource, policy: StructuralEvidencePolicyV1
+) -> str:
+    return content_digest(
+        {
+            "schema_version": 1,
+            "source_id": source.source_id,
+            "git_role": source.git_role,
+            "workspace_path": source.workspace_path,
+            "repository_path": source.repository_path,
+            "commit": source.commit,
+            "policy_id": policy.identity,
+            "codegraph_version": CURRENT_CODEGRAPH_VERSION,
+            "perlgraph_version": "0.1.0",
+        }
+    )
+
+
+def _cache_path(cache_root: Path, cache_key: str) -> Path:
+    digest_value(cache_key, "structural cache")
+    return cache_root / f"{cache_key.removeprefix('sha256:')}.json"
+
+
+def _read_structural_cache(
+    cache_root: Path,
+    cache_key: str,
+    source: MaterializedWorkspaceSource,
+    policy: StructuralEvidencePolicyV1,
+) -> StructuralSourceObservationV1 | None:
+    path = _cache_path(cache_root, cache_key)
+    maximum = policy.max_artifact_bytes * 2 + 1024 * 1024
+    try:
+        if not _safe_cache_directory(cache_root) or path.is_symlink():
+            return None
+        metadata = path.stat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077
+            or metadata.st_size > maximum
+        ):
+            return None
+        payload = path.read_bytes()
+        value = json.loads(payload)
+        if canonical_json_bytes(value) != payload or set(value) != {
+            "schema_version", "kind", "cache_key", "providers"
+        } or value["schema_version"] != 1 or value["kind"] != "re_structural_cache" or value["cache_key"] != cache_key:
+            return None
+        rows = value["providers"]
+        if not isinstance(rows, list) or len(rows) != 2:
+            return None
+        providers: list[StructuralProviderObservationV1] = []
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {"provider", "document", "not_applicable"}:
+                return None
+            provider = row["provider"]
+            if provider not in {"codegraph", "perlgraph"}:
+                return None
+            if row["not_applicable"] is True and provider == "perlgraph" and row["document"] is None:
+                providers.append(
+                    StructuralProviderObservationV1(
+                        "perlgraph", "not-applicable", False, None, None, "no-perl-source"
+                    )
+                )
+                continue
+            if row["not_applicable"] is not False or not isinstance(row["document"], dict):
+                return None
+            normalized = _normalize_execution(
+                source.source_id,
+                provider,
+                StructuralProviderExecutionV1(
+                    "completed", canonical_json_bytes(row["document"])
+                ),
+                policy,
+            )
+            if normalized.document_bytes is None:
+                return None
+            providers.append(normalized)
+        providers.sort(key=lambda item: item.provider)
+        if tuple(item.provider for item in providers) != ("codegraph", "perlgraph"):
+            return None
+        return StructuralSourceObservationV1(
+            source.source_id,
+            source.commit,
+            policy.identity,
+            tuple(providers),
+            True,
+        )
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def _write_structural_cache(
+    cache_root: Path,
+    cache_key: str,
+    source: MaterializedWorkspaceSource,
+    observation: StructuralSourceObservationV1,
+    policy: StructuralEvidencePolicyV1,
+) -> None:
+    del source
+    if any(
+        provider.document_bytes is None and provider.status != "not-applicable"
+        for provider in observation.providers
+    ):
+        return
+    rows = []
+    try:
+        for provider in observation.providers:
+            document = (
+                json.loads(provider.document_bytes)
+                if provider.document_bytes is not None
+                else None
+            )
+            rows.append(
+                {
+                    "provider": provider.provider,
+                    "document": document,
+                    "not_applicable": provider.status == "not-applicable",
+                }
+            )
+        payload = canonical_json_bytes(
+            {
+                "schema_version": 1,
+                "kind": "re_structural_cache",
+                "cache_key": cache_key,
+                "providers": sorted(rows, key=lambda row: row["provider"]),
+            }
+        )
+        if len(payload) > policy.max_artifact_bytes * 2 + 1024 * 1024:
+            return
+        if cache_root.is_symlink():
+            return
+        cache_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if not _safe_cache_directory(cache_root):
+            return
+        path = _cache_path(cache_root, cache_key)
+        if path.is_symlink():
+            return
+        temporary = cache_root / f".{path.name}.{os.getpid()}.tmp"
+        temporary.write_bytes(payload)
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+    finally:
+        if "temporary" in locals():
+            temporary.unlink(missing_ok=True)
+
+
+def _safe_cache_directory(path: Path) -> bool:
+    try:
+        metadata = path.stat()
+        return (
+            not path.is_symlink()
+            and stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_uid == os.getuid()
+            and not metadata.st_mode & 0o077
+        )
+    except OSError:
+        return False
 
 
 def _normalize_execution(

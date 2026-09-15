@@ -142,6 +142,83 @@ def test_capture_degrades_malformed_provider_output_to_closed_reason(
 
 
 @pytest.mark.unit
+def test_structural_cache_reuses_exact_commit_and_revalidates_artifacts(
+    tmp_path: Path,
+) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    calls = 0
+
+    def runner(*_args) -> StructuralProviderExecutionV1:
+        nonlocal calls
+        calls += 1
+        return StructuralProviderExecutionV1(
+            "completed", _codegraph_document(str(first_root))
+        )
+
+    cache_root = tmp_path / "cache"
+    first = capture_structural_source(
+        _source(first_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=runner,
+        cache_root=cache_root,
+    )
+    second = capture_structural_source(
+        _source(second_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=runner,
+        cache_root=cache_root,
+    )
+
+    assert calls == 1
+    assert first.reused is False
+    assert second.reused is True
+    assert second.providers == first.providers
+    assert all(path.stat().st_size <= 128 * 1024 * 1024 for path in cache_root.iterdir())
+
+
+@pytest.mark.unit
+def test_invalid_structural_cache_is_ignored_and_replaced(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    cache_root = tmp_path / "cache"
+    calls = 0
+
+    def runner(*_args) -> StructuralProviderExecutionV1:
+        nonlocal calls
+        calls += 1
+        return StructuralProviderExecutionV1(
+            "completed", _codegraph_document(str(source_root))
+        )
+
+    capture_structural_source(
+        _source(source_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=runner,
+        cache_root=cache_root,
+    )
+    cache_file = next(cache_root.iterdir())
+    cache_file.write_bytes(b'{"forged":true}')
+
+    refreshed = capture_structural_source(
+        _source(source_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=runner,
+        cache_root=cache_root,
+    )
+
+    assert calls == 2
+    assert refreshed.reused is False
+    assert json.loads(cache_file.read_bytes())["kind"] == "re_structural_cache"
+
+
+@pytest.mark.unit
 def test_structural_policy_has_finite_disk_output_and_time_bounds() -> None:
     policy = StructuralEvidencePolicyV1.defaults()
 
