@@ -85,6 +85,22 @@ These summarize existing contracts, not newly approved implementation choices.
 
 ## Deferred-capability register
 
+### Refresh skip optimization — deferred after `63c38e6b`
+
+The user explicitly prioritized functional E2E execution over optimization.
+Keep the evidence-sensitive dependency comparison and exact accepted-input
+authentication. Do not redesign dependencies or add skip proofs before the
+functional path works. The supported first repair cycle necessarily introduces
+WHY1 evidence absent from both prior producer inputs, including with no-op repair
+and Synthesis output. Reassess useful skipping against real repeated-review
+cycles later; do not discard historical evidence to manufacture an unchanged case.
+The interim execution policy is to run all authenticated Synthesis, Tracker and
+WHY1 refreshes, including empty comparisons, under the existing cumulative limits.
+This supersedes the historical unchanged-input stop; it introduces no skip proof.
+WHY1 re-review is now verified through the existing owners; see
+`superpowers/plans/2026-09-15-why1-rereview.md`. Downstream managed Constitution,
+remaining producer families and public activation remain required convergence.
+
 The identifiers below are stable documentation keys, not runtime entity IDs.
 Do not renumber or reuse them. Entries describe capability deferral, not a file
 deletion list. The dependency boundary records which existing pieces must remain

@@ -252,8 +252,8 @@ def pin_why1_tracker_history(project_root, state_store):
     return state_store.pin_why1_tracker_parent(operation_id, tracker_parent, source=source, expected_state=state)
 
 
-def _tracker_refresh_context(root, state_store):
-    """Authenticate Tracker's current accepted Synthesis and retained repair origin."""
+def _tracker_refresh_context(root, state_store, producer="tracker"):
+    """Authenticate a refresh's accepted upstream output and retained origin."""
     from harness.discovery_bootstrap_state import bootstrap_from_state
     from harness.discovery_completion import _retained_input_projection, _refresh_predecessor, released_discovery_input_projectors
     from harness.discovery_producer import SOURCE_FIELDS, tracker_round, tracker_rounds
@@ -268,16 +268,26 @@ def _tracker_refresh_context(root, state_store):
         and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
         and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved", "awaiting_human"})
     dispatch = state["last_dispatch"]
-    _require(dispatch.get("phase_id") == "phase1-synthesizer" and dispatch.get("post_dispatch_complete") is True)
+    _require(producer in {"tracker", "why1"})
+    parent_producer = "tracker" if producer == "why1" else "synthesizer"
+    _require(dispatch.get("phase_id") == "phase1-" + parent_producer and dispatch.get("post_dispatch_complete") is True)
     source = {key: dispatch[key] for key in SOURCE_FIELDS}
     binding, project_spec, project_context = _retained_input_projection(root, state_store.squad_dir, state,
         IdentityStore.open(root), operation_id="discovery-completion-" + source["dispatch_id"], source=source,
-        require_checkpoint=False, required_route=("phase1-synthesizer", "phase1-why1"))
-    row = tracker_round(state)
-    _require(row is not None and "refresh" in row and binding.recovery["version"] == 9
-        and all(row["refresh"][key] == binding.recovery["refresh"][key] for key in ("repair_unit", "repair_source")))
+        require_checkpoint=False, required_route=("phase1-" + parent_producer, "phase1-why1"))
+    row = tracker_round(state, producer=producer)
+    parent = tracker_round(state, producer=parent_producer)
+    _require(row is not None and "refresh" in row and not binding.clarification
+        and binding.producer == parent_producer and parent["operation"] == binding.recovery["operation"])
+    parents = tracker_rounds(state, parent_producer)["rounds"]
+    while "refresh" not in parent and parent["predecessor"] is not None:
+        parent = parents[parent["predecessor"]]
+    _require("refresh" in parent and all(row["refresh"][key] == parent["refresh"][key]
+        for key in ("repair_unit", "repair_source")))
+    if producer == "tracker":
+        _require(binding.recovery["version"] == 9)
     _, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
-    previous = _refresh_predecessor(root, state_store.squad_dir, state, row, producer="tracker")
+    previous = _refresh_predecessor(root, state_store.squad_dir, state, row, producer=producer)
     why1 = tracker_rounds(state, "why1")
     _require(why1 is not None and all("tracker_parent" in item for item in why1["rounds"].values()
         if item["predecessor"] is None))
@@ -301,9 +311,9 @@ def bind_repair_refresh_input(project_root, state_store, producer):
     from harness.squad_source_projection import project_publication_source_images
 
     try:
-        _require(producer in {"synthesizer", "tracker"})
+        _require(producer in {"synthesizer", "tracker", "why1"})
         root = Path(project_root)
-        context = (_tracker_refresh_context(root, state_store) if producer == "tracker"
+        context = (_tracker_refresh_context(root, state_store, producer) if producer in {"tracker", "why1"}
             else _repair_refresh_context(root, state_store, producer))
         state, source, refresh, binding, previous, project_spec, project_context, runtime_view = context
         row = tracker_round(state, producer=producer)

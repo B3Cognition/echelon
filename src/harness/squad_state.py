@@ -2538,6 +2538,8 @@ class SquadStateStore:
                         check = deepcopy(new_rounds)
                         active = old_rounds["active"]
                         check["rounds"][active].pop("execution_input", None)
+                        if round_producer == "why1":
+                            check["rounds"][active].pop("tracker_parent", None)
                         valid = "execution_input" not in old_rounds["rounds"][active] and check == old_rounds
                     elif update == "tracker_parent" and round_producer == "why1":
                         check = deepcopy(new_rounds)
@@ -2778,18 +2780,18 @@ class SquadStateStore:
             current = self._load_unlocked()
             try:
                 dispatch = current.get("last_dispatch") or {}
-                if (producer not in {"synthesizer", "tracker"} or current != expected_state
+                if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
                         or current.get("status") != "running" or current.get("phase") != "phase1-why1"
                         or current.get("mode") != "greenfield"
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}
-                        or dispatch.get("phase_id") != ("phase1-discover" if producer == "synthesizer" else "phase1-synthesizer")
+                        or dispatch.get("phase_id") != {"synthesizer": "phase1-discover", "tracker": "phase1-synthesizer", "why1": "phase1-tracker"}[producer]
                         or dispatch.get("post_dispatch_complete") is not True
                         or execution_input["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}):
                     raise ValueError("refresh input requires exact accepted state")
                 rounds = _tracker_from_state(current, producer)
                 row = rounds["rounds"][rounds["active"]]
-                if "refresh" not in row or row["operation"] is not None or row["turns"] is not None:
+                if "refresh" not in row:
                     raise ValueError("inactive refresh required")
                 if producer == "tracker":
                     synthesis = _tracker_from_state(current, "synthesizer")
@@ -2800,21 +2802,37 @@ class SquadStateStore:
                             or operation is None or not operation["attempts"]
                             or (operation["attempts"][-1]["result"] or {}).get("status") != "accepted"):
                         raise ValueError("Tracker requires the accepted Synthesis refresh")
+                if producer == "why1":
+                    tracker = _tracker_from_state(current, "tracker")
+                    parent = tracker["rounds"][tracker["active"]]
+                    operation = parent["operation"]
+                    ancestor = parent
+                    while "refresh" not in ancestor and ancestor["predecessor"] is not None:
+                        ancestor = tracker["rounds"][ancestor["predecessor"]]
+                    if (operation is None or not operation["attempts"]
+                            or (operation["attempts"][-1]["result"] or {}).get("status") != "accepted"
+                            or any(ancestor.get("refresh", {}).get(key) != row["refresh"][key]
+                                for key in ("repair_source", "repair_unit"))):
+                        raise ValueError("WHY1 requires its accepted refreshed Tracker")
                 if "execution_input" in row:
                     if row["execution_input"] != execution_input:
                         raise ValueError("refresh input is immutable")
                     return self._confirm_durable_state_unlocked(current)
+                if row["operation"] is not None or row["turns"] is not None:
+                    raise ValueError("inactive refresh required")
                 row["execution_input"] = deepcopy(execution_input)
+                if producer == "why1":
+                    row["tracker_parent"] = tracker["active"]
                 desired = {**current, rounds_key(producer): rounds}
                 _tracker_from_state(desired, producer)
             except Exception:
                 raise StateAdvanceError("invalid repair refresh input", validator="refresh_input") from None
             written = self._save_unlocked(desired, **{
-                "synthesis_round_update" if producer == "synthesizer" else "tracker_update": "execution_input"})
+                "synthesis_round_update" if producer == "synthesizer" else producer + "_update": "execution_input"})
             return self._confirm_durable_state_unlocked(written)
 
     def activate_refresh_round(self, producer, *, expected_state):
-        """Select a bound changed-input phase after caller authentication; no charge."""
+        """Select a bound refresh phase after caller authentication; no charge."""
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
@@ -2828,7 +2846,7 @@ class SquadStateStore:
                 rounds = _tracker_from_state(current, producer)
                 row = rounds["rounds"][rounds["active"]]
                 dispatch = current.get("last_dispatch") or {}
-                if ("refresh" not in row or not row["execution_input"]["dependencies"]["changed"]
+                if ("refresh" not in row
                         or row["execution_input"]["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}
                         or dispatch.get("post_dispatch_complete") is not True
                         or dispatch.get("phase_id") != ("phase1-discover" if producer == "synthesizer" else "phase1-synthesizer")):

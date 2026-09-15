@@ -1516,3 +1516,34 @@ All 311 distinct selected offline cases passed (15 new plus 296 regressions),
 including both provider paths, guided clarification, interrupted publication,
 exact retry and final-file tampering rejection. Independent review is clear.
 This supersedes the automatic controller guard only for changed-input refreshes.
+
+### Requesting WHY1 re-review (complete, 2026-09-15)
+
+The existing controller now continues after authenticated repair, Synthesis and
+Tracker into the requesting WHY1 review. Its once-bound input names the actual
+accepted Tracker separately from immutable repair origin. The exact Tracker
+history is pinned, including post-refresh clarification descendants; old rounds,
+reports, answers, IDs and receipts are not replaced. Closed v11 completion proofs
+authenticate that parent and independently recompute retained dependencies.
+WHY1 clarification continues through the existing v7/v6 answer/review owners.
+
+The user approved functionality before skip optimization. All authenticated
+Synthesis/Tracker/WHY1 refreshes execute, even with an empty comparison, using
+normal cumulative limits. This supersedes the historical unchanged-input stop,
+not exact source/dependency authentication. No skip proof or new authority exists.
+An earlier resolved question cannot select a fresh refresh's clarification:
+continuation also requires the current producer's latest completed dispatch.
+
+The [re-review plan](superpowers/plans/2026-09-15-why1-rereview.md) records 365
+distinct passing selected offline cases, including both provider paths, forged
+proof rejection, interrupted binding/publication/human-answer recovery, original
+mode/routing checks and the text-identical repair regression. Independent review
+has no remaining findings. Provider responses are scripted; state, identity,
+publication and completion owners are real. This is not a full-suite claim.
+
+Successful re-review reaches the guarded Constitution stop. Managed Constitution
+execution, remaining producer families, original whole-run identity acceptance
+and public/installed/live activation remain unfinished. Constitution is a shared
+workspace file, not another spec-relative artifact: preserve its existing
+ownership and use guarded publication rather than admitting the legacy direct
+writer. No installation, migration, live-provider spending, push or merge ran.

@@ -230,6 +230,14 @@ producer destinations stop before execution while retaining the selected route.
 Guided, semi and banzai obey the same identity checks and repair ceiling; existing
 human-input and quality policy remains unchanged.
 
+**2026-09-15 approved execution-policy amendment:** The user prioritized functional
+E2E over skip optimization. Until that optimization is revisited, execute every
+authenticated Synthesis/Tracker/WHY1 refresh, including an empty semantic input
+comparison, under the existing cumulative limits. Preserve exact source and
+dependency authentication; do not discard evidence or add skip completion proofs.
+This supersedes only the changed-input execution condition above. The decision
+and resumption boundary are retained in `../../element-identity-deferred-scope.md`.
+
 ## Acceptance exits
 
 Implement in tested checkpoints, each using real controller decisions and real

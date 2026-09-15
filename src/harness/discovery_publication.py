@@ -174,8 +174,11 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         recovery_fields.update(version=6 if producer == "why1" else 4, producer=producer,
             source_completion=tracker_input_source(state, producer=producer),
             resolution=row["resolution"])
-        if producer == "tracker" and "refresh" in row:
-            recovery_fields.update(version=10, **{key: row[key] for key in ("refresh", "execution_input", "predecessor")})
+        if "refresh" in row:
+            recovery_fields.update(version=11 if producer == "why1" else 10,
+                **{key: row[key] for key in ("refresh", "execution_input", "predecessor")})
+            if producer == "why1":
+                recovery_fields["tracker_parent"] = row["tracker_parent"]
     if repair_unit is not None:
         from harness.discovery_producer import repair_record
         claim = repair_record(state, producer, repair_unit)["selection"]

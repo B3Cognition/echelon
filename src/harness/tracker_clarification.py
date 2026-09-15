@@ -47,6 +47,9 @@ def _previous_records(state, operation_id, producer, seen):
         seen.add((producer, operation_id))
         row = rounds[operation_id]
         if "refresh" in row:
+            if producer == "why1" and "execution_input" in row:
+                previous = _previous_records(state, row["tracker_parent"], "tracker", seen)
+                return previous + tuple(reversed(records))
             if producer == "tracker":
                 why1 = tracker_rounds(state, "why1")
                 matches = [] if why1 is None else [item for item in why1["rounds"].values()

@@ -9,7 +9,28 @@ from tests.unit.test_synthesis_refresh_publication import (
     case, enrolled, turn_prepared, prepared, checkpoint_case, selection,
     install_why1, RefreshExecutor,
 )
-from tests.unit.test_discovery_completion import controller
+from tests.unit.test_discovery_completion import controller as full_controller
+
+
+def controller(prepared, executor):
+    """Isolate refresh ordering after authenticated WHY1 input, before re-review.
+
+    test_why1_refresh_execution exercises the unmodified controller beyond this
+    boundary. No source, publication or dependency check is replaced here.
+    """
+    from types import MethodType
+    ctrl = full_controller(prepared, executor)
+    advance = ctrl._prepare_managed_repair_refresh
+    def stop_before_rereview(self, selected):
+        result = advance(selected)
+        state = self._state_store.load()
+        if (result is None and state.get("phase") == "phase1-why1"
+                and state.get("managed_discovery_repairs") is not None
+                and (state.get("last_dispatch") or {}).get("phase_id") == "phase1-tracker"):
+            return self._managed_discovery_stop("managed_repair_refresh_complete")
+        return result
+    ctrl._prepare_managed_repair_refresh = MethodType(stop_before_rereview, ctrl)
+    return ctrl
 
 
 @pytest.mark.parametrize("provider,mode", [("codex", "semi"), ("claude", "banzai")])

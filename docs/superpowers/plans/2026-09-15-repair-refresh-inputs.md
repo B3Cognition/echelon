@@ -19,10 +19,10 @@
 - [x] Select active Synthesis round without changing the original flat source/operation/turn marker; isolate new receipts with existing round journal support.
 - [x] Bind actual inputs into completion proof and authenticate repair ancestry during replay/recovery. Permit read-only post-WHY1 context without broadening producer writes.
 - [x] Automatically execute changed Synthesis through existing owners, then evaluate and execute changed Tracker from that accepted publication. Preserve native caps, cumulative accounting, historical answers and interrupted execution/publication recovery; authenticate live sources again at the final stop.
-- [ ] Implement authenticated unchanged-input skips, retaining the same accepted head if Synthesis dependencies are unchanged before evaluating Tracker. Never dispatch from the repair-origin field merely because it names the round. Preserve the same caps, accounting and recovery behavior on skipped branches.
+- Deferred by user approval after `63c38e6b`: authenticated unchanged-input skips. Preserve evidence-sensitive checks; prioritize the functional end-to-end path before optimization.
 - [x] Implement the historical human-input prerequisite: pin WHY1 clarification ancestry to its accepted Tracker parent and preserve chronological Tracker→WHY1→new Tracker answers. The automatic route must invoke this prerequisite before allowing new Tracker questions.
 - [x] Bind and authenticate Tracker's accepted changed-Synthesis input, execute through existing owners with v10 proof and recover publication and subsequent clarification without rewriting historical answers. This prerequisite does not enable automatic refresh ordering or unchanged-input skips.
-- [ ] Verify unchanged-input skip combinations and whole-checkpoint interruption/recovery for Codex and Claude; stop before WHY1 re-review. Changed-input ordering/recovery is verified below. Independent review and local commit.
+- [x] Verify the functional changed-input path and whole-checkpoint interruption/recovery for Codex and Claude. Skip combinations are deferred, not implemented. Independent review and local commit are recorded below.
 
 No installation, migration, live provider spending, push, merge, original smoke workspace, legacy build, AGENTS.md or CLAUDE.md edits. This plan does not represent checkpoint B as complete when only binding tests pass.
 
@@ -387,7 +387,7 @@ automatic changed-input ordering, not all of checkpoint B: authenticated
 unchanged-input skips and their combined recovery checks remain approved work.
 No installation, migration, live-provider acceptance or activation is claimed.
 
-## Unchanged-skip reachability review (decision pending)
+## Unchanged-skip reachability review (deferral approved)
 
 At `1d4d58c1`, inspection of the supported first WHY1 repair cycle found a
 conflict between the skip checklist and the retained dependency contract.
@@ -406,9 +406,12 @@ defer skips while preserving the current evidence-sensitive behavior, or explici
 design narrower producer dependencies. Later repeated-review cycles must assess
 reachability again; this first-cycle argument is not a proof about all future runs.
 
-The user has been asked whether to defer the optimization and continue convergence.
-Until that choice is made, the approved checklist above remains unchanged. No
-production behavior, accepted proofs, rollout setting or provider prose changed.
+The user approved deferring the optimization: functionality and end-to-end
+execution take priority; optimize after E2E works. This supersedes the skip
+requirement above, not the authentication or history-preservation requirements.
+Continue with the already-approved requesting WHY1 re-review step, followed by
+remaining managed continuation and installation readiness. No installation or
+live provider spending is authorized by this plan correction.
 
 Verification: the nine existing pure dependency-comparison cases passed in 0.49s.
 The new real-owner characterization passed in 408.09s with scripted Codex replies:

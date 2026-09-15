@@ -24,9 +24,13 @@ def activation_state(after_synthesis):
 
 
 @pytest.mark.parametrize("producer", ["synthesizer", "tracker"])
-def test_refresh_activation_is_exact_cas_and_does_not_charge(after_synthesis, enrolled, producer):
+@pytest.mark.parametrize("changed", [True, False])
+def test_refresh_activation_is_exact_cas_and_does_not_charge(after_synthesis, enrolled, producer, changed):
     from harness.squad_state import StateAdvanceError, SquadStateStore
     state = activation_state(after_synthesis)
+    if not changed:
+        rounds = state["managed_" + producer + "_rounds"]
+        rounds["rounds"][rounds["active"]]["execution_input"]["dependencies"].update(after_sha256="1" * 64, changed=[])
     if producer == "synthesizer":
         rounds = state["managed_synthesizer_rounds"]
         rounds["rounds"][rounds["active"]]["operation"] = None
@@ -45,14 +49,13 @@ def test_refresh_activation_is_exact_cas_and_does_not_charge(after_synthesis, en
     assert SquadStateStore(store.squad_dir).activate_refresh_round(producer, expected_state=saved) == saved
 
 
-@pytest.mark.parametrize("damage", ["unbound", "unchanged", "source", "pending", "cancelled", "history", "phase", "parent_phase"])
+@pytest.mark.parametrize("damage", ["unbound", "source", "pending", "cancelled", "history", "phase", "parent_phase"])
 def test_refresh_activation_cannot_bypass_admission(after_synthesis, enrolled, damage):
     from harness.squad_state import StateAdvanceError
     state = activation_state(after_synthesis)
     rounds = state["managed_tracker_rounds"]
     target = rounds["rounds"][rounds["active"]]
     if damage == "unbound": del target["execution_input"]
-    elif damage == "unchanged": target["execution_input"]["dependencies"].update(after_sha256="1" * 64, changed=[])
     elif damage == "source": state["last_dispatch"].update(source("f"))
     elif damage == "pending": state["pending_controller_completion"] = {}
     elif damage == "cancelled": state["cancel_requested"] = True

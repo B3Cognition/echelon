@@ -111,19 +111,21 @@ def _decode(publication, completion_id, state):
         return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
         "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256",
-        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9, 10} else ()),
-        *(("resolution",) if recovery.get("version") in {4, 6, 10} else ()),
+        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9, 10, 11} else ()),
+        *(("resolution",) if recovery.get("version") in {4, 6, 10, 11} else ()),
         *(("repair_unit",) if recovery.get("version") == 8 else ()),
-        *(("refresh", "execution_input", "predecessor") if recovery.get("version") in {9, 10} else ())))
+        *(("refresh", "execution_input", "predecessor") if recovery.get("version") in {9, 10, 11} else ()),
+        *(("tracker_parent",) if recovery.get("version") == 11 else ())))
     producer = recovery.get("producer", "discovery")
     repair_unit = recovery.get("repair_unit")
-    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9, 10}
+    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9, 10, 11}
         and (recovery["version"] != 3 or producer == "synthesizer")
         and (recovery["version"] != 4 or producer == "tracker")
         and (recovery["version"] != 6 or producer == "why1")
         and (recovery["version"] != 8 or producer == "discovery")
         and (recovery["version"] != 9 or producer == "synthesizer")
         and (recovery["version"] != 10 or producer == "tracker")
+        and (recovery["version"] != 11 or producer == "why1")
         and _json(recovery) == request.recovery_payload)
     if completion_id is not None:
         _require(recovery["completion_id"] == completion_id)
@@ -142,9 +144,9 @@ def _decode(publication, completion_id, state):
     selected = operation["binding"]
     if recovery["version"] == 3:
         _require(selected["operation_id"] == "synthesis-" + recovery["source_completion"]["dispatch_id"])
-    if recovery["version"] == 4 and recovery["resolution"] is None:
-        _require(selected["operation_id"] == "tracker-" + recovery["source_completion"]["dispatch_id"])
-    if recovery["version"] in {9, 10}:
+    if recovery["version"] in {4, 6} and recovery["resolution"] is None:
+        _require(selected["operation_id"] == producer + "-" + recovery["source_completion"]["dispatch_id"])
+    if recovery["version"] in {9, 10, 11}:
         refresh = recovery["refresh"]
         _closed(refresh, ("repair_unit", "repair_source", "predecessor_source"))
         _require(type(refresh["repair_unit"]) is str and re.fullmatch(r"[0-9a-f]{64}", refresh["repair_unit"]) is not None)
@@ -153,15 +155,17 @@ def _decode(publication, completion_id, state):
             _require(all(type(value) is str and re.fullmatch(r"[0-9a-f]{%d}" % (32 if key == "dispatch_id" else 64), value)
                 for key, value in parent.items()))
         validate_refresh_input(producer, refresh, recovery["execution_input"])
-        _require(recovery["execution_input"]["dependencies"]["changed"]
-            and recovery["source_completion"] == recovery["execution_input"]["source"]
+        _require(recovery["source_completion"] == recovery["execution_input"]["source"]
             and selected["operation_id"] == producer + "-" + refresh["repair_source"]["dispatch_id"]
             and type(recovery["predecessor"]) is str
-            and re.fullmatch((r"(?:synthesis|synthesizer)" if producer == "synthesizer" else "tracker") + r"-[0-9a-f]{32}", recovery["predecessor"]) is not None
+            and re.fullmatch((r"(?:synthesis|synthesizer)" if producer == "synthesizer" else producer) + r"-[0-9a-f]{32}", recovery["predecessor"]) is not None
             and refresh["predecessor_source"]["dispatch_id"] != refresh["repair_source"]["dispatch_id"]
             and request.sources.expected_operation_id == "discovery-completion-" + recovery["source_completion"]["dispatch_id"])
-        if producer == "tracker":
+        if producer in {"tracker", "why1"}:
             _require(recovery["resolution"] is None)
+        if producer == "why1":
+            _require(type(recovery["tracker_parent"]) is str
+                and re.fullmatch(r"tracker-[0-9a-f]{32}", recovery["tracker_parent"]) is not None)
     if recovery["version"] == 8:
         _require(type(repair_unit) is str and re.fullmatch(r"[0-9a-f]{64}", repair_unit) is not None
             and selected["operation_id"] == "discovery-repair-" + repair_unit
@@ -227,9 +231,11 @@ def _decode(publication, completion_id, state):
             row = tracker_round(state, selected["operation_id"], producer=producer)
             _require(tracker_input_source(state, selected["operation_id"], producer=producer) == recovery["source_completion"]
                 and row["resolution"] == recovery["resolution"])
-            _require(("refresh" in row) == (recovery["version"] == 10))
-            if recovery["version"] == 10:
+            _require(("refresh" in row) == (recovery["version"] in {10, 11}))
+            if recovery["version"] in {10, 11}:
                 _require(all(row[key] == recovery[key] for key in ("refresh", "execution_input", "predecessor")))
+            if recovery["version"] == 11:
+                _require(row["tracker_parent"] == recovery["tracker_parent"])
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
 
 
@@ -272,7 +278,7 @@ def authenticate(root, run, state, completion):
             spec_view, runtime_view = _released_discovery_projections(root, run, state,
                 source=binding.recovery["source_completion"], historical=True,
                 repair_child=binding if binding.repair_unit is not None else None,
-                refresh_child=binding if binding.recovery["version"] in {9, 10} else None,
+                refresh_child=binding if binding.recovery["version"] in {9, 10, 11} else None,
                 why1_child=binding if binding.producer == "why1" else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
@@ -643,7 +649,7 @@ def _require_refresh_dependencies(row, previous, source, sources, inputs, select
     comparison = refresh_dependency_comparison(previous, sources,
         history=IdentityHistorySnapshot(**inputs["history"]), runtime=inputs["runtime"],
         spec_path=selection["spec_path"], run_path=run.relative_to(root).as_posix())
-    _require(comparison == row["execution_input"]["dependencies"] and comparison["changed"])
+    _require(comparison == row["execution_input"]["dependencies"])
 
 
 def _refresh_predecessor(root, run, state, row, *, producer="synthesizer"):
@@ -685,6 +691,9 @@ def _require_refresh_parent(child, parent, source):
     if child.recovery["version"] == 9:
         _require(parent.producer == "discovery" and parent.repair_unit == refresh["repair_unit"]
             and source == refresh["repair_source"])
+    elif child.recovery["version"] == 11:
+        _require(parent.producer == "tracker" and not parent.clarification
+            and parent.recovery["operation"]["binding"]["operation_id"] == child.recovery["tracker_parent"])
     else:
         _require(child.recovery["version"] == 10 and parent.producer == "synthesizer"
             and parent.recovery["version"] == 9
@@ -721,7 +730,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                 _require_repair_origin(state, repair, binding)
             _require_why1_tracker_parent(state, why1_child if child is None else child, binding)
             refreshing = refresh_child if child is None else child
-            if refreshing is not None and refreshing.recovery["version"] in {9, 10}:
+            if refreshing is not None and refreshing.recovery["version"] in {9, 10, 11}:
                 _require_refresh_parent(refreshing, binding, source)
                 pending_refreshes.append(refreshing)
             for pending_refresh in tuple(pending_refreshes):

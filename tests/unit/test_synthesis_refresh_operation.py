@@ -18,9 +18,10 @@ def selected(retained, *, changed=True):
     return state, binding
 
 
-def test_bound_refresh_uses_round_attempts_without_changing_original(retained):
+@pytest.mark.parametrize("changed", [True, False])
+def test_bound_refresh_uses_round_attempts_without_changing_original(retained, changed):
     from harness.discovery_operation_state import advance_operation, operation_from_state
-    state, binding = selected(retained)
+    state, binding = selected(retained, changed=changed)
     original = deepcopy(state["managed_synthesizer_operation"])
     state = advance_operation(state, binding, "prepare", producer="synthesizer")
     for attempt in range(1, 4):
@@ -32,10 +33,10 @@ def test_bound_refresh_uses_round_attempts_without_changing_original(retained):
     with pytest.raises(ValueError): advance_operation(state, binding, "begin", producer="synthesizer")
 
 
-@pytest.mark.parametrize("damage", ["unbound", "unchanged", "wrong_phase"])
+@pytest.mark.parametrize("damage", ["unbound", "wrong_phase"])
 def test_unadmitted_refresh_cannot_start_attempts(retained, damage):
     from harness.discovery_operation_state import advance_operation
-    state, binding = selected(retained, changed=damage != "unchanged")
+    state, binding = selected(retained)
     if damage == "unbound":
         del state["managed_synthesizer_rounds"]["rounds"][binding["operation_id"]]["execution_input"]
     if damage == "wrong_phase": state["phase"] = "phase1-why1"

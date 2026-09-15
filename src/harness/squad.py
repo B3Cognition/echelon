@@ -6715,7 +6715,7 @@ class SquadController:
             record=state["managed_identity"])
 
     def _prepare_managed_repair_refresh(self, selected):
-        """Order accepted changed inputs under the existing execution leases."""
+        """Order authenticated refresh inputs under the existing execution leases."""
         from harness.discovery_producer import SOURCE_FIELDS, tracker_round, post_why1_context
         from harness.discovery_repair_admission import (
             pin_why1_tracker_history, prepare_repair_refresh_round, bind_repair_refresh_input,
@@ -6764,13 +6764,16 @@ class SquadController:
                         raise ValueError("refresh return sources changed")
                 if self._state_store.load() != state:
                     raise ValueError("refresh return state changed")
-                return self._managed_discovery_stop("managed_repair_refresh_complete")
+                producer = "why1"
+            elif dispatch.get("phase_id") == "phase1-why1":
+                # The existing human-input owner resumes a re-review question.
+                # Its retained operation/capture authenticates this continuation.
+                return None
             else:
                 raise ValueError("refresh requires its accepted upstream producer")
             state = bind_repair_refresh_input(self._project_root, self._state_store, producer)
-            if not tracker_round(state, producer=producer)["execution_input"]["dependencies"]["changed"]:
-                return self._managed_discovery_stop("managed_repair_unchanged_skip_not_supported")
-            self._state_store.activate_refresh_round(producer, expected_state=state)
+            if producer != "why1":
+                self._state_store.activate_refresh_round(producer, expected_state=state)
         except Exception:
             return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
         return None
@@ -6804,6 +6807,8 @@ class SquadController:
                 decision = state.get("blocked_decision") or {}
                 row = tracker_round(state, producer=round_producer)
                 if (row is not None and decision.get("status") == "resolved"
+                        and (state.get("last_dispatch") or {}).get("phase_id") == state.get("phase")
+                        and (state.get("last_dispatch") or {}).get("post_dispatch_complete") is True
                         and decision.get("source_phase") == state.get("phase") and (
                         row["resolution"] is None or row["resolution"]["decision"]["id"] != decision.get("id"))):
                     from harness.discovery_completion import released_discovery_input_projectors

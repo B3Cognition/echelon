@@ -43,9 +43,11 @@ def tracker_rounds(state, producer="tracker"):
                 or ("execution_input" in row and "refresh" not in row)):
             raise ValueError("invalid retained Tracker round")
         if "tracker_parent" in row:
-            if (producer != "why1" or row["predecessor"] is not None or row["resolution"] is not None
-                    or "refresh" in row or type(row["tracker_parent"]) is not str):
-                raise ValueError("Tracker history belongs to the initial WHY1 root")
+            if (producer != "why1" or row["resolution"] is not None
+                    or (row["predecessor"] is not None and "refresh" not in row)
+                    or ("refresh" in row and "execution_input" not in row)
+                    or type(row["tracker_parent"]) is not str):
+                raise ValueError("Tracker history belongs to a bound WHY1 input")
             parents = tracker_rounds(state)
             previous = None if parents is None else parents["rounds"].get(row["tracker_parent"], {}).get("operation")
             if (previous is None or previous["binding"]["operation_id"] != row["tracker_parent"]
@@ -143,21 +145,22 @@ def validate_refresh_round(state, producer, row):
         raise ValueError("refresh must return to the requesting WHY1")
     if "execution_input" in row:
         validate_refresh_input(producer, refresh, row["execution_input"])
+        if producer == "why1" and "tracker_parent" not in row:
+            raise ValueError("WHY1 refresh requires its accepted Tracker history")
     if row["operation"] is not None or row["turns"] is not None:
-        if (producer not in {"synthesizer", "tracker"} or "execution_input" not in row
-                or not row["execution_input"]["dependencies"]["changed"]
+        if (producer not in {"synthesizer", "tracker", "why1"} or "execution_input" not in row
                 or row["operation"] is None):
-            raise ValueError("refresh execution requires changed bound inputs")
+            raise ValueError("refresh execution requires bound inputs")
 
 
 def validate_refresh_input(producer, refresh, bound):
     """Closed input shape shared by retained state and completion proofs."""
-    if (producer not in {"synthesizer", "tracker"} or type(bound) is not dict or set(bound) != {"source", "dependencies"}
+    if (producer not in {"synthesizer", "tracker", "why1"} or type(bound) is not dict or set(bound) != {"source", "dependencies"}
             or type(bound["source"]) is not dict or set(bound["source"]) != set(SOURCE_FIELDS)
             or any(type(value) is not str or re.fullmatch(r"[0-9a-f]{%d}" % (32 if key == "dispatch_id" else 64), value) is None
                 for key, value in bound["source"].items())
             or (producer == "synthesizer" and bound["source"] != refresh["repair_source"])
-            or (producer == "tracker" and bound["source"]["dispatch_id"] == refresh["repair_source"]["dispatch_id"])):
+            or (producer in {"tracker", "why1"} and bound["source"]["dispatch_id"] == refresh["repair_source"]["dispatch_id"])):
         raise ValueError("refresh execution input is not admitted")
     dependencies = bound["dependencies"]
     if (type(dependencies) is not dict or set(dependencies) != {"before_sha256", "after_sha256", "changed"}
@@ -198,7 +201,7 @@ def tracker_input_source(state, operation_id=None, *, producer="tracker"):
 
 def post_why1_context(state, producer):
     """Refresh descendants retain read-only review context, not new write roles."""
-    if producer not in {"synthesizer", "tracker"}:
+    if producer not in {"synthesizer", "tracker", "why1"}:
         return False
     rounds = tracker_rounds(state, producer)
     return rounds is not None and any("refresh" in row for row in rounds["rounds"].values())

@@ -179,7 +179,7 @@ def test_text_identical_repair_still_refreshes_new_review_evidence(checkpoint_ca
         "file:specs/game/user-intent.md", "identity"]
     assert row["operation"] is None and row["turns"] is None
     assert len(executor.calls) == 15
-    from tests.unit.test_discovery_completion import controller as full_controller
+    from tests.unit.test_managed_repair_refresh import controller as full_controller
     before_refresh = {path.name: path.read_bytes() for path in (root / "specs/game").glob("*.md")}
     result = full_controller(checkpoint_case, executor).run(managed_discovery=selected)
     assert result.summary == "managed_repair_refresh_complete", result

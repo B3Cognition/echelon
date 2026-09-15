@@ -85,10 +85,13 @@ def test_tracker_input_cannot_bypass_accepted_synthesis(after_synthesis, enrolle
         store.bind_refresh_input("tracker", bound, expected_state=state)
 
 
-def test_tracker_refresh_retains_round_attempt_limit_and_charges_once(after_synthesis, enrolled):
+@pytest.mark.parametrize("changed", [True, False])
+def test_tracker_refresh_retains_round_attempt_limit_and_charges_once(after_synthesis, enrolled, changed):
     from harness.discovery_operation_state import operation_from_state
     from harness.squad_state import StateAdvanceError
     state, bound = after_synthesis
+    if not changed:
+        bound["dependencies"].update(after_sha256="1" * 64, changed=[])
     rounds = state["managed_tracker_rounds"]
     target = rounds["rounds"][rounds["active"]]
     target["execution_input"] = bound
@@ -109,7 +112,7 @@ def test_tracker_refresh_retains_round_attempt_limit_and_charges_once(after_synt
     assert saved["managed_tracker_rounds"]["rounds"][target["predecessor"]] == previous
 
 
-@pytest.mark.parametrize("damage", ["unbound", "unchanged", "wrong_phase"])
+@pytest.mark.parametrize("damage", ["unbound", "wrong_phase"])
 def test_unadmitted_tracker_refresh_cannot_start(after_synthesis, damage):
     from harness.discovery_operation_state import advance_operation
     state, bound = after_synthesis
@@ -119,7 +122,6 @@ def test_unadmitted_tracker_refresh_cannot_start(after_synthesis, damage):
     binding = {**rounds["rounds"][target["predecessor"]]["operation"]["binding"], "operation_id": rounds["active"]}
     state["phase"] = "phase1-tracker"
     if damage == "unbound": del target["execution_input"]
-    elif damage == "unchanged": bound["dependencies"].update(after_sha256="1" * 64, changed=[])
     else: state["phase"] = "phase1-why1"
     with pytest.raises(ValueError): advance_operation(state, binding, "prepare", producer="tracker")
 
