@@ -8,8 +8,15 @@ import threading
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Callable
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.ai_cli_backends.claude_constrained import (
+    ConstrainedClaudeError,
+    failure as constrained_failure,
+    prepare_claude_request,
+    run_claude_process,
+)
 from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
 from harness.skill_loader import StreamEventPrinter
@@ -33,10 +40,17 @@ _CLAUDE_RULE_PATH_SAFE_CHARACTERS = frozenset("/._- ")
 
 class ClaudeCliBackend:
     name = "claude"
+    constrained_execution_contract_id = "claude-constrained-prompt-v1"
 
     def __init__(self, config: HarnessConfig) -> None:
         self._config = config
         self._bin = shutil.which("claude") or "claude"
+
+    def model_for_tier(self, tier: str) -> str | None:
+        """Resolve neutral Prosaic model intent inside the Claude adapter."""
+        if not isinstance(tier, str):
+            return None
+        return _MODEL_TIER_TO_CLAUDE_MODEL.get(tier.strip().lower())
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
         review_triage = _execution_profile(request) == _REVIEW_TRIAGE_PROFILE
@@ -147,6 +161,50 @@ class ClaudeCliBackend:
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self.run_prompt(request)
+
+    def run_constrained_prompt(
+        self,
+        request: CliRunRequest,
+        *,
+        model: str,
+        screen_output: Callable[[bytes], bytes],
+        max_input_bytes: int,
+        max_capture_bytes: int,
+        screen_input: Callable[[bytes], bytes] | None = None,
+    ) -> CliRunResult:
+        """Run one bounded, tool-free request through native Claude stdin."""
+        try:
+            prepared = prepare_claude_request(
+                self._bin,
+                request,
+                model=model,
+                screen_output=screen_output,
+                max_input_bytes=max_input_bytes,
+                max_capture_bytes=max_capture_bytes,
+                tool_policy=self._config.llm.tool_policy,
+                screen_input=screen_input,
+            )
+        except ConstrainedClaudeError as exc:
+            return constrained_failure(exc.reason)
+        try:
+            proc = subprocess.Popen(
+                list(prepared.command),
+                cwd=request.cwd,
+                env=prepared.env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except Exception:
+            return constrained_failure("process_start_error")
+        return run_claude_process(
+            proc,
+            screen_output=screen_output,
+            max_capture_bytes=max_capture_bytes,
+            timeout_s=float(request.timeout_s),
+            model=model,
+            input_bytes=prepared.prompt_bytes,
+        )
 
     def _run_stream_json(self, cmd: list[str], request: CliRunRequest) -> CliRunResult:
         quiet = _prompt_metadata_bool(request, "quiet")
