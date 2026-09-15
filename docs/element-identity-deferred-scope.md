@@ -373,6 +373,17 @@ generated context, reconstruct an earlier state by editing current producer keys
 or invent another ancestry ledger. This prerequisite is not guarded answer/resume
 or a passing Tracker run; those tasks remain approved and open.
 
+Reuse the now-defined Tracker version-3 semantic/candidate contract when wiring
+that execution. Review assignments bind the exact authored routing object;
+carry it through candidate hashes, persisted turn decoding and completion proof,
+not just the transient reply. Old Discovery/Synthesis encodings remain exact.
+An optional stakeholder `null` preserves absence and cannot delete an existing
+file: retain its raw source guard while omitting absent candidate/write paths.
+UI/II statement revisions use the existing immutable registry subject and exact
+ID; no new allocator or caption-as-subject identity rule is introduced. This
+inactive Task 3 dependency does not complete Task 2: round/state/receipt owners,
+guarded human resolution and normal Tracker execution still need integration.
+
 1. Read this record, the linked original contract, and only the implementation
    checkpoints relevant to the selected entry. Inspect current upstream and callers;
    these commit references are a baseline, not a claim about future code.

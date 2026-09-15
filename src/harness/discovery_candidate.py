@@ -41,15 +41,19 @@ def author_artifacts(assignment, reply, *, before: Mapping[str, str | None]) -> 
             if type(content) is not str or "\x00" in content:
                 raise ValueError("invalid captured discovery text")
             content.encode("utf-8")
+    if (assignment.producer == "tracker" and before.get("stakeholder-model.md") is not None
+            and value["artifacts"].get("stakeholder-model.md") is None):
+        raise ValueError("optional stakeholder absence cannot remove an existing artifact")
     return tuple(CandidateArtifact(path, artifact_roles(assignment.producer)[path], before[path], value["artifacts"][path])
-                 for path in assignment.artifact_paths)
+                 for path in assignment.artifact_paths
+                 if before[path] is not None or value["artifacts"][path] is not None)
 
 
 def _declarations(artifacts, field):
     result = {}
     for artifact in artifacts:
         content = getattr(artifact, field)
-        if content is None or artifact.role not in {"unknowns", "assumptions"}:
+        if content is None or artifact.role not in {"unknowns", "assumptions", "intent"}:
             continue
         parsed = parse_identity_artifact(path=artifact.path, role=artifact.role, text=content)
         if parsed.diagnostics:
@@ -67,8 +71,10 @@ def build_discovery_changes(assignment, reply, *, reservations, artifacts, exist
         raise ValueError("captured discovery collections must be tuples")
     if any(type(item) is not CandidateArtifact for item in artifacts):
         raise ValueError("invalid discovery artifact descriptor")
-    if (len(artifacts) != len(assignment.artifact_paths)
-            or {item.path for item in artifacts} != set(assignment.artifact_paths)
+    paths = {item.path for item in artifacts}
+    omitted = set(assignment.artifact_paths) - paths
+    if (len(artifacts) != len(paths) or not paths <= set(assignment.artifact_paths)
+            or (omitted and (assignment.producer != "tracker" or omitted != {"stakeholder-model.md"}))
             or any(item.role != artifact_roles(assignment.producer)[item.path] for item in artifacts)):
         raise ValueError("discovery artifacts must match assigned paths and roles")
     bindings, ids = {}, set()
@@ -77,7 +83,8 @@ def build_discovery_changes(assignment, reply, *, reservations, artifacts, exist
             raise ValueError("invalid discovery reservation descriptor")
         text(item.key, "proposal key")
         text(item.operation_id, "reservation operation")
-        if type(item.element_id) is not str or not re.fullmatch(r"[UA]-[0-9]{6,}", item.element_id):
+        pattern = r"(?:UI|II)-[0-9]{6,}" if assignment.producer == "tracker" else r"[UA]-[0-9]{6,}"
+        if type(item.element_id) is not str or not re.fullmatch(pattern, item.element_id):
             raise ValueError("new discovery IDs require numeric six-digit-minimum labels")
         if not item.element_id.split("-", 1)[1].strip("0"):
             raise ValueError("discovery ordinals must be positive")
@@ -106,7 +113,7 @@ def build_discovery_changes(assignment, reply, *, reservations, artifacts, exist
             raise ValueError("revised discovery definition is missing")
         old_path, old = before[element_id]
         new_path, new = after[element_id]
-        if old_path != new_path or old.caption != new.caption:
+        if old_path != new_path or (assignment.producer != "tracker" and old.caption != new.caption):
             raise ValueError("existing discovery subject caption or path changed")
         subject = existing_subjects[element_id]
         text(subject, "existing subject")

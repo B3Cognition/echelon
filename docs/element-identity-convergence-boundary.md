@@ -1134,3 +1134,20 @@ Tracker, create a resolved clarification, retain Tracker rounds or publish answe
 Those remain approved work in the same plan, followed by WHY1/review-origin repair
 and the original renumbering/evidence acceptance. Default managed selection,
 provider abstraction, legacy managed-execution guards and installation are unchanged.
+
+### Tracker semantic/candidate contract (2026-09-15)
+
+The approved Tracker plan now includes its inactive version-3 reply contract.
+UI/II proposals and revisions feed the existing identity authority; exact labels,
+immutable subjects and historical evidence survive statement revisions. Required
+intent and optional stakeholder outputs are distinguished: absent optional output
+does not create an empty file or authorize deletion. Authored ALIGNED/DRIFT/
+STOP_AND_ASK metadata is bound into the review assignment; it grants no routing or
+automatic-answer authority. Discovery/Synthesis encodings remain unchanged.
+
+This is a Task 3 dependency for Task 2's real answer/re-entry acceptance, not a
+new capability beyond the approved plan. Execution remains closed. Retained
+Tracker rounds, exact routing through receipt/candidate/completion proof, native
+Modeler skip and guarded clarification publication remain pending. The two normal
+Tracker acceptance cases are still RED. See the existing plan for test evidence;
+no installation, migration, live-provider run or activation is claimed.

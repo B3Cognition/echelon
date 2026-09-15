@@ -15,14 +15,19 @@ DISCOVERY_ROLES = {
     "glossary.md": "glossary", "mental-model.md": "references",
     "boundaries.md": "references", "reference-architectures.md": "references",
 }
+TRACKER_OUTPUTS = {"user-intent.md": "intent", "stakeholder-model.md": "references"}
 _MAX_REPLY_BYTES = 256 * 1024
 
 
 def artifact_roles(producer):
     from harness.discovery_producer import producer_key
-    producer_key(producer, "operation")
+    # Semantic decoding is not producer selection. Tracker execution remains
+    # closed until its retained round/publication owners admit it separately.
+    if producer != "tracker":
+        producer_key(producer, "operation")
     return DISCOVERY_ROLES if producer == "discovery" else {
-        **DISCOVERY_ROLES, "contradictions-and-gaps.md": "references", "risks.md": "references"}
+        **DISCOVERY_ROLES, "contradictions-and-gaps.md": "references", "risks.md": "references",
+        **(TRACKER_OUTPUTS if producer == "tracker" else {})}
 
 
 def _plain(value):
@@ -32,10 +37,12 @@ def _plain(value):
     value.encode("utf-8")
 
 
-def _discovery_id(value):
+def _discovery_id(value, producer="discovery"):
     label(value)
-    if value.split("-", 1)[0] not in {"U", "A"}:
-        raise ValueError("discovery supports only U/A identities")
+    kinds = {"UI", "II"} if producer == "tracker" else {"U", "A"}
+    if value.split("-", 1)[0] not in kinds:
+        raise ValueError("Tracker supports only UI/II identities" if producer == "tracker"
+            else "discovery supports only U/A identities")
 
 
 def _object(value, fields):
@@ -55,6 +62,7 @@ class DiscoveryAssignment:
     editable_revisions: tuple[tuple[str, str], ...] = ()
     assigned_ids: tuple[str, ...] = ()
     producer: str = "discovery"
+    routing: tuple[tuple[str, str | None], ...] | None = None
 
     def identity(self) -> dict:
         for value in (self.operation_id, self.dispatch_id, self.spec_id, self.run_id):
@@ -67,25 +75,37 @@ class DiscoveryAssignment:
                 or any(type(path) is not str or path not in artifact_roles(self.producer) for path in self.artifact_paths)
                 or len(set(self.artifact_paths)) != len(self.artifact_paths)):
             raise ValueError("invalid discovery artifact selection")
+        if self.producer == "tracker" and ("user-intent.md" not in self.artifact_paths
+                or not set(self.artifact_paths) <= set(TRACKER_OUTPUTS)):
+            raise ValueError("Tracker can author only its assigned intent outputs")
         if type(self.editable_revisions) is not tuple or type(self.assigned_ids) is not tuple:
             raise ValueError("discovery selections must be immutable tuples")
         selected = []
         for pair in self.editable_revisions:
             if type(pair) is not tuple or len(pair) != 2:
                 raise ValueError("invalid editable revision")
-            _discovery_id(pair[0])
+            _discovery_id(pair[0], self.producer)
             revision(pair[1])
             selected.append(pair[0])
         for item in self.assigned_ids:
-            _discovery_id(item)
+            _discovery_id(item, self.producer)
         if len(set(selected)) != len(selected) or len(set(self.assigned_ids)) != len(self.assigned_ids):
             raise ValueError("duplicate discovery selection")
+        if self.producer == "tracker" and self.step == "review":
+            if (type(self.routing) is not tuple or len(self.routing) != 4
+                    or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
+                raise ValueError("Tracker review requires exact immutable routing")
+            _tracker_routing(dict(self.routing))
+        elif self.routing is not None:
+            raise ValueError("routing can be bound only to a Tracker review")
         result = dict(schema_version=1, operation_id=self.operation_id, dispatch_id=self.dispatch_id,
             spec_id=self.spec_id, run_id=self.run_id, step=self.step, input_fingerprint=self.input_fingerprint,
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
         if self.producer != "discovery":
-            result.update(schema_version=2, producer=self.producer)
+            result.update(schema_version=3 if self.producer == "tracker" else 2, producer=self.producer)
+        if self.routing is not None:
+            result["routing"] = dict(self.routing)
         return result
 
 
@@ -98,14 +118,15 @@ def _proposal(value, assignment):
         _object(item, ("key", "kind", "subject", "caption"))
         if type(item["key"]) is not str or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", item["key"]):
             raise ValueError("invalid discovery proposal handle")
-        if type(item["kind"]) is not str or item["kind"] not in {"U", "A"}:
+        if type(item["kind"]) is not str or item["kind"] not in (
+                {"UI", "II"} if assignment.producer == "tracker" else {"U", "A"}):
             raise ValueError("invalid discovery proposal kind")
         for field in ("subject", "caption"):
             _plain(item[field])
         keys.append(item["key"])
     for item in value["revisions"]:
         _object(item, ("id", "expected_revision"))
-        _discovery_id(item["id"])
+        _discovery_id(item["id"], assignment.producer)
         revision(item["expected_revision"])
         if allowed.get(item["id"]) != item["expected_revision"]:
             raise ValueError("revision is outside discovery assignment")
@@ -118,10 +139,33 @@ def _proposal(value, assignment):
 
 def _author(value, assignment):
     _object(value["artifacts"], assignment.artifact_paths)
-    for content in value["artifacts"].values():
+    for path, content in value["artifacts"].items():
+        if assignment.producer == "tracker" and path == "stakeholder-model.md" and content is None:
+            continue
         if type(content) is not str or "\x00" in content:
             raise ValueError("discovery artifact must be exact UTF-8 text without NUL")
         content.encode("utf-8")
+    if assignment.producer == "tracker":
+        if not value["artifacts"]["user-intent.md"].strip():
+            raise ValueError("Tracker requires nonblank intent output")
+        _tracker_routing(value["routing"])
+
+
+def _tracker_routing(value):
+    _object(value, ("verdict", "question", "recommended_answer", "risk_level"))
+    if type(value["verdict"]) is not str or value["verdict"] not in {"ALIGNED", "DRIFT", "STOP_AND_ASK"}:
+        raise ValueError("invalid Tracker routing verdict")
+    if value["verdict"] != "STOP_AND_ASK":
+        if any(value[key] is not None for key in ("question", "recommended_answer", "risk_level")):
+            raise ValueError("Tracker clarification metadata requires STOP_AND_ASK")
+        return
+    _plain(value["question"])
+    if value["recommended_answer"] is not None:
+        _plain(value["recommended_answer"])
+    risk = value["risk_level"]
+    if risk is not None and (type(risk) is not str or risk not in {"low", "medium", "high", "critical"}
+            or value["recommended_answer"] is None):
+        raise ValueError("Tracker risk requires a recommendation and a valid risk level")
 
 
 def _verdict(value):
@@ -137,7 +181,7 @@ def _review(value, assignment):
     ids = []
     for item in value["assessments"]:
         _object(item, ("id", "verdict", "reason", "evidence"))
-        _discovery_id(item["id"])
+        _discovery_id(item["id"], assignment.producer)
         _verdict(item["verdict"])
         _plain(item["reason"])
         if type(item["evidence"]) is not list or not item["evidence"]:
@@ -170,6 +214,8 @@ def validate_discovery_reply(value: object, assignment: DiscoveryAssignment) -> 
             raise ValueError("invalid discovery action")
         extra = {"new_subjects", "revisions"} if assignment.step == "propose" else (
             {"artifacts"} if assignment.step == "author" else {"verdict", "reason", "assessments"})
+        if assignment.producer == "tracker" and assignment.step == "author":
+            extra.add("routing")
         fields = extra if action == "final" else {"request"} if action == "read" else {"reason"}
         if action not in {"final", "read", "blocked"}:
             raise ValueError("invalid discovery action")

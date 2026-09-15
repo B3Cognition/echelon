@@ -56,6 +56,9 @@
 **Interfaces:** Keep existing discovery/synthesis reply encodings exact. Tracker adds its own closed assignment/reply contract: explicit intent routing verdict, optional stakeholder output, UI/II proposal/reservations and exact row authoring. Authenticated routing output must be included in candidate/reviewer/completion binding, never substituted with DONE. Managed selection admits `through_phase: phase1-tracker` only through the existing internal entry; defaults remain unchanged.
 
 - [x] Add initial normal-entry acceptance: both provider cases currently fail at `managed_discovery_selection_requires_reconciliation`, before any dispatch.
+- [x] Define the inactive Tracker semantic/candidate contract: exact version-3
+  assignment, UI/II claims through existing identity preview, optional stakeholder
+  absence and authored routing bound to review. Runtime wiring remains below.
 - [ ] Extend closed producer selection and native Modeler skip; preserve the workflow's Tracker output/verdict/human-input contracts.
 - [ ] Exercise required intent plus optional stakeholder output, UI/II creation/revision, preserved U/A evidence, ALIGNED/DRIFT continuation and STOP_AND_ASK through Task 2.
 - [ ] Verify both providers and all three autonomy modes, source tampering, semantic rejection, missing receipts, bounded retries and restart accounting.
@@ -156,3 +159,64 @@ Integration seams confirmed for the remaining Task 2 work:
 - Completion release/recovery must select the existing human-resolution receipt
   owner (`last_human_input_completion`), preserving `last_dispatch` as the parent
   Tracker result. A second controller/decision ledger is not needed.
+
+## Tracker semantic/candidate checkpoint
+
+The Task 2 answer/re-entry acceptance needs a real Tracker STOP_AND_ASK producer.
+The closed semantic portion of Task 3 is therefore implemented first, within the
+same approved design. This does not complete guarded publication or round retention.
+
+Tracker assignments use version 3; Discovery version 1 and Synthesis version 2
+remain exact. Only Tracker's required `user-intent.md` and optional
+`stakeholder-model.md` are writable. An absent stakeholder postimage is `null`,
+not an empty file, and cannot erase an existing stakeholder artifact. Descriptors
+omit a path only when both images are absent. New UI/II use the existing six-digit-
+minimum reservations with no maximum width. Revisions preserve exact legacy IDs,
+immutable registry subjects and historical evidence, while the table statement
+may evolve as revision content. The existing coherent identity preview remains
+the authority; these translators neither reserve nor publish identities.
+
+The author returns ALIGNED, DRIFT or STOP_AND_ASK with a closed routing object.
+STOP_AND_ASK requires a question; recommendation and risk remain optional and do
+not decide automatic eligibility. A review assignment includes the exact authored
+routing, so a reply for another verdict/question/recommendation/risk cannot match.
+No role prose, provider adapter, execution selector, state or receipt owner changes
+in this checkpoint. Legacy managed-execution exclusion stays closed.
+
+Remaining integration must carry this exact routing into candidate hashing,
+retained turn decoding, reviewer construction, publication and completion proof.
+Keep old encodings unchanged. Guard optional-file absence even though no write or
+candidate descriptor is emitted; writable/unowned scopes must contain only actual
+candidate paths. Add immutable per-round selection and receipt paths before
+enabling Tracker, extend historical readers to the exact retained round, then
+connect native Modeler skip and guarded human resolution through existing owners.
+Do not reinterpret the inactive decoder as permission to dispatch or publish.
+
+The new contract tests first failed at unsupported Tracker semantics (10 failed);
+review-routing binding first failed at the absent assignment field (3 failed).
+After implementation the focused contract/candidate/intent group passed:
+**189 passed in 3.91s** using:
+```sh
+python -m pytest tests/unit/test_tracker_candidate.py tests/unit/test_discovery_semantics.py tests/unit/test_discovery_candidate.py tests/unit/test_intent_identities.py -q --tb=short
+```
+The normal Tracker acceptance tests remain separately RED for both providers at
+the closed managed selection (2 failed in 0.82s), and remain uncommitted. This is
+not a passing Tracker run, completed Task 2/3 or activation evidence.
+
+Independent read-only review found no Critical/Important/Minor issues in this
+inactive checkpoint and independently reran the same 189 checks (3.70s).
+Existing turn, reservation, operation and managed-exclusion regressions:
+**223 passed in 56.01s** using:
+```sh
+python -m pytest tests/unit/test_discovery_turns.py tests/unit/test_discovery_reservations.py tests/unit/test_discovery_operation.py tests/unit/test_squad_identity_exclusion.py -q --tb=short
+```
+
+Existing normal Synthesis entry across Codex/Claude, guided/semi/banzai and both
+checkpoint settings: **12 passed, 27 deselected in 252.52s** using:
+```sh
+python -m pytest tests/unit/test_managed_synthesizer.py -k normal_entry_publishes -q --tb=short
+```
+These are 424 passing selected checks, not a full-suite or live-provider claim.
+`git diff --check` passed. Only the two semantic/candidate modules, passing new
+contract test file and the three existing convergence records belong to this
+local checkpoint; the pending normal Tracker acceptance file is excluded.
