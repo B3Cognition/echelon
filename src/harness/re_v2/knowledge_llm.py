@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 from copy import deepcopy
+from dataclasses import replace
 from typing import Callable
 
 import yaml
@@ -79,7 +80,11 @@ class KnowledgeLLMBackend:
         self._model = model
         self._screen_output = screen_output
         self._max_capture_bytes = max_capture_bytes
-        self._input_policy = deepcopy(config.llm.tool_policy)
+        self._input_policy = replace(
+            deepcopy(config.llm.tool_policy),
+            allow_unsafe_host_execution=False,
+            approval_reason=None,
+        )
         adapter_digest = content_digest({
             "schema_version": 1,
             "kind": "configured_knowledge_llm_adapter",

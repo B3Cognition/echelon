@@ -755,6 +755,11 @@ configure `harness.llm.cli` to select the concrete adapter:
 | `opencode` | Opencode CLI |
 | `openai-compatible` | Configured OpenAI-compatible HTTP endpoint |
 
+The OpenAI-compatible adapter supports artifact workflows and bounded RE
+knowledge generation. Its neutral `fast`, `balanced`, `strong`, and `ultra`
+tiers currently resolve to the single configured `harness.llm.model`; delivery
+build execution remains unsupported.
+
 Echelon starts Codex with user configuration ignored by default. Authentication
 and Codex sessions still work, but personal plugins and skills do not leak into
 Echelon agents. To deliberately restore the normal personal Codex environment,
