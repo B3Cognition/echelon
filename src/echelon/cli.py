@@ -17276,7 +17276,51 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         )
 
 
-def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tuple[str, ...]]:
+def _re_structural_source_observer(
+    workspace: Path, observations: list[object]
+):
+    """Build a visible bounded snapshot observer with validated cache reuse."""
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidencePolicyV1,
+        capture_structural_source,
+    )
+
+    policy = StructuralEvidencePolicyV1.defaults()
+    cache_root = workspace / "re" / ".cache" / "structural-v1"
+
+    def observe(source) -> None:
+        print(
+            f"[re] structure {source.source_id} · checking cache / bounded acquisition",
+            flush=True,
+        )
+        observation = capture_structural_source(
+            source,
+            workspace,
+            policy,
+            cache_root=cache_root,
+            progress=lambda provider, index_bytes: print(
+                f"[re] structure {source.source_id} · {provider} working · "
+                f"temporary index {index_bytes // (1024 * 1024)} MiB",
+                flush=True,
+            ),
+        )
+        observations.append(observation)
+        providers = " · ".join(
+            f"{provider.provider} {provider.status}"
+            for provider in observation.providers
+        )
+        mode = "reused" if observation.reused else "captured"
+        print(
+            f"[re] structure {source.source_id} · {mode} · {providers}",
+            flush=True,
+        )
+
+    return observe
+
+
+def _capture_re_knowledge_authority(
+    workspace: Path,
+) -> tuple[object, object, tuple[str, ...], tuple[object, ...]]:
     """Freeze all declared sources for one ordinary reviewed request."""
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
@@ -17285,17 +17329,21 @@ def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tu
     source_ids = tuple(sorted(source.id for source in manifest.sources))
     if not source_ids:
         raise ValueError("needs attention: the workspace declares no sources to analyze")
+    structural_observations: list[object] = []
     snapshot = capture_workspace_snapshot(
         workspace,
         manifest.sources,
         _re_v2_snapshot_root(workspace),
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
+        ),
     )
     partition = build_workspace_partition_catalog(
         snapshot,
         manifest,
         _re_v22_partition_authorities(),
     )
-    return snapshot, partition, source_ids
+    return snapshot, partition, source_ids, tuple(structural_observations)
 
 
 def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str], ...]:
@@ -17334,7 +17382,9 @@ def _create_or_resume_re_knowledge_analysis(
         if active is not None
         else None
     )
-    snapshot, partition, source_ids = _capture_re_knowledge_authority(workspace)
+    snapshot, partition, source_ids, structural_observations = (
+        _capture_re_knowledge_authority(workspace)
+    )
     if intent is not None and (
         intent.get("snapshot_id") != getattr(snapshot, "snapshot_id", None)
         or intent.get("workspace_partition_id") != getattr(partition, "identity", None)
@@ -17419,6 +17469,7 @@ def _create_or_resume_re_knowledge_analysis(
             source_depths=tuple(sorted(depths.items())),
             token_limit=token_limit,
             active_ms_limit=active_ms_limit,
+            structural_observations=structural_observations,
             config=config,
         ),
     )
@@ -17572,10 +17623,14 @@ def _run_re_knowledge_refresh_action(
     selected_roots = tuple(
         source for source in workspace_manifest.sources if source.id in set(selected)
     )
+    structural_observations: list[object] = []
     snapshot = capture_workspace_snapshot(
         workspace,
         selected_roots,
         _re_v2_snapshot_root(workspace),
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
+        ),
     )
     selected_manifest = replace(workspace_manifest, sources=selected_roots)
     partition = build_workspace_partition_catalog(
@@ -17684,6 +17739,7 @@ def _run_re_knowledge_refresh_action(
                 source_depths=tuple(sorted(depth_by_source.items())),
                 token_limit=analysis_token_limit,
                 active_ms_limit=analysis_active_ms_limit,
+                structural_observations=tuple(structural_observations),
                 config=config,
             ),
         )

@@ -37,6 +37,12 @@ NEVER infer complete coverage from a percentage, file list, entry point, summary
 ALWAYS check every claim for permitted evidence, exact scope, lower-authority consistency, and unsupported or contradictory conclusions.
 NEVER accept a citation merely because it exists or overlook uncited behavioral content within assigned primary evidence.
 
+ALWAYS use optional `structural_evidence` as independent navigation when checking
+relationships, but require every accepted claim to remain grounded in the permitted evidence anchors.
+NEVER accept structural navigation as source authority or infer absence from a
+missing, partial, unavailable, or truncated graph; structural incompleteness is
+not evidence of absence.
+
 ### Rule 6 - Behavioral Completeness
 ALWAYS assess applicable boundaries, failures, recovery, invariants, configuration, security, operations, and negative space for the category.
 NEVER issue PASS while required category behavior is missing, shallow, contradictory, or unresolved.

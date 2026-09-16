@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 CODEGRAPH_NODE_DIR="$ROOT/runtime/scripts/node/codegraph"
 PACKAGE_NAME='@colbymchenry/codegraph'
-EXPECTED_VERSION='1.4.1'
+EXPECTED_VERSION='1.6.0'
 
 npm ci --prefix "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund >/dev/null
 

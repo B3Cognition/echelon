@@ -38,7 +38,7 @@ esac
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOAR_VERSION="9.6.4"
-CODEGRAPH_CLI_VERSION="1.4.1"
+CODEGRAPH_CLI_VERSION="1.6.0"
 PROSAIC_GIT_SPEC="git+ssh://git@github.com/B3Cognition/prosaic.git#b6c9701"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"

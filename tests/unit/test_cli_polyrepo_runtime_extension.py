@@ -46,10 +46,10 @@ def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
     (runtime / "package.json").write_text('{"name":"codegraph"}\n', encoding="utf-8")
     (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
     (package / "package.json").write_text(
-        '{"name":"@colbymchenry/codegraph","version":"1.4.1","main":"index.js"}\n',
+        '{"name":"@colbymchenry/codegraph","version":"1.6.0","main":"index.js"}\n',
         encoding="utf-8",
     )
-    (package / "index.js").write_text("module.exports = { version: '1.4.1' };\n", encoding="utf-8")
+    (package / "index.js").write_text("module.exports = { version: '1.6.0' };\n", encoding="utf-8")
 
     harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)

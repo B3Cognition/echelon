@@ -175,6 +175,9 @@ async function buildIndex(repoPath, onProgress) {
     let cg;
     try {
         cg = await index_1.CodeGraph.init(repoPath, {
+            // init() indexes by default in CodeGraph 1.6.  The bridge owns the
+            // one explicit, cancellable indexing pass below.
+            index: false,
             onProgress: onProgress
                 ? (p) => {
                     onProgress(p.current ?? 0, p.total ?? 0);

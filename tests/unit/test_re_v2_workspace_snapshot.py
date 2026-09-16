@@ -320,6 +320,49 @@ def test_composite_capture_materializes_shared_repository_subtrees_once(
 
 
 @pytest.mark.unit
+def test_composite_capture_observes_only_temporary_pinned_source_tree(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    repository = _clean_repo(
+        workspace / "sources" / "api",
+        {"src/app.py": "def run():\n    return 1\n"},
+    )
+    observed: list[tuple[str, str, str]] = []
+
+    def observe(source: object) -> None:
+        source_root = Path(getattr(source, "source_root"))
+        assert source_root != repository.resolve()
+        assert (source_root / "src/app.py").read_text(encoding="utf-8").startswith(
+            "def run"
+        )
+        (source_root / ".codegraph").mkdir()
+        (source_root / ".codegraph/index.db").write_bytes(b"temporary")
+        observed.append(
+            (
+                str(getattr(source, "source_id")),
+                str(getattr(source, "commit")),
+                str(source_root),
+            )
+        )
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        (_source("api", "sources/api"),),
+        tmp_path / "snapshots",
+        source_observer=observe,
+    )
+
+    assert [(source_id, commit) for source_id, commit, _path in observed] == [
+        ("api", _git(repository, "rev-parse", "HEAD").strip())
+    ]
+    assert not (repository / ".codegraph").exists()
+    assert not (snapshot.read_root / "sources/api/.codegraph").exists()
+    assert all(not Path(path).exists() for _source, _commit, path in observed)
+    assert _git(repository, "status", "--porcelain") == ""
+
+
+@pytest.mark.unit
 def test_composite_capture_materializes_recursive_submodule_identity_and_bytes(
     tmp_path: Path,
 ) -> None:

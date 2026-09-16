@@ -79,6 +79,24 @@ def _codegraph(
     }
 
 
+def test_codegraph_current_release_is_accepted_without_dropping_legacy_support() -> None:
+    from echelon.topology_provider import load_provider_document
+
+    current = _codegraph()
+    current["tool_version"] = "1.6.0"
+
+    assert (
+        load_provider_document(current, provider="codegraph", source_id="source-a").tool_version
+        == "1.6.0"
+    )
+    assert (
+        load_provider_document(
+            _codegraph(), provider="codegraph", source_id="source-a"
+        ).tool_version
+        == "1.4.1"
+    )
+
+
 def _perlgraph(
     *,
     symbols: list[dict[str, object]] | None = None,

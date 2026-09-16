@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
+
 from .node_runtime import NodeRuntimeResolutionError, resolve_codegraph_bridge
 
 @dataclass(frozen=True)
@@ -144,7 +146,7 @@ def _analysis_is_usable(
         data.get("schema_version") != 2
         or data.get("version") != "2.0.0"
         or data.get("tool") != "codegraph"
-        or data.get("tool_version") != "1.4.1"
+        or data.get("tool_version") != CURRENT_CODEGRAPH_VERSION
         or data.get("provider_status") != "complete"
         or data.get("complete") is not True
     ):

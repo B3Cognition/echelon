@@ -49,7 +49,7 @@ def _write_complete_codegraph(runtime: Path) -> None:
     (runtime / "codegraph-bridge.js").write_text("bridge\n", encoding="utf-8")
     (runtime / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
     (runtime / "node_modules/@colbymchenry/codegraph/package.json").write_text(
-        '{"version":"1.4.1"}\n', encoding="utf-8"
+        '{"version":"1.6.0"}\n', encoding="utf-8"
     )
     (runtime / "package.json").write_text(
         json.dumps(
