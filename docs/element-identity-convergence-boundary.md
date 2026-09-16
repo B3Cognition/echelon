@@ -1618,3 +1618,29 @@ activation remain outside this milestone. No installation, live migration,
 provider spending, push or merge is authorized by this checkpoint. Performance
 optimization remains deferred with its preservation requirements recorded in the
 combined plan.
+
+### Initial managed Lexicon derivation checkpoint (2026-09-16)
+
+The explicit internal selection through `phase1-lexicon-derive` now authenticates
+an ordinary passing WHY2 completion, runs neutral Prosaic producer/reviewer roles,
+and publishes only `requirements.lexicon.md` plus the existing graph projection.
+The host supplies the exact captured source hash. The derived text is checked as
+reference-bearing evidence, not falsely certified as a valid Lexicon projection.
+No requirements, identities or identity revisions change.
+
+The existing round, receipt, publisher and checkpoint-completion owners retain
+selection, cumulative usage and restart behavior. Closed v28 proofs bind the
+single artifact, empty identity operations, unchanged history and exact routing;
+rehashing cannot authorize another parent, source writes or gate approval.
+Both scripted provider corridors passed, including zero-call restart at the
+intentional `phase1-lexicon` stop. Selected regressions passed 330 tests; the
+independent completion/publication/reservation run passed 156 overlapping tests.
+Independent review has no remaining findings for this initial slice. See the
+[ongoing plan](superpowers/plans/2026-09-16-managed-lexicon-checkpoint.md) for exact
+fresh/retained results and the source-metadata refinement.
+
+This is **not** the complete Lexicon/checkpoint milestone. Deterministic gate
+publication, grammar repair/exhaustion/no-progress integration, accepted-debt
+inputs and the native approval checkpoint remain unfinished and fail closed.
+Phase 2, installation, migration, public activation and live-provider acceptance
+remain outside this checkpoint. No push or merge was performed.

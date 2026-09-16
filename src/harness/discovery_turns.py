@@ -216,7 +216,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     "discovery-turns.json", "discovery-turns.lock", "discovery-reservations.json", "discovery-reservations.lock",
                     *(("synthesizer-turns.json", "synthesizer-turns.lock", "synthesizer-reservations.json", "synthesizer-reservations.lock")
                         if producer == "synthesizer" else ())))
-            if producer in {"tracker", "why1", "constitution", "what", "why2"} or repair_unit is not None:
+            if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon"} or repair_unit is not None:
                 denied += (state_store.squad_dir,)
             binding = dict(contract="discovery-inspection-v1", bootstrap=selected, authority=observed,
                 roles={name: asdict(role) for name, role in roles.items()},
@@ -365,7 +365,7 @@ def read_discovery_usage(state_store, producer="discovery", *, repair_unit=None)
         # Once selected, resolve the active namespace even if its marker is null.
         round_id = None
         from harness.discovery_constitution import constitution_source
-        if (producer in {"tracker", "why1", "what", "why2"}
+        if (producer in {"tracker", "why1", "what", "why2", "lexicon"}
                 or (producer == "synthesizer" and synthesis_source(state) is not None)
                 or (producer == "constitution" and constitution_source(state) is not None)):
             round_id = receipt_round_operation_id(producer, producer_operation_id(state, producer))

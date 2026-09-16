@@ -22,6 +22,11 @@ _MAX_REPLY_BYTES = 256 * 1024
 
 def artifact_roles(producer):
     from harness.discovery_producer import producer_key
+    if producer == "lexicon":
+        from harness.discovery_lexicon import LEXICON_OUTPUT
+        # Derivation is an uncertified reference-bearing artifact. Only the
+        # provider-free gate may accept its explicit source projection.
+        return {**artifact_roles("what"), LEXICON_OUTPUT: "references"}
     if producer in {"what", "why2"}:
         from harness.discovery_spec import WHAT_OUTPUTS, WHY2_OUTPUTS
         return {**artifact_roles("constitution"), **WHAT_OUTPUTS, **WHY2_OUTPUTS}
@@ -40,7 +45,7 @@ def artifact_roles(producer):
 def identity_kinds(producer):
     if producer in {"what", "why2"}:
         return {"FR", "NFR", "AC"} if producer == "what" else {"ISS"}
-    if producer == "constitution":
+    if producer in {"constitution", "lexicon"}:
         return set()
     if producer == "why1":
         return {"U", "ISS"}
@@ -116,6 +121,10 @@ class DiscoveryAssignment:
         if self.producer == "constitution" and (self.artifact_paths != ("constitution.md",)
                 or self.editable_revisions or self.assigned_ids):
             raise ValueError("Constitution has one shared artifact and no identity scope")
+        if self.producer == "lexicon":
+            from harness.discovery_lexicon import LEXICON_OUTPUT
+            if self.artifact_paths != (LEXICON_OUTPUT,) or self.editable_revisions or self.assigned_ids:
+                raise ValueError("derivation has one output and no identity edit authority")
         if self.producer in {"what", "why2"}:
             from harness.discovery_spec import WHAT_OUTPUTS, WHY2_OUTPUTS
             if set(self.artifact_paths) != set(WHAT_OUTPUTS if self.producer == "what" else WHY2_OUTPUTS):
@@ -140,6 +149,12 @@ class DiscoveryAssignment:
                     or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
                 raise ValueError("Tracker review requires exact immutable routing")
             _tracker_routing(dict(self.routing), self.producer)
+        elif self.producer == "lexicon" and self.step == "review":
+            from harness.discovery_lexicon import validate_lexicon_routing
+            if (type(self.routing) is not tuple or len(self.routing) != 2
+                    or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
+                raise ValueError("derivation review requires exact routing")
+            validate_lexicon_routing(dict(self.routing))
         elif self.producer in {"what", "why2"} and self.step == "review":
             from harness.discovery_spec import validate_spec_routing
             if (type(self.routing) is not tuple or len(self.routing) != 2
@@ -153,7 +168,7 @@ class DiscoveryAssignment:
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
         if self.producer != "discovery":
-            result.update(schema_version=7 if self.producer == "why2" else 6 if self.producer == "what" else 5 if self.producer == "constitution" else 4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
+            result.update(schema_version=8 if self.producer == "lexicon" else 7 if self.producer == "why2" else 6 if self.producer == "what" else 5 if self.producer == "constitution" else 4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
         if self.routing is not None:
             result["routing"] = deepcopy(dict(self.routing))
         return result
@@ -204,6 +219,10 @@ def _author(value, assignment):
     if assignment.producer in {"what", "why2"}:
         from harness.discovery_spec import validate_spec_routing
         validate_spec_routing(value["routing"], assignment.producer)
+    if assignment.producer == "lexicon":
+        from harness.discovery_lexicon import validate_lexicon_artifacts, validate_lexicon_routing
+        validate_lexicon_artifacts(value["artifacts"])
+        validate_lexicon_routing(value["routing"])
 
 
 def _tracker_routing(value, producer="tracker"):
@@ -270,7 +289,7 @@ def validate_discovery_reply(value: object, assignment: DiscoveryAssignment) -> 
             raise ValueError("invalid discovery action")
         extra = {"new_subjects", "revisions"} if assignment.step == "propose" else (
             {"artifacts"} if assignment.step == "author" else {"verdict", "reason", "assessments"})
-        if assignment.producer in {"tracker", "why1", "what", "why2"} and assignment.step == "author":
+        if assignment.producer in {"tracker", "why1", "what", "why2", "lexicon"} and assignment.step == "author":
             extra.add("routing")
         fields = extra if action == "final" else {"request"} if action == "read" else {"reason"}
         if action not in {"final", "read", "blocked"}:
@@ -294,9 +313,9 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
             raise ValueError("invalid saved discovery assignment")
         fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
             "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-        if value["schema_version"] in {2, 3, 4, 5, 6, 7}:
+        if value["schema_version"] in {2, 3, 4, 5, 6, 7, 8}:
             fields.add("producer")
-        if value["schema_version"] in {3, 4, 6, 7} and value.get("step") == "review":
+        if value["schema_version"] in {3, 4, 6, 7, 8} and value.get("step") == "review":
             fields.add("routing")
         _object(value, fields)
         if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
@@ -304,7 +323,10 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
         if any(type(pair) is not list or len(pair) != 2 for pair in value["editable_revisions"]):
             raise ValueError("invalid saved editable revision")
         if "routing" in value:
-            if value.get("producer") in {"what", "why2"}:
+            if value.get("producer") == "lexicon":
+                from harness.discovery_lexicon import validate_lexicon_routing
+                validate_lexicon_routing(value["routing"])
+            elif value.get("producer") in {"what", "why2"}:
                 from harness.discovery_spec import validate_spec_routing
                 validate_spec_routing(value["routing"], value["producer"])
             else:

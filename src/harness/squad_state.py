@@ -2326,6 +2326,7 @@ class SquadStateStore:
         _tracker_from_state(value, "synthesizer")
         _tracker_from_state(value, "what")
         _tracker_from_state(value, "why2")
+        _tracker_from_state(value, "lexicon")
         return value
 
     def load(self) -> dict:
@@ -2470,6 +2471,7 @@ class SquadStateStore:
         synthesis_round_update: str | None = None,
         what_update: str | None = None,
         why2_update: str | None = None,
+        lexicon_update: str | None = None,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
@@ -2483,6 +2485,7 @@ class SquadStateStore:
         _tracker_from_state(state, "synthesizer")
         _tracker_from_state(state, "what")
         _tracker_from_state(state, "why2")
+        _tracker_from_state(state, "lexicon")
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2544,7 +2547,8 @@ class SquadStateStore:
                 raise StateAdvanceError("synthesis state requires its owning transition",
                     json_path="$.managed_synthesizer_" + component, validator="synthesizer") from None
         for round_producer, update in (("tracker", tracker_update), ("why1", why1_update), ("synthesizer", synthesis_round_update),
-                ("constitution", constitution_round_update), ("what", what_update), ("why2", why2_update)):
+                ("constitution", constitution_round_update), ("what", what_update), ("why2", why2_update),
+                ("lexicon", lexicon_update)):
             old_rounds = _tracker_from_state(current_state, round_producer)
             new_rounds = _tracker_from_state(next_state, round_producer)
             if old_rounds != new_rounds:
@@ -2728,7 +2732,7 @@ class SquadStateStore:
                 _discovery_turns_from_state(desired)
             elif producer == "constitution":
                 _constitution_from_state(desired)
-            elif producer in {"tracker", "why1", "what", "why2"} or synthesis_round:
+            elif producer in {"tracker", "why1", "what", "why2", "lexicon"} or synthesis_round:
                 _tracker_from_state(desired, producer)
             else:
                 _synthesis_from_state(desired)
@@ -2743,7 +2747,8 @@ class SquadStateStore:
                 tracker_update="turns" if producer == "tracker" else None,
                 why1_update="turns" if producer == "why1" else None,
                 what_update="turns" if producer == "what" else None,
-                why2_update="turns" if producer == "why2" else None)
+                why2_update="turns" if producer == "why2" else None,
+                lexicon_update="turns" if producer == "lexicon" else None)
             return self._confirm_durable_state_unlocked(written)
 
     def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery", repair_unit=None) -> dict:
@@ -2774,19 +2779,20 @@ class SquadStateStore:
                 tracker_update="operation" if producer == "tracker" else None,
                 why1_update="operation" if producer == "why1" else None,
                 what_update="operation" if producer == "what" else None,
-                why2_update="operation" if producer == "why2" else None)
+                why2_update="operation" if producer == "why2" else None,
+                lexicon_update="operation" if producer == "lexicon" else None)
             return self._confirm_durable_state_unlocked(written)
 
     def prepare_spec_round(self, producer, source, *, expected_state):
         """Select after caller-authenticated native parent release, under full CAS."""
-        if producer not in {"what", "why2"}:
+        if producer not in {"what", "why2", "lexicon"}:
             raise StateAdvanceError("invalid specification producer", validator="spec_round")
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             dispatch = current.get("last_dispatch") or {}
             resolution = None
             decision, receipt = current.get("blocked_decision") or {}, current.get("last_human_input_completion")
-            if (dispatch.get("phase_id") == "phase1-why2"
+            if (producer in {"what", "why2"} and dispatch.get("phase_id") == "phase1-why2"
                     and decision.get("status") == "resolved" and decision.get("source_phase") == "phase1-why2"
                     and (decision.get("resolution_handler") == "clarification_resume" or (
                         producer == "what" and decision.get("resolution_handler") == "proportional_quality_debt"
@@ -2799,9 +2805,14 @@ class SquadStateStore:
                 if source == clarification_source(receipt):
                     resolution = dict(decision=validate_blocked_decision(decision), completion=deepcopy(receipt))
             parents = {"phase1-constitution", "phase1-why2"} if producer == "what" else {"phase1-understanding"}
+            if producer == "lexicon":
+                retained = _tracker_from_state(current, producer)
+                selected = None if retained is None else retained["rounds"].get("lexicon-" + source.get("dispatch_id", ""))
+                initial = retained is None or (selected is not None and selected["predecessor"] is None)
+                parents = {"phase1-why2"} if initial else {"phase1-lexicon"}
             if resolution is not None:
                 parents = {"phase1-why2"}
-            if (current != expected_state or current.get("phase") != "phase1-" + producer
+            if (current != expected_state or current.get("phase") != producer_phase(producer)
                     or current.get("status") != "running" or current.get("cancel_requested")
                     or dispatch.get("phase_id") not in parents or dispatch.get("post_dispatch_complete") is not True
                     or (resolution is None and source != {field: dispatch.get(field) for field in SOURCE_FIELDS})
@@ -2832,7 +2843,8 @@ class SquadStateStore:
             _tracker_from_state(desired, producer)
             return self._confirm_durable_state_unlocked(self._save_unlocked(desired,
                 what_update="select" if producer == "what" else None,
-                why2_update="select" if producer == "why2" else None))
+                why2_update="select" if producer == "why2" else None,
+                lexicon_update="select" if producer == "lexicon" else None))
 
     def prepare_why1_round(self, source: dict) -> dict:
         return self.prepare_tracker_round(source, producer="why1")

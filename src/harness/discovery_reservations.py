@@ -45,9 +45,9 @@ def _pairs(pairs):
 def _assignment(value):
     fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
               "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-    if value.get("schema_version") in {2, 3, 4, 5, 6, 7}:
+    if value.get("schema_version") in {2, 3, 4, 5, 6, 7, 8}:
         fields.add("producer")
-    if value.get("schema_version") in {3, 4, 6, 7} and value.get("step") == "review":
+    if value.get("schema_version") in {3, 4, 6, 7, 8} and value.get("step") == "review":
         fields.add("routing")
     identity = {key: value[key] for key in fields if key in value}
     return decode_discovery_assignment(identity)

@@ -171,9 +171,9 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         if binding["operation_id"].startswith("constitution-refresh-"):
             row = tracker_round(state, binding["operation_id"], producer=producer)
             recovery_fields.update(version=16, predecessor=row["predecessor"])
-    if producer in {"what", "why2"}:
+    if producer in {"what", "why2", "lexicon"}:
         row = tracker_round(state, producer=producer)
-        recovery_fields.update(version=13 if producer == "what" else 15, producer=producer, source_completion=row["source"],
+        recovery_fields.update(version=28 if producer == "lexicon" else 13 if producer == "what" else 15, producer=producer, source_completion=row["source"],
             resolution=row["resolution"], predecessor=row["predecessor"])
         if producer == "what" and "constitution_parent" in row:
             recovery_fields.update(version=17, constitution_parent=row["constitution_parent"])
