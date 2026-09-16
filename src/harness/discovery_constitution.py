@@ -34,6 +34,15 @@ def validate_constitution_candidate(text, before):
         raise ValueError("Constitution creation cannot amend existing shared policy")
 
 
+def constitution_input_source(state, operation_id=None):
+    """Select current input without moving the retained original source."""
+    from harness.discovery_producer import producer_operation_id, tracker_round
+    selected = producer_operation_id(state, "constitution", operation_id)
+    if selected.startswith("constitution-refresh-"):
+        return dict(tracker_round(state, selected, producer="constitution")["source"])
+    return constitution_source(state)
+
+
 def publication_target(producer, spec_path, name):
     if producer == "constitution":
         if name != "constitution.md":
@@ -50,3 +59,41 @@ def require_constitution_parent(root, run, state, source):
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase1-why1", "phase1-constitution"))
     _require(binding.producer == "why1" and not binding.clarification)
+    original = constitution_source(state)
+    if original is not None and source != original:
+        require_refreshed_why1(root, run, state, binding, IdentityStore.open(root))
+
+
+def tracker_predecessor(state, binding):
+    from harness.discovery_producer import tracker_round
+    return tracker_round(state, binding.recovery["operation"]["binding"]["operation_id"], producer="why1")["predecessor"]
+
+
+def require_refreshed_why1(root, run, state, binding, store):
+    """A refresh may ask questions; prove each exact native answer successor."""
+    from harness.discovery_completion import _retained_input_projection, _require
+    from harness.discovery_spec import clarification_source
+    seen = set()
+    while True:
+        _require(binding.producer == "why1" and not binding.clarification)
+        if binding.recovery["version"] == 11:
+            return
+        _require(binding.recovery["version"] == 6 and binding.recovery.get("resolution") is not None)
+        operation = binding.recovery["operation"]["binding"]["operation_id"]
+        _require(operation not in seen)
+        seen.add(operation)
+        association = binding.recovery["resolution"]
+        source = clarification_source(association["completion"])
+        _require(binding.recovery["source_completion"] == source)
+        predecessor = tracker_predecessor(state, binding)
+        answer, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False, required_origin="resolution", required_route=("phase1-why1", "phase1-why1"))
+        _require(answer.producer == "why1" and answer.clarification
+            and answer.recovery["resolution"] == association["decision"]
+            and answer.recovery["operation"]["binding"]["operation_id"] == predecessor)
+        source = answer.recovery["source_completion"]
+        binding, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False, required_route=("phase1-why1", "phase1-why1"))
+        _require(binding.recovery["operation"]["binding"]["operation_id"] == predecessor)

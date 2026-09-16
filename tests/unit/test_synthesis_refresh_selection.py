@@ -75,6 +75,36 @@ def test_explicit_selection_cannot_fall_back_to_original(retained, operation_id)
     with pytest.raises(ValueError): producer_component(state, "synthesizer", "operation", operation_id=operation_id)
 
 
+@pytest.mark.parametrize("origin", ["why1", "why2"])
+@pytest.mark.parametrize("producer", ["synthesizer", "tracker", "why1"])
+def test_refresh_distinguishes_requesting_review_from_prior_producer(retained, origin, producer):
+    from harness.discovery_producer import validate_refresh_round
+    from tests.unit.test_why1_tracker_parent import row, source
+    state, original, refresh = retained
+    selected = deepcopy(state["managed_synthesizer_rounds"]["rounds"][refresh])
+    unit = selected["refresh"]["repair_unit"]
+    repair = state["managed_discovery_repairs"]["units"][unit]
+    repair["selection"]["origin"]["return_phase"] = "phase1-" + origin
+    repair["execution"]["binding"]["intent"]["origin"] = deepcopy(repair["selection"]["origin"])
+    if producer != "synthesizer":
+        digit = "c" if producer == "why1" and origin == "why1" else "d"
+        predecessor = producer + "-" + digit * 32
+        state["managed_" + producer + "_rounds"] = dict(schema_version=1, active=predecessor,
+            rounds={predecessor: row(digit, producer)})
+        selected["predecessor"] = predecessor
+        selected["refresh"]["predecessor_source"] = source(digit)
+    before = deepcopy(state)
+    validate_refresh_round(state, producer, selected)
+    assert state == before
+    repair["selection"]["origin"]["review_id"] = "f" * 32
+    with pytest.raises(ValueError):
+        validate_refresh_round(state, producer, selected)
+    repair["selection"]["origin"]["review_id"] = repair["selection"]["source"]["dispatch_id"]
+    repair["selection"]["origin"]["return_phase"] = "phase3-consensus"
+    with pytest.raises(ValueError):
+        validate_refresh_round(state, producer, selected)
+
+
 def test_original_selection_without_refresh_is_unchanged(retained):
     from harness.discovery_producer import producer_operation_id, producer_component
     state, original, _ = retained

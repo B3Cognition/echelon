@@ -44,7 +44,7 @@ def validate_binding(state, binding, producer="discovery", *, operation_id=None,
     if len(set(unowned)) != len(unowned) or not set(unowned) <= set(binding["artifact_paths"]):
         raise ValueError("invalid discovery unowned scope")
     intent = binding["intent"]
-    if (type(intent) is not dict or intent.get("kind") not in ({"create", "repair"} if producer == "discovery" else {"constitute"} if producer == "constitution" else {"challenge"} if producer == "why1" else {"track"} if producer == "tracker" else {"synthesize"})
+    if (type(intent) is not dict or intent.get("kind") not in ({"specify"} if producer == "what" else {"validate"} if producer == "why2" else {"create", "repair"} if producer == "discovery" else {"constitute"} if producer == "constitution" else {"challenge"} if producer == "why1" else {"track"} if producer == "tracker" else {"synthesize"})
             or type(intent.get("request")) is not str or not intent["request"].strip()
             or (intent["kind"] == "repair" and (not intent.get("origin") or not intent.get("findings")))):
         raise ValueError("discovery requires an explicit bound origin")

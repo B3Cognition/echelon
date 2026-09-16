@@ -270,9 +270,9 @@ class IdentityStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = _validate(connection, marker, allow_old=True)
-                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6"},
-                           publication_state=version in {"4", "5", "6"}, source_state=version in {"5", "6"},
-                           managed_state=version == "6")
+                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6", "7", "8"},
+                           publication_state=version in {"4", "5", "6", "7", "8"}, source_state=version in {"5", "6", "7", "8"},
+                           managed_state=version in {"6", "7", "8"})
                 if version != schema.SCHEMA_VERSION:
                     schema.upgrade(connection)
                 _validate(connection, marker)
@@ -502,6 +502,14 @@ class IdentityStore:
         if row["status"] == "active":
             if row["reason"] is not None:
                 raise IdentityStoreError("active revision contains a terminal reason")
+            from harness import element_identity_membership_store as membership
+            previous_revision = _decimal(_integer(revision) - 1)
+            if membership.current(connection, spec_id, element_id, previous_revision) is False:
+                restoration = connection.execute(
+                    "SELECT present,operation_id FROM snapshot_memberships "
+                    "WHERE spec_id=? AND element_id=? AND revision=?", (spec_id, element_id, revision)).fetchone()
+                if restoration is None or tuple(restoration) != (1, row["operation_id"]):
+                    raise IdentityStoreError("active revision after absence lacks explicit restoration")
         else:
             lifecycle.text(row["reason"], "terminal reason")
             previous = connection.execute(
@@ -538,7 +546,12 @@ class IdentityStore:
         revision = cls._revision(connection, spec_id, element_id, head["revision"])
         if revision is None or revision["status"] != head["status"]:
             raise IdentityStoreError("head and revision status bindings disagree")
-        return dict(entity) | {key: revision[key] for key in ("status", "revision", "content", "content_sha256")}
+        from harness import element_identity_membership_store as membership
+        result = dict(entity) | {key: revision[key] for key in ("status", "revision", "content", "content_sha256")}
+        present = membership.current(connection, spec_id, element_id)
+        if present is not None:
+            result["present"] = present
+        return result
 
     @_public
     def read_revision(self, *, spec_id: str, element_id: str, revision: str) -> dict | None:
@@ -597,7 +610,8 @@ class IdentityStore:
             raise IdentityStoreError("invalid lifecycle receipt")
         for entry in receipt:
             if (not isinstance(entry, dict)
-                    or set(entry) != {"element_id", "revision", "status", "lineage"}):
+                    or set(entry) not in ({"element_id", "revision", "status", "lineage"},
+                                         {"element_id", "revision", "status", "lineage", "snapshot_membership"})):
                 raise IdentityStoreError("invalid lifecycle receipt entry")
             label = entry["element_id"]
             cls._head(connection, spec_id, label)
@@ -607,6 +621,8 @@ class IdentityStore:
             if (revision is None or revision["operation_id"] != operation_id
                     or revision["status"] != entry["status"] or links != entry["lineage"]):
                 raise IdentityStoreError("lifecycle receipt bindings are inconsistent")
+        from harness import element_identity_membership_store as membership
+        membership.validate_receipt(connection, cls, spec_id, operation_id, receipt)
         return tuple(receipt)
 
     @classmethod
@@ -630,12 +646,14 @@ class IdentityStore:
 
     @classmethod
     def _existing_change(cls, connection, spec_id, label, expected, *, subject=None, content=None,
-                         status="active", reason=None, adopt=False):
+                         status="active", reason=None, adopt=False, membership=False):
         head = cls._head(connection, spec_id, label)
         if head is None or head["status"] != ("imported" if adopt else "active"):
             raise IdentityStoreError("entity is not in the required lifecycle state")
         if head["revision"] != expected:
             raise IdentityStoreError("stale expected_revision")
+        if head.get("present") is False and status == "active" and not membership:
+            raise IdentityStoreError("absent entity requires explicit snapshot restoration")
         if subject is not None and subject != head["subject"]:
             raise IdentityStoreError("revision cannot change immutable subject")
         revision = "1" if adopt else _decimal(_integer(expected) + 1)
@@ -657,6 +675,9 @@ class IdentityStore:
                           changes: Sequence[lifecycle.LifecycleChange]) -> tuple[dict, ...]:
         """Project validated lifecycle heads from one read snapshot without writes."""
         _identifier(spec_id, "spec_id")
+        changes = lifecycle.request(changes)[0]
+        memberships = {change.element_id: change.present for change in changes
+                       if type(change) is lifecycle.ElementSnapshotMembership}
         with self._transaction() as connection:
             planned, _ = lifecycle_store.plan_changes(connection, self, spec_id, changes)
             result = []
@@ -672,6 +693,10 @@ class IdentityStore:
                     "revision": revision,
                     "status": status,
                 })
+                if label in memberships:
+                    result[-1]["present"] = memberships[label]
+                elif head is not None and "present" in head:
+                    result[-1]["present"] = head["present"]
             return tuple(result)
 
     @_public
@@ -944,7 +969,9 @@ class IdentityStore:
             return capture(connection, self, spec_id)
 
     def preview_identity_history(self, *, spec_id: str,
-                                 operations: tuple[PublicationOperation, ...] = ()) -> IdentityHistorySnapshot:
+                                 operations: tuple[PublicationOperation, ...] = (),
+                                 publication_id: str | None = None,
+                                 continuation_request: PublicationIntentRequest | None = None) -> IdentityHistorySnapshot:
         """Observe exact proposed materialized history for new, unclaimed operations."""
         from harness.element_identity_publication import validated_operations
         from harness.element_identity_snapshot_preview import preview
@@ -954,7 +981,8 @@ class IdentityStore:
             operations = validated_operations(operations)
             with self._transaction() as connection:
                 connection.execute("PRAGMA query_only=ON")
-                return preview(connection, self, spec_id, operations)
+                return preview(connection, self, spec_id, operations,
+                               publication_id=publication_id, continuation_request=continuation_request)
         except Exception:
             pass
         raise IdentityStoreError("invalid proposed identity history authority or request")
@@ -968,6 +996,7 @@ class IdentityStore:
             "reference_claims", "issue_occurrences", "binding_receipts",
             "publication_intents", "publication_operation_claims",
             "source_contexts", "source_publications", "managed_identity_specs",
+            "snapshot_memberships",
         )
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
@@ -1050,6 +1079,8 @@ class IdentityStore:
                 cls._lineage(connection, *row)
             for row in connection.execute("SELECT operation_id,spec_id FROM operations WHERE method='lifecycle'"):
                 cls._receipt(connection, *row)
+            from harness import element_identity_membership_store as membership
+            membership.audit(connection, cls)
         if binding_state:
             binding_store.audit(connection, cls)
         if publication_state:
@@ -1151,9 +1182,9 @@ class IdentityStore:
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6"},
-                       publication_state=version in {"4", "5", "6"}, source_state=version in {"5", "6"},
-                       managed_state=version == "6")
+            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6", "7", "8"},
+                       publication_state=version in {"4", "5", "6", "7", "8"}, source_state=version in {"5", "6", "7", "8"},
+                       managed_state=version in {"6", "7", "8"})
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")

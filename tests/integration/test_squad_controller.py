@@ -11125,10 +11125,47 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert "spec_quality_debt_authorization" not in blocked
         assert not (spec_dir / "quality-debt.json").exists()
 
+    @pytest.mark.parametrize("restoration_hooks", [False, True, "before-crash", "after-crash"])
     def test_initial_assessment_and_three_changed_repairs_restore_best_candidate(
         self,
         tmp_path: Path,
+        monkeypatch,
+        restoration_hooks,
     ) -> None:
+        observed = []
+        interrupted = False
+        if restoration_hooks:
+            import harness.squad as squad_module
+            native_effect = squad_module.apply_or_verify_proportional_quality_effect
+            def coordinated_effect(effect, **kwargs):
+                if effect.get("restore_candidate_id") is not None:
+                    root = kwargs["project_root"]
+                    def before_restore(plan, selected):
+                        nonlocal interrupted
+                        assert plan.selected_candidate_id == selected.snapshot.manifest.candidate_id
+                        assert all(hashlib.sha256((root / entry.path).read_bytes()).hexdigest() in {entry.base_sha256, entry.target_sha256}
+                            for entry in plan.entries)
+                        observed.append(("before", plan))
+                        if restoration_hooks == "before-crash" and not interrupted:
+                            interrupted = True
+                            raise KeyboardInterrupt("completion join interrupted")
+                    def after_restore(plan, selected, receipt):
+                        nonlocal interrupted
+                        assert observed[-1] == ("before", plan)
+                        assert receipt["target_commit"] == plan.target_commit
+                        assert all(hashlib.sha256((root / entry.path).read_bytes()).hexdigest() == entry.target_sha256
+                            for entry in plan.entries)
+                        observed.append(("after", plan))
+                        if restoration_hooks == "after-crash" and not interrupted:
+                            interrupted = True
+                            raise KeyboardInterrupt("completion join interrupted")
+                    kwargs.update(before_restore=before_restore, after_restore=after_restore)
+                try:
+                    return native_effect(effect, **kwargs)
+                except KeyboardInterrupt:
+                    assert interrupted
+                    return native_effect(effect, **kwargs)
+            monkeypatch.setattr(squad_module, "apply_or_verify_proportional_quality_effect", coordinated_effect)
         ctrl, store = _start_proportional_quality_loop(tmp_path)
         retained_candidate = PROPORTIONAL_HELLO_WORLD_FIXTURE.read_text(
             encoding="utf-8"
@@ -11275,6 +11312,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert (tmp_path / "runs/run-test/specs/001-demo/spec.md").read_text(
             encoding="utf-8"
         ) == retained_candidate
+        expected_hooks = [] if not restoration_hooks else ["before", "after"]
+        if restoration_hooks == "before-crash": expected_hooks = ["before", *expected_hooks]
+        if restoration_hooks == "after-crash": expected_hooks *= 2
+        assert [stage for stage, _ in observed] == expected_hooks
+        assert len({plan.target_commit for _, plan in observed}) == (1 if restoration_hooks else 0)
 
     def test_valid_unchanged_automatic_what_opens_no_progress_decision(
         self,

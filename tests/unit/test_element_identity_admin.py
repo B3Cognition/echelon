@@ -104,7 +104,7 @@ def test_audit_reports_exact_authority_without_mutation(tmp_path):
         "report_version", "authority", "database_schema_version", "table_counts",
     }
     assert result["report_version"] == 1
-    assert result["database_schema_version"] == "6"
+    assert result["database_schema_version"] == "8"
     marker = json.loads((tmp_path / ".echelon/identity/authority.json").read_text())
     assert result["authority"] == marker
     assert result["table_counts"]["entities"] == "1"
@@ -146,6 +146,7 @@ def test_audit_uses_one_query_only_transaction_and_returns_detached_report(tmp_p
         "source_contexts": "0",
         "source_publications": "0",
         "managed_identity_specs": "0",
+        "snapshot_memberships": "0",
     }
     report["authority"]["epoch_uuid"] = "changed"
     report["table_counts"]["entities"] = "999"

@@ -8,10 +8,19 @@ from harness import element_identity_publication_store as publication_store
 from harness.element_identity_snapshot import capture, canonical_snapshot
 
 
-def preview(connection, store, spec_id, operations):
+def preview(connection, store, spec_id, operations, *, publication_id=None, continuation_request=None):
     """Overlay shared planned rows on the fully audited caller snapshot."""
     publication_store._require(connection, spec_id)
-    if connection.execute(publication_store._PENDING, (spec_id,)).fetchone():
+    if publication_id is not None or continuation_request is not None:
+        from harness.element_identity_publication import encode_publication_request, decode_publication_request
+        from harness.element_identity_continuation_store import prepare_parent
+        from harness.element_identity_lifecycle import text
+        text(publication_id, "publication_id")
+        request = decode_publication_request(encode_publication_request(continuation_request))
+        if request.continuation is None or request.operations != operations:
+            raise ValueError("preview operations differ from continuation request")
+        prepare_parent(connection, store, spec_id, publication_id, request)
+    elif connection.execute(publication_store._PENDING, (spec_id,)).fetchone():
         raise ValueError("spec has a pending identity publication")
     children = publication_store.operation_children(operations, spec_id)
     publication_store.require_new_children(connection, children)
@@ -38,6 +47,9 @@ def _overlay(retained, spec_id, children, plan):
                     spec_id, operation.operation_id, planned))
             value["lineage"].extend(lifecycle_store.lineage_row(operation.operation_id, link)
                                     for link in plan["lineage"])
+            if plan.get("snapshot_memberships"):
+                value["version"] = "2"
+                value.setdefault("snapshot_memberships", []).extend(plan["snapshot_memberships"])
         else:
             value[operation.method].extend(binding_store.materialized_row(
                 spec_id, operation.operation_id, index, payload, operation.method)

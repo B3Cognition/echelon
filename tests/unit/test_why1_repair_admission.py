@@ -93,6 +93,75 @@ def test_scope_uses_exact_occurrence_and_reviewed_target_without_widening(findin
     assert store.identity_history(spec_id="game") == before
 
 
+@pytest.mark.parametrize("producer,damage", [(producer, damage) for producer in ("why1", "why2")
+    for damage in (None, "origin", "accepted_review", "verdict", "findings")] + [("why2", "runtime")])
+def test_repair_replay_binds_exact_requesting_review(finding, producer, damage):
+    """The enclosing completion authenticates these captured images first."""
+    from types import SimpleNamespace
+    from harness.discovery_completion import _require_repair_origin
+    from harness.discovery_repair_admission import repair_findings
+    artifacts, reviewed, identity, _ = finding
+    history = identity.identity_history(spec_id="game")
+    current = {**artifacts, "issues.md": REPORT}
+    findings, paths, revisions = repair_findings(current, history, artifacts, reviewed)
+    source = dict(review_id="a" * 32, return_phase="phase1-" + producer)
+    claim = dict(origin=source, findings=findings, artifact_paths=paths, editable_revisions=revisions)
+    def baseline(items):
+        return SimpleNamespace(trees=(SimpleNamespace(path="specs/game", files=tuple(
+            SimpleNamespace(path="specs/game/" + path, content=text.encode()) for path, text in items.items())),))
+    parent = SimpleNamespace(producer=producer, clarification=False,
+        candidate={"routing": {"verdict": "FAIL"}}, recovery={"completion_id": "a" * 32, "review": {"verdict": "accept"}},
+        baseline=baseline(artifacts), source={"history": asdict(reviewed), "runtime": {"autonomy_mode": "semi"}})
+    child = SimpleNamespace(repair_unit="b" * 64, baseline=baseline(current),
+        source={"history": asdict(history), "runtime": {"autonomy_mode": "semi"}})
+    state = {"managed_discovery_repairs": {"units": {child.repair_unit: {"selection": claim}}}}
+    if damage == "origin":
+        claim["origin"] = {**source, "return_phase": "phase1-why2" if producer == "why1" else "phase1-why1"}
+    elif damage == "accepted_review":
+        parent.recovery["review"]["verdict"] = "reject"
+    elif damage == "verdict":
+        parent.candidate["routing"]["verdict"] = "PASS"
+    elif damage == "findings":
+        claim["findings"] = []
+    elif damage == "runtime":
+        child.source["runtime"] = {"autonomy_mode": "banzai"}
+    if damage is None:
+        _require_repair_origin(state, child, parent)
+    else:
+        with pytest.raises(ValueError):
+            _require_repair_origin(state, child, parent)
+
+
+@pytest.mark.parametrize("producer", ["why1", "why2"])
+def test_why2_discovery_scope_preserves_other_owner_findings(finding, producer):
+    from harness.discovery_repair_admission import repair_findings
+    from harness.discovery_candidate import issue_report_changes
+    from harness.element_identity_candidate import CandidateArtifact
+    from harness.element_identity_lifecycle import ElementCreate
+    artifacts, reviewed, identity, _ = finding
+    label, = identity.reserve(spec_id="game", kind="ISS", operation_id="what-issue", count=1)
+    body = ("- **Severity:** HIGH\n- **Type:** incompleteness\n- **Description:** Movement lacks controls.\n"
+        "- **Affected artifact:** spec.md\n- **Affected section:** FR-000001\n"
+        "- **Evidence:** Controls are unspecified.\n- **Recommendation:** Define controls.\n"
+        "- **Responsible agent:** WHAT\n- **Action Required:** Clarify controls.\n")
+    report = REPORT.replace("**HIGH:** 1", "**HIGH:** 2") + f"### {label}: Controls\n" + body
+    change = ElementCreate(label, "Controls", body, "what-issue")
+    _, occurrences = issue_report_changes((CandidateArtifact("issues.md", "issues", REPORT, report),),
+        (change,), identity.identity_history(spec_id="game"), report_id="mixed-review")
+    identity.apply_lifecycle(spec_id="game", operation_id="mixed-create", changes=(change,))
+    identity.record_issue_occurrences(spec_id="game", operation_id="mixed-report", occurrences=occurrences)
+    before = identity.identity_history(spec_id="game")
+    if producer == "why1":
+        with pytest.raises(ValueError):
+            repair_findings({**artifacts, "issues.md": report}, before, artifacts, reviewed, review_producer=producer)
+    else:
+        findings, paths, revisions = repair_findings({**artifacts, "issues.md": report}, before,
+            artifacts, reviewed, review_producer=producer)
+        assert len(findings) == 1 and paths == ["unknowns.md"] and revisions == [["U-000001", "1"]]
+        assert json.loads(findings[0]["detail"])["occurrence"]["issue_id"] == "ISS-000001"
+    assert identity.identity_history(spec_id="game") == before
+
+
 @pytest.mark.parametrize("target,path", [
     ("A-003", "assumptions.md"),
     ("U-10000000000000000000001", "unknowns.md"),
@@ -139,6 +208,7 @@ def test_scope_rejects_unproven_occurrences_and_changed_targets(finding, damage)
         repair_findings(current, history, artifacts, reviewed)
 
 
+@pytest.mark.parametrize("review_producer", ["why1", "why2"])
 @pytest.mark.parametrize("old,new", [
     ("DISCOVER", "WHAT"), ("unknowns.md", "../unknowns.md"),
     ("unknowns.md", "assumptions.md"), ("U-000001", "Camera choice"),
@@ -148,7 +218,7 @@ def test_scope_rejects_unproven_occurrences_and_changed_targets(finding, damage)
     ("- **Affected section:** U-000001", "```\n- **Affected section:** U-000001\n```\nEvidence mentions U-000001."),
     ("- **Affected section:** U-000001", "<!--\n- **Affected section:** U-000001\n-->\nEvidence mentions U-000001."),
 ])
-def test_authentic_but_ambiguous_or_cross_owner_report_cannot_widen_scope(finding, old, new):
+def test_authentic_but_ambiguous_or_cross_owner_report_cannot_widen_scope(finding, old, new, review_producer):
     from harness.discovery_repair_admission import repair_findings
     from harness.proportional_quality import QualityCandidateIntegrityError
     from harness.discovery_candidate import issue_report_changes
@@ -162,7 +232,8 @@ def test_authentic_but_ambiguous_or_cross_owner_report_cannot_widen_scope(findin
     store.apply_lifecycle(spec_id="game", operation_id="revise-issue", changes=(change,))
     store.record_issue_occurrences(spec_id="game", operation_id="next-report", occurrences=occurrences)
     with pytest.raises((ValueError, QualityCandidateIntegrityError)):
-        repair_findings({**artifacts, "issues.md": report}, store.identity_history(spec_id="game"), artifacts, reviewed)
+        repair_findings({**artifacts, "issues.md": report}, store.identity_history(spec_id="game"), artifacts, reviewed,
+            review_producer=review_producer)
 
 
 @pytest.mark.parametrize("ambiguous_report", [False, "restored", True])

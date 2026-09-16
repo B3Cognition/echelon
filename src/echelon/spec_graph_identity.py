@@ -38,8 +38,9 @@ _ROWS = {
     "reference_claims": "operation_id entry_index spec_id source_path source_sha256 source_anchor target_id target_revision relation payload_sha256",
     "issue_occurrences": "operation_id entry_index spec_id issue_id issue_revision report_id report_sha256 display_id title body issue_fingerprint payload_sha256",
 }
+_MEMBERSHIP_ROW = "spec_id element_id revision present source_revision snapshot_id operation_id"
 _NULLABLE = {"entities": {"ordinal", "revision"}, "revisions": {"reason"},
-             "reference_claims": {"target_revision"}}
+             "reference_claims": {"target_revision"}, "snapshot_memberships": {"source_revision"}}
 _RELATIONSHIPS = {
     "HAS_IDENTITY", "HAS_REVISION", "CURRENT_REVISION", "SUCCESSOR_REVISION",
     "REFERENCES_IDENTITY", "ASSESSES_REVISION", "HAS_SOURCE", "OCCURRENCE_OF",
@@ -104,19 +105,26 @@ def _decode(snapshot, spec_id):
     bindings.sha256(snapshot.sha256)
     _require(hashlib.sha256(snapshot.payload.encode("ascii")).hexdigest() == snapshot.sha256)
     value = strict_json(snapshot.payload)
+    _require(type(value) is dict and value.get("version") in {"1", "2"})
+    tables = _ROWS if value["version"] == "1" else _ROWS | {"snapshot_memberships": _MEMBERSHIP_ROW}
     _require(type(value) is dict and set(value) == {
-        "version", "workspace_uuid", "epoch_uuid", "spec_id", *_ROWS})
+        "version", "workspace_uuid", "epoch_uuid", "spec_id", *tables})
     _require(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) == snapshot.payload)
     for name in ("version", "workspace_uuid", "epoch_uuid", "spec_id"):
         lifecycle.text(value[name], name)
-    _require(value["version"] == "1" and value["spec_id"] == spec_id)
+    _require(value["spec_id"] == spec_id)
+    if value["version"] == "2":
+        _require(bool(value["snapshot_memberships"]))
     for name in ("workspace_uuid", "epoch_uuid"):
         _require(str(UUID(value[name])) == value[name])
-    for table, keys in _ROWS.items():
+    for table, keys in tables.items():
         _require(type(value[table]) is list)
         for row in value[table]:
             _require(type(row) is dict and set(row) == set(keys.split()))
             for key, item in row.items():
+                if table == "snapshot_memberships" and key == "present":
+                    _require(type(item) is bool)
+                    continue
                 if item is None and key in _NULLABLE.get(table, set()):
                     continue
                 lifecycle.text(item, key)
@@ -211,13 +219,37 @@ def _validate_history(value):
                 _require(historical["subject"] == row["title"] and historical["content"] == row["body"])
                 bindings.sha256(row["issue_fingerprint"])
                 _require(issue_fingerprint(row["title"], row["body"]) == row["issue_fingerprint"])
-    return entities
+    memberships = _unique(value.get("snapshot_memberships", []), ("element_id", "revision"))
+    presence = {}
+    for (label, revision), row in sorted(revisions.items(), key=lambda item: (
+            item[0][0], len(item[0][1]), item[0][1])):
+        change = memberships.get((label, revision))
+        if change is not None:
+            prior_revision = _next_revision(revision, -1)
+            lifecycle.ElementSnapshotMembership(label, prior_revision, change["present"],
+                                                change["source_revision"], change["snapshot_id"])
+            previous = revisions.get((label, prior_revision))
+            source = revisions.get((label, change["source_revision"])) if change["present"] else previous
+            _require(previous is not None and previous["status"] == row["status"] == "active")
+            _require(row["operation_id"] == change["operation_id"] and source is not None)
+            _require(source["status"] == "active" and source["content"] == row["content"])
+            if change["present"]:
+                _require((len(change["source_revision"]), change["source_revision"]) < (len(revision), revision))
+                _require(presence.get((label, change["source_revision"]), True))
+            else:
+                _require(presence.get((label, prior_revision), True))
+        elif row["status"] == "active":
+            _require(presence.get((label, _next_revision(revision, -1)), True))
+        presence[label, revision] = (change["present"] if change else
+                                     presence.get((label, _next_revision(revision, -1)), True))
+    _require(set(memberships).issubset(revisions))
+    return entities, memberships, presence
 
 
 def _project(graph, snapshot):
     nodes, edges, inputs, receipts = _copy_graph(graph)
     value = _decode(snapshot, graph.spec_id)
-    entities = _validate_history(value)
+    entities, memberships, presence = _validate_history(value)
     namespace = [value[key] for key in ("workspace_uuid", "epoch_uuid", "spec_id")]
     virtual_path = f"identity://{namespace[0]}/{namespace[1]}/{quote(graph.spec_id, safe='')}"
     _require(not any(item.path == virtual_path for item in inputs))
@@ -237,6 +269,9 @@ def _project(graph, snapshot):
         identity = {"workspace_uuid": namespace[0], "epoch_uuid": namespace[1],
                     **{field: row[field] for field in ("kind", "ordinal", "subject", "status", "revision")},
                     "rendered": key in existing}
+        if any(label == row["element_id"] for label, _ in memberships):
+            identity["present"] = presence[row["element_id"], row["revision"]]
+            _require(identity["present"] or key not in existing)
         if key in existing:
             properties = existing[key].properties
             _require("identity" not in properties or properties["identity"] == identity)
@@ -245,7 +280,7 @@ def _project(graph, snapshot):
             nodes.append(GraphNode(key, node_type, {label_property: row["element_id"], "identity": identity}))
         edges.append(GraphEdge(spec_key, "HAS_IDENTITY", key, {}))
     existing[spec_key].properties["identity_projection"] = {
-        "version": "1", "workspace_uuid": namespace[0], "epoch_uuid": namespace[1], "history_sha256": snapshot.sha256}
+        "version": value["version"], "workspace_uuid": namespace[0], "epoch_uuid": namespace[1], "history_sha256": snapshot.sha256}
     for edge in edges:
         if edge.type in {"VERIFIED_BY", "STORED_AS"} and (edge.source in managed or edge.target in managed):
             _require("identity_assessment" not in edge.properties or edge.properties["identity_assessment"] == "unassessed")
@@ -270,7 +305,11 @@ def _project(graph, snapshot):
     revision_keys = {}
     for row in value["revisions"]:
         pair = (row["element_id"], row["revision"])
-        key = add_node("identity-revision:", "ElementRevision", list(pair), row)
+        properties = row
+        if pair in memberships:
+            properties = row | {"snapshot_membership": {field: memberships[pair][field]
+                               for field in ("present", "source_revision", "snapshot_id")}}
+        key = add_node("identity-revision:", "ElementRevision", list(pair), properties)
         revision_keys[pair] = key
         edge(_scope_node_id(graph.spec_id, pair[0]), "HAS_REVISION", key)
     for label, row in entities.items():
@@ -282,7 +321,8 @@ def _project(graph, snapshot):
     for row in value["reference_claims"]:
         head = entities[row["target_id"]]
         properties = row | {"target_revision_matches_current": row["target_revision"] is not None
-                            and head["status"] == "active" and row["target_revision"] == head["revision"]}
+                            and head["status"] == "active" and presence.get((row["target_id"], head["revision"]), True)
+                            and row["target_revision"] == head["revision"]}
         key = add_node("identity-reference:", "ReferenceClaim", [row["operation_id"], row["entry_index"]], properties)
         edge(key, "REFERENCES_IDENTITY", _scope_node_id(graph.spec_id, row["target_id"]))
         if row["target_revision"] is not None:

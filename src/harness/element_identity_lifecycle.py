@@ -83,6 +83,29 @@ class ElementRetirement:
 
 
 @dataclass(frozen=True, slots=True)
+class ElementSnapshotMembership:
+    """Controller-selected snapshot membership, never permanent retirement."""
+    element_id: str
+    expected_revision: str
+    present: bool
+    source_revision: str | None
+    snapshot_id: str
+
+    def __post_init__(self):
+        label(self.element_id)
+        if self.element_id.split("-", 1)[0] not in {"FR", "NFR", "AC"}:
+            raise ValueError("snapshot membership supports requirements only")
+        revision(self.expected_revision)
+        if type(self.present) is not bool:
+            raise ValueError("present must be a boolean")
+        if self.present:
+            revision(self.source_revision)
+        elif self.source_revision is not None:
+            raise ValueError("absence cannot select content")
+        text(self.snapshot_id, "snapshot_id")
+
+
+@dataclass(frozen=True, slots=True)
 class ElementTransition:
     kind: str
     predecessors: tuple[tuple[str, str], ...]
@@ -114,8 +137,8 @@ class ElementTransition:
         text(self.reason, "reason")
 
 
-LifecycleChange: TypeAlias = ElementCreate | ElementAdopt | ElementRevision | ElementRetirement | ElementTransition
-_TYPES = (ElementCreate, ElementAdopt, ElementRevision, ElementRetirement, ElementTransition)
+LifecycleChange: TypeAlias = ElementCreate | ElementAdopt | ElementRevision | ElementRetirement | ElementTransition | ElementSnapshotMembership
+_TYPES = (ElementCreate, ElementAdopt, ElementRevision, ElementRetirement, ElementTransition, ElementSnapshotMembership)
 
 
 def request(changes: Sequence[LifecycleChange]) -> tuple[tuple[LifecycleChange, ...], list, tuple[str, ...]]:

@@ -62,12 +62,37 @@ class PublicationOperation:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicationContinuationClaim:
+    """Opaque completion association; the completion owner authenticates it."""
+    parent_operation_id: str
+    parent_request_sha256: str
+    parent_application_sha256: str
+    completion_id: str
+    completion_intent_sha256: str
+
+    def __post_init__(self):
+        _continuation_claim(self)
+
+
+def _continuation_claim(claim):
+    if type(claim) is not PublicationContinuationClaim:
+        raise ValueError("invalid continuation claim type")
+    text(claim.parent_operation_id, "parent_operation_id")
+    text(claim.completion_id, "completion_id")
+    for value in (claim.parent_request_sha256, claim.parent_application_sha256,
+                  claim.completion_intent_sha256):
+        sha256(value)
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationIntentRequest:
     manifest_sha256: str
     recovery_payload: str
     operations: tuple[PublicationOperation, ...] = ()
     sources: PublicationSourceClaim | None = None
     proposed_history_sha256: str | None = None
+    continuation_id: str | None = None
+    continuation: PublicationContinuationClaim | None = None
 
     def __post_init__(self):
         _validate(self)
@@ -98,6 +123,15 @@ def _validate(request):
         sha256(request.manifest_sha256)
         text(request.recovery_payload, "recovery_payload")
         validated_operations(request.operations)
+        if request.continuation_id is not None:
+            text(request.continuation_id, "continuation_id")
+            if request.continuation is not None or any(
+                    op.operation_id == request.continuation_id for op in request.operations):
+                raise ValueError("continuation must be distinct and cannot be nested")
+        if request.continuation is not None:
+            _continuation_claim(request.continuation)
+        if (request.continuation_id is not None or request.continuation is not None) and request.sources is None:
+            raise ValueError("continuation requires source ownership")
         if request.proposed_history_sha256 is not None:
             sha256(request.proposed_history_sha256)
         if request.sources is not None:
@@ -121,6 +155,15 @@ def encode_publication_request(request: PublicationIntentRequest) -> str:
                             "baseline_payload": request.sources.baseline_payload}
     if request.proposed_history_sha256 is not None:
         value.update(version="3", proposed_history_sha256=request.proposed_history_sha256)
+    if request.continuation_id is not None or request.continuation is not None:
+        claim = request.continuation
+        value.update(version="4", continuation_id=request.continuation_id,
+                     continuation=None if claim is None else {
+                         "parent_operation_id": claim.parent_operation_id,
+                         "parent_request_sha256": claim.parent_request_sha256,
+                         "parent_application_sha256": claim.parent_application_sha256,
+                         "completion_id": claim.completion_id,
+                         "completion_intent_sha256": claim.completion_intent_sha256})
     return json.dumps(value,
                       sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -128,10 +171,11 @@ def encode_publication_request(request: PublicationIntentRequest) -> str:
 def decode_publication_request(payload: str) -> PublicationIntentRequest:
     try:
         value = strict_json(payload)
-        if (type(value) is not dict or type(value.get("version")) is not str or value["version"] not in {"1", "2", "3"}
+        if (type(value) is not dict or type(value.get("version")) is not str or value["version"] not in {"1", "2", "3", "4"}
                 or set(value) != ({"version", "manifest_sha256", "recovery_payload", "operations"}
-                                  | ({"sources"} if value["version"] == "2" or (value["version"] == "3" and "sources" in value) else set())
-                                  | ({"proposed_history_sha256"} if value["version"] == "3" else set()))
+                                  | ({"sources"} if value["version"] in {"2", "4"} or (value["version"] == "3" and "sources" in value) else set())
+                                  | ({"proposed_history_sha256"} if value["version"] == "3" or (value["version"] == "4" and "proposed_history_sha256" in value) else set())
+                                  | ({"continuation_id", "continuation"} if value["version"] == "4" else set()))
                 or type(value["operations"]) is not list):
             raise ValueError("invalid publication shape/version")
         operations = []
@@ -144,10 +188,21 @@ def decode_publication_request(payload: str) -> PublicationIntentRequest:
             if type(value["sources"]) is not dict or set(value["sources"]) != {"context_id", "expected_operation_id", "baseline_payload"}:
                 raise ValueError("invalid source claim shape")
             sources = PublicationSourceClaim(**value["sources"])
-        if value["version"] == "3":
+        if "proposed_history_sha256" in value:
             sha256(value["proposed_history_sha256"])
+        continuation = None
+        if value["version"] == "4":
+            if value["continuation"] is not None:
+                claim = value["continuation"]
+                if type(claim) is not dict or set(claim) != {
+                        "parent_operation_id", "parent_request_sha256", "parent_application_sha256",
+                        "completion_id", "completion_intent_sha256"}:
+                    raise ValueError("invalid continuation shape")
+                continuation = PublicationContinuationClaim(**claim)
+            if value["continuation_id"] is None and continuation is None:
+                raise ValueError("empty continuation envelope")
         return PublicationIntentRequest(value["manifest_sha256"], value["recovery_payload"], tuple(operations), sources,
-                                        value.get("proposed_history_sha256"))
+                                        value.get("proposed_history_sha256"), value.get("continuation_id"), continuation)
     except (ValueError, TypeError, AttributeError, KeyError, RecursionError, OverflowError):
         raise PublicationIntentError("malformed serialized publication intent") from None
 

@@ -166,8 +166,27 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         review=candidate.review, provider=producer_component(state, producer, "turns", repair_unit=repair_unit), sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest())
     if producer == "constitution":
-        from harness.discovery_constitution import constitution_source
-        recovery_fields.update(version=12, producer=producer, source_completion=constitution_source(state))
+        from harness.discovery_constitution import constitution_input_source
+        recovery_fields.update(version=12, producer=producer, source_completion=constitution_input_source(state))
+        if binding["operation_id"].startswith("constitution-refresh-"):
+            row = tracker_round(state, binding["operation_id"], producer=producer)
+            recovery_fields.update(version=16, predecessor=row["predecessor"])
+    if producer in {"what", "why2"}:
+        row = tracker_round(state, producer=producer)
+        recovery_fields.update(version=13 if producer == "what" else 15, producer=producer, source_completion=row["source"],
+            resolution=row["resolution"], predecessor=row["predecessor"])
+        if producer == "what" and "constitution_parent" in row:
+            recovery_fields.update(version=17, constitution_parent=row["constitution_parent"])
+        if producer == "why2" and row["resolution"] is not None:
+            recovery_fields.update(version=19)
+            if row["resolution"]["decision"]["resolution_handler"] != "clarification_resume":
+                recovery_fields["version"] = 24
+        if producer == "what" and "review_resolution" in row:
+            recovery_fields.update(version=20, review_resolution=row["review_resolution"], review_parent=row["review_parent"])
+            if row["review_resolution"]["decision"]["resolution_handler"] != "clarification_resume":
+                recovery_fields["version"] = 22
+            if row["review_resolution"]["decision"]["resolution_handler"] == "banzai_issue_resolution":
+                recovery_fields["version"] = 26
     if producer == "synthesizer":
         recovery_fields.update(version=3, producer=producer, source_completion=synthesis_input_source(state))
         if binding["operation_id"].startswith("synthesizer-"):

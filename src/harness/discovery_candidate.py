@@ -45,6 +45,9 @@ def author_artifacts(assignment, reply, *, before: Mapping[str, str | None]) -> 
     if assignment.producer == "constitution":
         from harness.discovery_constitution import validate_constitution_candidate
         validate_constitution_candidate(value["artifacts"]["constitution.md"], before["constitution.md"])
+    if assignment.producer in {"what", "why2"}:
+        from harness.discovery_spec import validate_spec_artifacts
+        validate_spec_artifacts(value["artifacts"], value["routing"], assignment.producer)
     if any(before.get(path) is not None and value["artifacts"].get(path) is None
             for path in optional_artifacts(assignment.producer)):
         raise ValueError("optional absence cannot remove an existing artifact")
@@ -68,7 +71,7 @@ def _declarations(artifacts, field):
     result = {}
     for artifact in artifacts:
         content = getattr(artifact, field)
-        if content is None or artifact.role not in {"unknowns", "assumptions", "intent", "issues"}:
+        if content is None or artifact.role not in {"unknowns", "assumptions", "intent", "issues", "requirements"}:
             continue
         parsed = parse_identity_artifact(path=artifact.path, role=artifact.role, text=content)
         if parsed.diagnostics:

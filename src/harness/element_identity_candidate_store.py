@@ -122,7 +122,7 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
     for label, entries in definitions["before"].items():
         for path, entry in entries:
             head = current.get(label)
-            if head is None or head["revision"] is None or head["content"] != entry.content:
+            if head is None or head["revision"] is None or head["content"] != entry.content or head.get("present") is False:
                 diagnose("baseline_identity_mismatch", path, label,
                          "baseline requires exact assessed declaration content")
 
@@ -174,6 +174,9 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
             planned, _ = lifecycle_store.plan_changes(connection, store, spec_id, changes)
             projected = {label: {"revision": revision, "subject": subject, "content": content, "status": status}
                          for label, revision, subject, content, status, _, _, _ in planned}
+            for change in changes:
+                if type(change) is lifecycle.ElementSnapshotMembership:
+                    projected[change.element_id]["present"] = change.present
         except ValueError as error:
             diagnose("lifecycle_rejected", None, None, str(error))
             proposal_invalid = True
@@ -181,6 +184,9 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
         return result()
 
     created = set()
+    restored = {change.element_id for change in changes
+                if type(change) is lifecycle.ElementSnapshotMembership and change.present
+                and current.get(change.element_id, {}).get("present") is False}
     for change in changes:
         if type(change) is lifecycle.ElementCreate:
             created.add(change.element_id)
@@ -191,11 +197,13 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
         for path, entry in entries:
             old_head = current.get(label)
             head = projected.get(label, old_head)
-            if label not in definitions["before"] and label not in created:
+            if label not in definitions["before"] and label not in created | restored:
                 diagnose("unallocated_definition", path, label, "new declaration requires exact reserved creation or transition successor")
             if head is None:
                 diagnose("unallocated_definition", path, label, "declaration has no materialized or projected identity")
                 continue
+            if head.get("present") is False:
+                diagnose("absent_definition", path, label, "absent snapshot identity cannot have an after declaration")
             if entry.content != head["content"]:
                 code = "terminal_content_changed" if head["status"] in {"retired", "superseded"} else "definition_content_mismatch"
                 diagnose(code, path, label, "declaration differs from exact current or projected content")
@@ -206,11 +214,12 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
         if label in definitions["after"]:
             continue
         head = projected.get(label, current.get(label))
-        if head is not None and head["status"] == "active":
+        if head is not None and head["status"] == "active" and head.get("present") is not False:
             for path, _ in entries:
                 diagnose("definition_removed", path, label, "active declaration removed without retirement or transition")
     for label, head in projected.items():
-        if not label.startswith("ISS-") and head["status"] == "active" and label not in definitions["after"]:
+        if (not label.startswith("ISS-") and head["status"] == "active"
+                and head.get("present") is not False and label not in definitions["after"]):
             diagnose("definition_removed", None, label, "projected active identity requires an after declaration")
 
     diagnostics.extend(issues._after_diagnostics(issue_occurrences, historic_issue_paths, current, projected))
@@ -227,7 +236,7 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
                 diagnose("reference_identity_mismatch", artifact.path, ref.target_id,
                          "reference target must exist by exact label in the same spec")
                 continue
-            if ref.relation in {"requires", "depends"} and head["status"] != "active":
+            if ref.relation in {"requires", "depends"} and (head["status"] != "active" or head.get("present") is False):
                 diagnose("inactive_dependency", artifact.path, ref.target_id,
                          "required dependency is not active")
             revisions = tuple(claim["target_revision"] for claim in claims if (
@@ -236,7 +245,7 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
             ))
             assessed = tuple(revision for revision in revisions if revision is not None)
             state = "unassessed" if not assessed else (
-                "current" if head["status"] == "active" and head["revision"] in assessed else "historical")
+                "current" if head["status"] == "active" and head.get("present") is not False and head["revision"] in assessed else "historical")
             references.append(CandidateReferenceState(artifact.path, after.content_sha256,
                 ref.span.start, ref.span.end, ref.target_id, ref.relation, revisions, state))
     return result()

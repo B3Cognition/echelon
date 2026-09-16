@@ -112,7 +112,9 @@ def read(connection, store, method, spec_id, parameters):
             head = _target(connection, store, spec_id, entry, method)
             entry.update(target_status=head["status"], target_revision_matches_current=(
                 entry["target_revision"] is not None and entry["target_revision"] == head["revision"]
-                and head["status"] == "active"))
+                and head["status"] == "active" and head.get("present") is not False))
+            if "present" in head:
+                entry["target_present"] = head["present"]
         result.append(entry)
     return tuple(result)
 

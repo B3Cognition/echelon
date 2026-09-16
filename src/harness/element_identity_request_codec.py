@@ -21,6 +21,7 @@ _LIFECYCLE_TYPES = {
     "ElementRevision": lifecycle.ElementRevision,
     "ElementRetirement": lifecycle.ElementRetirement,
     "ElementTransition": lifecycle.ElementTransition,
+    "ElementSnapshotMembership": lifecycle.ElementSnapshotMembership,
 }
 _BINDING_TYPES = {
     "reference_claims": bindings.ReferenceClaim,

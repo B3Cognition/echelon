@@ -134,7 +134,7 @@ def _derived(request):
     return before, after
 
 
-def _parent(connection, publication_id):
+def _parent(connection, publication_id, *, links=True):
     """Indexed ownership and structural receipt checks, without child-history scans.
 
     Full child effects remain the journal read/retry/audit owner's responsibility.
@@ -193,6 +193,9 @@ def _parent(connection, publication_id):
                 raise ValueError("source parent completion digest is damaged")
     else:
         raise ValueError("source parent state is invalid")
+    if links:
+        from harness.element_identity_continuation_store import validate_links
+        validate_links(connection, parent, request)
     return parent, request
 
 

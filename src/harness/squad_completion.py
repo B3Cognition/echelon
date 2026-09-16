@@ -601,13 +601,16 @@ def _validate_intent(
     )
     route = _validate_route(dict.__getitem__(record, "route"))
     clarification = False
+    managed_debt = False
     if "managed_discovery" in publication:
         from harness.discovery_completion import decode_binding
         from harness.discovery_producer import producer_phase
         binding = decode_binding(publication, completion_id=completion_id)
-        clarification = binding.clarification
+        clarification = binding.resolution_publication
+        managed_debt = binding.policy_resolution and binding.recovery["version"] == 27
         if clarification:
-            if (origin != "resolution" or route.get("from_phase") != producer_phase(binding.producer)
+            if (origin != "resolution" or route.get("from_phase") != (
+                    binding.recovery["from_phase"] if binding.policy_resolution else producer_phase(binding.producer))
                     or route.get("decision_id") != binding.recovery["resolution"]["id"]
                     or route.get("to_phase") != binding.candidate["route"]):
                 _raise("intent_invalid")
@@ -622,6 +625,12 @@ def _validate_intent(
         if binding.recovery["version"] == 9 and route.get("to_phase") != "phase1-why1":
             _raise("intent_invalid")
         if binding.producer == "constitution" and route.get("to_phase") != "phase1-what":
+            _raise("intent_invalid")
+        if binding.producer == "understanding" and route.get("to_phase") != "phase1-why2":
+            _raise("intent_invalid")
+        if binding.producer == "what" and route.get("to_phase") != (
+                "phase1-investigate" if binding.candidate["routing"]["state_updates"]["evidence_resolution_status"] == "pending"
+                else "phase1-understanding"):
             _raise("intent_invalid")
         if binding.producer == "why1" and not clarification:
             verdict = binding.candidate["routing"]["verdict"]
@@ -648,7 +657,7 @@ def _validate_intent(
         ["mining", "retarget"],
     ):
         _raise("intent_invalid")
-    if origin == "resolution" and effect_plan != (["context"] if clarification else ["quality"]):
+    if origin == "resolution" and effect_plan != (["quality", "context"] if managed_debt else ["context"] if clarification else ["quality"]):
         _raise("intent_invalid")
     checkpoint_prestate = _validate_checkpoint_prestate(
         dict.__getitem__(record, "checkpoint_prestate"),
@@ -658,6 +667,8 @@ def _validate_intent(
         dict.__getitem__(record, "quality_effect"),
         quality_planned="quality" in effect_plan,
     )
+    if managed_debt and quality_effect != binding.recovery["quality_effect"]:
+        _raise("intent_invalid")
     context_reason = _validate_bounded_string(
         dict.__getitem__(record, "context_reason"),
         maximum=_MAX_CONTEXT_REASON_LENGTH,

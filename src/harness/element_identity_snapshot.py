@@ -31,6 +31,9 @@ def canonical_snapshot(value) -> IdentityHistorySnapshot:
     for method in ("reference_claims", "issue_occurrences"):
         value[method].sort(key=lambda row: (
             row["operation_id"], len(row["entry_index"]), row["entry_index"]))
+    if "snapshot_memberships" in value:
+        value["snapshot_memberships"].sort(key=lambda row: (
+            keys[row["element_id"]], len(row["revision"]), row["revision"]))
     return IdentityHistorySnapshot(payload=authority._json(value), sha256=authority._digest(value))
 
 
@@ -99,4 +102,8 @@ def capture(connection, store, spec_id: str) -> IdentityHistorySnapshot:
         "reference_claims": reference_claims,
         "issue_occurrences": issue_occurrences,
     }
+    from harness import element_identity_membership_store as membership
+    memberships = membership.rows(connection, spec_id=spec_id)
+    if memberships:
+        value.update(version="2", snapshot_memberships=memberships)
     return canonical_snapshot(value)

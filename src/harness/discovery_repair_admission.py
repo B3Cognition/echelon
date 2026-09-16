@@ -1,4 +1,4 @@
-"""Authenticate WHY1 repair selection; never dispatch, allocate or publish.
+"""Authenticate review-owned repair selection; never dispatch, allocate or publish.
 
 The existing repair state is association data, not execution authority. Every
 future repair dispatch must reauthenticate its selected completion and sources.
@@ -19,7 +19,7 @@ from harness.proportional_quality import (
 
 def _require(value):
     if not value:
-        raise ValueError("WHY1 repair requires authenticated, unambiguous Discovery findings")
+        raise ValueError("review repair requires authenticated, unambiguous Discovery findings")
 
 
 def _json(value):
@@ -31,13 +31,17 @@ def _literal(value):
     return value[1:-1] if value.startswith("`") and value.endswith("`") else value
 
 
-def repair_findings(artifacts, history, reviewed_artifacts, reviewed_history):
+def repair_findings(artifacts, history, reviewed_artifacts, reviewed_history, *, review_producer="why1"):
     """Derive narrow association data from already authenticated captured images.
 
     Existing report fields identify one exact U/A declaration per finding.
     Prose cannot choose another owner, authorize whole-file edits, or redefine an
-    ID. All actionable issues must fit; advisory entries confer no write scope.
+    ID. WHY2 may also retain WHAT debt: those proven occurrences remain in the
+    unchanged report/history but confer no Discovery write scope. The caller
+    authenticates the requesting review's native Discovery route separately.
+    Advisory entries confer no write scope.
     """
+    _require(review_producer in {"why1", "why2"})
     report = artifacts.get("issues.md")
     _require(type(report) is str)
     lines = _lines(report)
@@ -72,8 +76,12 @@ def repair_findings(artifacts, history, reviewed_artifacts, reviewed_history):
             and issue_head["revision"] == occurrence.issue_revision)
         declaration = declarations_by_id[issue["issue_id"]]
         fields = sage_issue_fields(visible[declaration.span.start:declaration.span.end])
-        _require(fields["Responsible agent"].strip() in {"DISCOVER", "SCOUT"})
+        owner = fields["Responsible agent"].strip()
         path, target = _literal(fields["Affected artifact"]), _literal(fields["Affected section"])
+        if review_producer == "why2" and owner in {"WHAT", "CARTOGRAPHER"}:
+            _require(path in {"spec.md", "requirements-overview.md"})
+            continue
+        _require(owner in {"DISCOVER", "SCOUT"})
         _require(path in {"unknowns.md", "assumptions.md"} and target in old_heads and heads.get(target) == old_heads[target])
         role, kind = ("unknowns", "U") if path == "unknowns.md" else ("assumptions", "A")
         _require(old_heads[target]["kind"] == kind and path in reviewed_artifacts and path in artifacts)
@@ -95,7 +103,7 @@ def repair_findings(artifacts, history, reviewed_artifacts, reviewed_history):
 
 
 def prepare_why1_discovery_repair(project_root, state_store):
-    """Select only a released WHY1→Discovery request under caller execution leases.
+    """Select a released WHY1/WHY2→Discovery request under execution leases.
 
     No caller-supplied origin, scope or finding is trusted. Capture the current
     accepted head with the existing owner, then compare unchanged review inputs
@@ -119,21 +127,28 @@ def prepare_why1_discovery_repair(project_root, state_store):
         and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
         and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved"})
     dispatch = state["last_dispatch"]
-    _require(dispatch.get("phase_id") == "phase1-why1" and dispatch.get("post_dispatch_complete") is True)
+    _require(dispatch.get("phase_id") in {"phase1-why1", "phase1-why2"} and dispatch.get("post_dispatch_complete") is True)
+    producer = dispatch["phase_id"].removeprefix("phase1-")
     source = {key: dispatch[key] for key in SOURCE_FIELDS}
     store = IdentityStore.open(root)
-    binding, _, project_context = _retained_input_projection(root, state_store.squad_dir, state, store,
+    binding, project_spec, project_context = _retained_input_projection(root, state_store.squad_dir, state, store,
         operation_id="discovery-completion-" + source["dispatch_id"], source=source, require_checkpoint=False,
-        required_route=("phase1-why1", "phase1-discover"))
-    _require(binding.producer == "why1" and not binding.clarification
+        required_route=(dispatch["phase_id"], "phase1-discover"))
+    _require(binding.producer == producer and not binding.clarification and binding.restoration is None
         and binding.candidate["routing"]["verdict"] == "FAIL"
         and binding.recovery["review"]["verdict"] == "accept"
-        and binding.recovery["operation"]["binding"]["operation_id"] == producer_operation_id(state, "why1"))
-    captured = _capture(root, state_store, store, selected,
-        binding.recovery["operation"]["binding"]["input_tree"], tuple(WHY1_OUTPUTS),
-        producer="why1", source_completion=source)
-    _, artifacts, _, history, _, _, sources, _ = captured
-    prior = project_context(sources)
+        and binding.recovery["operation"]["binding"]["operation_id"] == producer_operation_id(state, producer))
+    if producer == "why1":
+        captured = _capture(root, state_store, store, selected,
+            binding.recovery["operation"]["binding"]["input_tree"], tuple(WHY1_OUTPUTS),
+            producer="why1", source_completion=source)
+        _, artifacts, _, history, _, _, sources, _ = captured
+        prior = project_context(sources)
+    else:
+        # Capture the released review itself, not WHY2's earlier Understanding
+        # parent. This is selection only; repair execution reauthenticates it.
+        artifacts, history, prior = _capture_requesting_why2(root, state_store, state, selected, store,
+            binding, source, project_spec, project_context)
     spec_path = selected["selection"]["spec_path"]
     _require(prior.files == binding.sources.files
         and tuple(tree for tree in prior.trees if tree.path != spec_path)
@@ -141,10 +156,38 @@ def prepare_why1_discovery_repair(project_root, state_store):
     reviewed_spec, = (tree for tree in binding.baseline.trees if tree.path == spec_path)
     reviewed_artifacts = {item.path[len(spec_path) + 1:]: item.content.decode("utf-8") for item in reviewed_spec.files}
     findings, paths, revisions = repair_findings(artifacts, history, reviewed_artifacts,
-        IdentityHistorySnapshot(**binding.source["history"]))
-    selection = dict(source=source, origin=dict(review_id=source["dispatch_id"], return_phase="phase1-why1"),
+        IdentityHistorySnapshot(**binding.source["history"]), review_producer=producer)
+    selection = dict(source=source, origin=dict(review_id=source["dispatch_id"], return_phase=dispatch["phase_id"]),
         findings=findings, artifact_paths=paths, editable_revisions=revisions)
     return state_store.prepare_discovery_repair(selection, expected_state=state)
+
+
+def _capture_requesting_why2(root, state_store, state, selected, store, binding, source, project_spec, project_context):
+    from harness.discovery_completion import released_discovery_input_projectors
+    from harness.discovery_inputs import admit_runtime_inputs
+    from harness.squad_publication import load_prepared_publication
+    from harness.squad_source_manifest import snapshot_source_manifest
+    _, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
+    selection = selected["selection"]
+    publication = load_prepared_publication(root, state_store.squad_dir, selection["capture_marker"])
+    with publication.inspect_sources(tree_paths=tuple(tree.path for tree in binding.sources.trees),
+            file_paths=tuple(item.path for item in binding.sources.files)) as sources:
+        _require(not sources.publication.operations)
+        tree, = (tree for tree in sources.trees if tree.path == selection["spec_path"])
+        tree = project_spec(tree)
+        prior = project_context(sources)
+        runtime, _ = admit_runtime_inputs(root, state_store.squad_dir, state, runtime_view(sources))
+        _require(runtime == binding.source["runtime"])
+        observed = store.check_managed_context(spec_id=selection["spec_id"], run_id=selection["run_id"],
+            record=state["managed_identity"])
+        _require(observed["source_context"]["manifest"]["payload"]
+            == snapshot_source_manifest(trees=(tree,), files=()).payload)
+        history = store.identity_history(spec_id=selection["spec_id"])
+        _require(asdict(history) == binding.candidate["history"])
+        artifacts = {item.path[len(tree.path) + 1:]: item.content.decode("utf-8")
+            for item in tree.files if item.path.endswith(".md")}
+        _require(state_store.load() == state)
+    return artifacts, history, prior
 
 
 def prepare_repair_refresh_round(project_root, state_store, producer):
@@ -163,7 +206,7 @@ def _repair_refresh_context(project_root, state_store, producer):
     """Authenticate existing repair/predecessor owners without mutating state."""
     from harness.discovery_bootstrap_state import bootstrap_from_state
     from harness.discovery_completion import _retained_input_projection, released_discovery_input_projectors
-    from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds
+    from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds, repair_return_phase
     from harness.element_identity_store import IdentityStore
     from harness.squad_publication import load_prepared_publication
 
@@ -173,7 +216,7 @@ def _repair_refresh_context(project_root, state_store, producer):
         state = state_store.load()
         selected = bootstrap_from_state(state)["selection"]
         _require(str(root) == selected["project_root"] and str(state_store.squad_dir) == selected["run_dir"]
-            and state.get("phase") == "phase1-why1" and state.get("status") == "running"
+            and state.get("phase") in {"phase1-why1", "phase1-why2"} and state.get("status") == "running"
             and state.get("mode") == "greenfield"
             and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
             and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved"})
@@ -183,9 +226,10 @@ def _repair_refresh_context(project_root, state_store, producer):
         identity = IdentityStore.open(root)
         binding, project_spec, project_context = _retained_input_projection(root, state_store.squad_dir, state, identity,
             operation_id="discovery-completion-" + source["dispatch_id"], source=source, require_checkpoint=False,
-            required_route=("phase1-discover", "phase1-why1"))
-        _require(binding.producer == "discovery" and binding.repair_unit is not None)
-        # Full retained ancestry verifies the requesting WHY1 and repair findings.
+            required_route=("phase1-discover", state["phase"]))
+        _require(binding.producer == "discovery" and binding.repair_unit is not None
+            and repair_return_phase(state, binding.repair_unit) == state["phase"])
+        # Full retained ancestry verifies the actual requesting review and findings.
         _, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state, source=source)
         prepared = load_prepared_publication(root, state_store.squad_dir, selected["capture_marker"])
         with prepared.inspect_sources(tree_paths=tuple(tree.path for tree in binding.sources.trees),
@@ -236,7 +280,7 @@ def pin_why1_tracker_history(project_root, state_store):
 
     try:
         root = Path(project_root)
-        state, *_ = _repair_refresh_context(root, state_store, "why1")
+        state, _, _, repair, *_ = _repair_refresh_context(root, state_store, "why1")
         rounds = tracker_rounds(state, "why1")
         operation_id, = (key for key, row in rounds["rounds"].items() if row["predecessor"] is None)
         row = rounds["rounds"][operation_id]
@@ -249,7 +293,8 @@ def pin_why1_tracker_history(project_root, state_store):
         _require(state_store.load() == state)
     except Exception:
         raise ValueError("WHY1 history requires its authenticated accepted Tracker parent") from None
-    return state_store.pin_why1_tracker_parent(operation_id, tracker_parent, source=source, expected_state=state)
+    return state_store.pin_why1_tracker_parent(operation_id, tracker_parent, source=source, expected_state=state,
+        repair_unit=repair.repair_unit)
 
 
 def _tracker_refresh_context(root, state_store, producer="tracker"):

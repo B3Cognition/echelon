@@ -56,6 +56,91 @@ def test_completion_retains_exact_reviewed_publication_and_read_set(prepared):
     assert prepared[2].pending_identity_publication(spec_id="game") is None
 
 
+@pytest.mark.parametrize("claim", ["parent", "child"])
+def test_discovery_dispatch_cannot_acquire_restoration_continuation_authority(prepared, claim):
+    from harness.discovery_completion import decode_binding
+    from harness.element_identity_publication import PublicationContinuationClaim
+    executor = DiscoveryExecutor()
+    assert execute(prepared, executor, create=True).status == "reviewed"
+    package = prepare(prepared, executor)
+    fields = (dict(continuation_id="discovery-restore-" + "a" * 32) if claim == "parent" else
+        dict(continuation=PublicationContinuationClaim("other", "b" * 64, "c" * 64, "a" * 32, "d" * 64)))
+    request = replace(package.request, **fields)
+    with pytest.raises(CompletionError):
+        decode_binding(dict(kind="external", marker=package.publication.marker.to_dict(),
+            managed_discovery=dict(version=1, request=encode_publication_request(request))),
+            completion_id="a" * 32, state=prepared[1].load())
+    assert prepared[2].pending_identity_publication(spec_id="game") is None
+
+
+def why2_envelope(prepared):
+    """Closed shape fixture only; no accepted WHY2 operation or ancestry authority."""
+    from dataclasses import asdict
+    from harness.discovery_completion import _document, _json, _hash
+    from harness.discovery_publication import _seal, _graph
+    from harness.discovery_quality import capture_quality_policy
+    from harness.element_identity_publication import PublicationSourceClaim
+    from harness.element_identity_snapshot import IdentityHistorySnapshot
+    from harness.squad_source_snapshot import PublicationSourcesSnapshot
+    from harness.squad_source_baseline_codec import encode_initial_publication_sources
+    from harness.squad_source_manifest import snapshot_source_manifest
+    from tests.unit.test_managed_spec_contract import PASS_ISSUES, routing
+    executor = DiscoveryExecutor()
+    assert execute(prepared, executor, create=True).status == "reviewed"
+    package = prepare(prepared, executor)
+    recovery = _document(package.request.recovery_payload)
+    source = _document(recovery["source_inputs"])
+    source["quality_policy"] = capture_quality_policy({"spec_authoring_mode": "proportional"})
+    history = IdentityHistorySnapshot(**source["history"])
+    artifacts = {"issues.md": PASS_ISSUES, "quality-gates.md": "## Verdict: PASS\n"}
+    root, state_store = prepared[:2]
+    writes = {"specs/game/" + name: text.encode() for name, text in artifacts.items()}
+    provisional = _seal(root, state_store.squad_dir, writes, {})
+    def capture(publication):
+        with publication.inspect_sources(tree_paths=tuple(tree.path for tree in package.sources.trees),
+                file_paths=tuple(item.path for item in package.sources.files)) as sources:
+            return sources
+    graph = _graph(capture(provisional), history, dict(spec_id="game", spec_path="specs/game"))
+    writes["specs/game/spec-artifact-graph.json"] = graph
+    publication = _seal(root, state_store.squad_dir, writes, {})
+    sources = capture(publication)
+    source["manifest"] = asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files))
+    parent = dict(dispatch_id="b" * 32, completion_intent_sha256="c" * 64,
+        completion_receipts_sha256="d" * 64, completed_publication_binding_sha256="e" * 64)
+    candidate = dict(artifacts=artifacts, proposal={"new_subjects": [], "revisions": []}, reservations=[], operations=[],
+        history=asdict(history), routing=routing("why2"))
+    operation = dict(binding={"operation_id": "why2-" + parent["dispatch_id"], "spec_id": "game", "run_id": "first",
+        "intent": {"kind": "validate"}, "artifact_paths": list(artifacts), "fingerprint": _hash(source)},
+        attempts=[{"result": {"status": "accepted", "candidate_sha256": _hash(candidate)}}])
+    recovery.update(version=15, producer="why2", source_completion=parent, resolution=None, predecessor=None,
+        operation=operation, candidate_inputs=_json(candidate), candidate_sha256=_hash(candidate),
+        source_inputs=_json(source), source_fingerprint=_hash(source), review={"routing": routing("why2")},
+        sources=encode_initial_publication_sources(sources), graph_sha256=hashlib.sha256(graph).hexdigest())
+    spec, = (tree for tree in sources.trees if tree.path == "specs/game")
+    request = replace(package.request, recovery_payload=_json(recovery), operations=(), proposed_history_sha256=history.sha256,
+        manifest_sha256=publication.marker.manifest_sha256, sources=PublicationSourceClaim(package.request.sources.context_id,
+            package.request.sources.expected_operation_id,
+            encode_initial_publication_sources(PublicationSourcesSnapshot(sources.publication, (spec,), ()))))
+    return publication, request
+
+
+def test_only_exact_why2_root_can_declare_a_completion_restoration(prepared):
+    from harness.discovery_completion import decode_binding
+    publication, request = why2_envelope(prepared)
+    def envelope(value):
+        return dict(kind="external", marker=publication.marker.to_dict(),
+            managed_discovery=dict(version=1, request=encode_publication_request(value)))
+    # The fixture must be a valid ordinary closed envelope before adding a link.
+    assert decode_binding(envelope(request), completion_id="a" * 32).producer == "why2"
+    declared = replace(request, continuation_id="discovery-restore-" + "a" * 32)
+    assert decode_binding(envelope(declared), completion_id="a" * 32).request == declared
+    with pytest.raises(CompletionError):
+        decode_binding(envelope(replace(request, continuation_id="discovery-restore-" + "f" * 32)), completion_id="a" * 32)
+    # Closed shape grants neither an accepted provider operation nor ancestry.
+    with pytest.raises(CompletionError):
+        decode_binding(envelope(declared), completion_id="a" * 32, state=prepared[1].load())
+
+
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 def test_existing_completion_owner_publishes_applies_and_releases(prepared, provider):
     executor = DiscoveryExecutor(provider)

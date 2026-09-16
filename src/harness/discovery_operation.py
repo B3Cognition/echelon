@@ -16,7 +16,7 @@ from harness.discovery_inputs import DiscoveryInputError, admit_runtime_inputs, 
 from harness.discovery_operation_state import operation_from_state
 from harness.discovery_reservations import DiscoveryReservationJournal
 from harness.discovery_receipts import receipt_round_operation_id
-from harness.discovery_semantics import DiscoveryAssignment, artifact_roles
+from harness.discovery_semantics import DiscoveryAssignment, artifact_roles, captured_artifact_roles
 from harness.discovery_producer import producer_component, producer_operation_id, synthesis_input_source, tracker_input_source
 from harness.discovery_turns import read_discovery_usage, run_discovery_step
 from harness.element_artifacts import parse_identity_artifact
@@ -64,10 +64,17 @@ def _overlap(left, right):
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None, producer="discovery", source_completion=None):
+def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, repair_unit=None, producer="discovery", source_completion=None, clarification=False):
     from harness.discovery_producer import post_why1_context, tracker_round, tracker_rounds
     state = state_store.load()
+    if clarification:
+        from harness.discovery_producer import SOURCE_FIELDS
+        if (producer != "why2" or repair_unit is not None
+                or source_completion != {key: (state.get("last_dispatch") or {}).get(key) for key in SOURCE_FIELDS}):
+            raise _Blocked("clarification_source_changed")
     post_review = post_why1_context(state, producer)
+    source_roles = captured_artifact_roles(producer, after_review=repair_unit is not None or post_review
+        or (producer == "constitution" and state.get("managed_what_rounds") is not None))
     refresh = post_review and "refresh" in tracker_round(state, producer=producer) and source_completion is None
     spec_path = selected["selection"]["spec_path"]
     denied = (*CONTROL_ROOTS, *CONTROL_PATHS, str(state_store.squad_dir.relative_to(root)))
@@ -77,8 +84,14 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution"} or repair_unit is not None or post_review else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution"} or repair_unit is not None or post_review else ()
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution", "what", "why2"} or repair_unit is not None or post_review else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2"} or repair_unit is not None or post_review else ()
+    if producer == "what":
+        template_paths = {".echelon/prosaic/agents/exploration/templates/cartographer-spec-template.md": "spec.md",
+            ".echelon/prosaic/agents/exploration/templates/cartographer-overview-template.md": "requirements-overview.md"}
+    if producer == "why2":
+        template_paths = {".echelon/prosaic/agents/exploration/templates/sage-quality-gates-template.md": "quality-gates.md",
+            ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md"}
     if producer == "why1":
         template_paths = {".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md",
@@ -87,14 +100,39 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         template_paths.update({".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md"})
     spec_view = runtime_view = None
-    if producer in {"synthesizer", "tracker", "why1", "constitution"}:
+    understanding = None
+    evidence_paths = ()
+    if producer in {"synthesizer", "tracker", "why1", "constitution", "what", "why2"}:
         from harness.discovery_completion import released_discovery_input_projectors
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
+        if clarification:
+            from harness.discovery_completion import _retained_input_projection
+            from harness.tracker_clarification import question_claim
+            parent_binding, _, _ = _retained_input_projection(root, state_store.squad_dir, state, store,
+                operation_id="discovery-completion-" + source_completion["dispatch_id"], source=source_completion,
+                require_checkpoint=False, required_route=("phase1-why2", "phase1-why2"))
+            if (parent_binding.producer != "why2" or parent_binding.clarification
+                    or question_claim(parent_binding.candidate["routing"], "why2") is None
+                    or parent_binding.recovery["operation"] != operation_from_state(state, "why2")):
+                raise _Blocked("clarification_parent_changed")
+            prefix = state_store.squad_dir.relative_to(root).as_posix() + "/evidence/understanding/"
+            understanding, = (item for item in parent_binding.sources.files if item.path.startswith(prefix))
+            evidence_paths = (understanding.path,)
+        elif producer in {"what", "why2"}:
+            from harness.discovery_spec import require_spec_parent
+            parent = tracker_input_source(state, producer=producer)
+            parent_binding = require_spec_parent(root, state_store.squad_dir, state, producer, parent)
+            if producer == "why2":
+                evidence_paths = (parent_binding.recovery["report_path"],)
+                understanding, = (item for item in parent_binding.sources.files if item.path in evidence_paths)
+            if source_completion is not None and source_completion != parent:
+                raise _Blocked("specification_source_changed")
+            source_completion = parent
         if producer == "constitution":
-            from harness.discovery_constitution import constitution_source, require_constitution_parent
-            parent = constitution_source(state)
+            from harness.discovery_constitution import constitution_input_source, require_constitution_parent
+            parent = constitution_input_source(state)
             require_constitution_parent(root, state_store.squad_dir, state, parent)
             if source_completion is not None and source_completion != parent:
                 raise _Blocked("constitution_source_changed")
@@ -123,10 +161,14 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
             source=repair["source"])
     with prepared.inspect_sources(tree_paths=(spec_path, input_tree, *runtime_trees),
-            file_paths=(*template_paths, *runtime_files, *staging_paths, *reasoning_paths)) as sources:
+            file_paths=(*template_paths, *runtime_files, *staging_paths, *reasoning_paths, *evidence_paths)) as sources:
         if sources.publication.operations:
             raise _Blocked("discovery_capture_contains_publication")
         state = state_store.load()
+        if understanding is not None:
+            captured, = (item for item in sources.files if item.path == understanding.path)
+            if captured != understanding:
+                raise _Blocked("understanding_evidence_changed")
         if producer == "tracker":
             from harness.discovery_producer import tracker_round
             if not post_review and tracker_round(state)["resolution"] is None and any(
@@ -160,7 +202,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
                 # Exact derived bytes were authenticated above; it is not an
                 # editable Markdown artifact or provider-authored definition.
                 continue
-            if logical not in artifact_roles("why1" if repair_unit is not None or post_review else producer):
+            if logical not in source_roles:
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
         if producer == "constitution":
@@ -176,7 +218,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
         evidence.update(documents)
         evidence.update({item.path: item.content.decode("utf-8") for item in sources.files
-            if item.path in staging_paths and item.content is not None})
+            if item.path in (*staging_paths, *evidence_paths) and item.content is not None})
         if reasoning_paths:
             from harness.reasoning_journal_store import read_reasoning_journal
             journal, = (item for item in sources.files if item.path in reasoning_paths)
@@ -192,6 +234,9 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
             raise _Blocked("discovery_source_not_text")
         source_inputs = dict(manifest=asdict(snapshot_source_manifest(trees=sources.trees, files=sources.files)),
             history=asdict(history), authority=observed, runtime=runtime)
+        if producer == "why2":
+            from harness.discovery_quality import capture_quality_policy
+            source_inputs["quality_policy"] = capture_quality_policy(state)
         if refresh:
             _require_refresh_dependencies(refresh_row, previous, refresh_row["refresh"]["predecessor_source"],
                 sources, source_inputs, selected["selection"], state_store.squad_dir, root, producer=producer)
@@ -230,7 +275,7 @@ def capture_discovery_repair_inputs(project_root, state_store, unit_id):
 def _citations(artifacts, labels):
     citations = {}
     for artifact in artifacts:
-        if artifact.role not in {"unknowns", "assumptions", "intent", "issues"} or artifact.after_text is None:
+        if artifact.role not in {"unknowns", "assumptions", "intent", "issues", "requirements"} or artifact.after_text is None:
             continue
         parsed = parse_identity_artifact(path=artifact.path, role=artifact.role, text=artifact.after_text)
         for declaration in parsed.declarations:
@@ -250,7 +295,8 @@ def _progress(artifacts, findings, *, routing=None):
     rows = sorted(normalized(json.dumps(row, sort_keys=True, ensure_ascii=False)) for row in findings)
     record = dict(content=content, findings=rows)
     if routing is not None:
-        record["routing"] = {key: normalized(value) for key, value in routing.items()}
+        record["routing"] = {key: normalized(json.dumps(value, sort_keys=True, ensure_ascii=False)
+            if isinstance(value, dict) else value) for key, value in routing.items()}
     return _hash(record)
 
 
@@ -266,6 +312,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
         producer_args = {} if producer == "discovery" else {"producer": producer}
         from harness.discovery_producer import post_why1_context
         post_review = post_why1_context(state, producer)
+        source_roles = captured_artifact_roles(producer, after_review=repair_unit is not None or post_review
+            or (producer == "constitution" and state.get("managed_what_rounds") is not None))
         if repair_unit is not None:
             producer_args["repair_unit"] = repair_unit
         if type(replay_only) is not bool:
@@ -325,7 +373,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         raise _Blocked(last.reason)
                     return last.reply
                 proposal = turn(proposal_assignment, {**common, "reply_fields": dict(
-                    new_subjects=[] if producer == "constitution" else [dict(key="local-key", kind="U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
+                    new_subjects=[] if producer == "constitution" else [dict(key="local-key", kind="FR, NFR or AC" if producer == "what" else "ISS" if producer == "why2" else "U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
                     revisions=[] if producer == "constitution" else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
                 if repair_unit is not None and (proposal["new_subjects"] or
@@ -336,12 +384,19 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 assigned = tuple(sorted({item.element_id for item in mappings} | {item["id"] for item in proposal["revisions"]}))
                 author_assignment = replace(proposal_assignment, dispatch_id=f"attempt-{number}-author", step="author", assigned_ids=assigned)
                 reply_fields = dict(artifacts={path: "exact UTF-8 artifact text" for path in artifact_paths})
+                if producer == "what":
+                    reply_fields["routing"] = dict(verdict="DONE or FAIL", state_updates=dict(
+                        spec_status="planned or blocked", evidence_resolution_status="not_required or pending",
+                        evidence_requests="omit unless pending; existing executable evidence-request object"))
                 if producer in {"tracker", "why1"}:
                     reply_fields["artifacts"]["issues.md" if producer == "why1" else "stakeholder-model.md"] = "exact UTF-8 text, or null only when absent before and after"
                     reply_fields["routing"] = dict(verdict="PASS, FAIL, STOP_AND_ASK or BLOCKED" if producer == "why1" else "ALIGNED, DRIFT or STOP_AND_ASK",
                         question="required nonblank question for STOP_AND_ASK; otherwise null",
                         recommended_answer="optional nonblank answer for STOP_AND_ASK; otherwise null",
                         risk_level="optional low, medium, high or critical alongside a STOP_AND_ASK recommendation; otherwise null")
+                if producer == "why2":
+                    reply_fields["routing"] = dict(verdict="PASS, FAIL or STOP_AND_ASK", state_updates=dict(
+                        evidence_resolution_status="not_required or pending", finding_routes=dict(findings=[])))
                 authored = turn(author_assignment, {**common, "proposal": proposal, "reservations": reserved,
                     "reply_fields": reply_fields})
                 verify()
@@ -360,12 +415,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     # evidence still uses the existing reference adapter.
                     derived_context = (state_store.squad_dir / "context").relative_to(root).as_posix() + "/"
                     artifacts = tuple(sorted((*written,
-                        *(CandidateArtifact(path, artifact_roles("why1" if repair_unit is not None or post_review else producer)[path], content, content) for path, content in before.items() if path not in artifact_paths),
+                        *(CandidateArtifact(path, source_roles[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
                             if (producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution"} or repair_unit is not None or post_review else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2"} or repair_unit is not None or post_review else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)
@@ -380,7 +435,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         source_citations = {path: f"source:{path}:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
                             for path, content in evidence.items()}
                         review_assignment = replace(author_assignment, dispatch_id=f"attempt-{number}-review", step="review", assigned_ids=labels,
-                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1"} else None)
+                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1", "what", "why2"} else None)
                         review = turn(review_assignment, {**common, "proposal": proposal, "reservations": reserved,
                             "candidate": [asdict(item) for item in artifacts], "citations": citations,
                             "source_citations": source_citations,
@@ -398,12 +453,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 verify()
                 candidate_inputs = dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
                     operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history))
-                if producer in {"tracker", "why1"}:
+                if producer in {"tracker", "why1", "what", "why2"}:
                     candidate_inputs["routing"] = authored["routing"]
                 candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
-                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1"} else None)
+                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1", "what", "why2"} else None)
                 if repair_unit is not None:
                     finished["progress_sha256"] = progress
                 saved = operation_from_state(state_store.load(), producer, repair_unit=repair_unit)["attempts"][number - 1]["result"]

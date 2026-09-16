@@ -31,6 +31,7 @@ from harness.phase_checkpoints import (
     restore_checkpoint_artifacts,
     verify_checkpoint_artifact_digests,
 )
+from harness.squad_publication import PublicationError
 
 
 SCHEMA_VERSION = 1
@@ -82,6 +83,81 @@ class AuthoritativeSageEvidenceSnapshot:
     verdict: str
     issues: tuple[Mapping[str, object], ...]
     file_identity: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class ProjectedSageEvidenceSnapshot:
+    """Sealed review image for preparation, never a claim of live file freshness.
+
+    The caller authenticates the publication against its accepted operation and
+    retains the same sources in guarded completion. Values alone grant no writes.
+    """
+    project_relative_path: str
+    content: bytes = field(repr=False)
+    sha256: str
+    verdict: str
+    issues: tuple[Mapping[str, object], ...]
+    sources_payload: str = field(repr=False)
+
+
+def _projected_quality_artifacts(sources, path, *, project_root):
+    from harness.squad_source_projection import project_publication_source_images
+
+    _, relative = _safe_authoritative_sage_path(path, project_root=project_root)
+    spec_path = Path(relative).parent.as_posix()
+    if Path(relative).name != "issues.md":
+        raise QualityCandidateIntegrityError("projected review path is invalid")
+    projected = project_publication_source_images(sources)
+    trees = [tree for tree in projected.trees if tree.path == spec_path and tree.exists]
+    if len(trees) != 1:
+        raise QualityCandidateIntegrityError("projected review requires the exact spec tree")
+    review_paths = {spec_path + "/" + name for name in ("issues.md", "quality-gates.md")}
+    targets = {operation.target for operation in sources.publication.operations}
+    if not review_paths <= targets or not targets <= review_paths | {spec_path + "/spec-artifact-graph.json"}:
+        raise QualityCandidateIntegrityError("projected review has unexpected artifact scope")
+    if any(operation.action != "write" for operation in sources.publication.operations):
+        raise QualityCandidateIntegrityError("projected review cannot delete artifacts")
+    contents = {Path(item.path).name: item.content for item in trees[0].files
+                if Path(item.path).parent.as_posix() == spec_path
+                and Path(item.path).name in {"spec.md", "requirements-overview.md", "issues.md", "quality-gates.md"}}
+    if not {"spec.md", "issues.md", "quality-gates.md"} <= set(contents):
+        raise QualityCandidateIntegrityError("projected quality artifacts are incomplete")
+    for content in contents.values():
+        if type(content) is not bytes or not content.decode("utf-8").strip():
+            raise QualityCandidateIntegrityError("projected quality artifact is malformed")
+    return relative, contents
+
+
+def project_authoritative_sage_evidence_snapshot(sources, path, *, project_root):
+    """Parse exact sealed WHY2 bytes; no filesystem promotion or new authority."""
+    from harness.squad_source_baseline_codec import encode_initial_publication_sources, decode_initial_publication_sources
+
+    try:
+        payload = encode_initial_publication_sources(sources)
+        detached = decode_initial_publication_sources(payload)
+        relative, contents = _projected_quality_artifacts(detached, path, project_root=project_root)
+        content = contents["issues.md"]
+        verdict, issues = _parse_authoritative_sage_assessment_bytes(content)
+        return ProjectedSageEvidenceSnapshot(relative, content, hashlib.sha256(content).hexdigest(),
+            verdict, tuple(MappingProxyType(dict(issue)) for issue in issues), payload)
+    except (PublicationError, ValueError, TypeError, OSError, UnicodeError) as error:
+        raise QualityCandidateIntegrityError("projected SAGE evidence is invalid") from error
+
+
+def require_projected_authoritative_sage_evidence_snapshot(snapshot, path, *, project_root):
+    """Revalidate every supplied value and return the same projected artifacts."""
+    from harness.squad_source_baseline_codec import decode_initial_publication_sources
+
+    try:
+        if type(snapshot) is not ProjectedSageEvidenceSnapshot:
+            raise ValueError("invalid projected snapshot type")
+        sources = decode_initial_publication_sources(snapshot.sources_payload)
+        expected = project_authoritative_sage_evidence_snapshot(sources, path, project_root=project_root)
+        if snapshot != expected:
+            raise ValueError("projected snapshot binding changed")
+        return _projected_quality_artifacts(sources, path, project_root=project_root)[1]
+    except (PublicationError, ValueError, TypeError, OSError, UnicodeError) as error:
+        raise QualityCandidateIntegrityError("projected SAGE evidence binding is invalid") from error
 
 
 @dataclass(frozen=True)
@@ -844,7 +920,7 @@ def prepare_quality_candidate(
     assessment_index: int,
     eligibility_reasons: Sequence[str],
     repair_state: MutableMapping[str, object],
-    authoritative_sage_evidence: AuthoritativeSageEvidenceSnapshot | None = None,
+    authoritative_sage_evidence: AuthoritativeSageEvidenceSnapshot | ProjectedSageEvidenceSnapshot | None = None,
 ) -> QualityCandidateManifest:
     """Validate and describe one WHY2 candidate without external effects."""
     if not _is_candidate_id(candidate_id):
@@ -888,8 +964,18 @@ def prepare_quality_candidate(
     digests: list[tuple[str, str]] = []
     contents: dict[str, bytes] = {}
     sage_snapshot = authoritative_sage_evidence
+    projected_contents = (require_projected_authoritative_sage_evidence_snapshot(
+        sage_snapshot, resolved_spec / "issues.md", project_root=root)
+        if type(sage_snapshot) is ProjectedSageEvidenceSnapshot else None)
     for name in artifact_names:
         path = resolved_spec / name
+        if projected_contents is not None:
+            if name not in projected_contents and name == "requirements-overview.md":
+                continue
+            content = projected_contents[name]
+            contents[name] = content
+            digests.append((name, hashlib.sha256(content).hexdigest()))
+            continue
         if name == "issues.md" and sage_snapshot is not None:
             require_current_authoritative_sage_evidence_snapshot(
                 sage_snapshot,
@@ -1341,6 +1427,8 @@ def restore_quality_candidate(
 def candidate_artifact_preimage_digests(
     spec_dir: Path,
     candidate: QualityCandidateManifest,
+    *,
+    current_candidate: QualityCandidateManifest | None = None,
 ) -> dict[str, str]:
     """Seal the exact regular-file preimages for a later durable restore."""
     if not isinstance(candidate, QualityCandidateManifest):
@@ -1348,6 +1436,17 @@ def candidate_artifact_preimage_digests(
     artifact_digests = dict(candidate.owned_artifact_digests)
     if len(artifact_digests) != len(candidate.owned_artifact_digests):
         raise QualityCandidateIntegrityError("candidate artifact paths are duplicated")
+    if current_candidate is not None:
+        # Candidate effects run after the assessed candidate's publication.
+        # In managed execution that publication is still sealed here, so live
+        # review files describe the previous candidate, not restore preimages.
+        if not isinstance(current_candidate, QualityCandidateManifest):
+            raise QualityCandidateIntegrityError("current candidate manifest is invalid")
+        current = dict(current_candidate.owned_artifact_digests)
+        if len(current) != len(current_candidate.owned_artifact_digests) or not set(artifact_digests) <= set(current):
+            raise QualityCandidateIntegrityError("current candidate restore artifacts are missing or duplicated")
+        return _validated_restore_preimages({name: current[name] for name in sorted(artifact_digests)},
+                                           artifact_digests=artifact_digests)
     preimages: dict[str, str] = {}
     for name in sorted(artifact_digests):
         path = Path(spec_dir) / name

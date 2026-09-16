@@ -4,7 +4,7 @@ No filesystem access, authority creation, commits, or transaction ownership.
 The marker/user_version retain format 1; metadata versions the database schema.
 """
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "8"
 _CANONICAL = "{0} NOT GLOB '*[^0-9]*' AND ({0} = '0' OR {0} GLOB '[1-9]*')"
 ALLOCATION_SCHEMA = {
     "metadata": "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
@@ -128,7 +128,30 @@ MANAGED_SCHEMA = {
     "managed_identity_operations": "CREATE INDEX managed_identity_operations ON operations "
         "(spec_id,operation_id) WHERE method='managed_identity'",
 }
-SCHEMA = SCHEMA_V5 | MANAGED_SCHEMA
+SCHEMA_V6 = SCHEMA_V5 | MANAGED_SCHEMA
+MEMBERSHIP_SCHEMA = {
+    "snapshot_memberships": "CREATE TABLE snapshot_memberships (spec_id TEXT NOT NULL, element_id TEXT NOT NULL, "
+        "revision TEXT NOT NULL, present INTEGER NOT NULL CHECK (present IN (0,1)), source_revision TEXT, "
+        "snapshot_id TEXT NOT NULL, operation_id TEXT NOT NULL REFERENCES operations(operation_id), "
+        "CHECK ((present=1 AND source_revision IS NOT NULL) OR (present=0 AND source_revision IS NULL)), "
+        "PRIMARY KEY (spec_id,element_id,revision), "
+        "FOREIGN KEY (spec_id,element_id,revision) REFERENCES revisions(spec_id,element_id,revision), "
+        "FOREIGN KEY (spec_id,element_id,source_revision) REFERENCES revisions(spec_id,element_id,revision)) WITHOUT ROWID",
+    "snapshot_membership_operations": "CREATE INDEX snapshot_membership_operations ON snapshot_memberships (operation_id)",
+}
+SCHEMA_V7 = SCHEMA_V6 | MEMBERSHIP_SCHEMA
+CONTINUATION_SCHEMA = {
+    "publication_pending_specs": "CREATE UNIQUE INDEX publication_pending_specs ON publication_intents (spec_id) "
+        "WHERE state!='released' AND json_extract(request,'$.continuation') IS NULL",
+    "publication_continuation_ids": "CREATE UNIQUE INDEX publication_continuation_ids ON publication_intents "
+        "(json_extract(request,'$.continuation_id')) WHERE json_extract(request,'$.continuation_id') IS NOT NULL",
+    "publication_continuation_parents": "CREATE UNIQUE INDEX publication_continuation_parents ON publication_intents "
+        "(json_extract(request,'$.continuation.parent_operation_id')) "
+        "WHERE json_extract(request,'$.continuation.parent_operation_id') IS NOT NULL",
+    "publication_pending_owners": "CREATE INDEX publication_pending_owners ON publication_intents "
+        "(spec_id) WHERE state!='released'",
+}
+SCHEMA = SCHEMA_V7 | CONTINUATION_SCHEMA
 
 
 def validate(connection, marker, *, allow_old=False):
@@ -137,13 +160,14 @@ def validate(connection, marker, *, allow_old=False):
     actual = {row[0]: row[1] for row in connection.execute(
         "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
     )}
-    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA):
+    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA):
         raise ValueError("identity database schema or required indexes are malformed")
     metadata = dict(connection.execute("SELECT key, value FROM metadata"))
     expected = {key: str(value) for key, value in marker.items()}
     version = ("1" if actual == ALLOCATION_SCHEMA else "2" if actual == SCHEMA_V2
                else "3" if actual == SCHEMA_V3 else "4" if actual == SCHEMA_V4
-               else "5" if actual == SCHEMA_V5 else SCHEMA_VERSION)
+               else "5" if actual == SCHEMA_V5 else "6" if actual == SCHEMA_V6
+               else "7" if actual == SCHEMA_V7 else SCHEMA_VERSION)
     if version != "1":
         expected["schema_version"] = version
     if metadata != expected:
@@ -174,6 +198,13 @@ def upgrade(connection):
             connection.execute(statement)
     if version is None or version[0] in {"2", "3", "4", "5"}:
         for statement in MANAGED_SCHEMA.values():
+            connection.execute(statement)
+    if version is None or version[0] in {"2", "3", "4", "5", "6"}:
+        for statement in MEMBERSHIP_SCHEMA.values():
+            connection.execute(statement)
+    if version is None or version[0] in {"2", "3", "4", "5", "6", "7"}:
+        connection.execute("DROP INDEX publication_pending_specs")
+        for statement in CONTINUATION_SCHEMA.values():
             connection.execute(statement)
     connection.execute("INSERT INTO metadata (key,value) VALUES ('schema_version',?) "
                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (SCHEMA_VERSION,))

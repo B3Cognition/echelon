@@ -3,6 +3,7 @@
 import hashlib
 
 from harness import element_identity_lifecycle as lifecycle
+from harness import element_identity_membership_store as membership
 
 
 def revision_row(spec_id, operation_id, planned):
@@ -64,6 +65,12 @@ def apply_changes(connection, store, spec_id, operation_id, changes):
         "VALUES (?,?,?,?,?,?,?,?)",
         (tuple(lineage_row(operation_id, link).values()) for link in links),
     )
+    memberships = membership.planned_rows(spec_id, operation_id, changes, planned)
+    connection.executemany(
+        "INSERT INTO snapshot_memberships "
+        "(spec_id,element_id,revision,present,source_revision,snapshot_id,operation_id) VALUES (?,?,?,?,?,?,?)",
+        (tuple(row.values()) for row in memberships),
+    )
     result = [
         {
             "element_id": row[0],
@@ -76,6 +83,10 @@ def apply_changes(connection, store, spec_id, operation_id, changes):
         }
         for row in planned
     ]
+    by_id = {row["element_id"]: row for row in memberships}
+    for entry in result:
+        if entry["element_id"] in by_id:
+            entry["snapshot_membership"] = membership.receipt_fields(by_id[entry["element_id"]])
     receipt = _json(result)
     connection.execute(
         "INSERT INTO lifecycle_receipts (operation_id,receipt,receipt_sha256) VALUES (?,?,?)",
@@ -107,6 +118,8 @@ def plan_changes(connection, store, spec_id, changes):
                 connection, spec_id, change.element_id, change.expected_revision,
                 status="retired", reason=change.reason,
             ))
+        elif type(change) is lifecycle.ElementSnapshotMembership:
+            planned.append(membership.plan_change(connection, store, spec_id, change))
         else:
             for label, expected in change.predecessors:
                 planned.append(store._existing_change(

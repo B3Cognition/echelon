@@ -1582,3 +1582,39 @@ internal selection through that phase. WHAT requirements authoring and its
 downstream producer/gate families remain unsupported by managed execution;
 whole-run identity acceptance and public/installed/live activation remain open.
 No installation, migration, live provider spend, push or merge occurred.
+
+### Managed WHAT → Understanding → WHY2 (complete, 2026-09-16)
+
+The approved combined continuation implements managed requirements authoring,
+deterministic Understanding and WHY2 review through the existing operation,
+publication, identity and completion owners. WHAT and WHY2 use neutral Prosaic
+producer/reviewer roles for both providers; Understanding remains deterministic.
+No provider-native role lookup or additional COMMANDER authority is introduced.
+
+Repairs retain requirement subjects and IDs, append forward history and rerun
+Understanding before WHY2. Best-candidate restoration preserves exact selected
+artifact bytes through authenticated, reversible membership, without rewinding
+identity history or reviving permanently retired identities. The storage upgrade
+is explicit and has not been applied to any installed workspace.
+
+The native owners retain guided/semi/Banzai decisions, proportional/perfectionist
+policy, cumulative budgets, the single authorized extension and debt/stop outcomes.
+Discovery-owned repairs use the existing repair/refresh corridor, retaining prior
+answers and review ancestry. The linked
+[combined implementation plan](superpowers/plans/2026-09-16-managed-what-understanding-why2.md)
+records test-first fixes, review findings and fresh versus retained-checkpoint
+verification. The final Claude exhausted-extension recovery passed seven fault
+boundaries, current/downstream debt authorization, exact no-call restart and
+retained-proof tamper checks, preserving its 315 tokens, exhausted 3+1 budget and
+identity history. The latest fresh selected regression batch passed 504 tests.
+Independent read-only review has no remaining findings. This is not a full-suite
+or live-provider acceptance claim; old-loaded failures are documented separately
+from their passing current-code retained recovery.
+
+This supersedes the historical WHAT stop only for the explicit
+internal selection through WHY2. Downstream producer families, remaining input
+domains, original whole-run identity acceptance and public/installed/live
+activation remain outside this milestone. No installation, live migration,
+provider spending, push or merge is authorized by this checkpoint. Performance
+optimization remains deferred with its preservation requirements recorded in the
+combined plan.

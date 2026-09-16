@@ -11,6 +11,8 @@ from harness import element_identity_binding_store as binding_store
 from harness import element_identity_binding_preview as binding_preview
 from harness import element_identity_lifecycle as lifecycle
 from harness import element_identity_lifecycle_store as lifecycle_store
+from harness import element_identity_membership_store as membership
+from harness import element_identity_continuation_store as continuations
 from harness.element_identity_json import strict_json
 from harness.element_identity_publication import (
     encode_publication_request, decode_publication_request,
@@ -23,7 +25,7 @@ from harness import element_identity_store as authority
 _PENDING = "SELECT operation_id FROM publication_intents WHERE spec_id=? AND state!='released'"
 _CLAIM = "SELECT publication_id,method,digest FROM publication_operation_claims WHERE operation_id=?"
 _CHILD_TABLES = ("reservations", "revisions", "lifecycle_lineage", "lifecycle_receipts",
-                 "reference_claims", "issue_occurrences", "binding_receipts")
+                 "reference_claims", "issue_occurrences", "binding_receipts", "snapshot_memberships")
 _OMITTED = object()
 
 
@@ -73,7 +75,13 @@ def planned_effects(connection, store, spec_id, children):
     binding_preview.validate_projected(connection, store, spec_id, changes=changes,
                                        claims=batches.get("reference_claims", ()),
                                        occurrences=batches.get("issue_occurrences", ()))
-    return {"revisions": planned, "lineage": links}
+    result = {"revisions": planned, "lineage": links}
+    for operation, entries, _, _ in children:
+        if operation.method == "lifecycle":
+            rows = membership.planned_rows(spec_id, operation.operation_id, entries, planned)
+            if rows:
+                result["snapshot_memberships"] = rows
+    return result
 
 
 def _plan(connection, store, spec_id, children):
@@ -84,7 +92,8 @@ def require_new_children(connection, children):
     """Require globally unused operation IDs, including permanent child claims."""
     for op, _, _, _ in children:
         if (connection.execute("SELECT 1 FROM operations WHERE operation_id=?", (op.operation_id,)).fetchone()
-                or connection.execute(_CLAIM, (op.operation_id,)).fetchone()):
+                or connection.execute(_CLAIM, (op.operation_id,)).fetchone()
+                or continuations.claimed_parent(connection, op.operation_id) is not None):
             raise ValueError("publication child operation_id already executed or claimed")
 
 
@@ -99,7 +108,8 @@ def _stored_json(payload):
 
 
 def _plan_shape(value, spec_id):
-    if type(value) is not dict or set(value) != {"revisions", "lineage"}:
+    if type(value) is not dict or set(value) not in ({"revisions", "lineage"},
+                                                  {"revisions", "lineage", "snapshot_memberships"}):
         raise ValueError("invalid publication plan shape")
     if type(value["revisions"]) is not list or type(value["lineage"]) is not list:
         raise ValueError("invalid publication plan arrays")
@@ -137,6 +147,8 @@ def _plan_shape(value, spec_id):
 
 def _absent_rows(connection, operation_id, allowed=()):
     for table in _CHILD_TABLES:
+        if table == "snapshot_memberships" and not membership.available(connection):
+            continue
         if table not in allowed and connection.execute(
             f"SELECT 1 FROM {table} WHERE operation_id=? LIMIT 1", (operation_id,),
         ).fetchone():
@@ -164,6 +176,9 @@ def _persisted_plan(connection, store, row, plan, child_id):
         "FROM lifecycle_lineage WHERE operation_id=?", (child_id,))]
     if sorted(links) != sorted(tuple(link) for link in plan["lineage"]):
         raise ValueError("published lineage differs from retained exact plan")
+    actual_memberships = membership.rows(connection, operation_id=child_id)
+    if sorted(map(authority._json, actual_memberships)) != sorted(map(authority._json, plan.get("snapshot_memberships", []))):
+        raise ValueError("published snapshot membership differs from retained exact plan")
 
 
 def _application(connection, store, row, plan, children, *, source_receipt=None):
@@ -174,7 +189,7 @@ def _application(connection, store, row, plan, children, *, source_receipt=None)
         if saved is None or tuple(saved) != (operation.method, row["spec_id"], digest):
             raise ValueError("published child operation is missing or damaged")
         if operation.method == "lifecycle":
-            _absent_rows(connection, operation.operation_id, ("revisions", "lifecycle_lineage", "lifecycle_receipts"))
+            _absent_rows(connection, operation.operation_id, ("revisions", "lifecycle_lineage", "lifecycle_receipts", "snapshot_memberships"))
             _persisted_plan(connection, store, row, plan, operation.operation_id)
             receipt = store._receipt(connection, operation.operation_id, row["spec_id"])
             # Existing receipt validation authenticates entries; this journal also
@@ -183,6 +198,10 @@ def _application(connection, store, row, plan, children, *, source_receipt=None)
                          "lineage": [link for link in store._lineage(connection, row["spec_id"], p[0])
                                      if link["operation_id"] == operation.operation_id]}
                         for p in plan["revisions"]]
+            by_id = {m["element_id"]: m for m in plan.get("snapshot_memberships", [])}
+            for entry in expected:
+                if entry["element_id"] in by_id:
+                    entry["snapshot_membership"] = membership.receipt_fields(by_id[entry["element_id"]])
             if list(receipt) != expected:
                 raise ValueError("published lifecycle receipt differs from complete plan")
         else:
@@ -234,6 +253,11 @@ def _load(connection, store, spec_id, operation_id, *, effects=True, source_stat
     ):
         raise ValueError("publication plan or parent digest is damaged")
     children = _children(request, spec_id)
+    expected_memberships = [row for op, entries, _, _ in children if op.method == "lifecycle"
+                           for row in membership.planned_rows(spec_id, op.operation_id, entries, plan["revisions"])]
+    if plan.get("snapshot_memberships", []) != expected_memberships or (
+            "snapshot_memberships" in plan and not expected_memberships):
+        raise ValueError("planned snapshot membership differs from exact request")
     expected_claims = {(op.operation_id, operation_id, op.method, digest) for op, _, _, digest in children}
     claims = {tuple(item) for item in connection.execute(
         "SELECT operation_id,publication_id,method,digest FROM publication_operation_claims WHERE publication_id=?",
@@ -276,20 +300,33 @@ def _load(connection, store, spec_id, operation_id, *, effects=True, source_stat
             lifecycle.text(row["completion_payload"], "completion_payload")
             if _hash(row["completion_payload"], "utf-8") != row["completion_payload_sha256"]:
                 raise ValueError("publication completion digest is damaged")
+    continuations.validate_links(connection, row, request)
+    if request.continuation_id is not None and connection.execute(
+            "SELECT 1 FROM publication_intents WHERE operation_id=?", (request.continuation_id,)).fetchone():
+        _load(connection, store, spec_id, request.continuation_id, effects=effects, source_state=source_state)
     return row, request, plan, children
 
 
 def guard(connection, operation_id, method, spec_id, digest, existing, *, publication_id=None):
     """One indexed common gate, including permanent global child ownership."""
     claim = connection.execute(_CLAIM, (operation_id,)).fetchone()
+    continuation_owner = continuations.claimed_parent(connection, operation_id)
+    if continuation_owner is not None and (method != "identity_publication" or publication_id != continuation_owner):
+        raise ValueError("operation_id belongs to a declared publication continuation")
     if publication_id is not None:
         lifecycle.text(publication_id, "publication owner")
         loaded = _load(connection, authority.IdentityStore, spec_id, publication_id, effects=False)
+        if (method == "identity_publication" and loaded is not None
+                and loaded[0]["state"] == "applied" and loaded[1].continuation_id == operation_id
+                and claim is None and existing is None
+                and continuations.pending_root(connection, spec_id) == publication_id):
+            return
         if (loaded is None or loaded[0]["state"] != "prepared" or claim is None
                 or tuple(claim) != (publication_id, method, digest)):
             raise ValueError("invalid publication child owner or claim")
-        pending = connection.execute(_PENDING, (spec_id,)).fetchone()
-        if pending is None or pending[0] != publication_id or existing is not None:
+        pending = continuations.pending_root(connection, spec_id)
+        owner = (loaded[1].continuation.parent_operation_id if loaded[1].continuation is not None else publication_id)
+        if pending != owner or existing is not None:
             raise ValueError("publication child insert requires its prepared pending owner")
         return
     if claim is not None:
@@ -326,7 +363,7 @@ def prepare(connection, store, spec_id, operation_id, request):
     _require(connection, spec_id, operation_id)
     request_json = encode_publication_request(request)
     request = decode_publication_request(request_json)
-    if any(op.operation_id == operation_id for op in request.operations):
+    if any(op.operation_id == operation_id for op in request.operations) or request.continuation_id == operation_id:
         raise ValueError("parent and child operation IDs must differ")
     loaded = _load(connection, store, spec_id, operation_id)
     if loaded is not None:
@@ -335,12 +372,20 @@ def prepare(connection, store, spec_id, operation_id, request):
         return _preparation(connection, loaded[0])
     children = _children(request, spec_id)
     require_new_children(connection, children)
-    if connection.execute(_PENDING, (spec_id,)).fetchone():
+    continuation_owner = None
+    if request.continuation is not None:
+        continuation_owner = continuations.prepare_parent(connection, store, spec_id, operation_id, request)
+    elif connection.execute(_PENDING, (spec_id,)).fetchone():
         raise ValueError("spec has a pending identity publication")
+    if request.continuation_id is not None and (
+            connection.execute("SELECT 1 FROM operations WHERE operation_id=?", (request.continuation_id,)).fetchone()
+            or connection.execute(_CLAIM, (request.continuation_id,)).fetchone()):
+        raise ValueError("continuation operation_id already executed or claimed")
     plan = _plan(connection, store, spec_id, children)
     _check_proposed_history(connection, store, spec_id, request, children, _stored_json(plan))
     digest = authority._digest(["identity_publication", spec_id, operation_id, request_json, _hash(plan)])
-    store._operation(connection, operation_id, "identity_publication", spec_id, digest)
+    store._operation(connection, operation_id, "identity_publication", spec_id, digest,
+                     _publication_id=continuation_owner)
     connection.execute("INSERT INTO publication_intents "
                        "(operation_id,spec_id,request,request_sha256,plan,plan_sha256,state) VALUES (?,?,?,?,?,?,'prepared')",
                        (operation_id, spec_id, request_json, _hash(request_json), plan, _hash(plan)))
@@ -390,12 +435,23 @@ def release(connection, store, spec_id, operation_id, completion_payload):
     if loaded is None or loaded[0]["state"] == "prepared":
         raise ValueError("release requires an applied publication")
     row = loaded[0]
+    request = loaded[1]
+    if request.continuation is not None:
+        raise ValueError("continuation release belongs to its original publication owner")
+    release_ids = (operation_id,)
+    if request.continuation_id is not None:
+        child = _load(connection, store, spec_id, request.continuation_id)
+        if child is None or child[0]["state"] == "prepared":
+            raise ValueError("release requires the applied continuation")
+        release_ids += (request.continuation_id,)
     if row["state"] == "released":
         if row["completion_payload"] != completion_payload:
             raise ValueError("publication completion payload differs from original release")
     else:
-        connection.execute("UPDATE publication_intents SET state='released',completion_payload=?,completion_payload_sha256=? WHERE operation_id=?",
-                           (completion_payload, _hash(completion_payload, "utf-8"), operation_id))
+        placeholders = ",".join("?" for _ in release_ids)
+        connection.execute("UPDATE publication_intents SET state='released',completion_payload=?,completion_payload_sha256=? "
+                           f"WHERE operation_id IN ({placeholders})",
+                           (completion_payload, _hash(completion_payload, "utf-8"), *release_ids))
     return {"version": "1", "publication": _preparation(connection, row),
             "application_sha256": row["application_receipt_sha256"], "completion_sha256": _hash(completion_payload, "utf-8")}
 
@@ -414,8 +470,8 @@ def read(connection, store, spec_id, operation_id):
 @authority._public
 def pending(connection, store, spec_id):
     _require(connection, spec_id)
-    row = connection.execute(_PENDING, (spec_id,)).fetchone()
-    return read(connection, store, spec_id, row[0]) if row else None
+    operation_id = continuations.pending_root(connection, spec_id)
+    return read(connection, store, spec_id, operation_id) if operation_id else None
 
 
 @authority._public

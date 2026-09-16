@@ -319,8 +319,10 @@ def _synthesis_from_state(state):
 def _constitution_from_state(state):
     from harness.discovery_constitution import constitution_source
     try:
-        return (constitution_source(state), operation_from_state(state, "constitution"),
-            discovery_turns_from_state(state, "constitution"))
+        source = constitution_source(state)
+        original = None if source is None else "constitution-" + source["dispatch_id"]
+        return (source, operation_from_state(state, "constitution", operation_id=original),
+            discovery_turns_from_state(state, "constitution", operation_id=original))
     except Exception:
         raise StateAdvanceError("invalid Constitution state", validator="constitution") from None
 
@@ -2322,6 +2324,8 @@ class SquadStateStore:
         _tracker_from_state(value)
         _tracker_from_state(value, "why1")
         _tracker_from_state(value, "synthesizer")
+        _tracker_from_state(value, "what")
+        _tracker_from_state(value, "why2")
         return value
 
     def load(self) -> dict:
@@ -2460,9 +2464,12 @@ class SquadStateStore:
         allow_discovery_repair_update: bool = False,
         synthesis_update: str | None = None,
         constitution_update: str | None = None,
+        constitution_round_update: str | None = None,
         tracker_update: str | None = None,
         why1_update: str | None = None,
         synthesis_round_update: str | None = None,
+        what_update: str | None = None,
+        why2_update: str | None = None,
     ) -> dict:
         # Validate before deepcopy can invoke methods on a hostile record.
         _managed_identity_from_state(state)
@@ -2474,6 +2481,8 @@ class SquadStateStore:
         _tracker_from_state(state)
         _tracker_from_state(state, "why1")
         _tracker_from_state(state, "synthesizer")
+        _tracker_from_state(state, "what")
+        _tracker_from_state(state, "why2")
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
@@ -2534,7 +2543,8 @@ class SquadStateStore:
             if old != new and (synthesis_update != component or (component != "operation" and old is not None)):
                 raise StateAdvanceError("synthesis state requires its owning transition",
                     json_path="$.managed_synthesizer_" + component, validator="synthesizer") from None
-        for round_producer, update in (("tracker", tracker_update), ("why1", why1_update), ("synthesizer", synthesis_round_update)):
+        for round_producer, update in (("tracker", tracker_update), ("why1", why1_update), ("synthesizer", synthesis_round_update),
+                ("constitution", constitution_round_update), ("what", what_update), ("why2", why2_update)):
             old_rounds = _tracker_from_state(current_state, round_producer)
             new_rounds = _tracker_from_state(next_state, round_producer)
             if old_rounds != new_rounds:
@@ -2680,6 +2690,26 @@ class SquadStateStore:
                     or any(field in current for field in ("pending_controller_completion", "pending_external_publication"))
                     or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                 raise StateAdvanceError("Constitution requires exact accepted WHY1 state", validator="constitution")
+            if key in current and current[key] != source:
+                rounds = _tracker_from_state(current, "constitution")
+                operation_id = "constitution-refresh-" + source["dispatch_id"]
+                if rounds is not None and operation_id in rounds["rounds"]:
+                    if rounds["active"] != operation_id or rounds["rounds"][operation_id]["source"] != source:
+                        raise StateAdvanceError("Constitution round is historical", validator="constitution")
+                    return self._confirm_durable_state_unlocked(current)
+                previous = operation_from_state(current, "constitution")
+                if previous is None or not previous["attempts"] or (previous["attempts"][-1]["result"] or {}).get("status") != "accepted":
+                    raise StateAdvanceError("Constitution refresh requires its accepted predecessor", validator="constitution")
+                predecessor = previous["binding"]["operation_id"]
+                rounds = rounds or dict(schema_version=1, active=operation_id, rounds={})
+                rounds["active"] = operation_id
+                rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=None,
+                    predecessor=predecessor, operation=None, turns=None)
+                desired = {**current, rounds_key("constitution"): rounds}
+                _tracker_from_state(desired, "constitution")
+                return self._confirm_durable_state_unlocked(self._save_unlocked(desired, constitution_round_update="select"))
+            if rounds_key("constitution") in current:
+                raise StateAdvanceError("Constitution root is historical", validator="constitution")
             desired = {**current, key: deepcopy(source)}
             _constitution_from_state(desired)
             if desired == current:
@@ -2690,6 +2720,7 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             synthesis_round = producer == "synthesizer" and rounds_key(producer) in current
+            constitution_round = producer == "constitution" and rounds_key(producer) in current
             desired = with_producer_component(current, producer, "turns", marker, repair_unit=repair_unit)
             if repair_unit is not None:
                 _discovery_repairs_from_state(desired)
@@ -2697,7 +2728,7 @@ class SquadStateStore:
                 _discovery_turns_from_state(desired)
             elif producer == "constitution":
                 _constitution_from_state(desired)
-            elif producer in {"tracker", "why1"} or synthesis_round:
+            elif producer in {"tracker", "why1", "what", "why2"} or synthesis_round:
                 _tracker_from_state(desired, producer)
             else:
                 _synthesis_from_state(desired)
@@ -2706,16 +2737,20 @@ class SquadStateStore:
             written = self._save_unlocked(desired, allow_discovery_turn_initialization=producer == "discovery",
                 allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="turns" if producer == "synthesizer" and not synthesis_round else None,
-                constitution_update="turns" if producer == "constitution" else None,
+                constitution_update="turns" if producer == "constitution" and not constitution_round else None,
+                constitution_round_update="turns" if constitution_round else None,
                 synthesis_round_update="turns" if synthesis_round else None,
                 tracker_update="turns" if producer == "tracker" else None,
-                why1_update="turns" if producer == "why1" else None)
+                why1_update="turns" if producer == "why1" else None,
+                what_update="turns" if producer == "what" else None,
+                why2_update="turns" if producer == "why2" else None)
             return self._confirm_durable_state_unlocked(written)
 
     def advance_discovery_operation(self, binding: dict, event: str, *, result: dict | None = None, producer="discovery", repair_unit=None) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             synthesis_round = producer == "synthesizer" and rounds_key(producer) in current
+            constitution_round = producer == "constitution" and rounds_key(producer) in current
             try:
                 desired = advance_operation(current, binding, event, result, producer, repair_unit=repair_unit)
                 if event == "prepare" and producer_component(current, producer, "operation", repair_unit=repair_unit) is None:
@@ -2733,21 +2768,83 @@ class SquadStateStore:
             written = self._save_unlocked(desired, allow_discovery_operation_update=producer == "discovery",
                 allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="operation" if producer == "synthesizer" and not synthesis_round else None,
-                constitution_update="operation" if producer == "constitution" else None,
+                constitution_update="operation" if producer == "constitution" and not constitution_round else None,
+                constitution_round_update="operation" if constitution_round else None,
                 synthesis_round_update="operation" if synthesis_round else None,
                 tracker_update="operation" if producer == "tracker" else None,
-                why1_update="operation" if producer == "why1" else None)
+                why1_update="operation" if producer == "why1" else None,
+                what_update="operation" if producer == "what" else None,
+                why2_update="operation" if producer == "why2" else None)
             return self._confirm_durable_state_unlocked(written)
+
+    def prepare_spec_round(self, producer, source, *, expected_state):
+        """Select after caller-authenticated native parent release, under full CAS."""
+        if producer not in {"what", "why2"}:
+            raise StateAdvanceError("invalid specification producer", validator="spec_round")
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            dispatch = current.get("last_dispatch") or {}
+            resolution = None
+            decision, receipt = current.get("blocked_decision") or {}, current.get("last_human_input_completion")
+            if (dispatch.get("phase_id") == "phase1-why2"
+                    and decision.get("status") == "resolved" and decision.get("source_phase") == "phase1-why2"
+                    and (decision.get("resolution_handler") == "clarification_resume" or (
+                        producer == "what" and decision.get("resolution_handler") == "proportional_quality_debt"
+                        and decision.get("selected_option_id") == "extend_once") or (
+                        producer == "what" and decision.get("resolution_handler") == "banzai_issue_resolution") or (
+                        producer == "why2" and decision.get("resolution_handler") in {"reset_why_fail_count", "reset_why2_stagnation"}
+                        and decision.get("selected_option_id") is None)) and receipt is not None
+                    and receipt.get("decision_id") == decision.get("id")):
+                from harness.discovery_spec import clarification_source
+                if source == clarification_source(receipt):
+                    resolution = dict(decision=validate_blocked_decision(decision), completion=deepcopy(receipt))
+            parents = {"phase1-constitution", "phase1-why2"} if producer == "what" else {"phase1-understanding"}
+            if resolution is not None:
+                parents = {"phase1-why2"}
+            if (current != expected_state or current.get("phase") != "phase1-" + producer
+                    or current.get("status") != "running" or current.get("cancel_requested")
+                    or dispatch.get("phase_id") not in parents or dispatch.get("post_dispatch_complete") is not True
+                    or (resolution is None and source != {field: dispatch.get(field) for field in SOURCE_FIELDS})
+                    or any(field in current for field in ("pending_controller_completion", "pending_external_publication"))
+                    or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
+                raise StateAdvanceError("specification requires exact released parent state", validator="spec_round")
+            rounds = _tracker_from_state(current, producer)
+            if resolution is not None and rounds is None:
+                raise StateAdvanceError("clarification requires a retained WHY2 predecessor", validator="spec_round")
+            operation_id = producer + "-" + source["dispatch_id"]
+            if rounds is not None and operation_id in rounds["rounds"]:
+                if rounds["active"] != operation_id or rounds["rounds"][operation_id]["source"] != source:
+                    raise StateAdvanceError("specification round is historical", validator="spec_round")
+                return self._confirm_durable_state_unlocked(current)
+            predecessor = None if rounds is None else rounds["active"]
+            if rounds is None:
+                rounds = dict(schema_version=1, active=operation_id, rounds={})
+            rounds["active"] = operation_id
+            rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=resolution if producer == "why2" else None,
+                predecessor=predecessor, operation=None, turns=None)
+            if producer == "what" and resolution is not None:
+                rounds["rounds"][operation_id].update(review_resolution=resolution,
+                    review_parent=operation_from_state(current, "why2")["binding"]["operation_id"])
+            if producer == "what" and predecessor is not None and dispatch["phase_id"] == "phase1-constitution":
+                from harness.discovery_spec import what_constitution_parent
+                rounds["rounds"][operation_id]["constitution_parent"] = what_constitution_parent(current, source)
+            desired = {**current, rounds_key(producer): rounds}
+            _tracker_from_state(desired, producer)
+            return self._confirm_durable_state_unlocked(self._save_unlocked(desired,
+                what_update="select" if producer == "what" else None,
+                why2_update="select" if producer == "why2" else None))
 
     def prepare_why1_round(self, source: dict) -> dict:
         return self.prepare_tracker_round(source, producer="why1")
 
-    def pin_why1_tracker_parent(self, operation_id, tracker_parent, *, source, expected_state):
+    def pin_why1_tracker_parent(self, operation_id, tracker_parent, *, source, expected_state, repair_unit=None):
         """Pin one legacy root after caller-authenticated retained parent proof."""
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
-                if (current != expected_state or current.get("phase") != "phase1-why1"
+                from harness.discovery_producer import repair_return_phase
+                phase = "phase1-why1" if repair_unit is None else repair_return_phase(current, repair_unit)
+                if (current != expected_state or current.get("phase") != phase
                         or current.get("status") != "running" or current.get("mode") != "greenfield"
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human"}):
@@ -2773,8 +2870,10 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
+                from harness.discovery_producer import repair_return_phase
+                phase = repair_return_phase(current, refresh["repair_unit"])
                 if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
-                        or current.get("status") != "running" or current.get("phase") != "phase1-why1"
+                        or current.get("status") != "running" or current.get("phase") != phase
                         or current.get("mode") != "greenfield"
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}):
@@ -2816,9 +2915,13 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
+                from harness.discovery_producer import repair_return_phase
+                rounds = _tracker_from_state(current, producer)
+                row = rounds["rounds"][rounds["active"]]
+                phase = repair_return_phase(current, row["refresh"]["repair_unit"]) if producer == "synthesizer" else "phase1-why1"
                 dispatch = current.get("last_dispatch") or {}
                 if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
-                        or current.get("status") != "running" or current.get("phase") != "phase1-why1"
+                        or current.get("status") != "running" or current.get("phase") != phase
                         or current.get("mode") != "greenfield"
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}
@@ -2826,8 +2929,6 @@ class SquadStateStore:
                         or dispatch.get("post_dispatch_complete") is not True
                         or execution_input["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}):
                     raise ValueError("refresh input requires exact accepted state")
-                rounds = _tracker_from_state(current, producer)
-                row = rounds["rounds"][rounds["active"]]
                 if "refresh" not in row:
                     raise ValueError("inactive refresh required")
                 if producer == "tracker":
@@ -2873,15 +2974,17 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
             try:
+                from harness.discovery_producer import repair_return_phase
+                rounds = _tracker_from_state(current, producer)
+                row = rounds["rounds"][rounds["active"]]
+                return_phase = repair_return_phase(current, row["refresh"]["repair_unit"]) if producer == "synthesizer" else "phase1-why1"
                 phase = "phase1-" + producer
                 if (producer not in {"synthesizer", "tracker"} or current != expected_state
                         or current.get("status") != "running" or current.get("mode") != "greenfield"
-                        or current.get("phase") not in {"phase1-why1", phase} or current.get("cancel_requested")
+                        or current.get("phase") not in {return_phase, phase} or current.get("cancel_requested")
                         or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                     raise ValueError("refresh activation requires a settled exact state")
-                rounds = _tracker_from_state(current, producer)
-                row = rounds["rounds"][rounds["active"]]
                 dispatch = current.get("last_dispatch") or {}
                 if ("refresh" not in row
                         or row["execution_input"]["source"] != {key: dispatch.get(key) for key in SOURCE_FIELDS}
@@ -4652,7 +4755,7 @@ class SquadStateStore:
             route = intent["route"]
             from harness.discovery_completion import decode_binding
             binding = decode_binding(intent["publication"], completion_id=marker["completion_id"])
-            clarification = binding is not None and binding.clarification
+            clarification = binding is not None and binding.resolution_publication
             if (
                 marker["origin"] != "resolution"
                 or prefix_kind != "bound"
@@ -4808,9 +4911,12 @@ class SquadStateStore:
                     from harness.discovery_completion import decode_binding
                     binding = decode_binding(completion_intent["publication"],
                         completion_id=completion_marker["completion_id"], state=before)
-                    if (not binding.clarification or binding.recovery["resolution"] != resolved
+                    if (not binding.resolution_publication or binding.recovery["resolution"] != resolved
                             or expected_resolved is None or PENDING_EXTERNAL_PUBLICATION_KEY in before):
                         raise StateAdvanceError("clarification publication association changed", validator="completion_binding")
+                    if binding.policy_resolution and (detached_updates != binding.recovery["effects"]["state_updates"]
+                            or sorted(removals) != binding.recovery["effects"]["state_removals"]):
+                        raise StateAdvanceError("native policy effects changed", validator="completion_binding")
                     desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
             return self._commit_human_input_state_unlocked(
                 before,

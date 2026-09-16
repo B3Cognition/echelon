@@ -22,6 +22,9 @@ _MAX_REPLY_BYTES = 256 * 1024
 
 def artifact_roles(producer):
     from harness.discovery_producer import producer_key
+    if producer in {"what", "why2"}:
+        from harness.discovery_spec import WHAT_OUTPUTS, WHY2_OUTPUTS
+        return {**artifact_roles("constitution"), **WHAT_OUTPUTS, **WHY2_OUTPUTS}
     if producer == "constitution":
         return {**artifact_roles("why1"), "constitution.md": "references"}
     # Semantic decoding is not producer selection. Tracker execution remains
@@ -35,11 +38,24 @@ def artifact_roles(producer):
 
 
 def identity_kinds(producer):
+    if producer in {"what", "why2"}:
+        return {"FR", "NFR", "AC"} if producer == "what" else {"ISS"}
     if producer == "constitution":
         return set()
     if producer == "why1":
         return {"U", "ISS"}
     return {"UI", "II"} if producer == "tracker" else {"U", "A"}
+
+
+def captured_artifact_roles(producer, *, after_review=False):
+    """Read-only downstream context, never assignment or write-scope authority."""
+    if type(after_review) is not bool:
+        raise ValueError("invalid captured role policy")
+    roles = artifact_roles(producer)
+    if not after_review:
+        return roles
+    from harness.discovery_spec import WHAT_OUTPUTS, WHY2_OUTPUTS
+    return {**artifact_roles("why1"), **roles, **WHAT_OUTPUTS, **WHY2_OUTPUTS}
 
 
 def optional_artifacts(producer):
@@ -78,7 +94,7 @@ class DiscoveryAssignment:
     editable_revisions: tuple[tuple[str, str], ...] = ()
     assigned_ids: tuple[str, ...] = ()
     producer: str = "discovery"
-    routing: tuple[tuple[str, str | None], ...] | None = None
+    routing: tuple[tuple[str, object], ...] | None = None
 
     def identity(self) -> dict:
         for value in (self.operation_id, self.dispatch_id, self.spec_id, self.run_id):
@@ -100,6 +116,10 @@ class DiscoveryAssignment:
         if self.producer == "constitution" and (self.artifact_paths != ("constitution.md",)
                 or self.editable_revisions or self.assigned_ids):
             raise ValueError("Constitution has one shared artifact and no identity scope")
+        if self.producer in {"what", "why2"}:
+            from harness.discovery_spec import WHAT_OUTPUTS, WHY2_OUTPUTS
+            if set(self.artifact_paths) != set(WHAT_OUTPUTS if self.producer == "what" else WHY2_OUTPUTS):
+                raise ValueError("specification producer must author its exact canonical outputs")
         if type(self.editable_revisions) is not tuple or type(self.assigned_ids) is not tuple:
             raise ValueError("discovery selections must be immutable tuples")
         selected = []
@@ -120,6 +140,12 @@ class DiscoveryAssignment:
                     or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
                 raise ValueError("Tracker review requires exact immutable routing")
             _tracker_routing(dict(self.routing), self.producer)
+        elif self.producer in {"what", "why2"} and self.step == "review":
+            from harness.discovery_spec import validate_spec_routing
+            if (type(self.routing) is not tuple or len(self.routing) != 2
+                    or any(type(pair) is not tuple or len(pair) != 2 or type(pair[0]) is not str for pair in self.routing)):
+                raise ValueError("specification review requires exact routing")
+            validate_spec_routing(dict(self.routing), self.producer)
         elif self.routing is not None:
             raise ValueError("routing can be bound only to a Tracker review")
         result = dict(schema_version=1, operation_id=self.operation_id, dispatch_id=self.dispatch_id,
@@ -127,9 +153,9 @@ class DiscoveryAssignment:
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
         if self.producer != "discovery":
-            result.update(schema_version=5 if self.producer == "constitution" else 4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
+            result.update(schema_version=7 if self.producer == "why2" else 6 if self.producer == "what" else 5 if self.producer == "constitution" else 4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
         if self.routing is not None:
-            result["routing"] = dict(self.routing)
+            result["routing"] = deepcopy(dict(self.routing))
         return result
 
 
@@ -146,7 +172,7 @@ def _proposal(value, assignment):
             raise ValueError("invalid discovery proposal kind")
         for field in ("subject", "caption"):
             _plain(item[field])
-        if assignment.producer == "why1" and item["kind"] == "ISS" and item["subject"] != item["caption"]:
+        if assignment.producer in {"why1", "why2"} and item["kind"] == "ISS" and item["subject"] != item["caption"]:
             raise ValueError("issue subject must equal its immutable report title")
         keys.append(item["key"])
     for item in value["revisions"]:
@@ -175,6 +201,9 @@ def _author(value, assignment):
         if not value["artifacts"][required].strip():
             raise ValueError("review/intent output must be nonblank")
         _tracker_routing(value["routing"], assignment.producer)
+    if assignment.producer in {"what", "why2"}:
+        from harness.discovery_spec import validate_spec_routing
+        validate_spec_routing(value["routing"], assignment.producer)
 
 
 def _tracker_routing(value, producer="tracker"):
@@ -241,7 +270,7 @@ def validate_discovery_reply(value: object, assignment: DiscoveryAssignment) -> 
             raise ValueError("invalid discovery action")
         extra = {"new_subjects", "revisions"} if assignment.step == "propose" else (
             {"artifacts"} if assignment.step == "author" else {"verdict", "reason", "assessments"})
-        if assignment.producer in {"tracker", "why1"} and assignment.step == "author":
+        if assignment.producer in {"tracker", "why1", "what", "why2"} and assignment.step == "author":
             extra.add("routing")
         fields = extra if action == "final" else {"request"} if action == "read" else {"reason"}
         if action not in {"final", "read", "blocked"}:
@@ -265,9 +294,9 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
             raise ValueError("invalid saved discovery assignment")
         fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
             "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-        if value["schema_version"] in {2, 3, 4, 5}:
+        if value["schema_version"] in {2, 3, 4, 5, 6, 7}:
             fields.add("producer")
-        if value["schema_version"] in {3, 4} and value.get("step") == "review":
+        if value["schema_version"] in {3, 4, 6, 7} and value.get("step") == "review":
             fields.add("routing")
         _object(value, fields)
         if any(type(value[key]) is not list for key in ("artifact_paths", "editable_revisions", "assigned_ids")):
@@ -275,7 +304,11 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
         if any(type(pair) is not list or len(pair) != 2 for pair in value["editable_revisions"]):
             raise ValueError("invalid saved editable revision")
         if "routing" in value:
-            _tracker_routing(value["routing"], value.get("producer"))
+            if value.get("producer") in {"what", "why2"}:
+                from harness.discovery_spec import validate_spec_routing
+                validate_spec_routing(value["routing"], value["producer"])
+            else:
+                _tracker_routing(value["routing"], value.get("producer"))
         selected = DiscoveryAssignment(**{key: (
             tuple(tuple(pair) for pair in item) if key == "editable_revisions"
             else tuple(item) if key in {"artifact_paths", "assigned_ids"}

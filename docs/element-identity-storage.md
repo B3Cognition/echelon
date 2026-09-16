@@ -911,8 +911,8 @@ The workspace must already exist. State lives in `.echelon/identity/`:
   reservation ranges, entities, lifecycle heads, immutable content revisions,
   direct lineage, immutable reference claims, issue occurrences, publication
   intents, permanent child-operation claims, source contexts/publications,
-  managed genesis registrations, and receipts.
-  Database schema version is separate metadata (`schema_version=6`); marker
+  managed genesis registrations, reversible snapshot memberships, and receipts.
+  Database schema version is separate metadata (`schema_version=8`); marker
   format and SQLite `user_version` remain 1.
 
 The authority directory is created exclusively with mode `0700`; new sensitive
@@ -1692,7 +1692,7 @@ cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,
 operation receipts, counters, and reservations. It never merges or overwrites.
-A recognized schema 1, 2, 3, 4, or 5 backup is validated before claiming destination
+A recognized schema 1, 2, 3, 4, 5, or 6 backup is validated before claiming destination
 state, then upgraded transactionally only in the fresh restored database. The
 backup itself is unchanged. Unknown schema versions fail before destination
 creation. Current backups retain lifecycle history, immutable claims, original
@@ -1700,7 +1700,8 @@ receipts, report provenance and issue fingerprints. Schema-4 backups also retain
 every prepared/applied/released publication and all permanent child claims. Schema-5
 backups also retain and audit complete source contexts, source plans, acceptance
 receipts and independent head pointers. Schema-6 backups also retain and audit
-immutable managed genesis associations. Restore
+immutable managed genesis associations. Schema-7 backups additionally retain
+snapshot-membership events and their lifecycle/publication receipts. Restore
 does not promote files, authenticate completion, or clear a pending guard.
 
 A backup is a point-in-time snapshot. Restoring an old snapshot cannot recover
@@ -1712,6 +1713,66 @@ document maxima. Independently advancing restored copies must not be merged or
 treated as one allocation authority; they share identity/epoch and can issue
 overlapping future ordinals.
 
+## Reversible requirement snapshot membership (inactive schema 7)
+
+`ElementSnapshotMembership(element_id, expected_revision, present,
+source_revision, snapshot_id)` is a controller lifecycle request for FR/NFR/AC.
+It uses the existing lifecycle transaction, operation retry receipt and publication
+journal. `present=False` records temporary absence and retains the last content;
+`present=True` selects an exact retained, present, active revision of the same
+identity. Both append a forward revision, preserve the immutable subject and
+leave counters untouched. The head remains lifecycle-active; permanent retirement
+and supersession remain terminal and cannot be undone by membership changes.
+Ordinary revision cannot silently reintroduce an absent requirement.
+
+Publication plans, receipts, exact history previews, audit and backup retain the
+membership events. Candidate validation requires explicit removal/reappearance,
+validates the captured preimage and rejects required dependencies on absent IDs.
+Reference reads preserve historical claims but do not call absent targets current.
+Opening an older schema requires explicit upgrade; old history and receipt bytes
+remain unchanged when no membership events exist.
+
+This is an identity-level foundation, not activated quality restoration or CLI
+rewind. `snapshot_id` is retained provenance, not independent authorization.
+The quality controller must authenticate the selected candidate and bind its exact
+artifact bytes to these operations through the guarded completion owner. Model
+authoring does not acquire a membership action or a new identity authority.
+
+## Completion-owned publication continuation (inactive schema 8)
+
+A publication may predeclare exactly one globally reserved `continuation_id`.
+After that root is applied, only the declared child may prepare beneath it. The
+child retains the exact parent request/application hashes, completion ID and
+completion-intent hash, and must advance the same source context from that root.
+Nested continuations are rejected. Completion claims are opaque at this layer;
+the native completion owner must authenticate their meaning before execution.
+
+The child uses the existing publication plan, lifecycle/reference writers and
+source compare-and-swap transaction. The original application receipt is never
+rewritten. Ordinary writers and unrelated history previews remain blocked. A
+continuation-scoped preview accepts only the exact applied pending owner and
+matching operations. `pending_identity_publication` continues to return the root.
+Only root release can atomically release both records, after the child is applied;
+both retain the same owner-authenticated completion payload.
+
+Version-4 request envelopes carry these links; versions 1–3 keep their exact wire
+encoding and receipt shapes. Schema 8 replaces the single pending-record index
+with one pending root per spec and unique continuation links. Explicit upgrade
+preserves historical request/receipt bytes and adds no new table or storage owner.
+No live workspace migration is performed by this implementation work. This
+foundation is not yet wired to managed quality restoration; Git-first file
+recovery, graph projection and completion authentication remain integration work.
+
+The inactive restoration adapter represents native artifact restoration plus a
+graph-only publication as a detached composite source claim. Its logical marker
+is derived from both writer plans and is not an on-disk outbox marker. The real
+graph stage retains its own marker and native source guard. Recovery validates
+restored artifacts and all unowned sources, reconstructs only the graph's original
+preimage, and retains checkpoint-owner-authenticated physical metadata in the
+guard. Neither the composite nor a fresh observed graph grants publication or
+candidate-selection authority. Ordinary managed dispatches reject continuation
+claims until the native completion join is fully authenticated and admitted.
+
 ## Opt-in retained-history graph projection
 
 `echelon.spec_graph_identity.project_identity_history(graph, snapshot)` is a pure
@@ -1722,11 +1783,18 @@ authenticate the intended workspace/epoch authority and source graph. Canonical
 JSON, a self-consistent history hash, a matching label, and a ledger source path
 do not authenticate those associations or certify current source content.
 
-The helper checks the canonical ASCII snapshot hash, strict version-1 string
+The helper checks the canonical ASCII snapshot hash, strict versioned
 fields and closed row shapes, namespace UUIDs, exact spec binding, entity and
 revision targets, head consistency, content/binding digests, issue fingerprints,
 and original lineage associations. It is a derived view, not a replacement for
 the capture API's full store audit or canonical-source and semantic review.
+Snapshots without membership events retain their original version-1 bytes.
+Version 2 adds closed `snapshot_memberships` rows with boolean presence, exact
+source revision and selected-snapshot identity. The graph retains absent entities,
+their immutable revisions and references; `identity.present=false` is distinct
+from terminal lifecycle status. Membership events annotate the corresponding
+forward revision. Absent identities cannot masquerade as rendered current
+requirements or current assessed references.
 Malformed inputs fail with a bounded `SpecGraphError` without modifying inputs.
 IDs, ordinals and revisions remain strings, including wide decimal values and
 legacy padding/composites; unrelated numeric graph metadata remains numeric.

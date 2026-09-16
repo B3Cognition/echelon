@@ -671,7 +671,7 @@ def test_frozen_schema5_upgrade_restore_preserve_source_and_v2_journals(tmp_path
         if phase != "prepared": assert candidate.apply_identity_publication(spec_id="demo", operation_id="pub") == application
         if phase == "released": assert candidate.release_identity_publication(spec_id="demo", operation_id="pub", completion_payload="done") == release
         assert candidate.managed_identity(spec_id="demo") is None
-        assert candidate.audit()["database_schema_version"] == "6"
+        assert candidate.audit()["database_schema_version"] == "8"
 
 
 def test_frozen_schema5_rejects_unsupported_managed_operations_without_managed_tables(tmp_path):

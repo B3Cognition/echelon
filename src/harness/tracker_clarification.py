@@ -14,7 +14,7 @@ from harness.discovery_operation import _capture
 from harness.discovery_operation_state import operation_from_state
 from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds, identity_spec_tree, producer_phase
 from harness.discovery_publication import _seal, _inspect, _graph
-from harness.discovery_semantics import artifact_roles
+from harness.discovery_semantics import captured_artifact_roles
 from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
 from harness.element_identity_publication import PublicationIntentRequest, PublicationSourceClaim
 from harness.element_identity_snapshot import IdentityHistorySnapshot
@@ -22,6 +22,23 @@ from harness.element_identity_store import IdentityStore
 from harness.squad_source_baseline_codec import encode_initial_publication_sources, decode_initial_publication_sources
 from harness.squad_source_manifest import snapshot_source_manifest
 from harness.squad_source_snapshot import PublicationSourcesSnapshot
+
+
+def question_claim(routing, producer):
+    """Read an exact reviewed question; this grants no resolution authority."""
+    if producer == "why2":
+        from harness.discovery_spec import validate_spec_routing
+        validate_spec_routing(routing, producer)
+        updates = routing["state_updates"]
+        claim = dict(question=updates.get("escalation_question"),
+            recommended_answer=updates.get("escalation_recommended_answer"), risk_level=updates.get("escalation_risk_level"))
+    elif producer in {"tracker", "why1"}:
+        from harness.discovery_semantics import _tracker_routing
+        _tracker_routing(routing, producer)
+        claim = {key: routing[key] for key in ("question", "recommended_answer", "risk_level")}
+    else:
+        raise ValueError("unsupported clarification producer")
+    return claim if routing["verdict"] == "STOP_AND_ASK" else None
 
 
 def _record(decision, producer="tracker"):
@@ -33,8 +50,141 @@ def _record(decision, producer="tracker"):
     return ClarificationRecord(checked["id"], checked["question"], checked["answer_text"])
 
 
+def clarification_target(producer, decision, *, requires_repair):
+    """Derive a target from a sealed decision, never grant default authority.
+
+    The parent proof must separately authenticate the actual default envelope
+    with require_question_default before this target can be used.
+    """
+    from harness.human_input import BANZAI_DEFAULT_RECOMMENDED_ACTION
+    evidence = [item for item in decision.get("recommendation_evidence", ())
+        if item.get("kind") == "banzai_default_candidate"]
+    if evidence and (producer != "why2" or len(evidence) != 1
+            or decision.get("source_phase") != "phase1-why2" or decision.get("autonomy_mode") != "banzai"
+            or decision.get("automatic_eligible") is not True
+            or decision.get("recommendation_authority") != "controller_evidence"
+            or decision.get("recommended_action") != BANZAI_DEFAULT_RECOMMENDED_ACTION):
+        raise ValueError("invalid native default decision")
+    return "phase1-what" if requires_repair or evidence else producer_phase(producer)
+
+
+def require_question_default(routing, producer, decision):
+    """Recheck the default against the exact retained provider question."""
+    from harness.squad import SquadController
+    from harness.human_input import AutonomousDefaultCandidate
+    clarification_target(producer, decision, requires_repair=False)
+    pending = None
+    if producer == "why2":
+        question_claim(routing, producer)
+        payload = routing["state_updates"].get("autonomous_default_candidate")
+        if payload is not None:
+            candidate = AutonomousDefaultCandidate.from_provider_payload(payload)
+            SquadController._validate_banzai_default_candidate_finding_route(routing["state_updates"], candidate)
+            # Native preparation validates but does not seal a default outside
+            # Banzai. Forged Banzai evidence in those modes was rejected above.
+            if decision.get("autonomy_mode") not in {"guided", "semi"}:
+                pending = candidate.to_dict()
+    return SquadController._banzai_default_candidate_for_decision(
+        {"autonomous_default_candidate": pending}, decision)
+
+
+def validate_clarification_history(newest_first, *, pending=None):
+    """Check prefixes after full native ancestry traversal, without decoding again.
+
+    Bindings must be supplied in their authenticated source-chain order. The
+    pending child is not released yet and must not appear in its own history.
+    This check establishes no source or publication authority on its own.
+    """
+    chronological = tuple(reversed(newest_first)) + (() if pending is None else (pending,))
+    records, seen = [], set()
+    for binding in chronological:
+        version, producer = binding.recovery["version"], binding.producer
+        if type(version) is not int or (version, producer) not in {
+                (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2")}:
+            raise ValueError("unsupported clarification history binding")
+        if binding.recovery["previous"] != [asdict(item) for item in records]:
+            raise ValueError("clarification prefix differs from native source ancestry")
+        record = _record(binding.recovery["resolution"], producer)
+        if record.decision_id in seen:
+            raise ValueError("duplicate clarification decision in source ancestry")
+        seen.add(record.decision_id)
+        records.append(record)
+    return tuple(records)
+
+
+def retained_clarification_records(store, *, spec_id, source):
+    """Extract records without decoder recursion, after full source authentication.
+
+    Native proof/request equality guards this walk; the caller must also run the
+    complete discovery ancestry validator. This is not an admission API.
+    """
+    from types import SimpleNamespace
+    from harness.discovery_completion import _document, _require, _closed
+    from harness.squad_completion import validate_retained_completion_proof
+    from harness.element_identity_publication import decode_publication_request
+    records, seen = [], set()
+    while True:
+        _closed(source, SOURCE_FIELDS)
+        operation_id = "discovery-completion-" + source["dispatch_id"]
+        _require(operation_id not in seen)
+        seen.add(operation_id)
+        row = store.identity_publication(spec_id=spec_id, operation_id=operation_id)
+        _require(row is not None and row["state"] == "released")
+        proof = _document(row["completion_payload"])
+        _require(type(proof["version"]) is int and proof["version"] in {2, 3})
+        field = "checkpoint" if proof["version"] == 2 else "proof"
+        _closed(proof, ("version", "completion", field))
+        _closed(proof[field], ("intent", "receipts"))
+        marker, intent, _ = validate_retained_completion_proof(proof["completion"],
+            proof[field]["intent"], proof[field]["receipts"])
+        _require(source == dict(dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
+            completion_receipts_sha256=marker.receipts_sha256, completed_publication_binding_sha256=marker.publication_binding_sha256))
+        _require(intent.publication["managed_discovery"] == dict(version=1, request=row["request"]))
+        request = decode_publication_request(row["request"])
+        recovery = _document(request.recovery_payload)
+        _require(recovery["completion_id"] == source["dispatch_id"])
+        producer, version = recovery.get("producer", "discovery"), recovery["version"]
+        versions = {"discovery": {2, 8}, "synthesizer": {3, 9}, "tracker": {4, 5, 10, 18},
+            "why1": {6, 7, 11, 18}, "constitution": {12, 16}, "what": {13, 17, 20, 22, 26},
+            "understanding": {14}, "why2": {15, 18, 19, 24}, "why2-policy": {21, 23, 25, 27}}
+        _require(type(version) is int and version in versions.get(producer, set()))
+        if version in {5, 7, 18}:
+            _require(intent.origin == "resolution" and intent.route["decision_id"] == recovery["resolution"]["id"])
+            records.append(SimpleNamespace(producer=producer, recovery=recovery))
+        source = recovery.get("source_completion")
+        if source is None:
+            _require(producer == "discovery" and type(version) is int and version == 2)
+            return validate_clarification_history(records)
+
+
 def previous_records(state, operation_id, producer="tracker"):
     return _previous_records(state, operation_id, producer, set())
+
+
+def _resolution_rows(state, producer):
+    """Existing round associations, including WHAT consuming a WHY2 answer."""
+    rounds = tracker_rounds(state, producer)
+    result = [(row, row["resolution"]) for row in (() if rounds is None else rounds["rounds"].values())
+        if row["resolution"] is not None]
+    if producer == "why2":
+        requirements = tracker_rounds(state, "what")
+        result.extend((row, row["review_resolution"]) for row in (
+            () if requirements is None else requirements["rounds"].values()) if "review_resolution" in row)
+    return tuple((row, association) for row, association in result
+        if association["decision"]["resolution_handler"] == "clarification_resume")
+
+
+def capture_clarification_history(state, operation_id, producer, native_previous):
+    """Keep original formats unless the authenticated history crosses WHY2."""
+    if producer not in {"tracker", "why1", "why2"}:
+        raise ValueError("unsupported clarification producer")
+    why2_answers = {association["decision"]["id"] for _, association in _resolution_rows(state, "why2")}
+    if producer == "why2" or any(record.decision_id in why2_answers for record in native_previous):
+        return 18, native_previous
+    previous = previous_records(state, operation_id, producer)
+    if previous != native_previous:
+        raise ValueError("legacy clarification history differs from authenticated native ancestry")
+    return (5 if producer == "tracker" else 7), previous
 
 
 def _previous_records(state, operation_id, producer, seen):
@@ -110,15 +260,17 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
     store = IdentityStore.open(root)
     _, _, _, history, _, _, original, source_inputs = _capture(root, state_store, store, selected,
         operation["binding"]["input_tree"], tuple(operation["binding"]["artifact_paths"]),
-        producer=producer, source_completion=source)
-    previous = previous_records(state, operation["binding"]["operation_id"], producer)
+        producer=producer, source_completion=source, clarification=producer == "why2")
+    native_previous = retained_clarification_records(store, spec_id=selection["spec_id"], source=source)
+    version, previous = capture_clarification_history(state, operation["binding"]["operation_id"], producer, native_previous)
     candidate, texts, before = _candidate(original, selection["spec_path"],
         state_store.squad_dir.relative_to(root).as_posix(), resolved, previous, producer)
     spec_path = selection["spec_path"]
     report = "feature-policy-reconciliation.md"
     from harness.discovery_producer import post_why1_context
     post_review = post_why1_context(state, producer)
-    artifacts = tuple(CandidateArtifact(name, artifact_roles("why1" if post_review else producer)[name], text,
+    roles = captured_artifact_roles(producer, after_review=post_review)
+    artifacts = tuple(CandidateArtifact(name, roles[name], text,
         candidate.reconciliation_text if name == report else text) for name, text in before.items())
     if report not in before:
         artifacts += (CandidateArtifact(report, "references", None, candidate.reconciliation_text),)
@@ -126,7 +278,7 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         for path, text in texts.items() if path != spec_path + "/" + report)
     scope_paths = (report, *(path for path in texts if path != spec_path + "/" + report))
     from harness.discovery_candidate import issue_report_changes
-    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer == "why1" or post_review else ((), ())
+    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer in {"why1", "why2"} or post_review else ((), ())
     preview = store.preview_identity_candidate(spec_id=selection["spec_id"], artifacts=artifacts,
         scope=IdentityEditScope(scope_paths, (), scope_paths), operations=(), issue_reports=reports)
     if preview.check.diagnostics or preview.history != history:
@@ -144,7 +296,7 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         raise ValueError("clarification inputs changed")
     spec, = (tree for tree in sources.trees if tree.path == spec_path)
     baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
-    recovery = dict(version=7 if producer == "why1" else 5, producer=producer, completion_id=completion_id, operation=operation,
+    recovery = dict(version=version, producer=producer, completion_id=completion_id, operation=operation,
         source_completion=source, resolution=resolved, previous=[asdict(row) for row in previous],
         source_inputs=_json(source_inputs), source_fingerprint=_hash(source_inputs),
         candidate_inputs=_json(dict(artifacts=texts, history=asdict(history))),
@@ -165,10 +317,14 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
     _closed(recovery, ("version", "producer", "completion_id", "operation", "source_completion", "resolution",
         "previous", "source_inputs", "source_fingerprint", "candidate_inputs", "sources", "graph_sha256"))
     producer = recovery["producer"]
-    _require(type(recovery["version"]) is int and ((recovery["version"], producer) in {(5, "tracker"), (7, "why1")})
+    _require(type(recovery["version"]) is int and ((recovery["version"], producer) in {
+            (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2")})
         and (completion_id is None or completion_id == recovery["completion_id"]) and request.operations == ())
     source = _document(recovery["source_inputs"])
-    _closed(source, ("manifest", "history", "authority", "runtime"))
+    _closed(source, ("manifest", "history", "authority", "runtime", *(("quality_policy",) if producer == "why2" else ())))
+    if producer == "why2":
+        from harness.discovery_quality import validate_quality_policy
+        validate_quality_policy(source["quality_policy"])
     _require(_hash(source) == recovery["source_fingerprint"])
     candidate = _document(recovery["candidate_inputs"])
     _closed(candidate, ("artifacts", "history"))
@@ -214,20 +370,34 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
         _require(bootstrap is not None and state["managed_identity"] == genesis
             and selected["run_id"] == bootstrap["selection"]["run_id"]
             and selected["spec_id"] == bootstrap["selection"]["spec_id"]
-            and operation_from_state(state, producer, operation_id=selected["operation_id"]) == recovery["operation"]
-            and previous_records(state, selected["operation_id"], producer) == previous)
-        decisions = [state.get("blocked_decision"), *(row["resolution"]["decision"]
-            for row in tracker_rounds(state, producer)["rounds"].values() if row["resolution"] is not None)]
+            and operation_from_state(state, producer, operation_id=selected["operation_id"]) == recovery["operation"])
+        if recovery["version"] == 18:
+            # Chronology/completeness is checked against native ancestry by
+            # authenticate and retained reads, never inferred from this set.
+            known = {}
+            for owner in ("tracker", "why1", "why2"):
+                for _, association in _resolution_rows(state, owner):
+                    record = _record(association["decision"], owner)
+                    _require(record.decision_id not in known or known[record.decision_id] == record)
+                    known[record.decision_id] = record
+            _require(len({record.decision_id for record in previous}) == len(previous)
+                and all(known.get(record.decision_id) == record for record in previous))
+        else:
+            _require(previous_records(state, selected["operation_id"], producer) == previous)
+        associations = _resolution_rows(state, producer)
+        decisions = [state.get("blocked_decision"), *(association["decision"] for _, association in associations)]
         current = next((item for item in decisions if item and item["id"] == recovery["resolution"]["id"]), None)
         _require(current is not None)
         rounds = tracker_rounds(state, producer)
-        successors = [row for row in rounds["rounds"].values() if row["resolution"] is not None
-            and row["resolution"]["decision"]["id"] == recovery["resolution"]["id"]]
+        successors = [(row, association) for row, association in associations
+            if association["decision"]["id"] == recovery["resolution"]["id"]]
         if successors:
-            successor, = successors
-            _require(successor["predecessor"] == selected["operation_id"]
-                and successor["source"] == recovery["source_completion"]
-                and successor["resolution"]["completion"]["completion_id"] == recovery["completion_id"])
+            (successor, association), = successors
+            from harness.discovery_spec import clarification_source
+            _require(successor.get("review_parent", successor["predecessor"]) == selected["operation_id"]
+                and successor["source"] == (clarification_source(association["completion"])
+                    if producer == "why2" else recovery["source_completion"])
+                and association["completion"]["completion_id"] == recovery["completion_id"])
         else:
             dispatch = state.get("last_dispatch") or {}
             _require(rounds["active"] == selected["operation_id"] and state["blocked_decision"]["id"] == current["id"]
@@ -244,7 +414,8 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
             _require(build_human_input_resolution_postimage(current, answer, resolved_at=resolved["resolved_at"]) == resolved)
     # Derived from the authenticated report; never accepted from provider prose
     # or a caller-supplied destination. Preserve the legacy reconciliation route.
-    candidate["route"] = "phase1-what" if json.loads(prepared.reconciliation_json)["requires_repair"] else producer_phase(producer)
+    candidate["route"] = clarification_target(producer, recovery["resolution"],
+        requires_repair=json.loads(prepared.reconciliation_json)["requires_repair"])
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
 
 
@@ -265,9 +436,10 @@ def require_parent(state, binding, store):
     _require(parent is not None and parent.producer == binding.producer and not parent.clarification
         and parent.recovery["operation"] == binding.recovery["operation"]
         and retained["request"] == encode_publication_request(parent.request))
-    decision, routing = binding.recovery["resolution"], parent.candidate["routing"]
-    _require(routing["verdict"] == "STOP_AND_ASK" and routing["question"] == decision["question"]
-        and routing["recommended_answer"] == decision["recommended_answer"] and routing["risk_level"] == decision["risk_level"])
+    decision = binding.recovery["resolution"]
+    _require(question_claim(parent.candidate["routing"], binding.producer) == {
+        key: decision[key] for key in ("question", "recommended_answer", "risk_level")})
+    require_question_default(parent.candidate["routing"], binding.producer, decision)
 
 
 def require_resolution_receipt(state, binding, marker):
@@ -276,6 +448,6 @@ def require_resolution_receipt(state, binding, marker):
         receipts_sha256=marker.receipts_sha256, publication_binding_sha256=marker.publication_binding_sha256,
         decision_id=binding.recovery["resolution"]["id"])
     producer = binding.producer
-    receipts = [state.get("last_human_input_completion"), *(row["resolution"]["completion"]
-        for row in tracker_rounds(state, producer)["rounds"].values() if row["resolution"] is not None)]
+    receipts = [state.get("last_human_input_completion"), *(association["completion"]
+        for _, association in _resolution_rows(state, producer))]
     _require(expected in receipts)
