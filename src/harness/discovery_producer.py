@@ -340,6 +340,8 @@ def producer_key(producer, suffix):
 
 
 def producer_phase(producer):
+    if producer == "lexicon_gate":
+        return "phase1-lexicon"
     if producer == "lexicon":
         return "phase1-lexicon-derive"
     if producer in {"tracker", "why1", "constitution", "what", "why2", "understanding"}:

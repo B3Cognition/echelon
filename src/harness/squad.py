@@ -6775,9 +6775,9 @@ class SquadController:
         from harness.discovery_operation_state import operation_from_state
         from harness.element_identity_store import IdentityStore
 
-        through_lexicon = type(selected) is dict and selected.get("through_phase") == "phase1-lexicon-derive"
+        through_lexicon = type(selected) is dict and selected.get("through_phase") in {"phase1-lexicon-derive", "phase1-lexicon"}
         through_why2 = through_lexicon or (type(selected) is dict and selected.get("through_phase") == "phase1-why2")
-        if type(selected) is dict and selected.get("through_phase") in {"phase1-understanding", "phase1-why2", "phase1-lexicon-derive"}:
+        if type(selected) is dict and selected.get("through_phase") in {"phase1-understanding", "phase1-why2", "phase1-lexicon-derive", "phase1-lexicon"}:
             # The deterministic successor retains all preceding WHAT admission.
             selected = {**selected, "through_phase": "phase1-what"}
         if (type(selected) is not dict or set(selected) not in ({"bootstrap", "input_tree"}, {"bootstrap", "input_tree", "through_phase"})
@@ -6939,6 +6939,19 @@ class SquadController:
         return None
 
     def _run_managed_discovery_locked(self, selected) -> SquadResult:
+        if selected.get("through_phase") == "phase1-lexicon":
+            state = self._state_store.load()
+            if self._cancelled or state.get("cancel_requested"):
+                return self._managed_discovery_stop("managed_discovery_not_running")
+            # Stop at the first native repair/checkpoint handoff. Later rounds
+            # require their own accepted gate predecessor, not a fresh replay.
+            if (state.get("last_dispatch") or {}).get("phase_id") == "phase1-lexicon":
+                return self._managed_discovery_stop("managed_phase_not_supported")
+            if state.get("phase") != "phase1-lexicon":
+                result = self._run_managed_discovery_locked({**selected, "through_phase": "phase1-lexicon-derive"})
+                if self._state_store.load().get("phase") != "phase1-lexicon":
+                    return result
+            return self._run_managed_lexicon_gate_locked()
         if selected.get("through_phase") == "phase1-lexicon-derive":
             state = self._state_store.load()
             if self._cancelled or state.get("cancel_requested"):
@@ -6989,6 +7002,29 @@ class SquadController:
             if current.get("phase") in {"phase1-what", "phase1-discover"} and current.get("status") == "running":
                 return self._run_managed_discovery_locked(selected)
             return result
+        return self._managed_discovery_stop("managed_phase_not_supported")
+
+    def _run_managed_lexicon_gate_locked(self) -> SquadResult:
+        from harness.discovery_lexicon import prepare_lexicon_gate_publication, LEXICON_GATE_TRANSITIONS
+        from harness.element_identity_publication import encode_publication_request
+        node = self._graph.get("phase1-lexicon")
+        if (node.type != "deterministic_lexicon" or node.lexicon_artifact != "spec"
+                or tuple(node.outputs) != ("spec-lexicon-report.json",) or tuple(node.transitions) != LEXICON_GATE_TRANSITIONS):
+            return self._managed_discovery_stop("managed_lexicon_gate_workflow_not_admitted")
+        try:
+            completion_id = uuid.uuid4().hex
+            package = prepare_lexicon_gate_publication(self._project_root, self._state_store,
+                completion_id=completion_id, max_iterations=self._max_iterations)
+            snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
+            prepared = self._prepare_phase_result(node, package.result, snapshot)
+            routing = self._construct_routing_decision_or_block(node, prepared, snapshot,
+                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id)
+            if routing is None or self._advance_prepared_result_or_block(node, routing.decision,
+                    prepared_publication=package.publication) is None:
+                return self._managed_discovery_stop("managed_lexicon_gate_requires_reconciliation")
+        except Exception:
+            return self._managed_discovery_stop("managed_lexicon_gate_requires_reconciliation")
         return self._managed_discovery_stop("managed_phase_not_supported")
 
     def _run_managed_understanding_locked(self) -> SquadResult:
@@ -11807,39 +11843,11 @@ class SquadController:
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
             return {}, None
-        artifact_name, pass_key, attempts_key = gate_fields
-        gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or not gate.get("enabled", False):
-            return {}, None
-        artifacts = gate.get("artifacts", {})
-        artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
-        if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
-            return {}, None
-        try:
-            repair_cap = int(gate.get("max_repair_attempts", 3))
-        except (TypeError, ValueError):
-            repair_cap = 3
-        reported_attempts = result.state_updates.get(attempts_key, state.get(attempts_key))
-        repair_attempts_exhausted = (
-            isinstance(reported_attempts, int)
-            and repair_cap > 0
-            and reported_attempts >= repair_cap
-        )
-        squad_iterations_exhausted = int(state.get("iteration") or 0) >= int(
-            state.get("max_iterations") or self._max_iterations
-        )
-        if not repair_attempts_exhausted and not squad_iterations_exhausted:
-            return {}, None
-        if result.state_updates.get(pass_key) is True:
-            return {}, None
-
-        if (
-            node.id != "phase1-lexicon"
-            and str(gate.get("on_exhausted", "block")).lower() == "warn"
-        ):
-            return {}, None
-
-        return {}, PHASE_TERMINAL_BLOCKED
+        from harness.spec_lexicon_gate import lexicon_gate_exhausted
+        exhausted = lexicon_gate_exhausted(gate=self._lexicon_gate_config().get("lexicon_gate", {}),
+            artifact=gate_fields[0], state=state, updates=result.state_updates,
+            default_max_iterations=self._max_iterations)
+        return {}, PHASE_TERMINAL_BLOCKED if exhausted else None
 
     def _governance_config(self) -> dict:
         """Load the `governance` block so governance.* resolves in transition conditions.

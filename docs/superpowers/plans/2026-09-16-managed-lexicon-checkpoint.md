@@ -75,6 +75,18 @@ of exactly the derived artifact plus the existing graph projection.
 
 ## Task 3: Provider-free Lexicon gate
 
+Status: in progress. The first gate after ordinary passing WHY2/initial
+derivation is implemented through report publication and native completion.
+This increment deliberately stops at its repair or checkpoint handoff; it does
+not yet execute repaired derivation, accepted-debt input or checkpoint approval.
+Configured non-default artifact/source/glossary/report paths fail closed rather
+than silently using the defaults. Disabled-gate/checkpoint continuation and the
+complete gate fault/retry matrix remain unfinished.
+
+- [x] Verified incremental checkpoint: ordinary initial derivation → captured
+  native validation → guarded report/graph publication and completion → first
+  repair or approval-checkpoint handoff. No successor execution is enabled.
+
 Files: `src/harness/discovery_lexicon.py`, `spec_lexicon_gate.py`, existing
 completion/controller integration; `tests/unit/test_managed_lexicon_gate.py`.
 
@@ -188,3 +200,79 @@ record. No rollout/configuration cutover.
   the same approved plan with gate publication, repaired/debt inputs and native
   checkpoint resolution; do not reinterpret this checkpoint as installation or
   completion of the overall convergence work.
+
+### Initial deterministic gate increment
+
+- Starting commit `28476058`; existing isolated worktree, clean baseline.
+- Captured evaluator red: **12 failed** for the missing write-free native gate
+  boundary. The native validator and shared attempt policy now produce exact
+  report bytes/state updates without project-file I/O. First green with existing
+  native gate tests: **17 passed in 0.30s**. The I/O test was narrowed to project
+  files after it initially also blocked loading the bundled grammar.
+- Managed gate entry/corridor red: **2 failed** for unsupported selection.
+  Initial capture admits only the real released derivation, authenticates its
+  ordinary WHY2 ancestry and current quality authority, then seals exactly the
+  controller report and regenerated graph. Passing projections additionally use
+  the existing explicit source association/read-only identity candidate check.
+- Closed v29 proofs retain captured inputs, unchanged history, empty identity
+  operations, native result and routing prestate. Independent review exposed a
+  destination-validation gap and an unbound saved iteration limit. Literal
+  routing tests first failed **5 cases**; a real released-proof test also caught
+  acceptance of a rehashed changed limit before the fix. Native exhaustion is
+  now shared with ordinary Squad; the existing condition evaluator replays the
+  exact admitted workflow transitions. Live and detached completion validation
+  bind the destination, and state-aware decoding binds the actual run limit.
+- Initial fresh Codex failure corridor: **1 passed in 482.97s**, before final
+  proof hardening. The concurrent passing corridor stopped before publication
+  because its already-loaded Squad caller used the earlier preparation
+  signature. No authority or counters were reset. Current-code preparation and
+  continuation from its retained derivation then passed with **zero calls**,
+  **168 cumulative tokens**, current native passing evidence and exact restart.
+- Current-code retained Claude failure gate likewise passed with zero calls.
+  Current `assert_retained_gate` checks passed against both released outcomes:
+  rehashed limit, wrong destinations, changed result, parent, prior attempts and
+  version are refused. Captured-image checks also refused source, glossary,
+  derived artifact and report drift for both outcomes without changing files.
+- Current-code retained Codex fault check interrupted after real report
+  publication/checkpoint creation but before the checkpoint effect receipt.
+  Restart completed the same operation with **one** failed gate attempt,
+  unchanged report/history, zero provider calls and an exact second restart.
+  This is one real recovery boundary, not the unfinished full fault matrix.
+- Selected regression before the final additional snapshot tests: **421 passed,
+  4 deselected in 21.98s**. It used the preceding selected file list plus
+  `test_managed_lexicon_gate.py`, `test_artifact_validation_snapshots.py` and
+  `test_supplemental_identity_bundle.py`, excluding both long derivation and
+  both long gate cases. Native controller regression:
+  `tests/integration/test_squad_controller.py -k lexicon`: **54 passed,
+  463 deselected in 26.91s**.
+- Latest fast gate tests: **25 passed, 2 deselected in 0.85s**, including
+  configured-path refusal, captured-versus-live source selection and validator
+  outage without certification or report writes. Independent final read-only
+  review found no further actionable issues, conditional on fresh corridors.
+- Fresh post-hardening scripted Claude passing corridor:
+  **1 passed in 499.38s**. Fresh scripted Codex failing corridor:
+  **1 passed in 500.61s**. Commands selected
+  `tests/unit/test_managed_lexicon_gate.py::test_managed_gate_pass_reaches_checkpoint_without_executing_it`
+  and `::test_managed_gate_publishes_native_failure_once_without_provider_work`,
+  each with `-xq` and the global retention options. Both include real predecessor
+  phases, publication/completion, the final v29 proof checks and zero-call
+  restart. The later-added captured source-drift checks were independently run
+  against both retained outcomes as recorded above.
+- Final selected regression using the same preceding command and exclusions:
+  **428 passed, 4 deselected in 23.22s**. Existing completion, publication and
+  reservation regression (`test_discovery_completion.py`,
+  `test_discovery_publication.py`, `test_discovery_reservations.py`):
+  **156 passed in 247.88s**. These overlapping runs are not a full-suite claim.
+
+### Next continuation within the same approved scope
+
+- Admit repaired derivation only from the actual released failed gate. Replace
+  the explicit first-round-only guards with authenticated retained-round and
+  prior-attempt checks; never reset attempts or rewrite the original receipt.
+- Capture the controller report as exact read-only diagnostic evidence, not as
+  a provider-editable identity definition. Compare the staged repaired artifact
+  against that report for native no-progress detection before publication.
+- Extend ordinary/debt parent admission only with the existing accepted-debt
+  authorization and actual source-context head. Do not fabricate passing quality.
+- Then complete disabled-gate routing and native checkpoint resolution, with
+  guided/semi/Banzai policy and recovery coverage, stopping before Phase 2.

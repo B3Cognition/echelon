@@ -35,6 +35,26 @@ class SpecLexiconGateResult:
         return updates
 
 
+def lexicon_gate_exhausted(*, gate, artifact, state, updates, default_max_iterations):
+    """Native spec/tasks exhaustion policy, shared with retained gate proofs."""
+    if not isinstance(gate, dict) or not gate.get("enabled", False):
+        return False
+    artifacts = gate.get("artifacts", {})
+    artifact_gate = artifacts.get(artifact, {}) if isinstance(artifacts, dict) else {}
+    if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
+        return False
+    try:
+        repair_cap = int(gate.get("max_repair_attempts", 3))
+    except (TypeError, ValueError):
+        repair_cap = 3
+    prefix = "lexicon" if artifact == "spec" else "tasks_lexicon"
+    attempts = updates.get(prefix + "_attempts", state.get(prefix + "_attempts"))
+    exhausted = (isinstance(attempts, int) and repair_cap > 0 and attempts >= repair_cap)
+    exhausted = exhausted or int(state.get("iteration") or 0) >= int(state.get("max_iterations") or default_max_iterations)
+    return bool(exhausted and updates.get(prefix + "_pass") is not True
+        and (artifact == "spec" or str(gate.get("on_exhausted", "block")).lower() != "warn"))
+
+
 def has_current_spec_lexicon_evidence(
     state: dict[str, object],
     *,
@@ -156,6 +176,48 @@ def run_spec_lexicon_gate(
     except Exception as exc:
         return _pending(f"spec Lexicon validation could not execute: {exc}")
 
+    return _report_result(report, report_path, previous_attempts)
+
+
+def evaluate_captured_spec_lexicon(
+    *,
+    derived_text: str | None,
+    source_text: str | None,
+    glossary_text: str | None,
+    derived_path: Path,
+    source_path: Path,
+    glossary_path: Path,
+    report_path: Path,
+    artifact_type: str,
+    previous_attempts: object,
+) -> tuple[SpecLexiconGateResult, dict[str, object] | None]:
+    """Evaluate exact captured inputs without reading or publishing files.
+
+    Paths are report labels only. The managed completion owner must authenticate
+    the capture and publish the returned report before treating it as evidence.
+    A result alone grants neither certification nor permission to advance.
+    """
+    if derived_text is None:
+        return _pending(f"derived artifact is missing: {derived_path}"), None
+    if source_text is None:
+        return _pending(f"source artifact is missing: {source_path}"), None
+    try:
+        report = validate_spec_lexicon_texts(
+            derived_text=derived_text,
+            source_text=source_text,
+            source_name=source_path.name,
+            glossary_text=glossary_text,
+            artifact_type=artifact_type,
+        )
+        report.update(artifact_path=str(derived_path), source_path=str(source_path),
+            glossary_path=str(glossary_path))
+        return _report_result(report, report_path, previous_attempts), report
+    except Exception as exc:
+        return _pending(f"spec Lexicon validation could not execute: {exc}"), None
+
+
+def _report_result(report, report_path, previous_attempts):
+    """One native attempt policy for file-backed and captured validation."""
     if report["ok"]:
         attempts = 0
         evaluation = "passed"

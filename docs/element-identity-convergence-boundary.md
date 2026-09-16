@@ -1644,3 +1644,36 @@ publication, grammar repair/exhaustion/no-progress integration, accepted-debt
 inputs and the native approval checkpoint remain unfinished and fail closed.
 Phase 2, installation, migration, public activation and live-provider acceptance
 remain outside this checkpoint. No push or merge was performed.
+
+### Initial managed deterministic Lexicon gate (2026-09-16)
+
+The explicit internal selection through `phase1-lexicon` now continues the
+ordinary first derivation through the provider-free native gate. It validates
+captured source/derived/glossary bytes, publishes only the diagnostic report and
+regenerated graph through the existing guarded publisher, and completes through
+the existing checkpoint owner. Passing translations additionally undergo the
+existing explicit source/projection identity check with no write scope.
+
+Closed v29 proofs bind the report, unchanged identity history, empty identity
+operations, native counters and exact routing prestate. The native condition
+evaluator and shared exhaustion rule retain routing ownership; neither prose
+nor a model can supply gate authority. Rehashed output, parent, counter,
+destination and run-limit changes are refused. Source/glossary/derived/report
+drift is rejected against the released capture. A retained interruption after
+report publication and checkpoint creation recovered without another attempt,
+identity change or provider call.
+
+Fresh scripted Claude pass and Codex failure corridors both passed, including
+zero-call restart and retained-proof checks. Final selected regression passed
+428 tests; separate native controller and completion/publication regressions
+passed 54 and 156 overlapping tests. Independent review has no remaining
+findings for this initial gate slice; this is not a full-suite or live claim.
+
+The increment ends at the **first native repair handoff or approval checkpoint**.
+It does not execute the repair or the human checkpoint. Managed accepted-debt
+input, repaired-round/no-progress integration, disabled-gate continuation,
+remaining fault/retry coverage and guided/semi/Banzai approval/rejection remain
+in the same [approved plan](superpowers/plans/2026-09-16-managed-lexicon-checkpoint.md).
+Non-default configured artifact paths fail closed pending explicit admission.
+No legacy build flow, provider prose, installed workspace, public activation,
+live-provider run, push or merge changed.

@@ -83,7 +83,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def spec_id(self):
-        if self.producer == "understanding":
+        if self.producer in {"understanding", "lexicon_gate"}:
             return self.recovery["spec_id"]
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -150,6 +150,9 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 14:
         from harness.discovery_understanding import decode_understanding_binding
         return decode_understanding_binding(publication, request, recovery, completion_id, state)
+    if recovery.get("version") == 29:
+        from harness.discovery_lexicon import decode_lexicon_gate_binding
+        return decode_lexicon_gate_binding(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
@@ -441,7 +444,7 @@ def authenticate(root, run, state, completion):
                 refresh_child=binding if binding.recovery["version"] in {9, 10, 11} else None,
                 why1_child=binding if binding.producer == "why1" else None,
                 constitution_child=binding if binding.producer == "constitution" else None,
-                spec_child=binding if binding.producer in {"what", "why2", "lexicon"} and not binding.clarification else None,
+                spec_child=binding if binding.producer in {"what", "why2", "lexicon", "lexicon_gate"} and not binding.clarification else None,
                 clarification_child=binding if binding.clarification else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
@@ -452,6 +455,9 @@ def authenticate(root, run, state, completion):
         if binding.producer == "understanding":
             from harness.discovery_understanding import authenticate_understanding
             authenticate_understanding(root, run, state, completion, binding)
+        if binding.producer == "lexicon_gate":
+            from harness.discovery_lexicon import authenticate_lexicon_gate
+            authenticate_lexicon_gate(root, run, state, completion, binding)
         if binding.clarification:
             from harness.tracker_clarification import require_parent
             require_parent(state, binding, store)
@@ -474,7 +480,7 @@ def authenticate(root, run, state, completion):
         _require(observed["source_context"]["manifest"] == asdict(expected)
             and observed["source_context"]["operation_id"] == (binding.result_operation_id if applied else binding.request.sources.expected_operation_id)
             and asdict(store.identity_history(spec_id=binding.spec_id)) == (asdict(binding.result_history) if applied else binding.source["history"]))
-        if binding.producer != "understanding":
+        if binding.producer not in {"understanding", "lexicon_gate"}:
             _receipts(root, run, state, binding, store)
         return binding
     except Exception:
@@ -752,7 +758,7 @@ def context_generator(root, run, state, completion):
     binding = require_applied(root, run, state, completion)
     _require(binding is not None)
     spec = binding.source["authority"]["managed_identity"]["spec_path"]
-    if binding.resolution_publication or binding.producer == "understanding" or binding._restoration_applied:
+    if binding.resolution_publication or binding.producer in {"understanding", "lexicon_gate"} or binding._restoration_applied:
         projected = project_publication_source_images(binding.result_sources)
         artifacts = {item.path: item.content for tree in projected.trees for item in tree.files
             if tree.path == spec and item.path.endswith(".md")}
@@ -966,6 +972,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             specifying = specification is not None and specification.producer == "what" and not specification.clarification
             reviewing = specification is not None and specification.producer == "why2" and not specification.clarification
             deriving = specification is not None and specification.producer == "lexicon"
+            gating = specification is not None and specification.producer == "lexicon_gate"
             reviewing_answer = reviewing and specification.recovery["version"] in {19, 24}
             reviewing_policy = reviewing_answer and specification.recovery["version"] == 24
             specifying_answer = specifying and specification.recovery["version"] in {20, 22, 26}
@@ -979,6 +986,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                 operation_id=operation_id, source=source, require_checkpoint=require_checkpoint,
                 required_origin="resolution" if reviewing_answer or specifying_answer else "routed",
                 required_route=(None if specifying_policy or reviewing_policy else
+                    ("phase1-lexicon-derive", "phase1-lexicon") if gating else
                     ("phase1-why2", "phase1-lexicon-derive") if deriving else
                     ("phase1-why2", "phase1-what") if specifying_answer else
                     ("phase1-why2", "phase1-why2") if reviewing_answer else
@@ -986,6 +994,8 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     ("phase1-" + specification_parent, "phase1-what") if specifying else
                     ("phase1-why1", "phase1-constitution") if constituting else
                     (repair.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"], "phase1-discover") if repairing else None))
+            if gating:
+                _require(binding.producer == "lexicon" and binding.recovery["predecessor"] is None)
             if deriving:
                 _require(specification.recovery["predecessor"] is None
                     and binding.producer == "why2" and not binding.resolution_publication
