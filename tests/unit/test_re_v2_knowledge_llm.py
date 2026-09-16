@@ -323,13 +323,17 @@ def test_selected_claude_provider_constructs_without_codex_fallback_or_invocatio
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("unsafe", [False, True])
 def test_configured_claude_executes_a_real_discovery_step_without_codex_fallback(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, unsafe
 ):
     phase, paths, boundary, *_ = _phase_setup(tmp_path)
     module = importlib.import_module("harness.re_v2.knowledge_llm")
+    config = _config("claude")
+    config.llm.tool_policy = replace(config.llm.tool_policy,
+        allow_unsafe_host_execution=unsafe, approval_reason="Approved host execution" if unsafe else None)
     backend = module.KnowledgeLLMBackend(
-        _config("claude"),
+        config,
         model_tier="strong",
         screen_output=boundary.screen_output,
         max_capture_bytes=262_144,
@@ -359,6 +363,40 @@ def test_configured_claude_executes_a_real_discovery_step_without_codex_fallback
     assert command[command.index("--model") + 1] == "opus"
     assert "--restricted" in command
     assert account.status().charged_tokens == 15
+    assert b"Unsafe host execution bypass: disabled" in native.prompt(0)
+    assert config.llm.tool_policy.allow_unsafe_host_execution == unsafe
+
+
+@pytest.mark.unit
+def test_configured_codex_discovery_with_unsafe_host_config(tmp_path, monkeypatch):
+    phase, paths, boundary, *_ = _phase_setup(tmp_path)
+    config = _config()
+    config.llm.tool_policy = replace(config.llm.tool_policy,
+        allow_unsafe_host_execution=True, approval_reason="Approved host execution")
+    backend = _configured_backend(config, boundary)
+    account = KnowledgeDispatchAccount(paths, KnowledgeDispatchPolicy(500_000, 100_000, 3),
+        backend.contract, boundary.run_authority())
+    native = _NativeHarness(monkeypatch, tmp_path, account)
+    native.answers.append(_wire(_role_response(_proposal(json.loads(phase.provider_bytes())))))
+    result = DiscoveryController(phase, account, _PRODUCER_AGENT, backend, _RESERVATION).step()
+    assert result.state == "proposal_ready"
+    assert b"Unsafe host execution bypass: disabled" in native.prompt(0)
+    assert config.llm.tool_policy.allow_unsafe_host_execution is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("reason,visible", [("screen_rejected", True), ("secret-provider-value", False)])
+def test_provider_diagnostic_only_exposes_known_codes(tmp_path, monkeypatch, capsys, reason, visible):
+    _phase, _paths, boundary, *_ = _phase_setup(tmp_path)
+    backend = _configured_backend(_config("claude"), boundary, model="opus")
+    monkeypatch.setattr(backend._provider, "run_constrained_prompt_result",
+        lambda *a, **kw: CliRunResult(exit_code=125, stdout="", stderr="secret-stderr",
+            metadata={"failure_reason": reason}))
+    result = backend(b"Agent", b"{}", _RESERVATION)
+    output = capsys.readouterr().err
+    assert result.reason_code == "provider-failed"
+    assert ("screen_rejected" in output) == visible
+    assert "secret" not in output
 
 
 @pytest.mark.unit

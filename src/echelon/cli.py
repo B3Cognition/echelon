@@ -17094,6 +17094,7 @@ class _ReKnowledgeActionOptions:
     depth: str | None
     token_limit: int | None
     active_ms_limit: int | None
+    reset: bool = False
 
 
 def _parse_re_knowledge_action_options(
@@ -17106,9 +17107,16 @@ def _parse_re_knowledge_action_options(
     depth: str | None = None
     token_limit: int | None = None
     time_limit_minutes: int | None = None
+    reset = False
     index = 0
     while index < len(args):
         argument = args[index]
+        if argument == "--reset" and not allow_sources:
+            if reset:
+                raise ValueError("--reset may be supplied only once")
+            reset = True
+            index += 1
+            continue
         if argument in {
             "--source",
             "--depth",
@@ -17172,6 +17180,7 @@ def _parse_re_knowledge_action_options(
         depth,
         token_limit,
         None if time_limit_minutes is None else time_limit_minutes * 60_000,
+        reset,
     )
 
 
@@ -17260,6 +17269,11 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         print(f"[re] published generation {generation}")
     if reason:
         print(f"[re] reason: {reason}")
+    if reason == "provider-failed" and getattr(result, "request_run_id", None):
+        print(
+            "[re] The failed dispatch is saved. After resolving the provider error, "
+            "use echelon re run --reset for a fresh request; previous artifacts are preserved."
+        )
 
 
 def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tuple[str, ...]]:
@@ -17415,6 +17429,38 @@ def _create_or_resume_re_knowledge_analysis(
     return workspace / "runs" / creation.analysis_run_id, depth_label
 
 
+def _require_re_reset_stopped(run_dir: Path | None) -> None:
+    """Only replace the active pointer after a durable stopped outcome."""
+    if run_dir is None:
+        return
+    import json
+    from harness.re_v2.ledger import ObjectStore
+
+    creation = run_dir / "v2" / "knowledge-creation.json"
+    if creation.is_file():
+        ledger = run_dir / "v2" / "knowledge-dispatch.jsonl"
+        records = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        if records and records[-1].get("type") in {"discovery_applied", "review_applied"}:
+            receipt = json.loads(ObjectStore(run_dir / "v2" / "objects").read_blob(
+                records[-1]["payload"]["receipt_id"]
+            ))
+            if receipt.get("state") == "blocked":
+                return
+    elif (run_dir / "v2" / "run.json").is_file():
+        from harness.re_v2.protocol_28.status import protocol_28_status_document
+        status = protocol_28_status_document(run_dir)
+        if status.get("status") in {"complete", "complete-with-limitations"}:
+            return
+    elif (run_dir / "state.json").is_file():
+        status = json.loads((run_dir / "state.json").read_text())
+        if status.get("status") in {"blocked", "failed", "done", "complete"}:
+            return
+    raise ValueError(
+        "cannot reset a run without a confirmed stopped outcome; "
+        "inspect echelon re status and stop any active controller first"
+    )
+
+
 def _cmd_re_knowledge_run(args: list[str]) -> None:
     """Resume reviewed analysis through synthesis and atomic publication."""
     try:
@@ -17427,6 +17473,11 @@ def _cmd_re_knowledge_run(args: list[str]) -> None:
         workspace = Path.cwd().resolve()
         options = _resolve_re_knowledge_action_options(workspace, options)
         run_dir = resolve_current_re_run(workspace)
+        if options.reset:
+            _require_re_reset_stopped(run_dir)
+            if run_dir is not None:
+                print(f"[re] fresh request · preserving previous run {run_dir.name}", flush=True)
+            run_dir = None
         config = load_config(workspace, squad_only=True)
         depths = (
             _reviewed_run_depths(run_dir)

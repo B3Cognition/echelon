@@ -67,6 +67,7 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     run_help = CliRunner().invoke(app, ["re", "run", "--help"])
     refresh_help = CliRunner().invoke(app, ["re", "refresh", "--help"])
     run(["re", "run", "--depth", "deep"])
+    run(["re", "run", "--reset", "--depth", "standard"])
     run(
         [
             "re",
@@ -87,7 +88,7 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     assert "deep" in run_help.output
     assert "--source" in refresh_help.output
     assert "--depth" in refresh_help.output
-    assert run_calls == [["--depth", "deep"]]
+    assert run_calls == [["--depth", "deep"], ["--reset", "--depth", "standard"]]
     assert refresh_calls == [
         ["--source", "api", "--source", "worker", "--depth", "quick"]
     ]

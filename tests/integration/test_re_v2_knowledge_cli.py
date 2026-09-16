@@ -65,8 +65,9 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("reset", [False, True])
 def test_normal_run_creates_reviewed_analysis_when_none_is_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], reset: bool
 ) -> None:
     import echelon.cli as cli
     import harness.re_v2.knowledge_workflow as workflow
@@ -76,9 +77,14 @@ def test_normal_run_creates_reviewed_analysis_when_none_is_active(
     config = object()
     provider = object()
     creations = []
+    old_run = tmp_path / "runs" / "re-failed"
+    old_run.mkdir(parents=True)
+    old_state = old_run / "state.json"
+    old_state.write_text('{"status":"blocked","blocked_reason":"re_token_budget_exhausted"}')
+    old_bytes = old_state.read_bytes()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "harness.re_lifecycle.resolve_current_re_run", lambda _root: None
+        "harness.re_lifecycle.resolve_current_re_run", lambda _root: old_run if reset else None
     )
     monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: config)
     monkeypatch.setattr(
@@ -107,9 +113,10 @@ def test_normal_run_creates_reviewed_analysis_when_none_is_active(
         )[1],
     )
 
-    cli._cmd_re_knowledge_run([])
+    cli._cmd_re_knowledge_run(["--reset"] if reset else [])
 
     assert creations == [(tmp_path.resolve(), None, None, config)]
+    assert old_state.read_bytes() == old_bytes
     output = capsys.readouterr().out
     assert "completed" in output
     assert "generation 1" in output

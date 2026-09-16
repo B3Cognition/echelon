@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import tempfile
 from copy import deepcopy
+from dataclasses import replace
+import sys
 from typing import Callable
 
 import yaml
@@ -79,7 +81,11 @@ class KnowledgeLLMBackend:
         self._model = model
         self._screen_output = screen_output
         self._max_capture_bytes = max_capture_bytes
-        self._input_policy = deepcopy(config.llm.tool_policy)
+        self._input_policy = replace(
+            config.llm.tool_policy,
+            allow_unsafe_host_execution=False,
+            approval_reason=None,
+        )
         adapter_digest = content_digest({
             "schema_version": 1,
             "kind": "configured_knowledge_llm_adapter",
@@ -163,6 +169,19 @@ class KnowledgeLLMBackend:
                 "untrusted", usage.billable_tokens, dict(usage.classes)
             )
         if result.exit_code != 0 or result.timed_out:
+            # Native diagnostics may contain source data. Only expose known
+            # adapter codes; retain the existing durable transport category.
+            reason = result.metadata.get("failure_reason")
+            if isinstance(reason, str) and reason in {
+                "invalid_request", "input_overflow", "screen_rejected",
+                "process_start_error", "boundary_not_attested", "tool_event",
+                "malformed_capture", "provider_event_failure", "provider_exit",
+                "missing_final_answer", "capture_overflow", "capture_error", "timeout",
+            }:
+                print(
+                    f"[re] provider {self.contract.provider_id}: {reason}",
+                    file=sys.stderr, flush=True,
+                )
             return ProviderReply(b"", usage, "provider-failed")
         try:
             raw = result.stdout.encode("utf-8", errors="strict")

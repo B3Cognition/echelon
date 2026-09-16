@@ -945,8 +945,7 @@ def re_run(
     reset: bool = typer.Option(
         False,
         "--reset",
-        help="Abandon unfinished RE state and replan.",
-        hidden=True,
+        help="Start a fresh RE request, preserving prior run artifacts.",
     ),
     no_reuse: bool = typer.Option(
         False,
@@ -982,7 +981,6 @@ def re_run(
         or goal
         or re_max_inner is not None
         or profile is not None
-        or reset
         or no_reuse
         or re_policy != "changed"
     )
@@ -997,6 +995,8 @@ def re_run(
         raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
     if not legacy:
         args: list[str] = []
+        if reset:
+            args.append("--reset")
         if depth is not None:
             args.extend(["--depth", depth.value])
         _extend_option(args, "--re-token-limit", re_token_limit)

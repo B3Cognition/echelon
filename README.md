@@ -190,6 +190,13 @@ workspace documents, and publishes either exactly one generation or a durable
 no-op. An explicit `--depth` selects `quick`, `standard`, or `deep`; refresh
 otherwise preserves each source's published depth.
 
+After correcting a provider failure during discovery, `echelon re run --reset`
+starts a fresh request in the reviewed knowledge engine. Previous run artifacts
+and the current publication remain available. The old run must have a recorded
+stopped outcome; resetting does not stop a running controller. The new request
+uses the configured resource ceilings. Explicit legacy controls retain their
+compatibility routing.
+
 Each new request freezes the finite token and active-time ceilings from the
 workspace's selected `re.default_profile` in `.echelon/config.yml`; the CLI
 prints those aggregate limits before provider work begins. The shipped
