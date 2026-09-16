@@ -98,8 +98,12 @@ The interim execution policy is to run all authenticated Synthesis, Tracker and
 WHY1 refreshes, including empty comparisons, under the existing cumulative limits.
 This supersedes the historical unchanged-input stop; it introduces no skip proof.
 WHY1 re-review is now verified through the existing owners; see
-`superpowers/plans/2026-09-15-why1-rereview.md`. Downstream managed Constitution,
-remaining producer families and public activation remain required convergence.
+`superpowers/plans/2026-09-15-why1-rereview.md`. The approved shared Constitution
+continuation is implemented through the same guarded publisher/recovery owners;
+see `superpowers/plans/2026-09-16-managed-constitution.md`. Its exact canonical
+target, existing-policy preservation and v12 proof are not a general shared-file
+write capability. WHAT and remaining producer families, whole-run acceptance
+and public activation remain required convergence. Skip optimization stays deferred.
 
 The identifiers below are stable documentation keys, not runtime entity IDs.
 Do not renumber or reuse them. Entries describe capability deferral, not a file

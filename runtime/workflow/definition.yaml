@@ -494,6 +494,8 @@ phases:
       to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain
       context, calls the skill, verifies output, and fixes placeholders if needed.
       See phase1-constitution.md for phase contract; chief.md for full protocol.
+      Managed execution uses neutral echelon.constitution-producer and
+      echelon.constitution-reviewer contracts under the same CHIEF stewardship.
     outputs:
       - constitution.md
     allowed_state_updates:

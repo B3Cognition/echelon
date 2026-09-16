@@ -6649,7 +6649,7 @@ class SquadController:
         from harness.element_identity_store import IdentityStore
 
         if (type(selected) is not dict or set(selected) not in ({"bootstrap", "input_tree"}, {"bootstrap", "input_tree", "through_phase"})
-                or selected.get("through_phase", "phase1-synthesizer") not in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}
+                or selected.get("through_phase", "phase1-synthesizer") not in {"phase1-synthesizer", "phase1-tracker", "phase1-why1", "phase1-constitution"}
                 or type(create) is not bool or type(selected["input_tree"]) is not str):
             raise ValueError("invalid managed selection")
         claim = validate_selection(selected["bootstrap"])
@@ -6666,7 +6666,7 @@ class SquadController:
                 raise ValueError("checkpoint target differs from selected spec")
         if (create == (retained is not None) or (retained is not None and retained["selection"] != claim)
                 or (self._unresolved_human_input_decision(state) is not None
-                    and not (selected.get("through_phase") in {"phase1-tracker", "phase1-why1"} and self._managed_tracker_human_input(state)))
+                    and not (selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution"} and self._managed_tracker_human_input(state)))
                 or "retarget" in state):
             raise ValueError("managed selection conflicts with retained state")
         store = IdentityStore.open(self._project_root)
@@ -6683,7 +6683,7 @@ class SquadController:
             expected = int(operation is not None) + sum("execution" in row for row in repairs["units"].values())
             if count != expected:
                 raise ValueError("Discovery repair dispatch history requires reconciliation")
-        if selected.get("through_phase", "phase1-synthesizer") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}:
+        if selected.get("through_phase", "phase1-synthesizer") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1", "phase1-constitution"}:
             from harness.discovery_producer import synthesis_source, tracker_rounds
             source = synthesis_source(state)
             original_id = None if source is None else "synthesis-" + source["dispatch_id"]
@@ -6693,17 +6693,21 @@ class SquadController:
                 row["operation"] is not None for row in rounds["rounds"].values()))
             if (state.get("phase_dispatch_counts") or {}).get("phase1-synthesizer", 0) != expected:
                 raise ValueError("Synthesis dispatch history requires reconciliation")
-        if selected.get("through_phase") in {"phase1-tracker", "phase1-why1"}:
+        if selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution"}:
             from harness.discovery_producer import tracker_rounds
             rounds = tracker_rounds(state)
             expected = 0 if rounds is None else sum(row["operation"] is not None for row in rounds["rounds"].values())
             if (state.get("phase_dispatch_counts") or {}).get("phase1-tracker", 0) != expected:
                 raise ValueError("Tracker dispatch history requires reconciliation")
-            if selected.get("through_phase") == "phase1-why1":
+            if selected.get("through_phase") in {"phase1-why1", "phase1-constitution"}:
                 why_rounds = tracker_rounds(state, "why1")
                 expected = 0 if why_rounds is None else sum(row["operation"] is not None for row in why_rounds["rounds"].values())
                 if (state.get("phase_dispatch_counts") or {}).get("phase1-why1", 0) != expected:
                     raise ValueError("WHY1 dispatch history requires reconciliation")
+        if selected.get("through_phase") == "phase1-constitution":
+            expected = int(operation_from_state(state, "constitution") is not None)
+            if (state.get("phase_dispatch_counts") or {}).get("phase1-constitution", 0) != expected:
+                raise ValueError("Constitution dispatch history requires reconciliation")
         if operation is not None and operation["binding"]["input_tree"] != selected["input_tree"]:
             raise ValueError("independent input selection changed")
         if "managed_identity" not in state:
@@ -6796,8 +6800,8 @@ class SquadController:
             return refresh_stop
         state = self._state_store.load()
         if (state.get("phase") in {"phase1-tracker", "phase1-why1"}
-                and selected.get("through_phase") in ({"phase1-tracker", "phase1-why1"}
-                    if state["phase"] == "phase1-tracker" else {"phase1-why1"})):
+                and selected.get("through_phase") in ({"phase1-tracker", "phase1-why1", "phase1-constitution"}
+                    if state["phase"] == "phase1-tracker" else {"phase1-why1", "phase1-constitution"})):
             try:
                 round_producer = state["phase"].removeprefix("phase1-")
                 if self._unresolved_human_input_decision(state) is not None:
@@ -6820,7 +6824,7 @@ class SquadController:
                     state = self._state_store.prepare_tracker_round({key: state["last_dispatch"][key] for key in SOURCE_FIELDS}, producer=round_producer)
             except Exception:
                 return self._managed_discovery_stop("managed_tracker_resolution_requires_reconciliation")
-        if state.get("phase") == "phase1-modeler" and selected.get("through_phase") in {"phase1-tracker", "phase1-why1"}:
+        if state.get("phase") == "phase1-modeler" and selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution"}:
             try:
                 from harness.discovery_completion import released_discovery_input_projectors
                 if tracker_round(state) is None:
@@ -6842,7 +6846,7 @@ class SquadController:
                     if row["selection"]["source"]["dispatch_id"] == state["last_dispatch"]["dispatch_id"])
             except Exception:
                 return self._managed_discovery_stop("managed_review_repair_requires_reconciliation")
-        if state.get("phase") == "phase1-why1" and selected.get("through_phase") == "phase1-why1":
+        if state.get("phase") == "phase1-why1" and selected.get("through_phase") in {"phase1-why1", "phase1-constitution"}:
             try:
                 from harness.discovery_completion import released_discovery_input_projectors
                 if tracker_round(state, producer="why1") is None:
@@ -6851,11 +6855,23 @@ class SquadController:
                     state = self._state_store.prepare_why1_round(source)
             except Exception:
                 return self._managed_discovery_stop("managed_why1_selection_requires_reconciliation")
-        producer = {"phase1-synthesizer": "synthesizer", "phase1-tracker": "tracker", "phase1-why1": "why1"}.get(state.get("phase"), "discovery")
-        if state.get("phase") not in {"phase1-discover", "phase1-synthesizer", "phase1-tracker", "phase1-why1"} or (
+        if state.get("phase") == "phase1-constitution" and selected.get("through_phase") == "phase1-constitution":
+            try:
+                from harness.discovery_constitution import constitution_source, require_constitution_parent
+                from harness.discovery_completion import released_discovery_input_projectors
+                if constitution_source(state) is None:
+                    source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+                    require_constitution_parent(self._project_root, self._squad_dir, state, source)
+                    released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                    state = self._state_store.prepare_constitution(source, expected_state=state)
+            except Exception:
+                return self._managed_discovery_stop("managed_constitution_selection_requires_reconciliation")
+        producer = {"phase1-synthesizer": "synthesizer", "phase1-tracker": "tracker", "phase1-why1": "why1", "phase1-constitution": "constitution"}.get(state.get("phase"), "discovery")
+        if state.get("phase") not in {"phase1-discover", "phase1-synthesizer", "phase1-tracker", "phase1-why1", "phase1-constitution"} or (
                 producer != "discovery" and selected.get("through_phase") not in (
-                    {"phase1-synthesizer", "phase1-tracker", "phase1-why1"} if producer == "synthesizer" else
-                    {"phase1-tracker", "phase1-why1"} if producer == "tracker" else {"phase1-why1"})):
+                    {"phase1-synthesizer", "phase1-tracker", "phase1-why1", "phase1-constitution"} if producer == "synthesizer" else
+                    {"phase1-tracker", "phase1-why1", "phase1-constitution"} if producer == "tracker" else
+                    {"phase1-why1", "phase1-constitution"} if producer == "why1" else {"phase1-constitution"})):
             return self._managed_discovery_stop("managed_phase_not_supported")
         if (state.get("status") == "blocked"
                 and state.get("blocked_reason") == "controller_state_contract_validation_failed"):
@@ -6879,6 +6895,8 @@ class SquadController:
             paths = ("user-intent.md", "stakeholder-model.md")
         if producer == "why1":
             paths = ("assumption-review.md", "issues.md", "unknowns.md")
+        if producer == "constitution":
+            paths, successor = ("constitution.md",), "phase1-what"
         transitions = ([{"to": "phase1-tracker", "condition": "verdict = STOP_AND_ASK"},
             {"to": "phase1-why1", "condition": "verdict = ALIGNED OR verdict = DRIFT"}]
             if producer == "tracker" else [{"to": successor, "condition": "always"}])
@@ -6896,7 +6914,7 @@ class SquadController:
                 or node.transitions != transitions):
             return self._managed_discovery_stop("managed_discovery_workflow_not_admitted")
         extra = {}
-        intent = {"kind": "create" if producer == "discovery" else "challenge" if producer == "why1" else "track" if producer == "tracker" else "synthesize",
+        intent = {"kind": "create" if producer == "discovery" else "constitute" if producer == "constitution" else "challenge" if producer == "why1" else "track" if producer == "tracker" else "synthesize",
             "request": state.get("user_request") or state.get("user_message")}
         unowned = paths
         if repair_unit is not None:
@@ -6919,8 +6937,10 @@ class SquadController:
                     if row["element_id"].split("-")[0] in ({"ISS"} if producer == "why1" else {"UI", "II"} if producer == "tracker" else {"U", "A"})))
             except Exception:
                 return self._managed_discovery_stop("managed_synthesizer_selection_requires_reconciliation")
+        if producer == "constitution":
+            extra = dict(producer=producer)
         budget = self._token_budget or state.get("token_budget", 0)
-        if (producer in {"tracker", "why1"} or repair_unit is not None or post_why1_context(state, producer)) and operation_from_state(state, producer, repair_unit=repair_unit) is None and (
+        if (producer in {"tracker", "why1", "constitution"} or repair_unit is not None or post_why1_context(state, producer)) and operation_from_state(state, producer, repair_unit=repair_unit) is None and (
                 (state.get("phase_dispatch_counts") or {}).get(node.id, 0) >= _phase_dispatch_limit(
                     node.id, max_iterations=self._max_iterations)):
             return self._managed_discovery_stop("phase_dispatch_limit")
@@ -6940,6 +6960,8 @@ class SquadController:
                 **({"repair_unit": repair_unit} if repair_unit is not None else {}))
             snapshot = self._state_store.capture_routing_snapshot(expected_phase=node.id)
             result_payload = {"verdict": "DONE", "state_updates": {}}
+            if producer == "constitution":
+                result_payload["state_updates"]["constitution_status"] = "exists"
             if producer in {"tracker", "why1"}:
                 authored_routing = json.loads(package.candidate.candidate_inputs)["routing"]
                 updates = {"quality_scores": [{"pass": authored_routing["verdict"] == "PASS"}]} if producer == "why1" else {}
@@ -6975,9 +6997,10 @@ class SquadController:
             return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
         if repair_unit is not None or post_why1_context(state, producer):
             return self._run_managed_discovery_locked(selected)
-        if (producer == "discovery" and selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1"}) or (
-                producer == "synthesizer" and selected.get("through_phase") in {"phase1-tracker", "phase1-why1"}) or (
-                producer == "tracker" and selected.get("through_phase") == "phase1-why1"):
+        if (producer == "discovery" and selected.get("through_phase") in {"phase1-synthesizer", "phase1-tracker", "phase1-why1", "phase1-constitution"}) or (
+                producer == "synthesizer" and selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution"}) or (
+                producer == "tracker" and selected.get("through_phase") in {"phase1-why1", "phase1-constitution"}) or (
+                producer == "why1" and selected.get("through_phase") == "phase1-constitution"):
             return self._run_managed_discovery_locked(selected)
         if producer in {"tracker", "why1"} and self._unresolved_human_input_decision(self._state_store.load()) is not None:
             return self._run_managed_discovery_locked(selected)

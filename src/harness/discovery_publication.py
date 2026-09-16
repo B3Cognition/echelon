@@ -134,14 +134,15 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     if fingerprint != candidate.source_fingerprint:
         raise ValueError("reviewed discovery inputs changed")
     spec, = (tree for tree in original.trees if tree.path == selection["spec_path"])
-    modes = {item.path: item.image.mode for item in spec.files}
+    modes = {item.path: item.image.mode for item in (*spec.files, *original.files) if item.content is not None}
     authored = {artifact.path: artifact.after_text for artifact in candidate.artifacts
         if artifact.path in binding["artifact_paths"]}
     missing = set(binding["artifact_paths"]) - set(authored)
     from harness.discovery_semantics import optional_artifacts
     if not missing <= optional_artifacts(producer) or any(text is None for text in authored.values()):
         raise ValueError("reviewed discovery outputs missing")
-    writes = {selection["spec_path"] + "/" + name: text.encode("utf-8") for name, text in authored.items()}
+    from harness.discovery_constitution import publication_target
+    writes = {publication_target(producer, selection["spec_path"], name): text.encode("utf-8") for name, text in authored.items()}
     provisional = _seal(root, state_store.squad_dir, writes, modes)
     source_only = _inspect(provisional, original, writes, modes)
     graph = _graph(source_only, candidate.history, selection)
@@ -164,6 +165,9 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         candidate_inputs=candidate.candidate_inputs, source_inputs=candidate.source_inputs,
         review=candidate.review, provider=producer_component(state, producer, "turns", repair_unit=repair_unit), sources=encode_initial_publication_sources(sources),
         graph_sha256=hashlib.sha256(graph).hexdigest())
+    if producer == "constitution":
+        from harness.discovery_constitution import constitution_source
+        recovery_fields.update(version=12, producer=producer, source_completion=constitution_source(state))
     if producer == "synthesizer":
         recovery_fields.update(version=3, producer=producer, source_completion=synthesis_input_source(state))
         if binding["operation_id"].startswith("synthesizer-"):

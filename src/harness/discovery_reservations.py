@@ -45,7 +45,7 @@ def _pairs(pairs):
 def _assignment(value):
     fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
               "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-    if value.get("schema_version") in {2, 3, 4}:
+    if value.get("schema_version") in {2, 3, 4, 5}:
         fields.add("producer")
     if value.get("schema_version") in {3, 4} and value.get("step") == "review":
         fields.add("routing")

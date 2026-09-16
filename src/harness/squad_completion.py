@@ -621,6 +621,8 @@ def _validate_intent(
             _raise("intent_invalid")
         if binding.recovery["version"] == 9 and route.get("to_phase") != "phase1-why1":
             _raise("intent_invalid")
+        if binding.producer == "constitution" and route.get("to_phase") != "phase1-what":
+            _raise("intent_invalid")
         if binding.producer == "why1" and not clarification:
             verdict = binding.candidate["routing"]["verdict"]
             destinations = ({"phase1-why1"} if verdict == "STOP_AND_ASK" else

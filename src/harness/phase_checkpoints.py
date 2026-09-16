@@ -1311,6 +1311,7 @@ def fresh_completion_checkpoint_ledger_image(
     allow_pending: bool, rewind: str = "supported",
     artifact_images: Mapping[str, tuple[int, bytes]],
     ledger_preimage: bytes | None = None,
+    additional_file_images: Mapping[str, tuple[int, bytes]] | None = None,
 ) -> bytes | None:
     """Read-only expected metadata, optionally extending an authenticated ledger.
 
@@ -1362,8 +1363,20 @@ def fresh_completion_checkpoint_ledger_image(
     # A valid trailer/parent is necessary but cannot certify different bytes.
     # Compare raw Git blob identities: text-mode reads would normalize CRLF.
     spec_path = spec_dir.relative_to(project_root).as_posix() + "/"
+    additional = {} if additional_file_images is None else dict(additional_file_images)
+    # Explicit file selectors only: no paths outside the project, directory
+    # scopes, pathspec expressions, overlaps or model-selected write authority.
+    for path, image in additional.items():
+        if (type(path) is not str or not path or Path(path).is_absolute()
+                or Path(path).as_posix() != path or any(part in {"", ".", ".."} for part in path.split("/"))
+                or any(char in path for char in "\x00\n\r*?[:\\")
+                or path.startswith(spec_path) or path in artifact_images
+                or type(image) is not tuple or len(image) != 2
+                or type(image[0]) is not int or type(image[1]) is not bytes):
+            raise PhaseCheckpointError("invalid additional checkpoint file image")
+    images = {**artifact_images, **additional}
     entries = run_git_hardened(project_root, "ls-tree", "-rz", "--full-tree",
-        record["commit"], "--", spec_path, text=False).stdout
+        record["commit"], "--", spec_path, *sorted(additional), text=False).stdout
     found = set()
     for entry in entries.split(b"\0"):
         if not entry:
@@ -1371,16 +1384,16 @@ def fresh_completion_checkpoint_ledger_image(
         header, raw_path = entry.split(b"\t", 1)
         mode, kind, raw_oid = header.split(b" ")
         path, oid = raw_path.decode("utf-8"), raw_oid.decode("ascii")
-        if path in found or path not in artifact_images or kind != b"blob" or _GIT_OBJECT_ID_PATTERN.fullmatch(oid) is None:
+        if path in found or path not in images or kind != b"blob" or _GIT_OBJECT_ID_PATTERN.fullmatch(oid) is None:
             raise PhaseCheckpointError("checkpoint artifact membership mismatch")
-        expected_mode, content = artifact_images[path]
+        expected_mode, content = images[path]
         encoded_mode = b"100755" if expected_mode & 0o111 else b"100644"
         blob = b"blob " + str(len(content)).encode("ascii") + b"\0" + content
         expected_oid = hashlib.new("sha1" if len(oid) == 40 else "sha256", blob).hexdigest()
         if mode != encoded_mode or oid != expected_oid:
             raise PhaseCheckpointError("checkpoint artifact image mismatch")
         found.add(path)
-    if not found or found != set(artifact_images):
+    if not found or found != set(images):
         raise PhaseCheckpointError("checkpoint artifact membership mismatch")
     checkpoint = _completion_checkpoint_from_commit(record=record, completion_id=completion_id,
         run_id=run_id, spec_id=spec_id, phase=phase, next_phase=next_phase, source="auto",

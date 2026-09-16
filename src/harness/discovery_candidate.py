@@ -42,6 +42,9 @@ def author_artifacts(assignment, reply, *, before: Mapping[str, str | None]) -> 
             if type(content) is not str or "\x00" in content:
                 raise ValueError("invalid captured discovery text")
             content.encode("utf-8")
+    if assignment.producer == "constitution":
+        from harness.discovery_constitution import validate_constitution_candidate
+        validate_constitution_candidate(value["artifacts"]["constitution.md"], before["constitution.md"])
     if any(before.get(path) is not None and value["artifacts"].get(path) is None
             for path in optional_artifacts(assignment.producer)):
         raise ValueError("optional absence cannot remove an existing artifact")

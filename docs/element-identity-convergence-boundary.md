@@ -1547,3 +1547,38 @@ and public/installed/live activation remain unfinished. Constitution is a shared
 workspace file, not another spec-relative artifact: preserve its existing
 ownership and use guarded publication rather than admitting the legacy direct
 writer. No installation, migration, live-provider spending, push or merge ran.
+
+### Managed Constitution shared-file boundary (2026-09-16)
+
+The approved continuation now uses the existing managed operation, inspection
+turns, guarded publisher, identity publication and Squad completion owners for
+exactly `.echelon/constitution.md`. Neutral CHIEF producer/reviewer roles run
+through Prosaic for Codex and Claude. The model returns only the logical
+`constitution.md` artifact; the host fixes its canonical target. No legacy direct
+writer, spec-relative copy, provider-native role lookup or new authority is used.
+
+Selection authenticates an exact released WHY1→Constitution route and binds it
+once under full-state CAS. Constitution proposals cannot allocate or revise IDs,
+and shared policy cannot embed spec-scoped identities. Creation is permitted
+when absent; a valid existing policy and its file mode are preserved exactly.
+Amendment is not implicitly authorized by another spec. Invalid existing text,
+changed captured inputs, broadened targets and proof downgrades block.
+
+The closed v12 proof retains the shared-file pre/postimage and unchanged identity
+history. Historical runtime projection verifies the canonical postimage before
+rewinding it for original-domain admission; subsequent model evidence receives
+current authenticated bytes. Context generation uses that same canonical mapping.
+The existing checkpoint verifier also checks the exact canonical Git blob/mode,
+not merely working-tree bytes. The completion proof enforces Constitution→WHAT.
+
+Both scripted provider paths and the seven-boundary interrupted recovery test
+pass, without duplicate turns, accounting or dispatches. Final verification is
+607 distinct selected passing offline tests; independent review is closed. See the
+[implementation plan](superpowers/plans/2026-09-16-managed-constitution.md) for
+the test-first findings, review corrections and final verification record.
+
+This supersedes the earlier Constitution execution stop only for the explicit
+internal selection through that phase. WHAT requirements authoring and its
+downstream producer/gate families remain unsupported by managed execution;
+whole-run identity acceptance and public/installed/live activation remain open.
+No installation, migration, live provider spend, push or merge occurred.

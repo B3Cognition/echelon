@@ -43,10 +43,10 @@ class DiscoveryReceiptFile:
             producer_key(producer, "operation")
             if round_operation_id is not None:
                 raise ValueError("producer receipts do not support rounds")
-        if producer == "synthesizer":
+        if producer in {"synthesizer", "constitution"}:
             if repair_unit is not None:
                 raise ValueError("synthesis repair receipts not supported")
-            name = name.replace("discovery-", "synthesizer-", 1)
+            name = name.replace("discovery-", producer + "-", 1)
         if repair_unit is not None:
             if type(repair_unit) is not str or re.fullmatch(r"[0-9a-f]{64}", repair_unit) is None:
                 raise ValueError("invalid discovery repair receipt selection")

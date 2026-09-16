@@ -77,8 +77,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1"} or repair_unit is not None or post_review else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer == "why1" or repair_unit is not None or post_review else ()
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution"} or repair_unit is not None or post_review else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution"} or repair_unit is not None or post_review else ()
     if producer == "why1":
         template_paths = {".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md",
@@ -87,11 +87,18 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         template_paths.update({".echelon/prosaic/agents/exploration/templates/sage-assumption-review-template.md": "assumption-review.md",
             ".echelon/prosaic/agents/exploration/templates/sage-issues-template.md": "issues.md"})
     spec_view = runtime_view = None
-    if producer in {"synthesizer", "tracker", "why1"}:
+    if producer in {"synthesizer", "tracker", "why1", "constitution"}:
         from harness.discovery_completion import released_discovery_input_projectors
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
+        if producer == "constitution":
+            from harness.discovery_constitution import constitution_source, require_constitution_parent
+            parent = constitution_source(state)
+            require_constitution_parent(root, state_store.squad_dir, state, parent)
+            if source_completion is not None and source_completion != parent:
+                raise _Blocked("constitution_source_changed")
+            source_completion = parent
         spec_view, runtime_view = released_discovery_input_projectors(root, state_store.squad_dir, state,
             source=source_completion if source_completion is not None else (
                 tracker_input_source(state, producer=producer) if producer in {"tracker", "why1"} else synthesis_input_source(state)))
@@ -132,6 +139,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
             # must instead contain the just-validated current context bytes.
             documents.update({item.path: item.content.decode("utf-8")
                 for tree in sources.trees if tree.path == runtime_trees[0] for item in tree.files})
+            documents.update({item.path: item.content.decode("utf-8") for item in sources.files
+                if item.path == ".echelon/constitution.md" and item.content is not None})
         observed = store.check_managed_context(spec_id=selected["selection"]["spec_id"],
             run_id=selected["selection"]["run_id"], record=state["managed_identity"])
         spec, = (tree for tree in sources.trees if tree.path == spec_path)
@@ -154,6 +163,16 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
             if logical not in artifact_roles("why1" if repair_unit is not None or post_review else producer):
                 raise _Blocked("unsupported_discovery_source_role")
             files[logical] = item.content.decode("utf-8")
+        if producer == "constitution":
+            from harness.discovery_constitution import CONSTITUTION_PATH, validate_constitution_candidate
+            if "constitution.md" in files:
+                raise _Blocked("constitution_spec_target_collision")
+            shared, = (item for item in sources.files if item.path == CONSTITUTION_PATH)
+            if shared.content is not None:
+                text = shared.content.decode("utf-8")
+                validate_constitution_candidate(text, text)
+                files["constitution.md"] = text
+            documents.pop(CONSTITUTION_PATH, None)
         evidence = {item.path: item.content.decode("utf-8") for item in inputs.files}
         evidence.update(documents)
         evidence.update({item.path: item.content.decode("utf-8") for item in sources.files
@@ -306,8 +325,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         raise _Blocked(last.reason)
                     return last.reply
                 proposal = turn(proposal_assignment, {**common, "reply_fields": dict(
-                    new_subjects=[dict(key="local-key", kind="U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
-                    revisions=[dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
+                    new_subjects=[] if producer == "constitution" else [dict(key="local-key", kind="U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
+                    revisions=[] if producer == "constitution" else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
                 if repair_unit is not None and (proposal["new_subjects"] or
                         sorted((row["id"], row["expected_revision"]) for row in proposal["revisions"]) != sorted(editable_revisions)):
@@ -346,7 +365,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                             if (producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer == "why1" or repair_unit is not None or post_review else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution"} or repair_unit is not None or post_review else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)

@@ -22,6 +22,8 @@ _MAX_REPLY_BYTES = 256 * 1024
 
 def artifact_roles(producer):
     from harness.discovery_producer import producer_key
+    if producer == "constitution":
+        return {**artifact_roles("why1"), "constitution.md": "references"}
     # Semantic decoding is not producer selection. Tracker execution remains
     # closed until its retained round/publication owners admit it separately.
     if producer not in {"tracker", "why1"}:
@@ -33,6 +35,8 @@ def artifact_roles(producer):
 
 
 def identity_kinds(producer):
+    if producer == "constitution":
+        return set()
     if producer == "why1":
         return {"U", "ISS"}
     return {"UI", "II"} if producer == "tracker" else {"U", "A"}
@@ -93,6 +97,9 @@ class DiscoveryAssignment:
         if self.producer == "why1" and ("assumption-review.md" not in self.artifact_paths
                 or not set(self.artifact_paths) <= set(WHY1_OUTPUTS)):
             raise ValueError("WHY1 can author only its review, issues and unknown additions")
+        if self.producer == "constitution" and (self.artifact_paths != ("constitution.md",)
+                or self.editable_revisions or self.assigned_ids):
+            raise ValueError("Constitution has one shared artifact and no identity scope")
         if type(self.editable_revisions) is not tuple or type(self.assigned_ids) is not tuple:
             raise ValueError("discovery selections must be immutable tuples")
         selected = []
@@ -120,7 +127,7 @@ class DiscoveryAssignment:
             artifact_paths=list(self.artifact_paths), editable_revisions=[list(pair) for pair in self.editable_revisions],
             assigned_ids=list(self.assigned_ids))
         if self.producer != "discovery":
-            result.update(schema_version=4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
+            result.update(schema_version=5 if self.producer == "constitution" else 4 if self.producer == "why1" else 3 if self.producer == "tracker" else 2, producer=self.producer)
         if self.routing is not None:
             result["routing"] = dict(self.routing)
         return result
@@ -258,7 +265,7 @@ def decode_discovery_assignment(value: object) -> DiscoveryAssignment:
             raise ValueError("invalid saved discovery assignment")
         fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
             "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-        if value["schema_version"] in {2, 3, 4}:
+        if value["schema_version"] in {2, 3, 4, 5}:
             fields.add("producer")
         if value["schema_version"] in {3, 4} and value.get("step") == "review":
             fields.add("routing")

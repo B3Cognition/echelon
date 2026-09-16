@@ -316,6 +316,15 @@ def _synthesis_from_state(state):
         validator="synthesizer") from None
 
 
+def _constitution_from_state(state):
+    from harness.discovery_constitution import constitution_source
+    try:
+        return (constitution_source(state), operation_from_state(state, "constitution"),
+            discovery_turns_from_state(state, "constitution"))
+    except Exception:
+        raise StateAdvanceError("invalid Constitution state", validator="constitution") from None
+
+
 def _tracker_from_state(state, producer="tracker"):
     try:
         rounds = tracker_rounds(state, producer)
@@ -2450,6 +2459,7 @@ class SquadStateStore:
         allow_discovery_operation_update: bool = False,
         allow_discovery_repair_update: bool = False,
         synthesis_update: str | None = None,
+        constitution_update: str | None = None,
         tracker_update: str | None = None,
         why1_update: str | None = None,
         synthesis_round_update: str | None = None,
@@ -2514,6 +2524,11 @@ class SquadStateStore:
             raise StateAdvanceError("discovery repairs require their owning transition",
                 json_path="$.managed_discovery_repairs", validator="discovery_repairs") from None
         previous_synthesis, next_synthesis = _synthesis_from_state(current_state), _synthesis_from_state(next_state)
+        previous_constitution, next_constitution = _constitution_from_state(current_state), _constitution_from_state(next_state)
+        for index, component in enumerate(("source", "operation", "turns")):
+            old, new = previous_constitution[index], next_constitution[index]
+            if old != new and (constitution_update != component or (component != "operation" and old is not None)):
+                raise StateAdvanceError("Constitution state requires its owning transition", validator="constitution") from None
         for index, component in enumerate(("source", "operation", "turns")):
             old, new = previous_synthesis[index], next_synthesis[index]
             if old != new and (synthesis_update != component or (component != "operation" and old is not None)):
@@ -2653,6 +2668,24 @@ class SquadStateStore:
             written = self._save_unlocked(desired, synthesis_update="source")
             return self._confirm_durable_state_unlocked(written)
 
+    def prepare_constitution(self, source: dict, *, expected_state: dict) -> dict:
+        from harness.discovery_constitution import SOURCE_KEY as key
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            dispatch = current.get("last_dispatch") or {}
+            if (current != expected_state or current.get("phase") != "phase1-constitution"
+                    or current.get("status") != "running" or current.get("cancel_requested")
+                    or dispatch.get("phase_id") != "phase1-why1" or dispatch.get("post_dispatch_complete") is not True
+                    or source != {field: dispatch.get(field) for field in SOURCE_FIELDS}
+                    or any(field in current for field in ("pending_controller_completion", "pending_external_publication"))
+                    or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
+                raise StateAdvanceError("Constitution requires exact accepted WHY1 state", validator="constitution")
+            desired = {**current, key: deepcopy(source)}
+            _constitution_from_state(desired)
+            if desired == current:
+                return self._confirm_durable_state_unlocked(current)
+            return self._confirm_durable_state_unlocked(self._save_unlocked(desired, constitution_update="source"))
+
     def prepare_discovery_turns(self, marker: dict, *, producer="discovery", repair_unit=None) -> dict:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
@@ -2662,6 +2695,8 @@ class SquadStateStore:
                 _discovery_repairs_from_state(desired)
             elif producer == "discovery":
                 _discovery_turns_from_state(desired)
+            elif producer == "constitution":
+                _constitution_from_state(desired)
             elif producer in {"tracker", "why1"} or synthesis_round:
                 _tracker_from_state(desired, producer)
             else:
@@ -2671,6 +2706,7 @@ class SquadStateStore:
             written = self._save_unlocked(desired, allow_discovery_turn_initialization=producer == "discovery",
                 allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="turns" if producer == "synthesizer" and not synthesis_round else None,
+                constitution_update="turns" if producer == "constitution" else None,
                 synthesis_round_update="turns" if synthesis_round else None,
                 tracker_update="turns" if producer == "tracker" else None,
                 why1_update="turns" if producer == "why1" else None)
@@ -2697,6 +2733,7 @@ class SquadStateStore:
             written = self._save_unlocked(desired, allow_discovery_operation_update=producer == "discovery",
                 allow_discovery_repair_update=repair_unit is not None,
                 synthesis_update="operation" if producer == "synthesizer" and not synthesis_round else None,
+                constitution_update="operation" if producer == "constitution" else None,
                 synthesis_round_update="operation" if synthesis_round else None,
                 tracker_update="operation" if producer == "tracker" else None,
                 why1_update="operation" if producer == "why1" else None)

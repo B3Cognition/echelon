@@ -265,20 +265,20 @@ def with_producer_component(state, producer, suffix, value, *, repair_unit=None)
 
 
 def producer_key(producer, suffix):
-    if producer not in {"discovery", "synthesizer"} or suffix not in {"operation", "turns"}:
+    if producer not in {"discovery", "synthesizer", "constitution"} or suffix not in {"operation", "turns"}:
         raise ValueError("unsupported managed producer")
     return f"managed_{producer}_{suffix}"
 
 
 def producer_phase(producer):
-    if producer in {"tracker", "why1"}:
+    if producer in {"tracker", "why1", "constitution"}:
         return "phase1-" + producer
     producer_key(producer, "operation")
     return "phase1-discover" if producer == "discovery" else "phase1-synthesizer"
 
 
 def producer_role(producer, role):
-    if producer in {"tracker", "why1"} and role in {"producer", "reviewer"}:
+    if producer in {"tracker", "why1", "constitution"} and role in {"producer", "reviewer"}:
         return "echelon." + producer + "-" + role
     producer_key(producer, "operation")
     if role not in {"producer", "reviewer"}:
@@ -327,6 +327,15 @@ def producer_operation_id(state, producer, operation_id=None, *, repair_unit=Non
     producer_key(producer, "operation")
     if producer == "discovery":
         return bootstrap_from_state(state)["selection"]["operation_id"]
+    if producer == "constitution":
+        from harness.discovery_constitution import constitution_source
+        source = constitution_source(state)
+        if source is None:
+            raise ValueError("Constitution source not selected")
+        selected = "constitution-" + source["dispatch_id"]
+        if operation_id is not None and operation_id != selected:
+            raise ValueError("Constitution operation changed")
+        return selected
     source = synthesis_source(state)
     if source is None:
         raise ValueError("synthesis source not selected")
