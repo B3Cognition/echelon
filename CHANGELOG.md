@@ -33,6 +33,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Staged RE quality-debt reporting** — Status and the final source-quality
+  blocker distinguish file coverage from semantic correctness, name affected
+  domains with example findings and full report paths, and show concrete repair
+  or explicit partial-finalization/publication commands. Existing synthesis
+  drafts are no longer misleadingly labeled pending. Reporting remains read-only
+  and does not change repair policy or authorize higher token/time ceilings.
+
 - **Typed delivery status boundary** — `echelon delivery status` now passes
   Typer-validated `spec_id`, strategy, and JSON values directly to its status
   service. The redundant argv reconstruction, legacy parser, and duplicate

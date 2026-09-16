@@ -13371,6 +13371,11 @@ def _re_status_source_rows(run_re_dir: Path, state: dict) -> list[str]:
         if isinstance(domain_failures, list) and domain_failures:
             count = len(domain_failures)
             details.append(f"{count} incomplete domain" + ("s" if count != 1 else ""))
+        from echelon.re_quality_ui import semantic_debt_label
+
+        semantic_label = semantic_debt_label(report)
+        if semantic_label:
+            details.append(semantic_label)
         rows.append(f"  {source_id:<38} {status:<22} {' · '.join(details)}")
     return rows
 
@@ -13540,13 +13545,9 @@ def _cmd_re_status(args: list[str]) -> None:
         and outer.get("golddigger_status") == "partial"
     )
     publication_complete = outer.get("publication_complete") is True
-    synthesis_status = (
-        "complete"
-        if inner.get("re_workspace_synthesis_complete") is True
-        else "incomplete (accepted partial debt)"
-        if finalized_partial
-        else "pending"
-    )
+    from echelon.re_quality_ui import print_quality_debt, repair_command, synthesis_label
+
+    synthesis_status = synthesis_label(run_re_dir, inner, finalized_partial=finalized_partial)
     fields = [
         ("run", run_dir.name),
         ("controller", controller_status),
@@ -13601,9 +13602,15 @@ def _cmd_re_status(args: list[str]) -> None:
         )
     if source_rows:
         print("\nSource quality")
-        print("  source                                 status                 coverage / debt")
+        print("  source                                 status                 file coverage / quality debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
+    quality_blocker = controller_status == "blocked" and str(inner.get("blocked_reason") or "").startswith("re_source_quality_debt:")
+    print_quality_debt(
+        run_re_dir, display_inner, outer, _read_re_summary_state,
+        file=sys.stdout,
+        show_actions=bool(partial_count) and (controller_status == "done" or quality_blocker) and not active_source_count,
+    )
     if finalized_partial and publication_complete:
         action = (
             "This run is finalized and published as partial; debt remains explicit. "
@@ -13617,16 +13624,18 @@ def _cmd_re_status(args: list[str]) -> None:
     elif controller_status == "in_progress":
         action = "Do not start another continuation while the controller is active."
     elif controller_status == "blocked":
-        action = (
+        command = repair_command(inner, outer) if quality_blocker else None
+        action = f"Repair with `{command}`, or explicitly accept partial debt as shown above." if command else (
             "The controller is stopped at the blocker shown above. Resolve it if "
             "needed, then run `echelon re continue`."
         )
     elif active_source_count:
         action = "Do not start another continuation while a source is active."
     elif partial_count:
+        command = repair_command(inner, outer)
         action = (
             f"{partial_count} source(s) have partial quality debt; this is not a full-quality outcome. "
-            "Raise --re-max-inner above the current budget, then continue."
+            + (f"Repair with `{command}`, or explicitly accept partial debt as shown above." if command else "Inspect the unavailable source-local limits before continuing.")
         )
     elif nonpassed_count:
         action = (
@@ -13879,13 +13888,29 @@ def _print_re_lifecycle_result(result: object) -> None:
     else:
         if detail:
             fields.append(("detail", _summarize_re_lifecycle_detail(detail)))
-        fields.append(("action", "Resolve the blocker, then continue or resume the run."))
+        if reason.startswith("re_source_quality_debt:"):
+            fields.append(("action", "Review the quality debt and choose repair or explicit partial acceptance below."))
+        else:
+            fields.append(("action", "Resolve the blocker, then continue or resume the run."))
     _banner(
         "RE FINAL STATE — BLOCKED",
         fields,
         subtitle="No further provider work was run after the controller gate failed.",
         file=sys.stderr,
     )
+    if reason.startswith("re_source_quality_debt:") and run_id:
+        from echelon.re_quality_ui import print_quality_debt, synthesis_label
+
+        try:
+            run_dir = _resolve_named_re_run(Path.cwd(), run_id)
+        except ValueError:
+            run_dir = None
+        if run_dir is not None:
+            run_re_dir = run_dir / "re"
+            inner = _read_re_summary_state(run_re_dir / "state.json")
+            outer = _read_re_summary_state(run_dir / "state.json")
+            print(f"\nWorkspace synthesis: {synthesis_label(run_re_dir, inner)}", file=sys.stderr)
+            print_quality_debt(run_re_dir, inner, outer, _read_re_summary_state, file=sys.stderr, show_actions=True)
     raise SystemExit(1)
 
 
