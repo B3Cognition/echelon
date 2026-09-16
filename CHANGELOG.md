@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Whole-request RE preflight** — Fresh ordinary `re run` and `re refresh`
+  requests show one local inventory/depth/reuse-based token planning range,
+  including review, repair and workspace synthesis. Higher recommended ceilings
+  require terminal confirmation or an explicit `--re-token-limit`; piped and
+  noninteractive requests stop safely with a rerun command. Existing requests
+  retain frozen accounting and limits, and active-time ceilings are unchanged.
+
 - **Adaptive delivery convergence lease** — Phase B now persists a
   controller-owned high-water snapshot across delivery restarts and classifies
   canonical task progress, fulfillment debt, stable blocking failures, and

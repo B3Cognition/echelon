@@ -1440,6 +1440,9 @@ re:
 
   # End-to-end execution goal. Resolved values are frozen into each run so
   # continue/resume cannot reset accounting or silently change policy.
+  # New ordinary run/refresh requests show one local whole-request estimate.
+  # A higher recommended token ceiling requires terminal confirmation or an
+  # explicit --re-token-limit; time ceilings are never automatically raised.
   default_profile: balanced
   profiles:
     fast:

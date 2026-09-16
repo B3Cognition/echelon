@@ -180,13 +180,13 @@ def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
 ) -> None:
     import echelon.cli as cli
 
-    captured: list[tuple[tuple[str, ...], str | None, int, int]] = []
+    captured: list[tuple[tuple[str, ...], str | None, int, int, bool]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cli,
         "_run_re_knowledge_refresh_action",
-        lambda _root, sources, depth, tokens, active: captured.append(
-            (sources, depth, tokens, active)
+        lambda _root, sources, depth, tokens, active, **kwargs: captured.append(
+            (sources, depth, tokens, active, kwargs["token_limit_explicit"])
         ),
         raising=False,
     )
@@ -205,7 +205,7 @@ def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
         ]
     )
 
-    assert captured == [(('api', 'worker'), 'standard', 7_000_000, 14_400_000)]
+    assert captured == [(('api', 'worker'), 'standard', 7_000_000, 14_400_000, True)]
 
 
 @pytest.mark.integration
@@ -226,20 +226,20 @@ def test_normal_refresh_uses_workspace_profile_limits_when_not_explicit(
 """,
         encoding="utf-8",
     )
-    captured: list[tuple[tuple[str, ...], str | None, int, int]] = []
+    captured: list[tuple[tuple[str, ...], str | None, int, int, bool]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cli,
         "_run_re_knowledge_refresh_action",
-        lambda _root, sources, depth, tokens, active: captured.append(
-            (sources, depth, tokens, active)
+        lambda _root, sources, depth, tokens, active, **kwargs: captured.append(
+            (sources, depth, tokens, active, kwargs["token_limit_explicit"])
         ),
         raising=False,
     )
 
     cli._cmd_re_knowledge_refresh(["--depth", "deep"])
 
-    assert captured == [((), "deep", 17_000_000, 21_600_000)]
+    assert captured == [((), "deep", 17_000_000, 21_600_000, False)]
 
 
 @pytest.mark.integration

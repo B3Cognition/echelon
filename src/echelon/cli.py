@@ -17095,6 +17095,7 @@ class _ReKnowledgeActionOptions:
     token_limit: int | None
     active_ms_limit: int | None
     reset: bool = False
+    token_limit_explicit: bool = False
 
 
 def _parse_re_knowledge_action_options(
@@ -17181,6 +17182,7 @@ def _parse_re_knowledge_action_options(
         token_limit,
         None if time_limit_minutes is None else time_limit_minutes * 60_000,
         reset,
+        token_limit is not None,
     )
 
 
@@ -17362,6 +17364,38 @@ def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str],
     return tuple(rows)
 
 
+def _authorize_re_knowledge_request(
+    partition: object,
+    depths: dict[str, str],
+    options: _ReKnowledgeActionOptions,
+    *,
+    action: str,
+    retained_source_count: int = 0,
+    synthesis_required: bool = True,
+) -> int:
+    from echelon.re_preflight import authorize_knowledge_preflight
+    from harness.re_v2.knowledge_preflight import estimate_knowledge_request
+
+    command = ["echelon", "re", action]
+    if options.reset:
+        command.append("--reset")
+    if options.depth is not None:
+        command.extend(["--depth", options.depth])
+    for source_id in options.source_ids:
+        command.extend(["--source", source_id])
+    command.extend(["--re-time-limit-minutes", str(options.active_ms_limit // 60_000)])
+    return authorize_knowledge_preflight(
+        estimate_knowledge_request(
+            partition, depths, retained_source_count=retained_source_count,
+            synthesis_required=synthesis_required,
+        ),
+        token_limit=options.token_limit,
+        active_ms_limit=options.active_ms_limit,
+        explicit_token_limit=options.token_limit_explicit,
+        command=tuple(command),
+    )
+
+
 def _create_or_resume_re_knowledge_analysis(
     workspace: Path,
     active: Path | None,
@@ -17419,7 +17453,9 @@ def _create_or_resume_re_knowledge_analysis(
         request_run_id = _new_re_v2_run_id(workspace)
         analysis_run_id = f"{request_run_id}-analysis"
         created_at = _re_v2_now()
-        token_limit = options.token_limit
+        token_limit = _authorize_re_knowledge_request(
+            partition, depths, options, action="run"
+        )
         active_ms_limit = options.active_ms_limit
         _activate_re_v2_run(workspace, request_run_id)
     else:
@@ -17578,6 +17614,7 @@ def _cmd_re_knowledge_refresh(args: list[str]) -> None:
             options.depth,
             options.token_limit,
             options.active_ms_limit,
+            token_limit_explicit=options.token_limit_explicit,
         )
     except SystemExit:
         raise
@@ -17592,6 +17629,8 @@ def _run_re_knowledge_refresh_action(
     explicit_depth: str | None,
     token_limit: int,
     active_ms_limit: int,
+    *,
+    token_limit_explicit: bool = False,
 ) -> None:
     """Create or resume changed-source analysis and publish one refresh."""
     from harness.config import load_config
@@ -17699,7 +17738,13 @@ def _run_re_knowledge_refresh_action(
             request_run_id = _new_re_v2_run_id(workspace)
             analysis_run_id = f"{request_run_id}-analysis"
             created_at = _re_v2_now()
-            analysis_token_limit = token_limit
+            analysis_token_limit = _authorize_re_knowledge_request(
+                partition, depth_by_source,
+                _ReKnowledgeActionOptions(source_ids, explicit_depth, token_limit,
+                                          active_ms_limit, False, token_limit_explicit),
+                action="refresh",
+                retained_source_count=len(set(plan.reusable_source_ids) | set(plan.retained_source_ids)),
+            )
             analysis_active_ms_limit = active_ms_limit
             _activate_re_v2_run(workspace, request_run_id)
         else:
@@ -17752,6 +17797,15 @@ def _run_re_knowledge_refresh_action(
             raise SystemExit(2)
         analysis_run_id = creation.analysis_run_id
         _activate_re_v2_run(workspace, analysis_run_id)
+    elif not plan.needs_attention:
+        token_limit = _authorize_re_knowledge_request(
+            partition, {},
+            _ReKnowledgeActionOptions(source_ids, explicit_depth, token_limit,
+                                      active_ms_limit, False, token_limit_explicit),
+            action="refresh",
+            retained_source_count=len(set(plan.reusable_source_ids) | set(plan.retained_source_ids)),
+            synthesis_required=not plan.no_op,
+        )
     result = run_knowledge_refresh(
         workspace,
         plan,

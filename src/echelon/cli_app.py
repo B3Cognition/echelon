@@ -932,15 +932,13 @@ def re_run(
         None,
         "--re-token-limit",
         min=1,
-        help="Override the profile token ceiling for this run.",
-        hidden=True,
+        help="Authorize an absolute whole-request token ceiling; preflight will not raise it.",
     ),
     re_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-time-limit-minutes",
         min=1,
-        help="Override the profile active-time ceiling for this run.",
-        hidden=True,
+        help="Authorize an absolute active-time ceiling in minutes for this run.",
     ),
     reset: bool = typer.Option(
         False,
@@ -1038,15 +1036,13 @@ def re_refresh(
         None,
         "--re-token-limit",
         min=1,
-        help="Advanced absolute token ceiling for newly analyzed work.",
-        hidden=True,
+        help="Authorize an absolute whole-request token ceiling for newly analyzed work.",
     ),
     re_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-time-limit-minutes",
         min=1,
-        help="Advanced absolute active-time ceiling for newly analyzed work.",
-        hidden=True,
+        help="Authorize an absolute active-time ceiling in minutes for newly analyzed work.",
     ),
 ) -> None:
     """Check selected sources and atomically publish affected knowledge."""
