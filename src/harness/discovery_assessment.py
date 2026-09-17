@@ -20,7 +20,7 @@ def require_feasibility_repair(root, run, state, source, predecessor):
     gate, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase2-feasibility-structural", "phase2-decide"))
-    _require(gate.producer == "feasibility_gate" and gate.recovery["version"] == 32)
+    _require(gate.producer == "feasibility_gate" and gate.recovery["version"] in {32, 34})
     updates = gate.recovery["result"]["state_updates"]
     _require(updates["structural_action"] == "repair"
         and feasibility_gate_route(gate.recovery["routing_state"], updates) == "phase2-decide")

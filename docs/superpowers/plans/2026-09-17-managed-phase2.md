@@ -119,7 +119,11 @@ still open:
   gate and its accepted author predecessor, retaining the native counters and
   exact failed report. Publish the reviewed repair with a distinct closed v33
   association through the existing completion owner, returning to structural
-  gate entry. Re-evaluation of that retry remains a separate next increment.
+  gate entry.
+- [x] Add the distinct v34 structural recheck association from the released v33
+  repair author. Recover cumulative attempts, configuration and routing from
+  its exact authorizing gate; verify PASS and repeated warn/block exhaustion
+  through existing publication and interruption recovery.
 
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
@@ -640,3 +644,75 @@ Phase 2 acceptance is claimed by creating this plan.
   v33 author while retaining the prior budget, plus remaining managed bypass and
   exhaustion policy branches. Strategy/alignment, terminal/defer routes and
   activation remain open; this is not completion of Task 3 or Phase 2.
+
+### Structural rechecks and cumulative exhaustion (v34)
+
+- Extend the existing captured feasibility gate to consume a released v33
+  reviewed repair. The distinct v34 association recovers prior attempts from
+  that author's exact released repair gate, retaining its configuration and
+  routing counters. V32 remains first-entry-only. Repeated v33/v34 ancestry
+  uses the existing authority, completion and guarded publication owners.
+- Native governance still decides PASS, repair, warning or block. A passing
+  recheck resets attempts through native policy; a failed recheck consumes the
+  original budget. No workflow, provider prose, Banzai decision route or public
+  admission changes are part of this increment.
+- An actual retained gate exposed the live authentication typed-counter gap:
+  with Python equality restored, the negative test failed with `DID NOT RAISE`
+  for a boolean/numeric substitution. Canonical JSON comparison plus a strict
+  integer iteration guard makes the same actual gate reject boolean, float,
+  string and changed counter values. The final retained Codex PASS completion
+  passes all of those negatives without state changes.
+- Retained Codex `pytest-337/test_reviewed_feasibility_gate0` and
+  Claude/Banzai/Lexicon `pytest-331/test_real_review_seals_only_fe0` both passed
+  v34 PASS publication, exact report/graph checks, partial promotion and
+  post-identity-apply recovery, release and zero-call replay. Both reach
+  `phase2-strategic-overview` with attempts=0 and iteration=1, without executing
+  strategy. These are retained continuations, not fresh prefixes.
+- Final preparation-refusal helper also passed against the unused released
+  v33 author at `pytest-352/test_released_structural_gate_0`. Cloned reset,
+  inflated and typed attempts, changed/typed iteration, changed cap, forged
+  receipt and injected policy override all refuse before publication. Actual
+  durable state, requirement history and pending publication remain unchanged.
+- Final focused command uses the repository virtualenv, `-q --tb=short` and
+  the global retention flags, with `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py` and
+  `test_managed_assessment_contract.py`: **421 passed in 7.70s**. The previous
+  invalid-state fixture now uses -1 rather than 1: positive retained attempts
+  are valid only when authenticated by the released repair ancestry.
+- Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'`, same interpreter/options: **16 passed,
+  501 deselected in 5.68s**. Bounded read-only review found no critical or
+  important findings; the reviewer did not run tests or mutate files.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py` and `test_squad_completion.py`,
+  same interpreter/options: **352 passed in 372.48s**. The completion file
+  overlaps the focused group; these counts are not a unique-test total.
+- Fresh Codex/guided, Lexicon-disabled blocking corridor:
+  `tests/unit/test_managed_feasibility_recheck.py -k 'exhaust and codex'`,
+  same interpreter/options: **1 passed, 3 deselected in 1150.12s**. Fixture
+  `pytest-357/test_rechecks_exhaust_original0` set cap=2/block before managed
+  bootstrap, then executed actual Phase 1 approval, first author/gate, reviewed
+  repair and v34 recheck with publication interruptions, recovery and no-call
+  replay. Final state is `terminal-blocked`, status=blocked, attempts=2 and
+  iteration=1. Exhausted proof cannot authorize another repair even with forged
+  phase/status labels. No strategy or Phase 3 dispatch occurred. This run was
+  started before the additional preparation-refusal helper was added; that
+  helper's independent retained verification is recorded above.
+- Retained Claude/Banzai/Lexicon warning corridor continued from the unused
+  released v31 author at `pytest-320/test_feasibility_parent_is_rea0`, without
+  changing its existing cap=3/warn configuration. The first v32 failed gate
+  and two successive reviewed v33 repair/v34 recheck cycles passed the same
+  publication, exact ancestry, cumulative accounting, changed-input refusal,
+  interruption/recovery and live typed-counter helpers. Final state is
+  `phase2-strategic-overview`, status=running, attempts=3, iteration=2 and
+  `structural_action=proceed_with_warning`; strategy and Phase 3 were not
+  dispatched. Exhausted proof cannot authorize another repair. The standalone
+  continuation used the exact fixture-bound Prosaic inspector and scripted
+  provider, not a weakened production check or live call. This process also
+  preceded the additional preparation-refusal helper, verified separately above.
+- No identity/history reset, new policy owner, live model spending, installation,
+  migration, merge, push or public activation occurred. Remaining Task 3 checks
+  include managed bypass and first-attempt exhaustion branches. Strategy and
+  alignment, KILL/DEFER/timing parity and final acceptance remain open. This
+  increment does not complete Task 3 or the full Phase 2 milestone.

@@ -14,14 +14,14 @@ from tests.unit.test_managed_feasibility_gate import (
 )
 
 
-def assert_retry_authority(case):
+def assert_retry_authority(case, *, attempts=1, iteration=1):
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     binding = require_feasibility_parent(root, store.squad_dir, before, source)
     assert binding.producer == "feasibility_gate"
     assert binding.recovery["result"]["state_updates"]["structural_action"] == "repair"
-    assert before["iteration"] == 1 and before["feasibility_structural_attempts"] == 1
+    assert before["iteration"] == iteration and before["feasibility_structural_attempts"] == attempts
     for damage in ("counter", "typed_counter", "iteration", "typed_iteration", "cap", "action",
             "findings", "verdict", "phase", "cancelled", "unfinished", "source", "approval"):
         state, selected = deepcopy(before), dict(source)
@@ -45,7 +45,7 @@ def assert_retry_authority(case):
     assert store.load() == before and identity.identity_history(spec_id="game") == history
 
 
-def assert_reviewed_retry(case, provider):
+def assert_reviewed_retry(case, provider, *, feasibility_text=None, round_number=2):
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
     from harness.discovery_assessment import ASSESSMENT_OUTPUTS
     from harness.discovery_operation import run_discovery_operation
@@ -59,7 +59,7 @@ def assert_reviewed_retry(case, provider):
     old_rounds = deepcopy(before["managed_feasibility_rounds"]["rounds"])
     old_rounds.pop("feasibility-" + source["dispatch_id"], None)
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
-    executor = FeasibilityExecutor(provider, feasibility_text=FEASIBILITY)
+    executor = FeasibilityExecutor(provider, feasibility_text=FEASIBILITY if feasibility_text is None else feasibility_text)
     paths = tuple(ASSESSMENT_OUTPUTS["feasibility"])
     args = dict(input_tree=selection(case)["input_tree"], artifact_paths=paths,
         unowned_writable_paths=paths, intent=dict(kind="assess", request="Repair the captured feasibility findings"),
@@ -95,15 +95,16 @@ def assert_reviewed_retry(case, provider):
     assert selected["resolution"] is None and selected["predecessor"] in old_rounds
     assert selected["operation"]["attempts"][-1]["result"]["status"] == "accepted"
     assert all(after["managed_feasibility_rounds"]["rounds"][key] == row for key, row in old_rounds.items())
-    assert after["phase_dispatch_counts"]["phase2-decide"] == 2
-    assert after["iteration"] == after["feasibility_structural_attempts"] == 1
+    assert after["phase_dispatch_counts"]["phase2-decide"] == round_number
+    assert after["iteration"] == before["iteration"]
+    assert after["feasibility_structural_attempts"] == before["feasibility_structural_attempts"]
     assert after["blocked_decision"] == before["blocked_decision"]
     assert identity.identity_history(spec_id="game") == history
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     assert not after["phase_dispatch_counts"].get("phase3-specialists")
 
 
-def assert_retry_publication(case, provider):
+def assert_retry_publication(case, provider, *, completion_id="d" * 32):
     from dataclasses import replace
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
     from harness.discovery_completion import decode_binding
@@ -115,7 +116,7 @@ def assert_retry_publication(case, provider):
     executor = FeasibilityExecutor(provider)
     with PhaseAExecutionLock.acquire(root, "test-retry-publication"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-retry-publication"):
-            package = prepare_discovery_publication(root, store, executor, completion_id="d" * 32,
+            package = prepare_discovery_publication(root, store, executor, completion_id=completion_id,
                 producer="feasibility")
     binding = decode_binding(envelope(package), state=before)
     assert binding.recovery["version"] == 33 and binding.recovery["resolution"] is None
@@ -140,15 +141,15 @@ def assert_retry_publication(case, provider):
     return package
 
 
-def assert_retry_completion_retains_budgets(case):
+def assert_retry_completion_retains_budgets(case, *, completion_id="d" * 32, attempts=1, iteration=1):
     from types import SimpleNamespace
     from harness.discovery_completion import authenticate
     from harness.squad_completion import validate_retained_completion_proof
     root, store, identity, _ = case
     before = store.load()
     assert before["phase"] == "phase2-feasibility-structural"
-    assert before["iteration"] == before["feasibility_structural_attempts"] == 1
-    row = identity.identity_publication(spec_id="game", operation_id="discovery-completion-" + "d" * 32)
+    assert before["iteration"] == iteration and before["feasibility_structural_attempts"] == attempts
+    row = identity.identity_publication(spec_id="game", operation_id="discovery-completion-" + completion_id)
     proof = json.loads(row["completion_payload"])
     marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
         proof["proof"]["intent"], proof["proof"]["receipts"])

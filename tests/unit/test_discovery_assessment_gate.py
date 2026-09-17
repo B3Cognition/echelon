@@ -103,7 +103,7 @@ def test_absent_template_cannot_certify_or_charge_attempt():
 def test_gate_preparation_refuses_invalid_state_before_source_access(damage):
     from harness.discovery_assessment_gate import prepare_feasibility_gate_publication
     state = dict(phase="phase2-feasibility-structural", status="running", max_iterations=5)
-    if damage == "counter": state["feasibility_structural_attempts"] = 1
+    if damage == "counter": state["feasibility_structural_attempts"] = -1
     elif damage == "cancelled": state["cancel_requested"] = True
     elif damage == "phase": state["phase"] = "phase2-decide"
     else: state["pending_controller_completion"] = {}

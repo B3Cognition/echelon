@@ -1,10 +1,11 @@
 """Captured feasibility certification through the existing publication owner.
 
-This first-entry association admits PASS authoring only. Native governance owns
-validation, repair budgets and routing; a repair handoff is not retry authority.
+These associations admit PASS authoring only. Native governance owns validation,
+repair budgets and routing; every recheck retains its released predecessor.
 """
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 
@@ -79,16 +80,29 @@ def _result(gate):
 
 
 def require_feasibility_gate_parent(root, run, state, source):
-    """An actually released first author publication, never a phase label."""
+    """An actually released reviewed author publication, never a phase label."""
     from harness.discovery_completion import _retained_input_projection, _require
     from harness.element_identity_store import IdentityStore
     parent, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase2-decide", "phase2-feasibility-structural"))
-    _require(parent.producer == "feasibility" and parent.recovery["version"] == 31
-        and parent.recovery["predecessor"] is None
+    _require(parent.producer == "feasibility" and parent.recovery["version"] in {31, 33}
         and parent.candidate["routing"] == dict(verdict="PASS", state_updates={}))
     return parent
+
+
+def prior_feasibility_attempts(root, run, state, parent, routing, config):
+    """Recover the native budget from the gate that authorized this author round."""
+    from harness.discovery_assessment import require_feasibility_repair
+    from harness.discovery_completion import _require, _json
+    if parent.recovery["version"] == 31:
+        return 0
+    previous = require_feasibility_repair(root, run, state,
+        parent.recovery["source_completion"], parent.recovery["predecessor"])
+    expected = {**previous.recovery["routing_state"],
+        "iteration": previous.recovery["routing_state"]["iteration"] + 1}
+    _require(_json(routing) == _json(expected) and _json(config) == _json(previous.recovery["config"]))
+    return previous.recovery["result"]["state_updates"]["feasibility_structural_attempts"]
 
 
 @dataclass(frozen=True)
@@ -111,11 +125,12 @@ def decode_feasibility_gate_binding(publication, request, recovery, completion_i
     _closed(recovery, ("version", "producer", "completion_id", "source_completion", "spec_id",
         "sources", "history", "authority", "runtime", "config", "result", "previous_attempts",
         "project_root", "run_dir", "graph_sha256", "routing_state"))
-    _require(type(recovery["version"]) is int and recovery["version"] == 32
+    _require(type(recovery["version"]) is int and recovery["version"] in {32, 34}
         and recovery["producer"] == "feasibility_gate" and not request.operations
         and type(recovery["completion_id"]) is str and re.fullmatch(r"[0-9a-f]{32}", recovery["completion_id"])
         and (completion_id is None or completion_id == recovery["completion_id"])
-        and type(recovery["previous_attempts"]) is int and recovery["previous_attempts"] == 0)
+        and type(recovery["previous_attempts"]) is int and recovery["previous_attempts"] >= 0
+        and ((recovery["version"] == 32) == (recovery["previous_attempts"] == 0)))
     parent = recovery["source_completion"]
     _closed(parent, SOURCE_FIELDS)
     _require(all(type(value) is str and re.fullmatch(r"[0-9a-f]{%d}" % (32 if key == "dispatch_id" else 64), value)
@@ -141,11 +156,14 @@ def decode_feasibility_gate_binding(publication, request, recovery, completion_i
         and request.sources.context_id == genesis["context_id"] == authority["source_context"]["context_id"]
         and request.sources.expected_operation_id == authority["source_context"]["operation_id"]
         == "discovery-completion-" + parent["dispatch_id"]
-        and asdict(snapshot_source_manifest(trees=baseline.trees, files=())) == authority["source_context"]["manifest"]
-        and not any(item.path == spec.path + "/feasibility-structural-report.json" for item in spec.files))
+        and asdict(snapshot_source_manifest(trees=baseline.trees, files=())) == authority["source_context"]["manifest"])
+    prior_reports = [item for item in spec.files if item.path == spec.path + "/feasibility-structural-report.json"]
+    _require((recovery["version"] == 32 and not prior_reports) or (recovery["version"] == 34
+        and len(prior_reports) == 1 and json.loads(prior_reports[0].content).get("ok") is False))
     routing = recovery["routing_state"]
     gate, report = evaluate_feasibility_gate(sources=sources, root=root, spec_path=spec.path,
-        config=recovery["config"], previous_attempts=0, iteration=routing["iteration"], max_iterations=routing["max_iterations"])
+        config=recovery["config"], previous_attempts=recovery["previous_attempts"],
+        iteration=routing["iteration"], max_iterations=routing["max_iterations"])
     # Python equality treats True == 1; the sealed JSON contract must not.
     _require(_json(recovery["result"]) == _json(_result(gate)))
     feasibility_gate_route(routing, gate.state_updates())
@@ -171,14 +189,18 @@ def decode_feasibility_gate_binding(publication, request, recovery, completion_i
 
 def authenticate_feasibility_gate(root, run, state, completion, binding):
     from harness.config import get_full_resolved_config
-    from harness.discovery_completion import _require
-    require_feasibility_gate_parent(root, run, state, binding.recovery["source_completion"])
+    from harness.discovery_completion import _require, _json
+    parent = require_feasibility_gate_parent(root, run, state, binding.recovery["source_completion"])
+    _require(binding.recovery["version"] == (32 if parent.recovery["version"] == 31 else 34)
+        and binding.recovery["previous_attempts"] == prior_feasibility_attempts(root, run, state,
+            parent, binding.recovery["routing_state"], binding.recovery["config"]))
     _require(get_full_resolved_config(root) == binding.recovery["config"])
     updates, routing = binding.recovery["result"]["state_updates"], binding.recovery["routing_state"]
-    _require(all(state.get(key) == value for key, value in updates.items())
+    _require(_json({key: state.get(key) for key in updates}) == _json(updates)
         and state.get("feasibility_verdict") == routing["feasibility_verdict"])
     route = feasibility_gate_route(routing, updates)
     _require(completion.intent.route["to_phase"] == route
+        and type(state.get("iteration")) is int
         and state.get("iteration", 0) == routing["iteration"] + int(route == "phase2-decide"))
 
 
@@ -202,11 +224,16 @@ def prepare_feasibility_gate_publication(root, state_store, *, completion_id, ma
         and not state.get("cancel_requested") and type(state.get("max_iterations")) is int
         and state["max_iterations"] > 0 and state["max_iterations"] == max_iterations
         and type(state.get("feasibility_structural_attempts", 0)) is int
-        and state.get("feasibility_structural_attempts", 0) == 0
+        and state.get("feasibility_structural_attempts", 0) >= 0
         and not any(key in state for key in ("pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
     selection = bootstrap_from_state(state)["selection"]
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     parent = require_feasibility_gate_parent(root, run, state, source)
+    config = get_full_resolved_config(root)
+    routing = dict(iteration=state.get("iteration", 0), max_iterations=state["max_iterations"],
+        feasibility_verdict=state.get("feasibility_verdict"))
+    previous = prior_feasibility_attempts(root, run, state, parent, routing, config)
+    _require(state.get("feasibility_structural_attempts", 0) == previous)
     project_spec, project_context = released_discovery_input_projectors(root, run, state, source=source)
     capture = load_prepared_publication(root, run, selection["capture_marker"])
     with capture.inspect_sources(tree_paths=tuple(tree.path for tree in parent.sources.trees),
@@ -214,11 +241,8 @@ def prepare_feasibility_gate_publication(root, state_store, *, completion_id, ma
         spec, = (tree for tree in before.trees if tree.path == selection["spec_path"])
         project_spec(spec)
         runtime, _ = admit_runtime_inputs(root, run, state, project_context(before))
-    config = get_full_resolved_config(root)
-    routing = dict(iteration=state.get("iteration", 0), max_iterations=state["max_iterations"],
-        feasibility_verdict=state.get("feasibility_verdict"))
     gate, report = evaluate_feasibility_gate(sources=before, root=root, spec_path=spec.path,
-        config=config, previous_attempts=0, iteration=routing["iteration"], max_iterations=routing["max_iterations"])
+        config=config, previous_attempts=previous, iteration=routing["iteration"], max_iterations=routing["max_iterations"])
     feasibility_gate_route(routing, gate.state_updates())
     store = IdentityStore.open(root)
     authority = store.check_managed_context(spec_id=selection["spec_id"], run_id=state["run_id"], record=state["managed_identity"])
@@ -233,10 +257,11 @@ def prepare_feasibility_gate_publication(root, state_store, *, completion_id, ma
         publication = _seal(root, run, writes, modes)
         sources = _inspect(publication, before, writes, modes)
         baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
-        recovery = dict(version=32, producer="feasibility_gate", completion_id=completion_id,
+        recovery = dict(version=32 if parent.recovery["version"] == 31 else 34,
+            producer="feasibility_gate", completion_id=completion_id,
             source_completion=source, spec_id=selection["spec_id"], sources=encode_initial_publication_sources(sources),
             history=asdict(history), authority=authority, runtime=runtime, config=config,
-            result=_result(gate), previous_attempts=0, project_root=str(root), run_dir=str(run),
+            result=_result(gate), previous_attempts=previous, project_root=str(root), run_dir=str(run),
             graph_sha256=hashlib.sha256(graph).hexdigest(), routing_state=routing)
         request = PublicationIntentRequest(publication.marker.manifest_sha256, _json(recovery), (),
             PublicationSourceClaim(authority["source_context"]["context_id"], authority["source_context"]["operation_id"],

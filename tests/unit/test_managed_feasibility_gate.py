@@ -15,7 +15,8 @@ from tests.unit.test_managed_feasibility_publication import (
 from tests.unit.test_managed_feasibility_rounds import FeasibilityExecutor
 
 
-def assert_gate_publication(case, *, passed=False):
+def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=None,
+        attempts=None, completion_id="c" * 32):
     from harness.discovery_assessment_gate import prepare_feasibility_gate_publication
     root, store, identity, _ = case
     before = store.load()
@@ -23,15 +24,15 @@ def assert_gate_publication(case, *, passed=False):
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
     with PhaseAExecutionLock.acquire(root, "test-feasibility-gate"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-feasibility-gate"):
-            package = prepare_feasibility_gate_publication(root, store, completion_id="c" * 32,
+            package = prepare_feasibility_gate_publication(root, store, completion_id=completion_id,
                 max_iterations=before["max_iterations"])
     binding = decode_binding(envelope(package), state=before)
-    assert binding.producer == "feasibility_gate" and binding.recovery["version"] == 32
+    assert binding.producer == "feasibility_gate" and binding.recovery["version"] == (34 if previous_attempts else 32)
     assert binding.request.operations == () and binding.source["history"] == binding.candidate["history"]
-    assert binding.recovery["previous_attempts"] == 0
+    assert binding.recovery["previous_attempts"] == previous_attempts
     updates = binding.recovery["result"]["state_updates"]
-    assert updates["structural_action"] == ("proceed" if passed else "repair")
-    assert updates["feasibility_structural_attempts"] == int(not passed)
+    assert updates["structural_action"] == (action or ("proceed" if passed else "repair"))
+    assert updates["feasibility_structural_attempts"] == (int(not passed) if attempts is None else attempts)
     writes = {op.target: op.postimage_bytes for op in package.sources.publication.operations}
     assert set(writes) == {"specs/game/feasibility-structural-report.json", "specs/game/spec-artifact-graph.json"}
     report = json.loads(writes["specs/game/feasibility-structural-report.json"])
@@ -40,7 +41,7 @@ def assert_gate_publication(case, *, passed=False):
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     for damage in ("counter", "result", "typed_result", "verdict", "source", "extra", "report", "template"):
         recovery = json.loads(package.request.recovery_payload)
-        if damage == "counter": recovery["previous_attempts"] = 1
+        if damage == "counter": recovery["previous_attempts"] = 0 if previous_attempts else 1
         elif damage == "result": recovery["result"]["state_updates"]["structural_action"] = "repair" if passed else "proceed"
         elif damage == "typed_result": recovery["result"]["state_updates"]["feasibility_structural_attempts"] = not passed
         elif damage == "verdict": recovery["routing_state"]["feasibility_verdict"] = "KILL"
@@ -55,7 +56,7 @@ def assert_gate_publication(case, *, passed=False):
     return package
 
 
-def assert_gate_handoff(case, package, provider, *, passed=False):
+def assert_gate_handoff(case, package, provider, *, passed=False, action=None, attempts=None):
     from tests.unit.test_discovery_completion import controller, drain
     from tests.unit.test_discovery_turns import Interrupted
     from harness.squad_publication import PreparedSquadPublication
@@ -68,10 +69,13 @@ def assert_gate_handoff(case, package, provider, *, passed=False):
     ctrl = controller(case, executor)
     node = ctrl._graph.get("phase2-feasibility-structural")
     completion_id = json.loads(package.request.recovery_payload)["completion_id"]
+    action = action or ("proceed" if passed else "repair")
+    destination = {"repair": "phase2-decide", "proceed": "phase2-strategic-overview",
+        "proceed_with_warning": "phase2-strategic-overview", "block": "terminal-blocked"}[action]
     with PhaseAExecutionLock.acquire(root, "test-feasibility-gate"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-feasibility-gate"):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
-            for route in (("phase2-decide" if passed else "phase2-strategic-overview"), "phase3-specialists", "done"):
+            for route in ({"phase2-decide", "phase2-strategic-overview", "phase3-specialists", "done"} - {destination}):
                 with pytest.raises(StateAdvanceError):
                     ctrl._prepare_controller_completion(from_phase=node.id, to_phase=route, snapshot=snapshot,
                         manual_phase_run=False, conditional_skip=False, record_completion=True,
@@ -110,10 +114,10 @@ def assert_gate_handoff(case, package, provider, *, passed=False):
     assert identity.pending_identity_publication(spec_id="game")["state"] == "applied"
     assert drain(controller(case, executor)).recovered, store.load()
     after = store.load()
-    assert after["phase"] == ("phase2-strategic-overview" if passed else "phase2-decide") and after["status"] == "running"
-    assert after["iteration"] == before["iteration"] + int(not passed)
-    assert after["feasibility_structural_attempts"] == int(not passed)
-    assert after["structural_action"] == ("proceed" if passed else "repair")
+    assert after["phase"] == destination and after["status"] == ("blocked" if action == "block" else "running")
+    assert after["iteration"] == before["iteration"] + int(action == "repair")
+    assert after["feasibility_structural_attempts"] == (int(not passed) if attempts is None else attempts)
+    assert after["structural_action"] == action
     assert after["token_usage"] == before["token_usage"] and not executor.calls
     assert after["phase_dispatch_counts"] == before["phase_dispatch_counts"]
     assert identity.identity_history(spec_id="game") == history

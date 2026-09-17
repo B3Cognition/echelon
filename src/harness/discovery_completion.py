@@ -156,7 +156,7 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 30:
         from harness.discovery_checkpoint_resolution import decode_binding as decode_checkpoint
         return decode_checkpoint(publication, request, recovery, completion_id, state)
-    if recovery.get("version") == 32:
+    if recovery.get("version") in {32, 34}:
         from harness.discovery_assessment_gate import decode_feasibility_gate_binding
         return decode_feasibility_gate_binding(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
@@ -1059,7 +1059,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     ("phase1-why1", "phase1-constitution") if constituting else
                     (repair.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"], "phase1-discover") if repairing else None))
             if assessing_retry:
-                _require(binding.producer == "feasibility_gate" and binding.recovery["version"] == 32
+                _require(binding.producer == "feasibility_gate" and binding.recovery["version"] in {32, 34}
                     and binding.recovery["result"]["state_updates"]["structural_action"] == "repair")
             elif assessing:
                 _require(binding.producer == "checkpoint" and binding.recovery["version"] == 30
@@ -1067,10 +1067,12 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     and binding.recovery["resolution"] == specification.recovery["resolution"]["decision"]
                     and binding.recovery["resolution"]["selected_option_id"] == "approve")
             if assessment_gate:
-                _require(binding.producer == "feasibility" and binding.recovery["version"] == 31
-                    and binding.recovery["predecessor"] is None
+                from harness.discovery_assessment_gate import prior_feasibility_attempts
+                _require(binding.producer == "feasibility" and binding.recovery["version"] in {31, 33}
                     and binding.candidate["routing"] == dict(verdict="PASS", state_updates={})
-                    and specification.recovery["previous_attempts"] == 0)
+                    and specification.recovery["version"] == (32 if binding.recovery["version"] == 31 else 34)
+                    and specification.recovery["previous_attempts"] == prior_feasibility_attempts(root, run, state,
+                        binding, specification.recovery["routing_state"], specification.recovery["config"]))
             if gating:
                 from harness.discovery_lexicon import prior_gate_attempts
                 _require(binding.producer == "lexicon" and specification.recovery["previous_attempts"]
