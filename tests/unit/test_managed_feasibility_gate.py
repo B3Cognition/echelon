@@ -16,7 +16,7 @@ from tests.unit.test_managed_feasibility_rounds import FeasibilityExecutor
 
 
 def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=None,
-        attempts=None, completion_id="c" * 32):
+        attempts=None, completion_id="c" * 32, has_report=True):
     from harness.discovery_assessment_gate import prepare_feasibility_gate_publication
     root, store, identity, _ = case
     before = store.load()
@@ -34,9 +34,15 @@ def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=N
     assert updates["structural_action"] == (action or ("proceed" if passed else "repair"))
     assert updates["feasibility_structural_attempts"] == (int(not passed) if attempts is None else attempts)
     writes = {op.target: op.postimage_bytes for op in package.sources.publication.operations}
-    assert set(writes) == {"specs/game/feasibility-structural-report.json", "specs/game/spec-artifact-graph.json"}
-    report = json.loads(writes["specs/game/feasibility-structural-report.json"])
-    assert report["ok"] is passed and bool(report["findings"]) is not passed
+    expected_writes = {"specs/game/spec-artifact-graph.json"}
+    if has_report:
+        expected_writes.add("specs/game/feasibility-structural-report.json")
+        report = json.loads(writes["specs/game/feasibility-structural-report.json"])
+        assert report["ok"] is passed and bool(report["findings"]) is not passed
+    else:
+        assert "feasibility_structural_report" not in updates
+        assert updates["feasibility_structural_findings"] == 0
+    assert set(writes) == expected_writes
     assert store.load() == before and identity.identity_history(spec_id="game") == history
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     for damage in ("counter", "result", "typed_result", "verdict", "source", "extra", "report", "template"):
@@ -56,7 +62,7 @@ def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=N
     return package
 
 
-def assert_gate_handoff(case, package, provider, *, passed=False, action=None, attempts=None):
+def assert_gate_handoff(case, package, provider, *, passed=False, action=None, attempts=None, has_report=True):
     from tests.unit.test_discovery_completion import controller, drain
     from tests.unit.test_discovery_turns import Interrupted
     from harness.squad_publication import PreparedSquadPublication
@@ -100,9 +106,9 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
     assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
     writes = package.sources.publication.operations
-    # Report-only publication may leave graph bytes unchanged. The real
-    # per-operation hook, not byte inequality, proves the interruption point.
-    assert interruptions == [1] and len(writes) == 2
+    # Gate publication may leave graph bytes unchanged. The real hook proves
+    # partial report/graph promotion, or completion of the sole bypass write.
+    assert interruptions == [1] and len(writes) == (2 if has_report else 1)
     apply = IdentityStore.apply_identity_publication
     def after_apply(*args, **kwargs):
         apply(*args, **kwargs)

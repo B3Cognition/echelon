@@ -88,8 +88,9 @@ new `tests/unit/test_managed_feasibility.py`.
 Consumes released v30 Phase 1 approval, captured context and Task 1 evaluator.
 Produces protected feasibility rounds and native structural completion proof.
 
-First-entry sub-slice completed; the execution/publication milestone below is
-still open:
+The PASS-feasibility authoring/publication and structural-gate milestone is
+verified below. Public managed admission remains closed; KILL/DEFER and timing
+parity belong to Task 5, and whole-Phase-2 acceptance remains Task 6.
 
 - [x] Authenticate an actual released v30 approval, exact native decision and
   receipt, current identity source head and current quality/debt authorization.
@@ -125,21 +126,23 @@ still open:
   its exact authorizing gate; verify PASS and repeated warn/block exhaustion
   through existing publication and interruption recovery.
 
-- [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
+- [x] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
   `phase2-strategic-overview`, not execute strategy implicitly.
-- [ ] Extend existing retained selection/component ownership and exact receipt
+- [x] Extend existing retained selection/component ownership and exact receipt
   decoding for this producer. Capture all declared templates/calibration/journal
   inputs; explicit absence is evidence, not authority to search the host.
-- [ ] Publish only reviewed outputs plus graph, then exact captured gate report
+- [x] Publish only reviewed outputs plus graph, then exact captured gate report
   plus graph. Bind counters/configuration/native route into sealed completion.
   ```python
   assert state["phase"] == "phase2-strategic-overview"
   assert identity.identity_history(spec_id="game") == history_before
   assert not state["phase_dispatch_counts"].get("phase3-specialists")
   ```
-- [ ] Test scripted Codex/Claude calls, structural retry, changed-input refusal,
+- [x] Test scripted Codex/Claude calls, structural retry, changed-input refusal,
   before/after publication interruption and zero-call restart; commit verified work.
+- [x] Verify managed disabled/non-structural bypass and cap-one warn/block
+  exhaustion from fresh approval ancestry, without changing native policy.
 
 ## Task 4: Strategy and alignment continuation
 
@@ -716,3 +719,56 @@ Phase 2 acceptance is claimed by creating this plan.
   include managed bypass and first-attempt exhaustion branches. Strategy and
   alignment, KILL/DEFER/timing parity and final acceptance remain open. This
   increment does not complete Task 3 or the full Phase 2 milestone.
+
+### First-check bypass and exhaustion coverage
+
+- Added `test_managed_feasibility_policy.py` with fresh approval-to-gate
+  corridors for globally disabled governance, a non-structural feasibility
+  tier, cap=1/block and cap=1/warn. Configuration is set before managed
+  bootstrap, not rewritten underneath retained authority. Codex/guided uses
+  Lexicon disabled; Claude/Banzai uses Lexicon enabled and COMMANDER approval.
+- Extended only the shared test helpers for graph-only publication. Bypass
+  expectations require no report, no attempt charge and no exhausted marker;
+  cap-one expectations require native warning/block after exactly one author
+  dispatch. Every case checks unchanged requirement history, no implicit
+  strategy/Phase 3 dispatch, strict live counters and no repair authority.
+- A graph-only transaction interrupts after its sole operation, before
+  identity application. Report-producing transactions retain their existing
+  partial-promotion test. Both use the existing post-identity-apply recovery,
+  actual release and zero-call replay assertions. No production code or policy
+  changes were made for this coverage slice.
+- Read-only review found no actionable findings, including review of the
+  graph-only interruption boundary. The reviewer ran no tests or mutations.
+- Focused command with the repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py` and
+  `test_managed_assessment_contract.py`: **421 passed in 8.08s**.
+- Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'`, same interpreter/options: **16 passed,
+  501 deselected in 5.79s**.
+- Fresh policy commands use `tests/unit/test_managed_feasibility_policy.py`
+  with one `-k` selector each, the repository virtualenv and the same options:
+  - `disabled`: **1 passed, 3 deselected in 793.54s**;
+    `pytest-362/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=0 and no structural report or strategy execution.
+  - `block`: **1 passed, 3 deselected in 791.08s**;
+    `pytest-364/test_first_gate_preserves_nati0` reaches `terminal-blocked`,
+    status=blocked, attempts=1, iteration=0 and the native exhausted reason.
+  - `nonstructural`: **1 passed, 3 deselected in 1037.68s**;
+    `pytest-363/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=0 and no structural report or strategy execution.
+  - `warn`: **1 passed, 3 deselected in 1035.28s**;
+    `pytest-365/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=1, iteration=0 and `proceed_with_warning`, without strategy
+    execution. Both Claude cases retain actual COMMANDER approval provenance.
+- All four fresh cases completed publication/recovery, strict live counter
+  checks and refusal of forged repair authority. These tests exercise existing
+  behavior and passed without a production change; no fix or red/green defect
+  reproduction is claimed. No additional full repository suite was run for
+  this test-only slice. Final diff checks passed.
+- Task 3's PASS-feasibility/structural milestone is now verified across the
+  recorded increments. This is not public activation or full Phase 2 acceptance.
+  Next is Task 4's strategy/alignment continuation from actual released gate
+  proofs, followed by Task 5 branch/timing parity and Task 6 acceptance. No live
+  calls, installation, migration, merge or push occurred in this increment.
