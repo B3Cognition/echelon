@@ -1677,3 +1677,28 @@ in the same [approved plan](superpowers/plans/2026-09-16-managed-lexicon-checkpo
 Non-default configured artifact paths fail closed pending explicit admission.
 No legacy build flow, provider prose, installed workspace, public activation,
 live-provider run, push or merge changed.
+
+### Native COMMANDER checkpoint route (2026-09-17)
+
+The user explicitly retained Banzai's existing COMMANDER judgment: eligible
+checkpoint decisions are not approved merely because controller evidence passes.
+The managed route loads the same neutral `echelon.commander` role through Prosaic
+and uses the shared constrained Codex/Claude inspection boundary. Native Squad
+still owns the decision, attempts, resolution, charges and state changes. The
+shared receipt file boundary retains the exact claimed judgment; v30 checkpoint
+completion binds to that receipt. There is no additional COMMANDER role or
+provider-specific prose.
+
+Fresh scripted Codex approval and retained scripted Claude rejection both passed.
+Claude recovery after the native state commit retained the same judgment and
+charged once. Unknown completions do not redispatch; known invalid replies retain
+the native attempt cap, and oversized/over-budget replies cannot lose known usage
+or become approvals. Neither corridor executed Phase 2. Retained successful and
+no-progress Lexicon repair corridors also passed without identity changes.
+
+The [ongoing verification record](superpowers/plans/2026-09-16-managed-lexicon-checkpoint.md)
+distinguishes these results from the unfinished full milestone. Fresh guided
+approval with the gate disabled and semi-mode rejection with it enabled also
+passed. Accepted-debt continuation and the remaining gate/completion fault matrix
+still require their recorded acceptance checks. No installation, public activation,
+live provider, push or merge was performed.

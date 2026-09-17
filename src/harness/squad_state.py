@@ -2792,9 +2792,11 @@ class SquadStateStore:
             dispatch = current.get("last_dispatch") or {}
             resolution = None
             decision, receipt = current.get("blocked_decision") or {}, current.get("last_human_input_completion")
-            if (producer in {"what", "why2"} and dispatch.get("phase_id") == "phase1-why2"
+            if (producer in {"what", "why2", "lexicon"} and dispatch.get("phase_id") == "phase1-why2"
                     and decision.get("status") == "resolved" and decision.get("source_phase") == "phase1-why2"
-                    and (decision.get("resolution_handler") == "clarification_resume" or (
+                    and ((producer != "lexicon" and decision.get("resolution_handler") == "clarification_resume") or (
+                        producer == "lexicon" and decision.get("resolution_handler") == "proportional_quality_debt"
+                        and decision.get("selected_option_id") == "continue_with_debt") or (
                         producer == "what" and decision.get("resolution_handler") == "proportional_quality_debt"
                         and decision.get("selected_option_id") == "extend_once") or (
                         producer == "what" and decision.get("resolution_handler") == "banzai_issue_resolution") or (
@@ -2820,7 +2822,7 @@ class SquadStateStore:
                     or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                 raise StateAdvanceError("specification requires exact released parent state", validator="spec_round")
             rounds = _tracker_from_state(current, producer)
-            if resolution is not None and rounds is None:
+            if resolution is not None and rounds is None and producer != "lexicon":
                 raise StateAdvanceError("clarification requires a retained WHY2 predecessor", validator="spec_round")
             operation_id = producer + "-" + source["dispatch_id"]
             if rounds is not None and operation_id in rounds["rounds"]:
@@ -2831,7 +2833,7 @@ class SquadStateStore:
             if rounds is None:
                 rounds = dict(schema_version=1, active=operation_id, rounds={})
             rounds["active"] = operation_id
-            rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=resolution if producer == "why2" else None,
+            rounds["rounds"][operation_id] = dict(source=deepcopy(source), resolution=resolution if producer in {"why2", "lexicon"} else None,
                 predecessor=predecessor, operation=None, turns=None)
             if producer == "what" and resolution is not None:
                 rounds["rounds"][operation_id].update(review_resolution=resolution,
@@ -4252,7 +4254,10 @@ class SquadStateStore:
         failure_code: str,
         token_usage_delta: int = 0,
         v2_automatic_eligible: bool = False,
+        retry_allowed: bool = True,
     ) -> dict[str, Any]:
+        if type(retry_allowed) is not bool:
+            raise ValueError("human-input retry eligibility must be boolean")
         if type(token_usage_delta) is not int or token_usage_delta < 0:
             raise StateAdvanceError(
                 "human-input token usage delta is invalid",
@@ -4269,7 +4274,7 @@ class SquadStateStore:
                 allowed_statuses=frozenset({"resolving"}),
             )
             desired = deepcopy(before)
-            exhausted = int(decision["attempts"]) >= 2
+            exhausted = int(decision["attempts"]) >= 2 or not retry_allowed
             failed = {
                 **decision,
                 "status": "failed" if exhausted else "pending",

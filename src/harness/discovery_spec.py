@@ -83,7 +83,15 @@ def current_spec_source(root, state, producer):
     from harness.element_identity_store import IdentityStore
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     decision, receipt = state.get("blocked_decision") or {}, state.get("last_human_input_completion")
-    if (producer in {"what", "why2"} and state["last_dispatch"]["phase_id"] == "phase1-why2"
+    authorization = state.get("spec_quality_debt_authorization") or {}
+    if (producer in {"lexicon", "checkpoint"} and receipt is not None
+            and (authorization.get("resolution_completion") or {}).get("completion_id") == receipt.get("completion_id")
+            and (authorization.get("resolved_decision") or {}).get("id") == receipt.get("decision_id")):
+        observed = IdentityStore.open(root).check_managed_context(spec_id=state["managed_identity"]["spec_id"],
+            run_id=state["run_id"], record=state["managed_identity"])
+        if observed["source_context"]["operation_id"] == "discovery-completion-" + receipt["completion_id"]:
+            return clarification_source(receipt)
+    if (producer in {"what", "why2", "lexicon", "checkpoint"} and state["last_dispatch"]["phase_id"] == "phase1-why2"
             and decision.get("status") == "resolved" and decision.get("source_phase") == "phase1-why2"
             and decision.get("resolution_handler") in {"clarification_resume", "proportional_quality_debt",
                 "reset_why_fail_count", "reset_why2_stagnation", "banzai_issue_resolution"} and receipt is not None

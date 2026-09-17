@@ -79,11 +79,11 @@ class DiscoveryCompletionBinding:
 
     @property
     def resolution_publication(self):
-        return self.clarification or self.policy_resolution
+        return self.clarification or self.policy_resolution or self.producer == "checkpoint"
 
     @property
     def spec_id(self):
-        if self.producer in {"understanding", "lexicon_gate"}:
+        if self.producer in {"understanding", "lexicon_gate", "checkpoint"}:
             return self.recovery["spec_id"]
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -153,6 +153,9 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 29:
         from harness.discovery_lexicon import decode_lexicon_gate_binding
         return decode_lexicon_gate_binding(publication, request, recovery, completion_id, state)
+    if recovery.get("version") == 30:
+        from harness.discovery_checkpoint_resolution import decode_binding as decode_checkpoint
+        return decode_checkpoint(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
@@ -224,9 +227,18 @@ def _decode(publication, completion_id, state):
             for key, value in parent.items()))
         _require(selected["operation_id"] == producer + "-" + parent["dispatch_id"]
             and selected["intent"]["kind"] == ("derive" if producer == "lexicon" else "specify" if producer == "what" else "validate")
-            and ((recovery["resolution"] is not None) == (recovery["version"] in {19, 24}))
+            and ((producer == "lexicon") or ((recovery["resolution"] is not None) == (recovery["version"] in {19, 24})))
             and (recovery["predecessor"] is None or (type(recovery["predecessor"]) is str
                 and re.fullmatch(producer + r"-[0-9a-f]{32}", recovery["predecessor"]) is not None)))
+        if producer == "lexicon" and recovery["resolution"] is not None:
+            from harness.discovery_spec import clarification_source
+            from harness.discovery_policy_resolution import require_resolved
+            association = recovery["resolution"]
+            _closed(association, ("decision", "completion"))
+            require_resolved(association["decision"], debt=True)
+            _require(recovery["predecessor"] is None and association["decision"]["selected_option_id"] == "continue_with_debt"
+                and parent == clarification_source(association["completion"])
+                and association["completion"]["decision_id"] == association["decision"]["id"])
         if recovery["version"] == 17:
             _require(recovery["predecessor"] is not None and type(recovery["constitution_parent"]) is str
                 and re.fullmatch(r"constitution-refresh-[0-9a-f]{32}", recovery["constitution_parent"]) is not None)
@@ -464,6 +476,9 @@ def authenticate(root, run, state, completion):
         if binding.policy_resolution:
             from harness.discovery_policy_resolution import require_parent
             require_parent(root, run, state, binding, store)
+        if binding.producer == "checkpoint":
+            from harness.discovery_checkpoint_resolution import require_parent
+            require_parent(root, run, state, binding)
         observed = store.check_managed_context(spec_id=binding.spec_id, run_id=state["run_id"], record=state["managed_identity"])
         pending = store.pending_identity_publication(spec_id=binding.spec_id)
         retained = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
@@ -480,7 +495,7 @@ def authenticate(root, run, state, completion):
         _require(observed["source_context"]["manifest"] == asdict(expected)
             and observed["source_context"]["operation_id"] == (binding.result_operation_id if applied else binding.request.sources.expected_operation_id)
             and asdict(store.identity_history(spec_id=binding.spec_id)) == (asdict(binding.result_history) if applied else binding.source["history"]))
-        if binding.producer not in {"understanding", "lexicon_gate"}:
+        if binding.producer not in {"understanding", "lexicon_gate", "checkpoint"}:
             _receipts(root, run, state, binding, store)
         return binding
     except Exception:
@@ -972,6 +987,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             specifying = specification is not None and specification.producer == "what" and not specification.clarification
             reviewing = specification is not None and specification.producer == "why2" and not specification.clarification
             deriving = specification is not None and specification.producer == "lexicon"
+            deriving_debt = deriving and specification.recovery["resolution"] is not None
             gating = specification is not None and specification.producer == "lexicon_gate"
             reviewing_answer = reviewing and specification.recovery["version"] in {19, 24}
             reviewing_policy = reviewing_answer and specification.recovery["version"] == 24
@@ -979,15 +995,15 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             specifying_policy = specifying_answer and specification.recovery["version"] in {22, 26}
             specification_parent = "why2" if (specifying and specification.recovery["predecessor"] is not None
                 and specification.recovery["version"] != 17) else "constitution"
-            if (specification is not None and specification.producer in {"what", "why2"} and not specification.clarification
+            if (specification is not None and specification.producer in {"what", "why2", "lexicon"} and not specification.clarification
                     and specification.recovery["predecessor"] is not None):
                 pending_spec_predecessors.append(specification)
             binding, project, context = _retained_input_projection(root, run, state, store,
                 operation_id=operation_id, source=source, require_checkpoint=require_checkpoint,
-                required_origin="resolution" if reviewing_answer or specifying_answer else "routed",
-                required_route=(None if specifying_policy or reviewing_policy else
+                required_origin="resolution" if reviewing_answer or specifying_answer or deriving_debt else "routed",
+                required_route=(None if specifying_policy or reviewing_policy or deriving_debt else
                     ("phase1-lexicon-derive", "phase1-lexicon") if gating else
-                    ("phase1-why2", "phase1-lexicon-derive") if deriving else
+                    ("phase1-lexicon" if specification.recovery["predecessor"] is not None else "phase1-why2", "phase1-lexicon-derive") if deriving else
                     ("phase1-why2", "phase1-what") if specifying_answer else
                     ("phase1-why2", "phase1-why2") if reviewing_answer else
                     ("phase1-understanding", "phase1-why2") if reviewing else
@@ -995,11 +1011,21 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     ("phase1-why1", "phase1-constitution") if constituting else
                     (repair.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"], "phase1-discover") if repairing else None))
             if gating:
-                _require(binding.producer == "lexicon" and binding.recovery["predecessor"] is None)
+                from harness.discovery_lexicon import prior_gate_attempts
+                _require(binding.producer == "lexicon" and specification.recovery["previous_attempts"]
+                    == prior_gate_attempts(root, run, state, binding))
             if deriving:
-                _require(specification.recovery["predecessor"] is None
-                    and binding.producer == "why2" and not binding.resolution_publication
-                    and binding.candidate["routing"]["verdict"] == "PASS")
+                if specification.recovery["predecessor"] is not None:
+                    _require(binding.producer == "lexicon_gate"
+                        and binding.recovery["result"]["state_updates"]["lexicon_evaluation"] == "failed")
+                else:
+                    if deriving_debt:
+                        _require(binding.recovery["version"] == 27 and binding.candidate["route"] == "phase1-lexicon-derive"
+                            and binding.recovery["resolution"] == specification.recovery["resolution"]["decision"]
+                            and binding.recovery["resolution"]["selected_option_id"] == "continue_with_debt")
+                    else:
+                        _require(binding.producer == "why2" and not binding.resolution_publication
+                            and binding.candidate["routing"]["verdict"] == "PASS")
             if specifying_answer:
                 _require((binding.policy_resolution if specifying_policy else binding.producer == "why2" and binding.recovery["version"] == 18)
                     and binding.candidate["route"] == "phase1-what"
@@ -1131,6 +1157,10 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
         if binding.recovery["version"] == 27:
             from harness.discovery_debt_resolution import require_effect
             require_effect(binding, intent)
+    elif binding.producer == "checkpoint":
+        from harness.discovery_checkpoint_resolution import require_parent, require_receipt
+        require_parent(root, run, state, binding)
+        require_receipt(state, binding, marker)
     elif binding.producer in {"tracker", "why1"}:
         selected_round = tracker_round(state, binding.recovery["operation"]["binding"]["operation_id"], producer=binding.producer)
         if selected_round["predecessor"] is not None:

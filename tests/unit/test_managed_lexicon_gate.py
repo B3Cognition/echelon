@@ -151,6 +151,60 @@ def test_managed_gate_evaluates_the_snapshot_not_later_live_source_bytes(capture
     assert not (root / "specs/game/spec-lexicon-report.json").exists()
 
 
+def test_managed_repair_gate_retains_prior_attempts(captured_gate_sources):
+    from harness.discovery_lexicon import _gate_evaluation
+    root, sources = captured_gate_sources
+    result, _ = _gate_evaluation(sources, root, "specs/game", {"lexicon_gate": {"enabled": True}}, 2)
+    assert result.passed is True and result.attempts == 0
+    spec = sources.trees[0]
+    bad = replace(spec, files=tuple(replace(item, content=b"Still invalid\n")
+        if item.path.endswith("/requirements.lexicon.md") else item for item in spec.files))
+    result, _ = _gate_evaluation(replace(sources, trees=(bad,)), root, spec.path,
+        {"lexicon_gate": {"enabled": True}}, 2)
+    assert result.passed is False and result.attempts == 3
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_repair_progress_uses_sealed_postimage_not_live_file(tmp_path, changed):
+    from harness.discovery_lexicon import projected_lexicon_progress
+    from harness.squad_publication import SquadPublicationTransaction
+    spec = tmp_path / "specs/game"
+    spec.mkdir(parents=True)
+    original = b"Invalid translation\n"
+    (spec / "requirements.lexicon.md").write_bytes(original)
+    (spec / "spec-lexicon-report.json").write_text(json.dumps(dict(ok=False,
+        artifact_path=str(spec / "requirements.lexicon.md"), artifact_sha256=hashlib.sha256(original).hexdigest())))
+    run = tmp_path / "runs/first"
+    run.mkdir(parents=True)
+    from harness.discovery_publication import _seal
+    publication = _seal(tmp_path, run, {"specs/game/requirements.lexicon.md": original + (b"Changed\n" if changed else b"")}, {})
+    with publication.inspect_sources(tree_paths=("specs/game",), file_paths=()) as sources:
+        assert projected_lexicon_progress(sources, root=tmp_path, spec_dir=spec) is changed
+    assert (spec / "requirements.lexicon.md").read_bytes() == original
+
+
+def test_native_preparation_admits_staged_lexicon_repair(checkpoint_case):
+    from harness.discovery_publication import _seal
+    from harness.squad_provider import SquadAgentResult
+    root, store, _, _ = checkpoint_case
+    original = b"Invalid translation\n"
+    spec = root / "specs/game"
+    (spec / "requirements.lexicon.md").write_bytes(original)
+    (spec / "spec-lexicon-report.json").write_text(json.dumps(dict(ok=False,
+        artifact_path=str(spec / "requirements.lexicon.md"), artifact_sha256=hashlib.sha256(original).hexdigest())))
+    state = store.load()
+    state.update(phase="phase1-lexicon-derive", lexicon_evaluation="failed", lexicon_pass=False,
+        lexicon_attempts=1, lexicon_report=str(spec / "spec-lexicon-report.json"), spec_dir="specs/game")
+    store.save(state)
+    publication = _seal(root, store.squad_dir, {"specs/game/requirements.lexicon.md": b"Changed translation\n"}, {})
+    ctrl = controller(checkpoint_case, LexiconExecutor())
+    with publication.inspect_sources(tree_paths=("specs/game",), file_paths=()) as sources:
+        prepared = ctrl._prepare_phase_result(ctrl._graph.get("phase1-lexicon-derive"),
+            SquadAgentResult(0, dict(verdict="DONE", state_updates={}), "", 0, False),
+            store.capture_routing_snapshot(expected_phase="phase1-lexicon-derive"), publication_sources=sources)
+    assert prepared.routing_override is None
+
+
 def assert_gate_source_drift_refused(project_spec, root):
     from harness.squad_source_snapshot import inspect_project_tree
     with inspect_project_tree(root, "specs/game") as tree:
@@ -323,6 +377,57 @@ AC: AC-000001
             result["artifacts"] = {"requirements.lexicon.md": text}
             response = replace(response, stdout=json.dumps(result))
         return response
+
+
+def continue_repair(case, provider="codex", *, progress=True):
+    """Reusable against a fresh corridor or an untouched retained failed gate."""
+    from harness.discovery_completion import released_discovery_input_projectors
+    from harness.discovery_producer import SOURCE_FIELDS
+    root, store, identity, _ = case
+    before = store.load()
+    history = identity.identity_history(spec_id="game")
+    assert before["phase"] == "phase1-lexicon-derive" and before["lexicon_attempts"] == 1
+    previous = deepcopy(before["managed_lexicon_rounds"])
+    executor = PassingLexiconExecutor(provider) if progress else LexiconExecutor(provider)
+    selected = {**selection(case), "through_phase": "phase1-lexicon-derive"}
+    result = controller(case, executor).run(managed_discovery=selected)
+    assert result.phase == ("phase1-lexicon" if progress else "terminal-blocked"), (result, store.load().get("controller_contract_error"))
+    state = store.load()
+    assert state["lexicon_attempts"] == 1 and state["token_usage"] == before["token_usage"] + 21
+    assert len(executor.calls) == 3
+    rounds = state["managed_lexicon_rounds"]
+    assert rounds["rounds"][previous["active"]] == previous["rounds"][previous["active"]]
+    assert rounds["rounds"][rounds["active"]]["predecessor"] == previous["active"]
+    assert identity.identity_history(spec_id="game") == history
+    released_discovery_input_projectors(root, store.squad_dir, state,
+        source={key: state["last_dispatch"][key] for key in SOURCE_FIELDS})
+    if progress:
+        result = controller(case, executor).run(managed_discovery={**selected, "through_phase": "phase1-lexicon"})
+        assert result.phase == "checkpoint-assess", result
+        assert store.load()["lexicon_attempts"] == 0 and store.load()["lexicon_pass"] is True
+    settled = store.load()
+    controller(case, executor).run(managed_discovery={**selected, "through_phase": "phase1-lexicon"})
+    assert store.load() == settled and len(executor.calls) == 3
+    assert identity.identity_history(spec_id="game") == history
+
+
+@pytest.mark.parametrize("provider,progress", [("codex", True), ("claude", False)])
+def test_managed_failed_gate_repair_retains_authority_and_stops_no_progress(checkpoint_case, provider, progress):
+    from harness.quality_scores import QUALITY_GATE_SCORE_KEYS
+    root, store, _, _ = checkpoint_case
+    install_lexicon(checkpoint_case)
+    config = root / ".echelon/config.yml"
+    value = yaml.safe_load(config.read_text())
+    value["quality_gates"] = {key: 0.0 for key in QUALITY_GATE_SCORE_KEYS}
+    config.write_text(yaml.safe_dump(value))
+    selected = {**selection(checkpoint_case), "through_phase": "phase1-lexicon"}
+    result = controller(checkpoint_case, LexiconExecutor(provider)).run(managed_discovery=selected, create_managed_discovery=True)
+    assert result.phase == "phase1-lexicon-derive", result
+    continue_repair(checkpoint_case, provider, progress=progress)
+    if progress:
+        from tests.unit.test_managed_checkpoint_assess import install_commander, continue_checkpoint
+        install_commander(root)
+        continue_checkpoint(checkpoint_case, provider, fault="before_state")
 
 
 def test_managed_gate_pass_reaches_checkpoint_without_executing_it(checkpoint_case):

@@ -41,7 +41,9 @@ class DiscoveryReceiptFile:
         from harness.discovery_producer import producer_key
         if type(name) is not str or name not in {"discovery-reservations", "discovery-turns"}:
             raise ValueError("unsupported discovery receipt name")
-        if producer in {"tracker", "why1", "what", "why2", "lexicon"} or (producer in {"synthesizer", "constitution"} and round_operation_id is not None):
+        if producer == "commander" and (name != "discovery-turns" or repair_unit is not None):
+            raise ValueError("COMMANDER supports judgment receipts only")
+        if producer in {"tracker", "why1", "what", "why2", "lexicon", "commander"} or (producer in {"synthesizer", "constitution"} and round_operation_id is not None):
             if (type(round_operation_id) is not str
                     or re.fullmatch(("constitution-refresh" if producer == "constitution" else producer) + r"-[0-9a-f]{32}", round_operation_id) is None
                     or repair_unit is not None):

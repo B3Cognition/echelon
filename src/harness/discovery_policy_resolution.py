@@ -274,6 +274,12 @@ def decode_policy_binding(publication, request, recovery, completion_id, state):
             receipt = state["last_human_input_completion"]
             _require(clarification_source(receipt)["dispatch_id"] == recovery["completion_id"]
                 and receipt["decision_id"] == recovery["resolution"]["id"])
+        elif debt and state.get("spec_quality_debt_authorization") == recovery["quality_effect"]["payload"].get("authorization"):
+            from harness.discovery_debt_resolution import retained_debt_receipt
+            authorization = state["spec_quality_debt_authorization"]
+            _require(authorization["resolved_decision"] == recovery["resolution"]
+                and retained_debt_receipt(Path(bootstrap_from_state(state)["selection"]["project_root"]), state,
+                    authorization)["completion_id"] == recovery["completion_id"])
         else:
             from harness.human_input import AppliedHumanInputResolution
             from harness.squad_state import build_human_input_resolution_postimage
@@ -391,8 +397,15 @@ def require_resolution_receipt(state, binding, marker):
     expected = dict(schema_version=1, completion_id=marker.completion_id, intent_sha256=marker.intent_sha256,
         receipts_sha256=marker.receipts_sha256, publication_binding_sha256=marker.publication_binding_sha256,
         decision_id=binding.recovery["resolution"]["id"])
-    _require(expected in [state.get("last_human_input_completion"),
-        *(item["completion"] for _, item in resolution_associations(state))])
+    receipts = [state.get("last_human_input_completion"),
+        *(item["completion"] for _, item in resolution_associations(state))]
+    if binding.recovery["version"] == 27 and binding.recovery["quality_effect"]["operation"] == "debt_write":
+        from harness.discovery_bootstrap_state import bootstrap_from_state
+        from harness.discovery_debt_resolution import retained_debt_receipt
+        authorization = state.get("spec_quality_debt_authorization")
+        _require(authorization == binding.recovery["quality_effect"]["payload"]["authorization"])
+        receipts.append(retained_debt_receipt(Path(bootstrap_from_state(state)["selection"]["project_root"]), state, authorization))
+    _require(expected in receipts)
 
 
 def state_only_effects(state, decision, selected, effects):

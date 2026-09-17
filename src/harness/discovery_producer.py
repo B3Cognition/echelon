@@ -108,8 +108,8 @@ def tracker_rounds(state, producer="tracker"):
                 raise ValueError("specification predecessor must be accepted")
         if producer == "what" and resolution is not None:
             raise ValueError("WHAT clarification belongs to its requesting review")
-        if producer == "lexicon" and resolution is not None:
-            raise ValueError("derivation requires a released parent completion")
+        if producer == "lexicon" and resolution is not None and predecessor is not None:
+            raise ValueError("debt can admit only the initial derivation")
         association = row.get("review_resolution", resolution)
         if association is not None:
             from harness.blocked_decision import validate_blocked_decision
@@ -117,7 +117,7 @@ def tracker_rounds(state, producer="tracker"):
                 raise ValueError("invalid Tracker resolution association")
             decision = validate_blocked_decision(association["decision"])
             receipt = association["completion"]
-            owner = "why2" if "review_resolution" in row else producer
+            owner = "why2" if "review_resolution" in row or producer == "lexicon" else producer
             if (decision != association["decision"] or decision["status"] != "resolved"
                     or decision["source_phase"] != "phase1-" + owner or type(receipt) is not dict
                     or receipt.get("decision_id") != decision["id"]):
@@ -130,6 +130,12 @@ def tracker_rounds(state, producer="tracker"):
                 size = 32 if key == "completion_id" else 64
                 if type(receipt[key]) is not str or re.fullmatch(r"[0-9a-f]{%d}" % size, receipt[key]) is None:
                     raise ValueError("invalid Tracker resolution receipt digest")
+            if producer == "lexicon":
+                from harness.discovery_spec import clarification_source
+                from harness.discovery_policy_resolution import require_resolved
+                require_resolved(decision, debt=True)
+                if decision["selected_option_id"] != "continue_with_debt" or source != clarification_source(receipt):
+                    raise ValueError("derivation requires exact accepted-debt resolution")
             if "review_resolution" in row:
                 from harness.discovery_spec import clarification_source
                 if row["source"] != clarification_source(receipt):
@@ -340,6 +346,8 @@ def producer_key(producer, suffix):
 
 
 def producer_phase(producer):
+    if producer == "checkpoint":
+        return "checkpoint-assess"
     if producer == "lexicon_gate":
         return "phase1-lexicon"
     if producer == "lexicon":

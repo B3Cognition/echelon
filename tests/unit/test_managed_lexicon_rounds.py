@@ -86,3 +86,41 @@ def test_initial_lexicon_round_cannot_skip_released_why2(enrolled, parent):
     before = select_parent(store)
     accepted = store.prepare_spec_round("lexicon", source("a"), expected_state=before)
     assert tracker_round(accepted, producer="lexicon")["source"] == source("a")
+
+
+def test_lexicon_debt_round_shape_keeps_exact_resolution_receipt(enrolled, tmp_path):
+    from tests.unit.test_phase1_quality_debt import _debt_fixture
+    from harness.discovery_spec import clarification_source
+    debt_state, _, _, _ = _debt_fixture(tmp_path / "debt")
+    _, store, _, _ = enrolled
+    before = select_parent(store)
+    decision = debt_state["spec_quality_debt_authorization"]["resolved_decision"]
+    receipt = dict(schema_version=1, decision_id=decision["id"], completion_id="b" * 32,
+        intent_sha256="c" * 64, receipts_sha256="d" * 64, publication_binding_sha256="e" * 64)
+    operation = "lexicon-" + receipt["completion_id"]
+    before["managed_lexicon_rounds"] = dict(schema_version=1, active=operation, rounds={operation:
+        dict(source=clarification_source(receipt), resolution=dict(decision=decision, completion=receipt),
+            predecessor=None, operation=None, turns=None)})
+    row = tracker_round(before, producer="lexicon")
+    assert row["source"] == clarification_source(receipt)
+    assert row["resolution"] == dict(decision=decision, completion=receipt)
+    assert row["predecessor"] is None
+
+
+def test_checkpoint_selects_debt_head_after_checkpoint_replaces_active_decision(monkeypatch, tmp_path):
+    from harness.discovery_spec import current_spec_source, clarification_source
+    from harness.element_identity_store import IdentityStore
+    from types import SimpleNamespace
+    receipt = dict(schema_version=1, decision_id="debt-choice", completion_id="b" * 32,
+        intent_sha256="c" * 64, receipts_sha256="d" * 64, publication_binding_sha256="e" * 64)
+    head = "discovery-completion-" + receipt["completion_id"]
+    monkeypatch.setattr(IdentityStore, "open", lambda root: SimpleNamespace(
+        check_managed_context=lambda **kwargs: dict(source_context=dict(operation_id=head))))
+    state = dict(last_dispatch={**source("a"), "phase_id": "phase1-why2"},
+        blocked_decision=dict(id="checkpoint-choice", status="awaiting_human", source_phase="checkpoint-assess"),
+        last_human_input_completion=receipt, managed_identity=dict(spec_id="game"), run_id="first",
+        spec_quality_debt_authorization=dict(resolution_completion=dict(completion_id=receipt["completion_id"]),
+            resolved_decision=dict(id=receipt["decision_id"])))
+    assert current_spec_source(tmp_path, state, "checkpoint") == clarification_source(receipt)
+    head = "discovery-completion-" + "a" * 32
+    assert current_spec_source(tmp_path, state, "checkpoint") == source("a")

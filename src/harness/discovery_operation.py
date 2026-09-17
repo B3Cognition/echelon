@@ -210,6 +210,11 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         files = {}
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
+            if producer == "lexicon" and logical in {"spec-lexicon-report.json", "quality-debt.json"}:
+                # Controller-authenticated diagnostics are exact model evidence,
+                # never identity definitions or provider-owned output.
+                documents[item.path] = item.content.decode("utf-8")
+                continue
             if spec_view is not None and logical == "spec-artifact-graph.json":
                 # Exact derived bytes were authenticated above; it is not an
                 # editable Markdown artifact or provider-authored definition.
@@ -434,7 +439,10 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     artifacts = tuple(sorted((*written,
                         *(CandidateArtifact(path, source_roles[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
-                            if (producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))), key=lambda item: item.path))
+                            if ((producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))
+                            and not (producer == "lexicon" and path in {
+                                selected["selection"]["spec_path"] + "/spec-lexicon-report.json",
+                                selected["selection"]["spec_path"] + "/quality-debt.json"}))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
                         report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon"} or repair_unit is not None or post_review else ((), ())

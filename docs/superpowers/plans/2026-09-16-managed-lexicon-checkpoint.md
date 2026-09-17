@@ -48,9 +48,10 @@ Produces: the `lexicon` producer assignment, no allocation/revision scope,
 
 ## Task 2: Retained derivation and publication
 
-Status: in progress. Low-level retained-round/provider-receipt foundations and
-the ordinary first-derivation handoff/publication are implemented. Repaired
-rounds and accepted-debt inputs remain to be connected alongside the gate.
+Status: in progress. Ordinary and repaired derivation/publication are implemented
+and verified through retained real ancestry. Accepted-debt derivation has reached
+the released gate/checkpoint handoff; its full checkpoint continuation and exact
+replay remain under verification. See the dated verification record below.
 
 - [x] Verified incremental checkpoint: ordinary passing WHY2 → first derivation
   → guarded publication/checkpoint completion → stop at `phase1-lexicon`, for
@@ -75,13 +76,12 @@ of exactly the derived artifact plus the existing graph projection.
 
 ## Task 3: Provider-free Lexicon gate
 
-Status: in progress. The first gate after ordinary passing WHY2/initial
-derivation is implemented through report publication and native completion.
-This increment deliberately stops at its repair or checkpoint handoff; it does
-not yet execute repaired derivation, accepted-debt input or checkpoint approval.
+Status: in progress. Ordinary and repaired gates now continue to native checkpoint
+approval/rejection. Accepted-debt input has reached the released gate/checkpoint
+handoff, with final continuation still under verification.
 Configured non-default artifact/source/glossary/report paths fail closed rather
-than silently using the defaults. Disabled-gate/checkpoint continuation and the
-complete gate fault/retry matrix remain unfinished.
+than silently using the defaults. Disabled-gate checkpoint continuation passed;
+the complete gate fault/retry matrix remains unfinished.
 
 - [x] Verified incremental checkpoint: ordinary initial derivation → captured
   native validation → guarded report/graph publication and completion → first
@@ -106,6 +106,11 @@ managed completion, without an LLM turn or identity revision.
 
 ## Task 4: Native Phase 1 checkpoint handoff
 
+Status: native user and Banzai COMMANDER approval/rejection, retained judgment
+replay and interruptions before/after native state application are verified.
+Accepted-debt checkpoint continuation remains under verification. No controller-
+only approval replaces COMMANDER judgment.
+
 Files: `src/harness/discovery_checkpoint_resolution.py`, existing human-input,
 completion and Squad owners; `tests/unit/test_managed_checkpoint_assess.py`.
 
@@ -118,7 +123,8 @@ or reject completion with retained proof, ending before Phase 2 execution.
 - [ ] Bind only native checkpoint outcomes to the existing publication/completion
   transaction. Preserve original decisions and resolver provenance on recovery.
 - [ ] Verify stale quality/Lexicon/debt evidence refusal, no invented approval,
-  no extra COMMANDER/provider calls and exact restart after each fault boundary.
+  one native COMMANDER judgment for eligible Banzai decisions (bounded native
+  retries only for known failed replies), and no duplicate calls on recovery.
 
 ## Task 5: Combined acceptance and closeout
 
@@ -276,3 +282,150 @@ record. No rollout/configuration cutover.
   authorization and actual source-context head. Do not fabricate passing quality.
 - Then complete disabled-gate routing and native checkpoint resolution, with
   guided/semi/Banzai policy and recovery coverage, stopping before Phase 2.
+
+### Repair/debt/checkpoint continuation — incomplete, approval question open
+
+- Started from clean `99904c09`. Current changes are **uncommitted and not an
+  activation milestone**. No installation, live provider spending or Phase 2
+  execution occurred.
+- Added retained repair ancestry/prior-attempt checks, exact read-only report
+  and debt evidence, and staged Lexicon progress comparison. Initial targeted
+  red: three failures; staged comparison and nonzero prior-attempt evaluation
+  then passed. A real retained repair exposed a missed caller handoff: native
+  preparation still compared the live preimage. That failed test run was
+  preserved, not reset. A fresh corridor then exposed the WHAT/WHY2-only staged
+  source admission guard. A focused native-preparation test reproduced that
+  guard and passed after admitting Lexicon derivation. **A complete repaired
+  corridor has not yet passed with the final code.**
+- Added initial accepted-debt round association and source-head selection, plus
+  original debt-receipt lookup after later human decisions. These additions
+  still require real end-to-end accepted-debt derivation/checkpoint coverage.
+- Added a draft v30 managed wrapper around the native checkpoint resolution,
+  preserving the existing human state/completion owners. Guided/semi completion,
+  interrupted completion and tamper coverage remain unverified.
+- Read-only review found two concrete defects in this draft: selecting debt
+  ancestry through the active decision lost it once checkpoint sealing replaced
+  the WHY2 decision; cancellation could enter the resume branch. Both now have
+  focused red/green tests. The reviewer withdrew a suspected destination-proof
+  gap after confirming the existing generic completion validator already binds
+  resolution destinations.
+- **Policy mismatch requiring user direction:** existing Banzai checkpoint
+  eligibility still leads to `_dispatch_commander_human_input`, unlike the
+  proportional-debt controller-only resolver. The draft test's zero-call,
+  `resolved_by=controller` expectation was incorrect. Do not silently replace
+  native judgment with approval from a recommendation. Asked whether to preserve
+  that judgment through managed Prosaic (recommended) or explicitly change to
+  controller-evidence approval. Until decided, the managed checkpoint stops with
+  its native pending decision before legacy COMMANDER dispatch. No new role has
+  been added. The Banzai acceptance test remains deliberately unfinished.
+- Current-code retained passing fixture
+  `pytest-234/test_managed_gate_pass_reaches0` reached a native pending Banzai
+  checkpoint with **zero inspection/legacy calls**, unchanged usage/history.
+  The earlier `pytest-228/test_managed_gate_pass_reaches0` preserves the failed
+  scripted legacy-judgment experiment; do not rewrite its decision or receipts.
+- Latest focused regression: **105 passed, 7 deselected in 3.71s**, using
+  `test_managed_lexicon_gate.py`, `test_managed_lexicon_rounds.py`,
+  `test_managed_lexicon_contract.py`, `test_managed_spec_rounds.py`,
+  `test_managed_policy_resolution.py`, `test_managed_checkpoint_assess.py`, with
+  `-k 'not managed_gate_pass_reaches and not managed_gate_publishes and not managed_failed_gate_repair and not managed_checkpoint_uses_native_policy'`,
+  `-q -o tmp_path_retention_count=200 -o tmp_path_retention_policy=all`.
+  `git diff --check` also passed. These are **not** end-to-end/full-suite claims.
+- Policy question resolved by the user: keep routing through existing COMMANDER
+  and improve that route where needed. Preserve native judgment (including
+  rejection/override), not controller-evidence automatic approval. Use the same
+  neutral Prosaic role through constrained Codex/Claude inspection; bind its
+  native claim and retained response to checkpoint completion and exact replay.
+  No new COMMANDER role or provider-specific prose.
+- Next: complete the managed COMMANDER transport and fresh repaired/no-progress,
+  accepted-debt and guided/semi/Banzai checkpoint corridors; add fault/rehashed
+  proof tests; rerun native/completion regressions and review before committing.
+  For retained pytest provider-turn replay, use the fixture's scripted Prosaic
+  inspection bridge unchanged: substituting live `prosaic inspect` changes the
+  retained role binding and correctly fails rather than authorizing a replay.
+
+### Approved COMMANDER route continuation (2026-09-17)
+
+- Kept the existing `echelon.commander` Prosaic role, native recommendation,
+  sealed choice, resolver provenance and two-attempt known-failure policy.
+  Added constrained inspection transport through the existing shared receipt
+  file boundary; no provider-specific prose, new role, second decision store,
+  identity changes, installation or Phase 2 execution.
+- Native resolving claims are resumed before legacy interrupted-claim recovery.
+  Persisted responses replay without another call; uncertain responses remain
+  unresolved. Checkpoint v30 completion authenticates the actual COMMANDER
+  answer/claim and receipt, not merely the controller recommendation.
+- Read-only review found oversized-output persistence and over-budget charge
+  gaps. Both were reproduced and fixed test-first. Bounded response evidence
+  retains known usage; nonretryable known failures are charged atomically once
+  by the native state owner and cannot reissue the judgment. Re-review found no
+  new actionable defect; added the suggested failure-accounting fault cases.
+- Fresh scripted Codex Banzai corridor: **1 passed, 5 deselected in 529.51s**
+  using `test_managed_checkpoint_assess.py -k 'codex-banzai'` plus `-q` and the
+  global retention options. COMMANDER approved with one 7-token scripted call;
+  original identity history and exact restart survived; Phase 2 was not run.
+- Retained scripted Claude checkpoint fixture
+  `pytest-234/test_managed_gate_pass_reaches0`: COMMANDER rejected, interrupted
+  immediately after native state commit, then recovered publication/completion
+  and exact replay with one call/charge and no Phase 2 execution. Neutral role
+  bundle was added before this fixture's first managed COMMANDER dispatch;
+  no existing decision, counters or receipts were reset.
+- Retained repair corridors passed through the real released ancestry:
+  `pytest-245/test_managed_failed_gate_repai0` recovered the previously accepted
+  initial derivation, then repaired the failed gate, passed and replayed;
+  `pytest-215/test_managed_derivation_publis0` stopped a no-progress Claude
+  repair and replayed without another call or identity change.
+- Regression run: **572 passed in 68.01s** using
+  `test_human_input_routing.py`, `test_squad_state.py`,
+  `test_managed_commander.py`, `test_phase1_quality_debt.py` with the global
+  retention flags. A later transport/adapter/Prosaic run: **119 passed in
+  19.61s** using `test_managed_commander.py`, `test_inspection_turn.py`,
+  `test_host_serviced_inspection.py`, `test_prosaic_prompt_loader.py`.
+  These are overlapping targeted runs, not a full-suite claim.
+- Added a negative codec test for a structurally valid controller-only approval;
+  it failed before the checkpoint effect guard was tightened to explicit user
+  decisions or Banzai COMMANDER judgments. This does not change native automatic
+  quality-debt policy. The expanded COMMANDER suite passed **28 tests in 21.85s**.
+- Fresh guided approval with the Lexicon gate disabled and semi-mode explicit
+  rejection with the gate enabled: **2 passed, 5 deselected in 927.31s**, using
+  `test_managed_checkpoint_assess.py -k 'codex-guided or claude-semi'` with the
+  global flags. Both stopped before Phase 2 execution, with no provider calls
+  for the user decisions and exact restart.
+- The repaired Codex fixture `pytest-245/test_managed_failed_gate_repai0` also
+  continued through COMMANDER approval with an interruption before native state
+  application. Recovery retained the same one-call judgment and charge.
+- Latest focused combined regression: **225 passed, 9 deselected in 24.53s**
+  (before the additional controller-only negative test); no full-suite claim.
+- Final combined regression after the controller-only guard: **785 passed,
+  9 deselected in 79.40s**. This combines native human-input routing, Squad state,
+  native debt, managed COMMANDER/Lexicon/round/policy/checkpoint focused tests,
+  inspection adapters and Prosaic loading; the long checkpoint/repair/debt cases
+  were explicitly excluded and are recorded separately above. All pytest runs
+  retain the global temporary-directory options. `git diff --check` passed.
+- Accepted-debt-to-checkpoint continuation is still under verification. The
+  complete Lexicon/checkpoint milestone is not claimed finished or committed by
+  this record.
+- A final empty-decision regression exposed a nullable legacy decision crashing
+  the new managed-route precheck. Added the missing mapping guard test-first;
+  both absent and explicit-null decisions resume without a call or state change.
+  The complete COMMANDER module then passed **30 tests in 23.27s**. The test
+  fixture was corrected to reload the native revision after its own setup save;
+  the first combined rerun's sole failure was that stale fixture expectation
+  (**786 passed, 1 failed, 9 deselected**), not a second runtime defect.
+- Final current-code combined rerun: **787 passed, 9 deselected in 80.19s**,
+  using the same 13-module selection and long-case exclusions as the 785-test
+  run above. `git diff --check` passed. The retained accepted-debt continuation
+  (`pytest-192/test_managed_quality_debt_choi0`, exec session `24197`) remains
+  active at `checkpoint-assess`, revision 182, with the Lexicon gate completion
+  released and the original debt decision preserved. Final checkpoint approval
+  and replay have not yet returned; do not record this corridor as passed or
+  commit/install the complete milestone on this evidence.
+
+### User-requested preservation checkpoint (2026-09-17)
+
+The user requested committing all current work before continuing verification.
+This is a preservation checkpoint, not a completed-milestone or activation
+claim. The last focused run passed 787 tests (9 long cases excluded). The
+retained accepted-debt run has since applied the user checkpoint approval and
+reached `phase2-decide` with completion bookkeeping still pending; no Phase 2
+producer was executed. Remaining acceptance/fault checks stay open below the
+existing task headings. Continue inline without installation or live spending.

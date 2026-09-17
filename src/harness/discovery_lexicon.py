@@ -1,5 +1,6 @@
 """Closed managed derivation contract; the native gate owns certification."""
 import hashlib
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
@@ -59,6 +60,35 @@ def require_lexicon_parent(root, run, state, source):
     from harness.discovery_completion import _retained_input_projection, _require
     from harness.element_identity_store import IdentityStore
     from harness.phase1_quality import has_current_phase1_quality_certificate
+    from harness.discovery_producer import tracker_rounds
+    rounds = tracker_rounds(state, "lexicon")
+    selected = None if rounds is None else rounds["rounds"].get("lexicon-" + source["dispatch_id"])
+    predecessor = None if rounds is None else (selected["predecessor"] if selected is not None else rounds["active"])
+    if predecessor is not None:
+        binding, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False, required_route=("phase1-lexicon", "phase1-lexicon-derive"))
+        _require(binding.producer == "lexicon_gate"
+            and binding.recovery["result"]["state_updates"]["lexicon_evaluation"] == "failed")
+        parent = _gate_parent(root, run, state, binding.recovery["source_completion"])
+        _require(parent.recovery["operation"]["binding"]["operation_id"] == predecessor)
+        return binding
+    from harness.discovery_spec import clarification_source
+    from harness.phase1_quality_debt import has_current_quality_debt_authorization
+    resolution = selected["resolution"] if selected is not None else None
+    if resolution is None:
+        receipt = state.get("last_human_input_completion")
+        if receipt is not None and source == clarification_source(receipt):
+            resolution = dict(decision=state.get("blocked_decision"), completion=receipt)
+    if resolution is not None:
+        binding, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False)
+        _require(binding.recovery["version"] == 27 and binding.recovery["resolution"] == resolution["decision"]
+            and binding.candidate["route"] == "phase1-lexicon-derive"
+            and binding.recovery["resolution"]["selected_option_id"] == "continue_with_debt"
+            and has_current_quality_debt_authorization(state, project_root=root))
+        return binding
     binding, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase1-why2", "phase1-lexicon-derive"))
@@ -82,9 +112,7 @@ def _gate_parent(root, run, state, source):
     parent, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_route=("phase1-lexicon-derive", "phase1-lexicon"))
-    # This increment admits the first gate only. Repair/debt authority is added
-    # with its own retained-round tests, never inferred from phase strings.
-    _require(parent.producer == "lexicon" and parent.recovery["predecessor"] is None)
+    _require(parent.producer == "lexicon")
     require_lexicon_parent(root, run, state, parent.recovery["source_completion"])
     return parent
 
@@ -100,7 +128,7 @@ def _gate_evaluation(sources, root, spec_path, config, previous_attempts):
         and str(spec_gate.get("source_ref") or "spec.md").strip() == "spec.md"
         and str(spec_gate.get("glossary_file") or gate.get("glossary_file") or "glossary.md").strip() == "glossary.md"
         and str(spec_gate.get("report") or "spec-lexicon-report.json").strip() == "spec-lexicon-report.json"
-        and type(previous_attempts) is int and previous_attempts == 0)
+        and type(previous_attempts) is int and previous_attempts >= 0)
     spec, = (tree for tree in sources.trees if tree.path == spec_path)
     documents = {item.path[len(spec_path) + 1:]: item.content.decode("utf-8") for item in spec.files}
     result, report = evaluate_captured_spec_lexicon(
@@ -111,6 +139,29 @@ def _gate_evaluation(sources, root, spec_path, config, previous_attempts):
         previous_attempts=previous_attempts)
     _require(report is not None and result.passed is not None)
     return result, report
+
+
+def prior_gate_attempts(root, run, state, derivation):
+    parent = require_lexicon_parent(root, run, state, derivation.recovery["source_completion"])
+    return parent.recovery["result"]["state_updates"]["lexicon_attempts"] if parent.producer == "lexicon_gate" else 0
+
+
+def projected_lexicon_progress(sources, *, root, spec_dir):
+    """Compare the sealed repair with its captured failed report, before writes."""
+    from harness.discovery_completion import _require
+    from harness.squad_source_projection import project_publication_source_images
+    path = Path(spec_dir)
+    spec = (path if path.is_absolute() else Path(root) / path).relative_to(root).as_posix()
+    _require(all(op.action == "write" and op.target in {
+        spec + "/" + LEXICON_OUTPUT, spec + "/spec-artifact-graph.json"} for op in sources.publication.operations))
+    before, = (tree for tree in sources.trees if tree.path == spec)
+    report_file, = (item for item in before.files if item.path == spec + "/spec-lexicon-report.json")
+    report = json.loads(report_file.content)
+    _require(report.get("ok") is False and report.get("artifact_path") == str(Path(root) / spec / LEXICON_OUTPUT)
+        and type(report.get("artifact_sha256")) is str and re.fullmatch(r"[0-9a-f]{64}", report["artifact_sha256"]))
+    after, = (tree for tree in project_publication_source_images(sources).trees if tree.path == spec)
+    artifact, = (item for item in after.files if item.path == spec + "/" + LEXICON_OUTPUT)
+    return hashlib.sha256(artifact.content).hexdigest() != report["artifact_sha256"]
 
 
 def _gate_projection(store, spec_id, sources, spec_path):
@@ -171,6 +222,9 @@ def decode_lexicon_gate_binding(publication, request, recovery, completion_id, s
         == "discovery-completion-" + parent["dispatch_id"]
         and asdict(snapshot_source_manifest(trees=baseline.trees, files=())) == authority["source_context"]["manifest"])
     result, report = _gate_evaluation(sources, root, spec.path, recovery["config"], recovery["previous_attempts"])
+    prior_reports = [item for item in spec.files if item.path == spec.path + "/spec-lexicon-report.json"]
+    _require((not prior_reports and recovery["previous_attempts"] == 0) or (len(prior_reports) == 1
+        and json.loads(prior_reports[0].content).get("ok") is False and recovery["previous_attempts"] > 0))
     _require(recovery["result"] == dict(verdict="DONE", state_updates=result.state_updates()))
     lexicon_gate_route(recovery["config"], recovery["routing_state"], result.state_updates())
     graph = _graph(sources, IdentityHistorySnapshot(**history), dict(spec_id=recovery["spec_id"], spec_path=spec.path))
@@ -197,7 +251,8 @@ def authenticate_lexicon_gate(root, run, state, completion, binding):
     from harness.config import get_full_resolved_config
     from harness.discovery_completion import _require
     from harness.element_identity_store import IdentityStore
-    _gate_parent(root, run, state, binding.recovery["source_completion"])
+    parent = _gate_parent(root, run, state, binding.recovery["source_completion"])
+    _require(binding.recovery["previous_attempts"] == prior_gate_attempts(root, run, state, parent))
     _require(get_full_resolved_config(root) == binding.recovery["config"])
     updates = binding.recovery["result"]["state_updates"]
     _require(all(state.get(key) == value for key, value in updates.items()))
@@ -238,6 +293,7 @@ def prepare_lexicon_gate_publication(root, state_store, *, completion_id, max_it
         runtime, _ = admit_runtime_inputs(root, run, state, project_context(before))
     config = get_full_resolved_config(root)
     previous = state.get("lexicon_attempts", 0)
+    _require(previous == prior_gate_attempts(root, run, state, parent))
     result, report = _gate_evaluation(before, root, spec.path, config, previous)
     store = IdentityStore.open(root)
     authority = store.check_managed_context(spec_id=selection["spec_id"], run_id=state["run_id"], record=state["managed_identity"])

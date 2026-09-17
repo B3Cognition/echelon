@@ -104,9 +104,10 @@ def require_resolution_link(root, state, authorization, debt):
     selection = bootstrap_from_state(state)["selection"]
     _require(root == Path(selection["project_root"]))
     run = Path(selection["run_dir"])
-    source = clarification_source(state["last_human_input_completion"])
     store = IdentityStore.open(root)
     expected = authorization["resolution_completion"]
+    receipt = retained_debt_receipt(root, state, authorization)
+    source = clarification_source(receipt)
     binding, _, _ = _retained_input_projection(root, run, state, store,
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False, required_origin="resolution",
@@ -120,3 +121,26 @@ def require_resolution_link(root, state, authorization, debt):
     proof = _document(row["completion_payload"])["proof"]
     receipt = apply_or_verify_quality_debt_effect(root, effect["payload"], verify_only=True)
     _require(proof["receipts"]["effects"]["quality"] == dict(schema_version=1, operation="debt_write", debt=receipt))
+
+
+def retained_debt_receipt(root, state, authorization):
+    """A later checkpoint receipt cannot replace the original debt resolution."""
+    from harness.discovery_completion import _require, _document
+    from harness.element_identity_store import IdentityStore
+    from harness.squad_completion import validate_retained_completion_proof
+    completion_id = authorization["resolution_completion"]["completion_id"]
+    row = IdentityStore.open(root).identity_publication(spec_id=state["managed_identity"]["spec_id"],
+        operation_id="discovery-completion-" + completion_id)
+    _require(row is not None and row["state"] == "released")
+    retained = _document(row["completion_payload"])
+    marker, intent, _ = validate_retained_completion_proof(retained["completion"],
+        retained["proof"]["intent"], retained["proof"]["receipts"])
+    _require(intent.origin == "resolution" and marker.completion_id == completion_id
+        and intent.route["decision_id"] == authorization["resolved_decision"]["id"])
+    receipt = dict(schema_version=1, decision_id=intent.route["decision_id"], completion_id=completion_id,
+        intent_sha256=marker.intent_sha256, receipts_sha256=marker.receipts_sha256,
+        publication_binding_sha256=marker.publication_binding_sha256)
+    current = state.get("last_human_input_completion")
+    if current is not None and current.get("completion_id") == completion_id:
+        _require(current == receipt)
+    return receipt

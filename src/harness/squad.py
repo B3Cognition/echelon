@@ -2568,7 +2568,8 @@ class SquadController:
                         )
                     settled = self._state_store.load()
                     if (managed_discovery is not None and self._unresolved_human_input_decision(settled) is not None
-                            and not (self._managed_tracker_human_input(settled) or self._managed_automatic_policy_input(settled))):
+                            and not (self._managed_tracker_human_input(settled) or self._managed_automatic_policy_input(settled)
+                                or self._managed_checkpoint_human_input(settled))):
                         # Admission may permit finishing an already-sealed WHY2
                         # completion. It never grants an answer or a new dispatch.
                         return self._unresolved_human_input_result(settled)
@@ -4057,7 +4058,9 @@ class SquadController:
                 )
 
         state = self._state_store.load()
-        if self._legacy_identity_execution_blocked(state):
+        managed_checkpoint = (request.source_kind == "human_gate" and request.producer_id == "checkpoint-assess"
+            and request.phase_id == "checkpoint-assess" and self._managed_checkpoint_entry(state))
+        if self._legacy_identity_execution_blocked(state) and not managed_checkpoint:
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         autonomy_mode = state.get("autonomy_mode")
         if autonomy_mode not in {"guided", "semi", "banzai"}:
@@ -4805,6 +4808,38 @@ class SquadController:
                 return False
         return self._managed_why2_completion_wait(state)
 
+    def _managed_checkpoint_entry(self, state):
+        if "managed_identity" not in state or state.get("phase") != "checkpoint-assess":
+            return False
+        try:
+            from harness.discovery_checkpoint_resolution import require_checkpoint_parent, policy_payload, policy_from_payload
+            from harness.discovery_spec import current_spec_source
+            policy, = self._graph.get("checkpoint-assess").human_input_policies
+            policy_from_payload(policy_payload(policy))
+            require_checkpoint_parent(self._project_root, self._squad_dir, state,
+                current_spec_source(self._project_root, state, "checkpoint"))
+            return True
+        except Exception:
+            return False
+
+    def _managed_checkpoint_human_input(self, state):
+        from harness.discovery_checkpoint_resolution import supported_decision, require_checkpoint_parent
+        from harness.discovery_spec import current_spec_source
+        if "managed_identity" not in state or not supported_decision(state.get("blocked_decision")):
+            return False
+        try:
+            marker = state.get(PENDING_CONTROLLER_COMPLETION_KEY)
+            if marker is not None:
+                from harness.discovery_completion import authenticate
+                completion = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+                self._state_store._require_controller_completion_provenance(state, marker, completion.intent.to_dict())
+                return authenticate(self._project_root, self._squad_dir, state, completion).producer == "checkpoint"
+            require_checkpoint_parent(self._project_root, self._squad_dir, state,
+                current_spec_source(self._project_root, state, "checkpoint"))
+            return state["phase"] == "checkpoint-assess"
+        except Exception:
+            return False
+
     def _managed_automatic_policy_input(self, state):
         from harness.discovery_issue_resolution import admitted_choice
         from harness.discovery_policy_resolution import supported_decision
@@ -5373,6 +5408,7 @@ class SquadController:
             )
         state = self._state_store.load()
         managed_tracker = self._managed_tracker_human_input(state)
+        managed_checkpoint = self._managed_checkpoint_human_input(state)
         from harness.discovery_policy_resolution import supported_decision, supported_reset_decision
         from harness.discovery_issue_resolution import admitted_choice
         managed_policy = ("managed_identity" in state and (
@@ -5380,7 +5416,7 @@ class SquadController:
             or (supported_reset_decision(state.get("blocked_decision")) and resolution.selected_option_id is None)
             or admitted_choice(state.get("blocked_decision"), resolution.selected_option_id))
             and self._managed_why2_completion_wait(state))
-        if self._legacy_identity_execution_blocked(state) and not (managed_tracker or managed_policy):
+        if self._legacy_identity_execution_blocked(state) and not (managed_tracker or managed_policy or managed_checkpoint):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             raise HumanInputPolicyError(
@@ -5433,7 +5469,7 @@ class SquadController:
             ),
         }
         handler = handlers.get(str(decision["resolution_handler"]))
-        if managed_tracker or managed_policy:
+        if managed_tracker or managed_policy or managed_checkpoint:
             # A caller may retry an answer directly after a pre-CAS crash,
             # without entering run() first. Retire positively authenticated
             # unpublished drafts while their original sources still exist.
@@ -5455,6 +5491,9 @@ class SquadController:
         if managed_policy and effects.completion is None:
             from harness.discovery_policy_resolution import prepare
             effects = prepare(self, state, decision, selected, resolution, effects)
+        if managed_checkpoint:
+            from harness.discovery_checkpoint_resolution import prepare
+            effects = prepare(self, state, decision, selected, resolution, effects, token_usage_delta=token_usage_delta)
         if effects.route not in self._graph.all_phase_ids():
             raise HumanInputPolicyError(
                 "human-input handler returned an invalid route"
@@ -5925,6 +5964,42 @@ class SquadController:
         if len(rendered.encode("utf-8")) > COMMANDER_DECISION_PROMPT_MAX_BYTES:
             raise AssertionError("COMMANDER prompt byte bound was exceeded")
         return rendered
+
+    def _dispatch_managed_checkpoint_commander(self, state, policy):
+        from harness.managed_commander import run_commander_turn
+        from harness.discovery_turns import _hash
+        def check_inputs():
+            if not self._managed_checkpoint_human_input(self._state_store.load()):
+                raise ValueError("managed_commander_checkpoint_evidence_changed")
+        while state["blocked_decision"]["status"] in {"pending", "resolving"}:
+            budget = self._token_budget or state.get("token_budget", 0)
+            remaining = max(0, budget - state.get("token_usage", 0)) if budget else None
+            result = run_commander_turn(self, state, policy, check_inputs=check_inputs, token_budget=remaining)
+            state = self._state_store.load()
+            decision = state["blocked_decision"]
+            if result.resolution is not None:
+                # Successful judgment is never retried merely because its
+                # application/publication needs recovery.
+                return self.apply_human_input_resolution(decision["id"],
+                    expected_state_revision=state["state_revision"], resolution=result.resolution,
+                    token_usage_delta=result.token_usage)
+            if not result.retryable:
+                if (result.token_usage is not None and result.claim_sha256 == _hash(state)
+                        and decision["status"] == "resolving"):
+                    # Known charges must survive even when evidence/budget
+                    # forbids using the answer or attempting another judgment.
+                    self._state_store.record_human_input_resolution_failure(decision["id"],
+                        expected_state_revision=state["state_revision"], failure_code=result.reason,
+                        token_usage_delta=result.token_usage, retry_allowed=False)
+                logger.warning("Managed COMMANDER requires reconciliation: %s", result.reason)
+                return False
+            if result.claim_sha256 != _hash(state):
+                return False
+            state = self._state_store.record_human_input_resolution_failure(decision["id"],
+                expected_state_revision=state["state_revision"],
+                failure_code="invalid_resolution_result" if result.reason == "invalid_commander_result" else "provider_failed",
+                token_usage_delta=result.token_usage)
+        return False
 
     def _dispatch_commander_human_input(
         self,
@@ -6548,7 +6623,8 @@ class SquadController:
         """Recover an interrupted claim, then route one pending decision."""
         pending = self._state_store.load()
         if self._legacy_identity_execution_blocked(pending) and not (
-                self._managed_tracker_human_input(pending) or self._managed_automatic_policy_input(pending)):
+                self._managed_tracker_human_input(pending) or self._managed_automatic_policy_input(pending)
+                or self._managed_checkpoint_human_input(pending)):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
@@ -6574,6 +6650,12 @@ class SquadController:
         ):
             return True
         pending = self._rearm_awaiting_banzai_recommendation(pending)
+        decision = pending.get("blocked_decision")
+        if (isinstance(decision, Mapping) and decision.get("status") in {"pending", "resolving"} and decision.get("autonomy_mode") == "banzai"
+                and decision.get("automatic_eligible") is True and self._managed_checkpoint_human_input(pending)):
+            # Preserve the native claim and replay its retained response before
+            # legacy interrupted-claim recovery could allocate another attempt.
+            return self._dispatch_managed_checkpoint_commander(pending, self._policy_for_human_input_decision(decision))
         raw_pending_decision = pending.get("blocked_decision")
         v2_automatic_eligible = (
             self._v2_decision_automatic_eligible(raw_pending_decision)
@@ -6644,6 +6726,8 @@ class SquadController:
                     expected_state_revision=int(state["state_revision"]),
                     resolution=controller_resolution,
                 )
+            if self._managed_checkpoint_human_input(state):
+                return self._dispatch_managed_checkpoint_commander(state, policy)
             return self._dispatch_commander_human_input(
                 state,
                 decision,
@@ -6657,7 +6741,8 @@ class SquadController:
             raise HumanInputPolicyError("human-input answer is required")
         state = self._state_store.load()
         if self._legacy_identity_execution_blocked(state) and not (
-                self._managed_tracker_human_input(state) or self._managed_policy_human_input(state)):
+                self._managed_tracker_human_input(state) or self._managed_policy_human_input(state)
+                or self._managed_checkpoint_human_input(state)):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             if not self._drain_pending_controller_completion().recovered:
@@ -6775,9 +6860,10 @@ class SquadController:
         from harness.discovery_operation_state import operation_from_state
         from harness.element_identity_store import IdentityStore
 
-        through_lexicon = type(selected) is dict and selected.get("through_phase") in {"phase1-lexicon-derive", "phase1-lexicon"}
+        through_checkpoint = type(selected) is dict and selected.get("through_phase") == "checkpoint-assess"
+        through_lexicon = through_checkpoint or (type(selected) is dict and selected.get("through_phase") in {"phase1-lexicon-derive", "phase1-lexicon"})
         through_why2 = through_lexicon or (type(selected) is dict and selected.get("through_phase") == "phase1-why2")
-        if type(selected) is dict and selected.get("through_phase") in {"phase1-understanding", "phase1-why2", "phase1-lexicon-derive", "phase1-lexicon"}:
+        if type(selected) is dict and selected.get("through_phase") in {"phase1-understanding", "phase1-why2", "phase1-lexicon-derive", "phase1-lexicon", "checkpoint-assess"}:
             # The deterministic successor retains all preceding WHAT admission.
             selected = {**selected, "through_phase": "phase1-what"}
         if (type(selected) is not dict or set(selected) not in ({"bootstrap", "input_tree"}, {"bootstrap", "input_tree", "through_phase"})
@@ -6799,7 +6885,8 @@ class SquadController:
         if (create == (retained is not None) or (retained is not None and retained["selection"] != claim)
                 or (self._unresolved_human_input_decision(state) is not None
                     and not ((selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what"} and self._managed_tracker_human_input(state))
-                        or (through_why2 and self._managed_why2_completion_wait(state))))
+                        or (through_why2 and self._managed_why2_completion_wait(state))
+                        or (through_checkpoint and self._managed_checkpoint_human_input(state))))
                 or "retarget" in state):
             raise ValueError("managed selection conflicts with retained state")
         store = IdentityStore.open(self._project_root)
@@ -6939,6 +7026,40 @@ class SquadController:
         return None
 
     def _run_managed_discovery_locked(self, selected) -> SquadResult:
+        if selected.get("through_phase") == "checkpoint-assess":
+            while True:
+                state = self._state_store.load()
+                if self._cancelled or state.get("cancel_requested"):
+                    return self._managed_discovery_stop("managed_discovery_not_running")
+                if state.get("status") != "running":
+                    if self._managed_checkpoint_human_input(state):
+                        self.resume_pending_human_input()
+                    return self._managed_discovery_stop("managed_phase_not_supported")
+                phase = state.get("phase")
+                if phase == "checkpoint-assess":
+                    try:
+                        from harness.discovery_checkpoint_resolution import require_checkpoint_parent
+                        from harness.discovery_spec import current_spec_source
+                        from harness.discovery_completion import released_discovery_input_projectors
+                        source = current_spec_source(self._project_root, state, "checkpoint")
+                        require_checkpoint_parent(self._project_root, self._squad_dir, state, source)
+                        released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
+                        if self._unresolved_human_input_decision(state) is not None:
+                            self.resume_pending_human_input()
+                        else:
+                            self._intercept_human_gate(self._graph.get("checkpoint-assess"))
+                    except Exception:
+                        return self._managed_discovery_stop("managed_checkpoint_requires_reconciliation")
+                    return self._managed_discovery_stop("managed_phase_not_supported")
+                if phase in {"phase2-decide", "terminal-blocked"}:
+                    return self._managed_discovery_stop("managed_phase_not_supported")
+                if phase == "phase1-lexicon":
+                    result = self._run_managed_lexicon_gate_locked()
+                else:
+                    result = self._run_managed_discovery_locked({**selected, "through_phase": "phase1-lexicon-derive"})
+                after = self._state_store.load()
+                if after == state or (after.get("phase") == phase and after.get("status") == state.get("status")):
+                    return result
         if selected.get("through_phase") == "phase1-lexicon":
             state = self._state_store.load()
             if self._cancelled or state.get("cancel_requested"):
@@ -7172,8 +7293,9 @@ class SquadController:
         if state.get("phase") == "phase1-lexicon-derive" and selected.get("through_phase") == "phase1-lexicon-derive":
             try:
                 from harness.discovery_lexicon import require_lexicon_parent
+                from harness.discovery_spec import current_spec_source
                 from harness.discovery_completion import released_discovery_input_projectors
-                source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+                source = current_spec_source(self._project_root, state, "lexicon")
                 require_lexicon_parent(self._project_root, self._squad_dir, state, source)
                 released_discovery_input_projectors(self._project_root, self._squad_dir, state, source=source)
                 state = self._state_store.prepare_spec_round("lexicon", source, expected_state=state)
@@ -7316,12 +7438,12 @@ class SquadController:
                 "phase1-why1" if producer == "synthesizer" and post_why1_context(state, producer) else None)
             prepared = (prepare_phase_result(node, result, controller_updates={}, routing_override=return_phase)
                 if return_phase is not None else self._prepare_phase_result(node, result, snapshot,
-                    **({"publication_sources": package.sources} if producer in {"what", "why2"} else {})))
+                    **({"publication_sources": package.sources} if producer in {"what", "why2", "lexicon"} else {})))
             routing = self._construct_routing_decision_or_block(node, prepared, snapshot,
                 additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request),
                 completion_id=completion_id, token_usage_delta=outcome.token_usage,
-                **({"publication_sources": package.sources} if producer in {"what", "why2"} else {}))
+                **({"publication_sources": package.sources} if producer in {"what", "why2", "lexicon"} else {}))
             if routing is None:
                 return self._managed_discovery_stop("managed_discovery_routing_requires_reconciliation")
             human_input = routing.human_input or self._prepare_provider_human_input(node, prepared, snapshot)
@@ -11899,6 +12021,8 @@ class SquadController:
         self,
         node: PhaseNode,
         state: Mapping[str, object],
+        *,
+        publication_sources=None,
     ) -> tuple[dict[str, object], str | None]:
         """Return a terminal block when a Lexicon derivation changes nothing."""
         if node.id != "phase1-lexicon-derive":
@@ -11908,6 +12032,11 @@ class SquadController:
             or state.get("lexicon_pass") is not False
         ):
             return {}, None
+        if publication_sources is not None:
+            from harness.discovery_lexicon import projected_lexicon_progress
+            progressed = projected_lexicon_progress(publication_sources,
+                root=self._project_root, spec_dir=state["spec_dir"])
+            return {}, None if progressed else PHASE_TERMINAL_BLOCKED
         report_ref = str(state.get("lexicon_report") or "").strip()
         if not report_ref:
             return {}, None
@@ -12734,7 +12863,7 @@ class SquadController:
         )
         updates.update(lexicon_updates)
         repair_updates, repair_override = (
-            self._lexicon_repair_no_progress_enrichment(node, state_copy)
+            self._lexicon_repair_no_progress_enrichment(node, state_copy, publication_sources=publication_sources)
         )
         updates.update(repair_updates)
         quality_certificate_override: str | None = None
@@ -12959,8 +13088,8 @@ class SquadController:
         *, publication_sources=None,
     ) -> PreparedPhaseResult:
         """Prepare one detached executor result for routing and persistence."""
-        if publication_sources is not None and node.id not in {"phase1-what", "phase1-why2"}:
-            raise ValueError("projected quality sources require WHAT or WHY2")
+        if publication_sources is not None and node.id not in {"phase1-what", "phase1-why2", "phase1-lexicon-derive"}:
+            raise ValueError("projected sources require WHAT, WHY2 or Lexicon derivation")
         candidate = detach_squad_agent_result(result)
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(candidate)
