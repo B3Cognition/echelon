@@ -26,12 +26,13 @@ def test_repair_requires_released_gate_not_phase_or_approval():
                 phase_id="phase2-intent-alignment-structural", post_dispatch_complete=True)), {})
 
 
-def assert_retry_authority(case):
+def assert_retry_authority(case, *, attempts=1):
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     binding = assessment.require_alignment_parent(root, store.squad_dir, before, source)
-    assert binding.producer == "alignment_gate" and binding.recovery["version"] == 37
+    assert binding.producer == "alignment_gate" and binding.recovery["version"] == (37 if attempts == 1 else 39)
+    assert before["intent_alignment_check_structural_attempts"] == attempts
     assert binding.recovery["result"]["state_updates"]["structural_action"] == "repair"
     for damage in ("attempt", "typed_attempt", "iteration", "typed_iteration", "cap", "action", "findings",
             "verdict", "feasibility", "phase", "cancelled", "unfinished", "source", "override", "old_parent"):
@@ -57,17 +58,22 @@ def assert_retry_authority(case):
 
 
 class RepairExecutor(AlignmentExecutor):
+    def __init__(self, provider, *, alignment_text=None):
+        super().__init__(provider)
+        self.alignment_text = alignment_text
+
     def run_inspection_turn(self, *args, **kwargs):
         result = super().run_inspection_turn(*args, **kwargs)
         payload = json.loads(result.stdout)
         if payload["step"] == "author":
-            payload["artifacts"]["intent-alignment-check.md"] = payload["artifacts"][
-                "intent-alignment-check.md"].replace("Movement remains in scope.", "ALIGNED: Movement remains in scope.")
+            payload["artifacts"]["intent-alignment-check.md"] = (self.alignment_text if self.alignment_text is not None
+                else payload["artifacts"]["intent-alignment-check.md"].replace(
+                    "Movement remains in scope.", "ALIGNED: Movement remains in scope."))
             result = replace(result, stdout=json.dumps(payload))
         return result
 
 
-def assert_reviewed_retry(case, provider):
+def assert_reviewed_retry(case, provider, *, alignment_text=None, round_number=2):
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
     from harness.discovery_operation import run_discovery_operation
     from tests.unit.test_managed_checkpoint_assess import selection
@@ -75,7 +81,7 @@ def assert_reviewed_retry(case, provider):
     before, history = store.load(), identity.identity_history(spec_id="game")
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
-    executor = RepairExecutor(provider)
+    executor = RepairExecutor(provider, alignment_text=alignment_text)
     args = dict(input_tree=selection(case)["input_tree"], artifact_paths=("intent-alignment-check.md",),
         unowned_writable_paths=("intent-alignment-check.md",),
         intent=dict(kind="align", request="Repair the captured alignment findings"), producer="alignment")
@@ -100,7 +106,7 @@ def assert_reviewed_retry(case, provider):
     for key in ("iteration", "max_iterations", "feasibility_structural_attempts",
             "intent_alignment_check_structural_attempts", "blocked_decision"):
         assert accepted[key] == before[key]
-    assert accepted["phase_dispatch_counts"]["phase2-tracker-alignment"] == 2
+    assert accepted["phase_dispatch_counts"]["phase2-tracker-alignment"] == round_number
     assert identity.identity_history(spec_id="game") == history
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     assert not accepted["phase_dispatch_counts"].get("phase3-specialists")
@@ -147,20 +153,24 @@ def assert_retry_stops_at_recheck_entry(case):
     assert store.load() == before and identity.identity_history(spec_id="game") == history
 
 
-@pytest.mark.parametrize("provider,mode,enabled", [("codex", "guided", False), ("claude", "banzai", True)])
-def test_alignment_repair_preserves_gate_ancestry_and_budgets(checkpoint_case, provider, mode, enabled):
+def complete_first_alignment_gate(checkpoint_case, provider):
     from tests.unit.test_managed_strategy_execution import assert_reviewed_strategy
     from tests.unit.test_managed_strategy_publication import assert_strategy_publication, assert_strategy_handoff
     from tests.unit.test_managed_alignment_execution import assert_reviewed_alignment
     from tests.unit.test_managed_alignment_publication import assert_alignment_publication
     from tests.unit.test_managed_alignment_gate import assert_gate_publication, assert_gate_handoff
-    complete_retry(checkpoint_case, provider, mode, enabled)
-    assert_repaired_gate(checkpoint_case, provider)
     assert_reviewed_strategy(checkpoint_case, provider)
     assert_strategy_handoff(checkpoint_case, assert_strategy_publication(checkpoint_case, provider), provider)
     assert_reviewed_alignment(checkpoint_case, provider)
     assert_alignment_handoff(checkpoint_case, assert_alignment_publication(checkpoint_case, provider), provider)
     assert_gate_handoff(checkpoint_case, assert_gate_publication(checkpoint_case), provider)
+
+
+@pytest.mark.parametrize("provider,mode,enabled", [("codex", "guided", False), ("claude", "banzai", True)])
+def test_alignment_repair_preserves_gate_ancestry_and_budgets(checkpoint_case, provider, mode, enabled):
+    complete_retry(checkpoint_case, provider, mode, enabled)
+    assert_repaired_gate(checkpoint_case, provider)
+    complete_first_alignment_gate(checkpoint_case, provider)
     assert_retry_authority(checkpoint_case)
     assert_reviewed_retry(checkpoint_case, provider)
     assert_alignment_handoff(checkpoint_case, assert_retry_publication(checkpoint_case, provider), provider)

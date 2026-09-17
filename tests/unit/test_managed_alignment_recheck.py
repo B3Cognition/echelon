@@ -38,7 +38,7 @@ def assert_recheck_preparation_refusals(case):
                 changed = deepcopy(before)
                 if damage == "reset": changed["intent_alignment_check_structural_attempts"] = 0
                 elif damage == "inflate": changed["intent_alignment_check_structural_attempts"] += 1
-                elif damage == "typed_attempt": changed["intent_alignment_check_structural_attempts"] = 1.0
+                elif damage == "typed_attempt": changed["intent_alignment_check_structural_attempts"] = float(before["intent_alignment_check_structural_attempts"])
                 elif damage == "iteration": changed["iteration"] += 1
                 elif damage == "typed_iteration": changed["iteration"] = float(before["iteration"])
                 elif damage == "cap": changed["max_iterations"] += 1
@@ -68,7 +68,7 @@ def assert_repaired_gate(case, provider):
     assert_recheck_budget_integrity(case)
 
 
-def assert_recheck_budget_integrity(case):
+def assert_recheck_budget_integrity(case, *, previous_attempts=1):
     from harness.discovery_completion import authenticate
     from harness.squad_completion import validate_retained_completion_proof
     root, store, identity, _ = case
@@ -81,12 +81,13 @@ def assert_recheck_budget_integrity(case):
     completion = SimpleNamespace(marker=marker, intent=intent, receipts=receipts)
     binding = authenticate(root, store.squad_dir, before, completion)
     assert binding.producer == "alignment_gate" and binding.recovery["version"] == 39
-    assert binding.recovery["previous_attempts"] == 1
+    assert binding.recovery["previous_attempts"] == previous_attempts
     from harness.discovery_assessment import require_alignment_parent
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     forged = {**before, "phase": "phase2-tracker-alignment", "status": "running"}
-    with pytest.raises((ValueError, CompletionError)):
-        require_alignment_parent(root, store.squad_dir, forged, source)
+    if binding.recovery["result"]["state_updates"]["structural_action"] != "repair":
+        with pytest.raises((ValueError, CompletionError)):
+            require_alignment_parent(root, store.squad_dir, forged, source)
     for key in ("iteration", "intent_alignment_check_structural_attempts", "feasibility_structural_attempts"):
         for value in (bool(before[key]), float(before[key]), str(before[key]), before[key] + 1):
             changed = deepcopy(before)

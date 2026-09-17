@@ -133,7 +133,7 @@ def require_alignment_repair(root, run, state, source, predecessor):
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False,
         required_route=("phase2-intent-alignment-structural", "phase2-tracker-alignment"))
-    _require(gate.producer == "alignment_gate" and gate.recovery["version"] == 37)
+    _require(gate.producer == "alignment_gate" and gate.recovery["version"] in {37, 39})
     updates = gate.recovery["result"]["state_updates"]
     _require(updates["structural_action"] == "repair"
         and alignment_gate_route(gate.recovery["routing_state"], updates) == "phase2-tracker-alignment")

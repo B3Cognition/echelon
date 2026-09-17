@@ -177,6 +177,10 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   v39 association, retaining the released v38/v37 ancestry and native budgets.
   Verify successful recheck, tamper refusal and interrupted completion without
   dispatching Phase 3. Repeated v39-to-author repair remains a later increment.
+- [x] Admit subsequent alignment repairs only from an actual released v39
+  repair result; retain the entire accepted author/gate chain and original
+  limits. Verify unchanged-output retries, warning/block exhaustion, refusal
+  of another author after exhaustion, and interrupted publication/recovery.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -1248,3 +1252,73 @@ Phase 2 acceptance is claimed by creating this plan.
   no-progress repair/warn/block v39 handoffs and repeated-author admission with
   preserved original limits; then native clarification/COMMANDER and remaining
   branch/timing parity. Full activation and whole-Phase-2 acceptance stay open.
+
+### Task 4 — repeated alignment repair and exhaustion
+
+- Continuing inline from `9aacd96d`, with no installation, activation, live
+  provider spend, merge/push or Phase 3 execution. User-approved disk cleanup
+  removed the disposable recent regression fixtures and 14 abandoned pytest
+  `garbage-*` directories; all older numbered runs and retained evidence were
+  preserved. Free space recovered to about 115 GiB. Read-only snapshot directory
+  permissions had prevented deletion of the abandoned garbage; only directories
+  within the validated garbage roots had permissions restored, without following
+  symlinks. No repository or test-retention configuration changed.
+- New tests deliberately reuse byte-identical invalid alignment output. Codex
+  guided/cap-two/block runs from a fresh Phase 1 prefix; Claude Banzai/cap-three/
+  warn continues the actual released feasibility gate in original-root
+  `pytest-339/test_valid_claude_banzai_feasi0`, without changing its configuration,
+  state or proof to manufacture a parent. Both use the existing scripted provider
+  and fixture Prosaic inspector, leaving production authority/routing intact.
+- Existing focused gate/round/repair-boundary baseline passed: **71 passed,
+  2 deselected in 11.71s**, using repository virtualenv, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short`, retention count
+  200/policy all. Full corridor outcomes are recorded separately below.
+- The actual retained Claude continuation published strategy and initial
+  alignment, released the first repair gate, authored byte-identical invalid
+  output and released the v39 second failure with attempts=2. Native partial
+  publication/post-identity-application interruption, recovery, exact replay and
+  typed-budget refusal passed. The next-author test then failed exactly at
+  `require_alignment_repair`'s v37-only version guard, before a third round.
+- Minimal production change: both live repair admission and historical
+  repaired-author projection now admit v37 or v39, still requiring the exact
+  released `repair` route/action and accepted predecessor. Existing recursive
+  configuration/iteration/attempt checks own the budget; no allocator, version,
+  schema, provider prose or approval policy was added. The same saved released
+  second failure resumed at attempt three; no state/proof/configuration reset.
+- Post-change focused gate/round/repair, squad completion and captured/native
+  governance regressions passed **338 tests, 2 deselected in 14.98s**, with the
+  same interpreter and isolated retention settings. Read-only review of the
+  actual two-line production change and generalized acceptance tests found no
+  actionable defect; complete corridor acceptance remained pending at review.
+- Shared discovery completion/publication/restoration and native controller
+  structural/feasibility/alignment routing regressions passed **143 tests,
+  501 deselected in 356.42s**, using the same interpreter and retention settings.
+- Retained Claude continuation passed from the saved second failure through
+  third unchanged author, v38 publication and v39 warning exhaustion. The helper
+  verified native interruptions/recovery, zero-call replay, typed-budget and
+  exhausted-author refusals, exact cumulative accounting, unchanged identity
+  history and preservation of older rounds. Final state: settled Phase 3 entry,
+  iteration 2, alignment attempts 3, three alignment author dispatches and 280
+  scripted tokens; no Phase 3 dispatch. This is retained acceptance, not a fresh
+  Claude full-prefix run.
+- Fresh Codex guided/cap-two/block acceptance passed **1 test, 1 deselected in
+  3201.10s** (`test_managed_alignment_exhaustion.py -k codex`, same interpreter,
+  isolated root and retention flags). It traversed the real Phase 1 approval,
+  feasibility repair/recheck, strategy and unchanged alignment repair before
+  exhaustion. Final state: settled `terminal-blocked`, iteration 2, attempts 2,
+  two alignment author dispatches, 252 scripted tokens and no Phase 3 dispatch.
+  Preserve its new isolated-root `pytest-4/test_no_progress_alignment_exh0`
+  evidence; this is not the disposable older pytest-4 removed during cleanup.
+- The fresh Codex process started before the two-line admission patch; its
+  cap-two path never needs v39-to-author admission. The retained Claude third
+  author supplies that post-change acceptance; the final read-only checks below
+  authenticate both exhausted releases and refuse further repair on current code.
+- Final read-only current-code verification passed for Codex released v39
+  `be60bfb44b22418b818b72ba464dd396` and Claude released v39
+  `a6c4a7673b484c01aa60ef98cd5cdb14`: exact actions, previous/current attempts,
+  iteration, dispatch counts and usage matched; forged return-to-author phases
+  were refused, and saved state/history stayed unchanged. Final diff check passed.
+- This checkpoint closes repeated alignment repair/no-progress and warn/block
+  exhaustion only. Native clarification/COMMANDER transport, remaining
+  branch/timing parity and whole-Phase-2 acceptance remain open. No installation,
+  public/live activation, Phase 3 execution, merge or push occurred.

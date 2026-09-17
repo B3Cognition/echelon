@@ -1124,7 +1124,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     ("phase1-why1", "phase1-constitution") if constituting else
                     (repair.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"], "phase1-discover") if repairing else None))
             if aligning_retry:
-                _require(binding.producer == "alignment_gate" and binding.recovery["version"] == 37
+                _require(binding.producer == "alignment_gate" and binding.recovery["version"] in {37, 39}
                     and binding.recovery["result"]["state_updates"]["structural_action"] == "repair")
             elif aligning:
                 _require(binding.producer == "strategy" and binding.recovery["version"] == 35
