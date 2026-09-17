@@ -354,6 +354,8 @@ def producer_key(producer, suffix):
 
 
 def producer_phase(producer):
+    if producer == "feasibility_gate":
+        return "phase2-feasibility-structural"
     if producer in {"feasibility", "strategy", "alignment"}:
         return {"feasibility": "phase2-decide", "strategy": "phase2-strategic-overview",
                 "alignment": "phase2-tracker-alignment"}[producer]

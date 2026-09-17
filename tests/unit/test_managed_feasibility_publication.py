@@ -192,7 +192,8 @@ def assert_feasibility_handoff(case, package, provider):
     assert identity.identity_history(spec_id="game") == history
     row = identity.identity_publication(spec_id="game", operation_id="discovery-completion-" + completion_id)
     assert row["state"] == "released" and row["completion_payload"]
-    assert (root / "specs/game/feasibility.md").read_text() == "# Feasibility\nFeasible with one generated scene.\n"
+    expected, = (op.postimage_bytes for op in writes if op.target == "specs/game/feasibility.md")
+    assert (root / "specs/game/feasibility.md").read_bytes() == expected
     assert (root / "specs/game/spec-artifact-graph.json").read_bytes() == package.graph
     assert not package.publication._transaction_root.exists()
     assert identity.pending_identity_publication(spec_id="game") is None

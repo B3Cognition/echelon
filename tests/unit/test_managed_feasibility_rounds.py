@@ -191,10 +191,12 @@ class FeasibilityExecutor:
     supports_inspection_turn = True
     constrained_execution_configuration_id = "inspection-v1"
 
-    def __init__(self, provider="codex", *, failure=None, forbidden_read=False, reject=0):
+    def __init__(self, provider="codex", *, failure=None, forbidden_read=False, reject=0,
+            feasibility_text="# Feasibility\nFeasible with one generated scene.\n"):
         self.cli = self.provider_id = provider
         self.failure, self.forbidden_read, self.reject = failure, forbidden_read, reject
         self.calls = []
+        self.feasibility_text = feasibility_text
 
     def run_inspection_turn(self, private, prompt, *, frontmatter, timeout_ms):
         from pathlib import Path
@@ -212,7 +214,7 @@ class FeasibilityExecutor:
             fields = dict(action="final", new_subjects=[], revisions=[])
         elif assignment["step"] == "author":
             fields = dict(action="final", artifacts={
-                "feasibility.md": "# Feasibility\nFeasible with one generated scene.\n",
+                "feasibility.md": self.feasibility_text,
                 "prioritization.md": "# Prioritization\nScene, lighting, movement.\n",
                 "estimates.md": "# Estimates\nOne small prototype iteration.\n",
                 "mvp-scope.md": "# MVP Scope\nOne movable player in a lit scene.\n",

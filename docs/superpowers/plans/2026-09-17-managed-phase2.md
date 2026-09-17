@@ -109,6 +109,12 @@ still open:
   native handoff to `phase2-feasibility-structural`; author verdicts cannot skip
   structural evaluation. This lower-level handoff does not open public managed
   Phase 2 admission or execute the gate.
+- [x] Add a closed first-entry v32 structural association using the captured
+  native evaluator and existing report/graph publisher, completion and recovery
+  owners. Bind the actual released v31 PASS parent, first-attempt counter,
+  resolved configuration, exact report bytes and native route. This is a
+  report/handoff increment only: it does not authorize retry authoring or open
+  public Phase 2 admission.
 
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
@@ -451,3 +457,77 @@ Phase 2 acceptance is claimed by creating this plan.
   Phase 2 admission only when its full approved corridor is ready. Structural
   evaluation was not executed by this publication/handoff slice; Task 3 is not
   complete and Phase 2 remains inactive.
+
+### Task 3 first structural report/handoff increment
+
+- Added `discovery_assessment_gate.py`, the association module already named
+  by Task 3. It consumes the existing captured governance evaluator; it does
+  not add another gate policy, allocator, publisher, decision owner or model
+  role. Only the fixed feasibility report and captured graph may be written.
+- The closed v32 proof requires actual released first-entry v31 PASS authoring,
+  unchanged identity history, no identity operations, zero prior structural
+  attempts and no pre-existing structural report. Captured inputs determine the
+  exact report/result; current source/config guards and native completion
+  authenticate publication and recovery. KILL/DEFER and structural retry
+  authoring remain unadmitted in this slice.
+- Native transition literals are checked against the workflow definition and
+  replayed with the existing condition evaluator. The completion owner rejects
+  changed destinations, including skipping to Phase 3. Native repair increments
+  iteration once; a successful gate hands off to strategy without dispatching
+  its provider. No workflow definition, provider prose, Banzai decision policy,
+  installation or public managed admission was changed.
+- Red tests first failed for the absent adapter/preparation entry point. Two
+  test setup errors were corrected: dependency schemas must load before the
+  no-input-I/O check, and the workflow list is `phases`, not `nodes`.
+- Retained Codex `pytest-330/test_real_review_seals_only_fe0` and Claude/Banzai
+  `pytest-331/test_real_review_seals_only_fe0` now have released v32 completion
+  `cccccccccccccccccccccccccccccccc`, native repair handoff, attempts=1 and
+  iteration=1. Their deliberately incomplete authored documents failed the
+  unmodified structural rules. Report/graph publication, interruption after
+  identity application, recovery, unchanged history, unchanged dispatch/usage
+  counts and settled zero-call replay passed on both retained corridors.
+  On both, the original checkpoint approval is also explicitly refused as
+  authority for another feasibility operation after the gate's repair handoff.
+- The Codex continuation initially hit a test-only assertion: graph bytes can
+  remain unchanged in report-only publication, so counting equal postimages
+  does not prove the physical promotion position. The test now asserts the
+  actual publisher fault hook fired at position 1. Its existing pending
+  completion was then safely recovered; no receipt/source reset was used.
+  Claude subsequently passed the full corrected helper sequence, including
+  that per-operation interruption.
+- A further negative test reproduced Python's `True == 1` equality loophole in
+  the new result decoder. Canonical JSON comparison now rejects boolean, float
+  and string substitutions for the integer attempt count. The actual retained
+  report still decodes; the typed-result regression is in the managed helper.
+- Read-only review and a follow-up found no remaining code issue. Review noted
+  that native bypass and first-attempt warn/block exhaustion still need full
+  managed publication/handoff coverage before activation; their captured
+  evaluation, counter outcomes and native route selection are unit-tested.
+- Verification so far: focused contracts/state/completion/checkpoint/gates
+  **462 passed in 140.39s**; shared publication/completion/restoration and
+  Lexicon contracts/rounds **153 passed in 351.07s**; native structural,
+  feasibility and alignment routing **16 passed, 501 deselected in 5.61s**.
+  All pytest commands use the repository virtualenv and retention flags.
+  A post-type-fix contracts/state/completion rerun passed **378 tests in 6.38s**
+  (overlaps the 462 above; do not add it to the unique test total).
+- Fresh Codex/guided, Lexicon-disabled repair corridor:
+  `test_managed_feasibility_gate.py::test_reviewed_feasibility_gate_uses_guarded_report_handoff[codex-guided-False]`:
+  **1 passed in 722.74s**. Fixture
+  `pytest-337/test_reviewed_feasibility_gate0` is a released v32 native repair
+  handoff at `phase2-decide`, attempts=1 and iteration=1, with no retry dispatch.
+- Fresh Claude/Banzai, Lexicon-enabled successful structural corridor:
+  `test_managed_feasibility_gate.py::test_valid_claude_banzai_feasibility_reaches_strategy_without_dispatch`:
+  **1 passed in 874.24s**. Fixture `pytest-339/test_valid_claude_banzai_feasi0`
+  is a released v32 handoff at `phase2-strategic-overview`, attempts=0 and
+  iteration=0. Native COMMANDER approval, valid reviewed feasibility, exact
+  report/graph publication, both interruption boundaries and zero-call recovery
+  passed. STRATEGIST and Phase 3 were not dispatched.
+- Post-run inspection with the final decoder confirmed both fresh released
+  handoffs and rejected boolean, float and string counter substitutions for
+  both repair (1) and pass (0). Unique final verification total: **633 passing
+  focused tests**, plus the retained-corridor checks above. This is not a claim
+  that the full repository suite, every policy branch or live activation ran.
+- Remaining Task 3: released gate retry authority and reviewed retry execution,
+  remaining policy-branch managed handoff coverage, and public Phase 2 admission
+  only after the complete approved corridor is ready. Strategy/alignment,
+  terminal/defer paths and activation tasks remain open. Task 3 is not complete.

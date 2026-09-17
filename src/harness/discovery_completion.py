@@ -83,7 +83,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def spec_id(self):
-        if self.producer in {"understanding", "lexicon_gate", "checkpoint"}:
+        if self.producer in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate"}:
             return self.recovery["spec_id"]
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -156,6 +156,9 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 30:
         from harness.discovery_checkpoint_resolution import decode_binding as decode_checkpoint
         return decode_checkpoint(publication, request, recovery, completion_id, state)
+    if recovery.get("version") == 32:
+        from harness.discovery_assessment_gate import decode_feasibility_gate_binding
+        return decode_feasibility_gate_binding(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
@@ -479,7 +482,7 @@ def authenticate(root, run, state, completion):
                 refresh_child=binding if binding.recovery["version"] in {9, 10, 11} else None,
                 why1_child=binding if binding.producer == "why1" else None,
                 constitution_child=binding if binding.producer == "constitution" else None,
-                spec_child=binding if binding.producer in {"what", "why2", "lexicon", "lexicon_gate", "feasibility"} and not binding.clarification else None,
+                spec_child=binding if binding.producer in {"what", "why2", "lexicon", "lexicon_gate", "feasibility", "feasibility_gate"} and not binding.clarification else None,
                 clarification_child=binding if binding.clarification else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
@@ -493,6 +496,9 @@ def authenticate(root, run, state, completion):
         if binding.producer == "lexicon_gate":
             from harness.discovery_lexicon import authenticate_lexicon_gate
             authenticate_lexicon_gate(root, run, state, completion, binding)
+        if binding.producer == "feasibility_gate":
+            from harness.discovery_assessment_gate import authenticate_feasibility_gate
+            authenticate_feasibility_gate(root, run, state, completion, binding)
         if binding.clarification:
             from harness.tracker_clarification import require_parent
             require_parent(state, binding, store)
@@ -518,7 +524,7 @@ def authenticate(root, run, state, completion):
         _require(observed["source_context"]["manifest"] == asdict(expected)
             and observed["source_context"]["operation_id"] == (binding.result_operation_id if applied else binding.request.sources.expected_operation_id)
             and asdict(store.identity_history(spec_id=binding.spec_id)) == (asdict(binding.result_history) if applied else binding.source["history"]))
-        if binding.producer not in {"understanding", "lexicon_gate", "checkpoint"}:
+        if binding.producer not in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate"}:
             _receipts(root, run, state, binding, store)
         return binding
     except Exception:
@@ -796,7 +802,7 @@ def context_generator(root, run, state, completion):
     binding = require_applied(root, run, state, completion)
     _require(binding is not None)
     spec = binding.source["authority"]["managed_identity"]["spec_path"]
-    if binding.resolution_publication or binding.producer in {"understanding", "lexicon_gate"} or binding._restoration_applied:
+    if binding.resolution_publication or binding.producer in {"understanding", "lexicon_gate", "feasibility_gate"} or binding._restoration_applied:
         projected = project_publication_source_images(binding.result_sources)
         artifacts = {item.path: item.content for tree in projected.trees for item in tree.files
             if tree.path == spec and item.path.endswith(".md")}
@@ -1011,6 +1017,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             reviewing = specification is not None and specification.producer == "why2" and not specification.clarification
             deriving = specification is not None and specification.producer == "lexicon"
             assessing = specification is not None and specification.producer == "feasibility"
+            assessment_gate = specification is not None and specification.producer == "feasibility_gate"
             deriving_debt = deriving and specification.recovery["resolution"] is not None
             gating = specification is not None and specification.producer == "lexicon_gate"
             reviewing_answer = reviewing and specification.recovery["version"] in {19, 24}
@@ -1027,6 +1034,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                 required_origin="resolution" if reviewing_answer or specifying_answer or deriving_debt or assessing else "routed",
                 required_route=(None if specifying_policy or reviewing_policy or deriving_debt else
                     ("checkpoint-assess", "phase2-decide") if assessing else
+                    ("phase2-decide", "phase2-feasibility-structural") if assessment_gate else
                     ("phase1-lexicon-derive", "phase1-lexicon") if gating else
                     ("phase1-lexicon" if specification.recovery["predecessor"] is not None else "phase1-why2", "phase1-lexicon-derive") if deriving else
                     ("phase1-why2", "phase1-what") if specifying_answer else
@@ -1040,6 +1048,11 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     and binding.candidate["route"] == "phase2-decide"
                     and binding.recovery["resolution"] == specification.recovery["resolution"]["decision"]
                     and binding.recovery["resolution"]["selected_option_id"] == "approve")
+            if assessment_gate:
+                _require(binding.producer == "feasibility" and binding.recovery["version"] == 31
+                    and binding.recovery["predecessor"] is None
+                    and binding.candidate["routing"] == dict(verdict="PASS", state_updates={})
+                    and specification.recovery["previous_attempts"] == 0)
             if gating:
                 from harness.discovery_lexicon import prior_gate_attempts
                 _require(binding.producer == "lexicon" and specification.recovery["previous_attempts"]

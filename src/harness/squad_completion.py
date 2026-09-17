@@ -630,6 +630,11 @@ def _validate_intent(
             _raise("intent_invalid")
         if binding.producer == "feasibility" and route.get("to_phase") != "phase2-feasibility-structural":
             _raise("intent_invalid")
+        if binding.producer == "feasibility_gate":
+            from harness.discovery_assessment_gate import feasibility_gate_route
+            expected = feasibility_gate_route(binding.recovery["routing_state"], binding.recovery["result"]["state_updates"])
+            if route.get("to_phase") != expected:
+                _raise("intent_invalid")
         if binding.producer == "lexicon_gate":
             from harness.discovery_lexicon import lexicon_gate_route
             expected = lexicon_gate_route(binding.recovery["config"], binding.recovery["routing_state"],

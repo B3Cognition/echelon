@@ -181,7 +181,7 @@ def assert_feasibility_capture_preserves_populated_evidence(case):
     assert store.load() == before and identity.identity_history(spec_id="game") == history
 
 
-def assert_reviewed_feasibility(case, provider):
+def assert_reviewed_feasibility(case, provider, *, feasibility_text=None):
     """Exercise the real operation owner after authenticated checkpoint release."""
     import json
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
@@ -191,7 +191,7 @@ def assert_reviewed_feasibility(case, provider):
     from tests.unit.test_managed_checkpoint_assess import selection
     from tests.unit.test_managed_feasibility_rounds import FeasibilityExecutor
     root, store, identity, _ = case
-    executor = FeasibilityExecutor(provider)
+    executor = FeasibilityExecutor(provider, **({} if feasibility_text is None else dict(feasibility_text=feasibility_text)))
     before = store.load()
     history = identity.identity_history(spec_id="game")
     sources = {path.name: path.read_bytes() for path in (root / "specs/game").iterdir() if path.is_file()}
