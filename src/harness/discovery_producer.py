@@ -13,7 +13,7 @@ TRACKER_KEY = "managed_tracker_rounds"
 
 
 def rounds_key(producer):
-    if producer not in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon"}:
+    if producer not in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility"}:
         raise ValueError("unsupported round producer")
     return "managed_" + producer + "_rounds"
 
@@ -87,21 +87,21 @@ def tracker_rounds(state, producer="tracker"):
                 raise ValueError("WHAT answer input requires an accepted WHY2 operation")
         predecessor = row["predecessor"]
         if "refresh" in row:
-            if producer in {"constitution", "what", "why2", "lexicon"}:
+            if producer in {"constitution", "what", "why2", "lexicon", "feasibility"}:
                 raise ValueError("specification rounds require native parent completions")
             validate_refresh_round(state, producer, row)
             unit = row["refresh"]["repair_unit"]
             if unit in repair_units:
                 raise ValueError("repeated repair refresh")
             repair_units.add(unit)
-        elif producer not in {"constitution", "what", "why2", "lexicon"} and (producer == "synthesizer" or (resolution is None) != (predecessor is None)):
+        elif producer not in {"constitution", "what", "why2", "lexicon", "feasibility"} and (producer == "synthesizer" or (resolution is None) != (predecessor is None)):
             raise ValueError("invalid Tracker predecessor")
         if predecessor is not None and (type(predecessor) is not str
                 or (predecessor not in value["rounds"] and predecessor != root) or predecessor == operation_id):
             raise ValueError("invalid Tracker predecessor")
         if producer == "constitution" and (predecessor is None or resolution is not None):
             raise ValueError("Constitution refresh requires an immutable predecessor")
-        if producer in {"constitution", "what", "why2", "lexicon"} and predecessor is not None:
+        if producer in {"constitution", "what", "why2", "lexicon", "feasibility"} and predecessor is not None:
             previous = original if predecessor == root else value["rounds"][predecessor]["operation"]
             if (previous is None or not previous.get("attempts")
                     or (previous["attempts"][-1].get("result") or {}).get("status") != "accepted"):
@@ -110,6 +110,8 @@ def tracker_rounds(state, producer="tracker"):
             raise ValueError("WHAT clarification belongs to its requesting review")
         if producer == "lexicon" and resolution is not None and predecessor is not None:
             raise ValueError("debt can admit only the initial derivation")
+        if producer == "feasibility" and (resolution is None) == (predecessor is None):
+            raise ValueError("feasibility requires initial approval or a retained structural predecessor")
         association = row.get("review_resolution", resolution)
         if association is not None:
             from harness.blocked_decision import validate_blocked_decision
@@ -118,8 +120,9 @@ def tracker_rounds(state, producer="tracker"):
             decision = validate_blocked_decision(association["decision"])
             receipt = association["completion"]
             owner = "why2" if "review_resolution" in row or producer == "lexicon" else producer
+            phase = "checkpoint-assess" if producer == "feasibility" else "phase1-" + owner
             if (decision != association["decision"] or decision["status"] != "resolved"
-                    or decision["source_phase"] != "phase1-" + owner or type(receipt) is not dict
+                    or decision["source_phase"] != phase or type(receipt) is not dict
                     or receipt.get("decision_id") != decision["id"]):
                 raise ValueError("invalid Tracker resolved decision")
             if (set(receipt) != {"schema_version", "decision_id", "completion_id", "intent_sha256",
@@ -136,6 +139,11 @@ def tracker_rounds(state, producer="tracker"):
                 require_resolved(decision, debt=True)
                 if decision["selected_option_id"] != "continue_with_debt" or source != clarification_source(receipt):
                     raise ValueError("derivation requires exact accepted-debt resolution")
+            if producer == "feasibility":
+                from harness.discovery_checkpoint_resolution import state_effects
+                from harness.discovery_spec import clarification_source
+                if state_effects(decision)["route"] != "phase2-decide" or source != clarification_source(receipt):
+                    raise ValueError("feasibility requires exact native approval resolution")
             if "review_resolution" in row:
                 from harness.discovery_spec import clarification_source
                 if row["source"] != clarification_source(receipt):
@@ -309,7 +317,7 @@ def producer_component(state, producer, suffix, *, operation_id=None, repair_uni
         if selected.startswith("synthesizer-"):
             return tracker_round(state, selected, producer=producer)[suffix]
         return state.get(producer_key(producer, suffix))
-    if producer not in {"tracker", "why1", "what", "why2", "lexicon"}:
+    if producer not in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"}:
         if operation_id is not None and operation_id != producer_operation_id(state, producer):
             raise ValueError("producer operation changed")
         return state.get(producer_key(producer, suffix))
@@ -330,7 +338,7 @@ def with_producer_component(state, producer, suffix, value, *, repair_unit=None)
             raise ValueError("repair turns are immutable")
         row["execution"]["turns"] = deepcopy(value)
         return updated
-    if producer not in {"tracker", "why1", "what", "why2", "lexicon"} and not (producer in {"synthesizer", "constitution"} and rounds_key(producer) in state):
+    if producer not in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"} and not (producer in {"synthesizer", "constitution"} and rounds_key(producer) in state):
         return {**state, producer_key(producer, suffix): value}
     rounds = tracker_rounds(state, producer)
     if rounds is None or suffix not in {"operation", "turns"}:
@@ -403,7 +411,7 @@ def producer_operation_id(state, producer, operation_id=None, *, repair_unit=Non
         if operation_id is not None and operation_id != expected:
             raise ValueError("repair operation changed")
         return expected
-    if producer in {"tracker", "why1", "what", "why2", "lexicon"}:
+    if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"}:
         row = tracker_round(state, operation_id, producer=producer)
         if row is None:
             raise ValueError("Tracker round not selected")

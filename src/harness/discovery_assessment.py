@@ -27,6 +27,12 @@ def require_feasibility_parent(root, run, state, source):
         and state.get("status") == "running" and not state.get("cancel_requested")
         and type(state.get("last_human_input_completion")) is dict)
     _require(source == clarification_source(state["last_human_input_completion"]))
+    from harness.discovery_producer import tracker_round
+    selected = tracker_round(state, producer="feasibility")
+    if selected is not None:
+        _require(selected["predecessor"] is None and selected["source"] == source
+            and selected["resolution"] == dict(decision=state.get("blocked_decision"),
+                completion=state["last_human_input_completion"]))
     store = IdentityStore.open(root)
     binding, _, _ = _retained_input_projection(root, run, state, store,
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,

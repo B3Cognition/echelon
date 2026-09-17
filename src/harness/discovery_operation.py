@@ -417,8 +417,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         raise _Blocked(last.reason)
                     return last.reply
                 proposal = turn(proposal_assignment, {**common, "reply_fields": dict(
-                    new_subjects=[] if producer in {"constitution", "lexicon"} else [dict(key="local-key", kind="FR, NFR or AC" if producer == "what" else "ISS" if producer == "why2" else "U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
-                    revisions=[] if producer in {"constitution", "lexicon"} else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
+                    new_subjects=[] if producer in {"constitution", "lexicon", "feasibility"} else [dict(key="local-key", kind="FR, NFR or AC" if producer == "what" else "ISS" if producer == "why2" else "U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
+                    revisions=[] if producer in {"constitution", "lexicon", "feasibility"} else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
                 if repair_unit is not None and (proposal["new_subjects"] or
                         sorted((row["id"], row["expected_revision"]) for row in proposal["revisions"]) != sorted(editable_revisions)):
@@ -428,6 +428,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 assigned = tuple(sorted({item.element_id for item in mappings} | {item["id"] for item in proposal["revisions"]}))
                 author_assignment = replace(proposal_assignment, dispatch_id=f"attempt-{number}-author", step="author", assigned_ids=assigned)
                 reply_fields = dict(artifacts={path: "exact UTF-8 artifact text" for path in artifact_paths})
+                if producer == "feasibility":
+                    reply_fields["artifacts"]["kill-report.md"] = "nonblank UTF-8 text for KILL; otherwise exactly the captured baseline slot, including null for absence"
+                    reply_fields["routing"] = dict(verdict="PASS, KILL or DEFER", state_updates={})
                 if producer == "lexicon":
                     reply_fields["routing"] = dict(verdict="DONE or FAIL", state_updates={})
                 if producer == "what":
@@ -464,12 +467,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         *(CandidateArtifact(path, source_roles[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
                             if ((producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))
-                            and not (producer == "lexicon" and path in {
+                            and not (producer in {"lexicon", "feasibility"} and path in {
                                 selected["selection"]["spec_path"] + "/spec-lexicon-report.json",
                                 selected["selection"]["spec_path"] + "/quality-debt.json"}))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon"} or repair_unit is not None or post_review else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility"} or repair_unit is not None or post_review else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)
@@ -484,7 +487,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         source_citations = {path: f"source:{path}:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
                             for path, content in evidence.items()}
                         review_assignment = replace(author_assignment, dispatch_id=f"attempt-{number}-review", step="review", assigned_ids=labels,
-                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1", "what", "why2", "lexicon"} else None)
+                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"} else None)
                         review = turn(review_assignment, {**common, "proposal": proposal, "reservations": reserved,
                             "candidate": [asdict(item) for item in artifacts], "citations": citations,
                             "source_citations": source_citations,
@@ -502,12 +505,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 verify()
                 candidate_inputs = dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
                     operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history))
-                if producer in {"tracker", "why1", "what", "why2", "lexicon"}:
+                if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"}:
                     candidate_inputs["routing"] = authored["routing"]
                 candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
-                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1", "what", "why2", "lexicon"} else None)
+                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"} else None)
                 if repair_unit is not None:
                     finished["progress_sha256"] = progress
                 saved = operation_from_state(state_store.load(), producer, repair_unit=repair_unit)["attempts"][number - 1]["result"]

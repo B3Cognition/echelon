@@ -96,6 +96,14 @@ still open:
 - [x] Extend the existing captured-input owner for first-entry feasibility,
   including exact templates, read-only diagnostics and explicit calibration and
   journal absence. Verify against real retained approvals and a fresh prefix.
+- [x] Add protected feasibility rounds to the existing state owner, with exact
+  initial approval association, full-state CAS, immutable predecessors and
+  round-specific provider/reservation receipts. Structural-retry selection is
+  shape-only until the released gate proof and runtime route are implemented.
+- [x] Connect first-entry feasibility proposal/author/reviewer composition to
+  the shared provider turn and identity-preview owners; retain routing in the
+  review assignment, candidate and progress digests. Preserve source issue
+  provenance without creating identity or occurrence changes.
 
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
@@ -274,3 +282,81 @@ Phase 2 acceptance is claimed by creating this plan.
   and structural-report publication/completion, native repair and PASS handoff,
   and interruption/replay acceptance. No Phase 2 execution or activation admitted
   by this commit; all later tasks remain open.
+
+### Task 3 protected rounds and reviewed-candidate sub-slice
+
+- Feasibility uses the existing protected round owner, not a new journal or
+  state authority. Initial selection retains the exact checkpoint decision and
+  resolution receipt. Selection is full-state CAS and idempotent; preparing the
+  operation charges the outer `phase2-decide` dispatch exactly once. Structural
+  retry shapes retain an accepted predecessor and separate receipt namespace.
+- Shape selection is not released-parent authorization. The first-entry proof
+  helper now also checks the selected feasibility round: an existing structural
+  retry cannot reuse the initial approval. Actual structural retry execution is
+  still closed pending its own released gate proof and cumulative native budget.
+- Shared neutral turns now protect the entire run directory for feasibility.
+  Completed steps replay without another provider call; unknown or malformed
+  turns remain frozen. No provider-specific roles, COMMANDER policy changes,
+  identity edits or new publication owner were introduced.
+- Composition sends empty identity proposal scopes, exact derived-output slots
+  and PASS/KILL/DEFER routing instructions. Review is bound to author routing;
+  candidate and no-progress digests retain it. Existing issue-report context
+  authenticates unchanged source issues; controller diagnostics remain captured
+  model evidence rather than being reparsed as identity-definition documents.
+- RED: the initial round tests had **15 failed, 4 passed**, at the closed
+  producer-selection boundary. After round integration, the provider read-root
+  test failed because feasibility had not yet inherited whole-run exclusion;
+  adding it to the existing exclusion branch made the test pass.
+- The first real retained approval-to-operation check stopped safely with
+  `discovery_no_progress` after four scripted calls. Read-only preview diagnosis
+  identified `issue_report_context_missing` for the unchanged source `issues.md`;
+  the existing issue context path resolves that diagnostic without operations.
+  The failed test-owned `pytest-305/test_feasibility_parent_is_rea0` is retained,
+  not reset or rewritten to pretend it passed.
+- A detached, structurally valid retry round initially passed the first-entry
+  approval helper (RED); exact selected-round association now refuses it (GREEN).
+- Targeted regressions (repository virtualenv, `-q --tb=short`, global retention
+  flags): operation/turn/round/semantic/candidate/reservation/COMMANDER and parent
+  suites **472 passed**; kernel state, Tracker round and captured gate suites
+  **286 passed**; native structural/feasibility/alignment routing **16 passed,
+  501 deselected**; remaining spec/Lexicon/Constitution contracts, Prosaic loader
+  and input capture **146 passed**. Final focused feasibility round suite,
+  including five additional malformed retained-state cases: **29 passed**.
+- Read-only review of both the state/receipt and operation integration deltas
+  found no actionable issue. Full KILL/DEFER operation corridors remain Task 5;
+  this slice exercises PASS composition and does not admit native routing.
+- Retained user rejection (`pytest-268/test_managed_checkpoint_uses_n1`) and
+  COMMANDER rejection (`pytest-234/test_managed_gate_pass_reaches0`) still refuse
+  feasibility admission. Accepted-debt approval and capture
+  (`pytest-192/test_managed_quality_debt_choi0`) pass with unchanged state/history.
+- Fresh Codex/guided approval-to-reviewed-candidate corridor, with Lexicon
+  disabled: `test_managed_feasibility.py -k 'real_native_checkpoint and codex'`:
+  **1 passed, 3 deselected in 523.17s**. Its test-owned fixture is
+  `pytest-313/test_feasibility_parent_is_rea0`. This run included
+  capture fault checks, populated evidence, exact approval association, three
+  scripted turns, unchanged identity history/source files, and two receipt-only
+  replays with no additional calls or state changes.
+- The first fresh Claude/Banzai run reached released COMMANDER approval but
+  failed a fault-test expectation (**1 failed, 3 deselected in 551.35s**,
+  `pytest-314/test_feasibility_parent_is_rea0`). Diagnosis traced the refusal to
+  native Lexicon freshness: the fault helper restored `spec.md` bytes but left
+  its modified timestamp newer than the certified report. The test now restores
+  its own captured timestamp and verifies passing capture after each restored
+  source/context fault. No production freshness check or report was changed.
+- The corrected fault helper and recapture passed against retained
+  COMMANDER/Lexicon approval (`pytest-259/test_managed_checkpoint_uses_n0`) and
+  the fresh Codex reviewed-candidate fixture (`pytest-313`), including exact
+  restored source bytes/mtime and unchanged state/history. Final fast feasibility
+  round plus first-entry selection: **30 passed, 3 deselected in 3.22s**.
+- Corrected fresh Claude/Banzai approval-to-reviewed-candidate corridor, with
+  Lexicon enabled: `test_managed_feasibility.py -k 'real_native_checkpoint and
+  claude and banzai'`: **1 passed, 3 deselected in 672.21s**. Its test-owned
+  fixture is `pytest-320/test_feasibility_parent_is_rea0`. Native COMMANDER
+  judgment approved the checkpoint; the same full capture/fault/three-turn/
+  two-replay assertions passed. No live provider calls were made in either run.
+- Final staged diff checks passed. The reviewed-candidate slice is verified;
+  no full Phase 2, KILL/DEFER integration, publication or activation claim is made.
+- Remaining Task 3: exact candidate publication/completion, captured structural
+  report publication/completion, native structural retry and PASS handoff, plus
+  publication interruption/replay acceptance. Public runtime admission remains
+  closed; nothing has been installed or activated.
