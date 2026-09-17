@@ -1,7 +1,8 @@
 """Captured Phase 2 certification through the existing publication owner.
 
-These associations admit PASS feasibility and ordinary first-entry alignment. Native governance owns validation,
-repair budgets and routing; every recheck retains its released predecessor.
+These associations admit PASS feasibility and ordinary alignment, including
+rechecks. Native governance owns validation, repair budgets and routing; every
+recheck retains its released predecessor.
 """
 from dataclasses import asdict, dataclass
 import hashlib
@@ -149,16 +150,28 @@ def require_alignment_gate_parent(root, run, state, source):
         operation_id="discovery-completion-" + source["dispatch_id"], source=source,
         require_checkpoint=False,
         required_route=("phase2-tracker-alignment", "phase2-intent-alignment-structural"))
-    _require(parent.producer == "alignment" and parent.recovery["version"] == 36
+    _require(parent.producer == "alignment" and parent.recovery["version"] in {36, 38}
         and parent.candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"}
         and parent.candidate["routing"]["state_updates"] == {})
     return parent
 
 
 def require_alignment_gate_budget(root, run, state, parent, routing, config):
-    """Retain the existing feasibility budget/configuration across the new gate."""
+    """Authenticate native budgets and return the preceding alignment attempts."""
     from harness.discovery_completion import _retained_input_projection, _require, _json
     from harness.element_identity_store import IdentityStore
+    if parent.recovery["version"] == 38:
+        from harness.discovery_assessment import require_alignment_repair
+        previous = require_alignment_repair(root, run, state,
+            parent.recovery["source_completion"], parent.recovery["predecessor"])
+        author = require_alignment_gate_parent(root, run, state, previous.recovery["source_completion"])
+        require_alignment_gate_budget(root, run, state, author,
+            previous.recovery["routing_state"], previous.recovery["config"])
+        expected = {**previous.recovery["routing_state"],
+            "iteration": previous.recovery["routing_state"]["iteration"] + 1,
+            "intent_alignment_verdict": parent.candidate["routing"]["verdict"]}
+        _require(_json(routing) == _json(expected) and _json(config) == _json(previous.recovery["config"]))
+        return previous.recovery["result"]["state_updates"]["intent_alignment_check_structural_attempts"]
     store = IdentityStore.open(root)
     source = parent.recovery["source_completion"]
     strategy, _, _ = _retained_input_projection(root, run, state, store,
@@ -178,6 +191,7 @@ def require_alignment_gate_budget(root, run, state, parent, routing, config):
         max_iterations=expected["max_iterations"], intent_alignment_verdict=parent.candidate["routing"]["verdict"]))
         and _json({key: state.get(key) for key in feasibility}) == _json(feasibility)
         and _json(config) == _json(gate.recovery["config"]))
+    return 0
 
 
 @dataclass(frozen=True)
@@ -200,10 +214,10 @@ def decode_assessment_gate_binding(publication, request, recovery, completion_id
     _closed(recovery, ("version", "producer", "completion_id", "source_completion", "spec_id",
         "sources", "history", "authority", "runtime", "config", "result", "previous_attempts",
         "project_root", "run_dir", "graph_sha256", "routing_state"))
-    alignment = recovery["version"] == 37
+    alignment = recovery["version"] in {37, 39}
     artifact = "intent-alignment-check" if alignment else "feasibility"
     route_gate = alignment_gate_route if alignment else feasibility_gate_route
-    _require(type(recovery["version"]) is int and recovery["version"] in {32, 34, 37}
+    _require(type(recovery["version"]) is int and recovery["version"] in {32, 34, 37, 39}
         and recovery["producer"] == ("alignment_gate" if alignment else "feasibility_gate") and not request.operations
         and type(recovery["completion_id"]) is str and re.fullmatch(r"[0-9a-f]{32}", recovery["completion_id"])
         and (completion_id is None or completion_id == recovery["completion_id"])
@@ -236,7 +250,7 @@ def decode_assessment_gate_binding(publication, request, recovery, completion_id
         == "discovery-completion-" + parent["dispatch_id"]
         and asdict(snapshot_source_manifest(trees=baseline.trees, files=())) == authority["source_context"]["manifest"])
     prior_reports = [item for item in spec.files if item.path == spec.path + "/" + artifact + "-structural-report.json"]
-    _require((recovery["version"] in {32, 37} and not prior_reports) or (recovery["version"] == 34
+    _require((recovery["version"] in {32, 37} and not prior_reports) or (recovery["version"] in {34, 39}
         and len(prior_reports) == 1 and json.loads(prior_reports[0].content).get("ok") is False))
     routing = recovery["routing_state"]
     gate, report = _evaluate_gate(artifact=artifact, sources=sources, root=root, spec_path=spec.path,
@@ -287,7 +301,9 @@ def authenticate_alignment_gate(root, run, state, completion, binding):
     from harness.discovery_completion import _require, _json
     parent = require_alignment_gate_parent(root, run, state, binding.recovery["source_completion"])
     routing, updates = binding.recovery["routing_state"], binding.recovery["result"]["state_updates"]
-    require_alignment_gate_budget(root, run, state, parent, routing, binding.recovery["config"])
+    _require(binding.recovery["version"] == (37 if parent.recovery["version"] == 36 else 39)
+        and binding.recovery["previous_attempts"] == require_alignment_gate_budget(root, run, state,
+            parent, routing, binding.recovery["config"]))
     _require(_json(get_full_resolved_config(root)) == _json(binding.recovery["config"])
         and _json({key: state.get(key) for key in updates}) == _json(updates)
         and state.get("intent_alignment_verdict") == routing["intent_alignment_verdict"])
@@ -343,9 +359,8 @@ def _prepare_gate_publication(root, state_store, *, completion_id, max_iteration
     config = get_full_resolved_config(root)
     routing = dict(iteration=state.get("iteration", 0), max_iterations=state["max_iterations"],
         **{verdict_key: state.get(verdict_key)})
-    previous = 0 if alignment else prior_feasibility_attempts(root, run, state, parent, routing, config)
-    if alignment:
-        require_alignment_gate_budget(root, run, state, parent, routing, config)
+    previous = (require_alignment_gate_budget if alignment else prior_feasibility_attempts)(
+        root, run, state, parent, routing, config)
     _require(state.get(prefix + "_attempts", 0) == previous)
     project_spec, project_context = released_discovery_input_projectors(root, run, state, source=source)
     capture = load_prepared_publication(root, run, selection["capture_marker"])
@@ -370,7 +385,8 @@ def _prepare_gate_publication(root, state_store, *, completion_id, max_iteration
         publication = _seal(root, run, writes, modes)
         sources = _inspect(publication, before, writes, modes)
         baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
-        recovery = dict(version=37 if alignment else 32 if parent.recovery["version"] == 31 else 34,
+        recovery = dict(version=(37 if parent.recovery["version"] == 36 else 39) if alignment
+            else 32 if parent.recovery["version"] == 31 else 34,
             producer="alignment_gate" if alignment else "feasibility_gate", completion_id=completion_id,
             source_completion=source, spec_id=selection["spec_id"], sources=encode_initial_publication_sources(sources),
             history=asdict(history), authority=authority, runtime=runtime, config=config,

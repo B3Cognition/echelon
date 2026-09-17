@@ -134,15 +134,15 @@ def assert_retry_publication(case, provider):
     return package
 
 
-def assert_retry_stops_before_unadmitted_recheck(case):
+def assert_retry_stops_at_recheck_entry(case):
     from harness.discovery_assessment_gate import require_alignment_gate_parent
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     assert before["phase"] == "phase2-intent-alignment-structural"
     assert before["last_dispatch"]["post_dispatch_complete"] is True
-    with pytest.raises((ValueError, CompletionError)):
-        require_alignment_gate_parent(root, store.squad_dir, before, source)
+    parent = require_alignment_gate_parent(root, store.squad_dir, before, source)
+    assert parent.recovery["version"] == 38
     assert not before["phase_dispatch_counts"].get("phase3-specialists")
     assert store.load() == before and identity.identity_history(spec_id="game") == history
 
@@ -164,4 +164,4 @@ def test_alignment_repair_preserves_gate_ancestry_and_budgets(checkpoint_case, p
     assert_retry_authority(checkpoint_case)
     assert_reviewed_retry(checkpoint_case, provider)
     assert_alignment_handoff(checkpoint_case, assert_retry_publication(checkpoint_case, provider), provider)
-    assert_retry_stops_before_unadmitted_recheck(checkpoint_case)
+    assert_retry_stops_at_recheck_entry(checkpoint_case)

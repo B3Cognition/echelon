@@ -156,7 +156,7 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 30:
         from harness.discovery_checkpoint_resolution import decode_binding as decode_checkpoint
         return decode_checkpoint(publication, request, recovery, completion_id, state)
-    if recovery.get("version") in {32, 34, 37}:
+    if recovery.get("version") in {32, 34, 37, 39}:
         from harness.discovery_assessment_gate import decode_assessment_gate_binding
         return decode_assessment_gate_binding(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
@@ -1143,12 +1143,11 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     and binding.recovery["resolution"]["selected_option_id"] == "approve")
             if alignment_gate:
                 from harness.discovery_assessment_gate import require_alignment_gate_budget
-                _require(binding.producer == "alignment" and binding.recovery["version"] == 36
-                    and specification.recovery["version"] == 37
-                    and specification.recovery["previous_attempts"] == 0
+                _require(binding.producer == "alignment" and binding.recovery["version"] in {36, 38}
+                    and specification.recovery["version"] == (37 if binding.recovery["version"] == 36 else 39)
                     and binding.candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"})
-                require_alignment_gate_budget(root, run, state, binding,
-                    specification.recovery["routing_state"], specification.recovery["config"])
+                _require(specification.recovery["previous_attempts"] == require_alignment_gate_budget(root, run, state, binding,
+                    specification.recovery["routing_state"], specification.recovery["config"]))
             if assessment_gate:
                 from harness.discovery_assessment_gate import prior_feasibility_attempts
                 _require(binding.producer == "feasibility" and binding.recovery["version"] in {31, 33}

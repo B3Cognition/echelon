@@ -173,6 +173,10 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   publish reviewed repair through v38, and recover to structural recheck entry.
   Recheck publication stays closed until its retained-budget association is
   verified; this checkpoint does not claim a complete alignment repair loop.
+- [x] Bind the first repaired alignment structural recheck through a distinct
+  v39 association, retaining the released v38/v37 ancestry and native budgets.
+  Verify successful recheck, tamper refusal and interrupted completion without
+  dispatching Phase 3. Repeated v39-to-author repair remains a later increment.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -1192,3 +1196,55 @@ Phase 2 acceptance is claimed by creating this plan.
   no-progress evidence; then native clarification/COMMANDER and remaining
   branch/timing parity. No controller approval policy or identity semantics
   are being changed.
+
+### Task 4 — first repaired alignment structural recheck
+
+- Continuing from `2642737c` in the same isolated worktree, inline under the
+  approved Phase 2 design. No installation, activation, provider spending,
+  migration, merge/push, prose change or Phase 3 dispatch is authorized here.
+- Test-first against the actual released v38 in retained Claude/Banzai
+  `pytest-331/test_real_review_seals_only_fe0`: the new parent assertion failed
+  at the existing v36-only admission guard, before canonical writes. The new
+  v39 association admits that released repair and retains its authorizing v37
+  gate, exact failed report, configuration, iteration and feasibility budget.
+  It recovers alignment attempts from the released failure, not live defaults.
+- Extended only the existing gate decoder/publisher/authentication and retained
+  projection owner. v37 remains first-entry; v39 requires nonzero prior attempts
+  and the retained failed report. Both use native captured evaluation and exact
+  report/graph publication. A second author after v39 is still deliberately
+  closed pending repeated-failure/exhaustion acceptance.
+- Retained parent admission and recheck preparation refusals passed: reset,
+  inflated/typed attempts, iteration/type, cap, source, configuration override,
+  feasibility budget and verdict changes were refused without canonical writes
+  or identity-history changes. Focused gate/round/completion tests passed
+  **295 tests in 14.29s**, with repository virtualenv, `-q --tb=short`, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8` and retention count 200/policy all.
+- Read-only review found no actionable defect. Its coverage boundary remains
+  explicit: successful v39 acceptance does not establish repeated repair,
+  warn/block exhaustion or fresh dual-provider full-prefix acceptance.
+- Actual retained Claude v38 continued through successful v39 recheck using
+  the production publisher/controller: exact gate/report/graph binding and
+  tamper refusals, partial promotion interruption, interruption after identity
+  application, native recovery, settled replay with no provider call or charge,
+  and typed-budget authentication passed. Identity history stayed unchanged;
+  the run reached `phase3-specialists` entry without dispatching Phase 3.
+  This is a retained continuation, not a new full-prefix run. The fresh
+  Codex/Claude test compositions are present but not run in this increment.
+- A separate final read-only check authenticated the existing isolated-root
+  v37 Codex bypass and Claude warning releases, plus this actual v39 release
+  `476c322bc86742d6a08a9d60b1c0c374`. All retained states/history remained unchanged.
+  v39 is settled at Phase 3 entry, iteration 2, alignment attempts 0 (native
+  successful-check semantics), 280 cumulative scripted tokens and zero Phase 3
+  dispatches. Its sealed input still records the preceding failed attempt.
+  The new explicit forged-phase assertion also refused another author from
+  v39; typed iteration/alignment/feasibility counter mutations were refused.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, captured/native governance gates
+  and native controller structural/feasibility/alignment routing passed
+  **185 tests, 501 deselected in 336.92s**, with the same interpreter, isolated
+  root and retention settings. Final diff checks passed. No further temporary
+  data was deleted. Disk is critically low (~210 MiB free).
+- Checkpoint closes the successful first repaired recheck only. Next: actual
+  no-progress repair/warn/block v39 handoffs and repeated-author admission with
+  preserved original limits; then native clarification/COMMANDER and remaining
+  branch/timing parity. Full activation and whole-Phase-2 acceptance stay open.

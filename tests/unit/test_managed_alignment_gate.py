@@ -32,7 +32,7 @@ def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=N
             package = prepare_alignment_gate_publication(root, store, completion_id=completion_id,
                 max_iterations=before["max_iterations"])
     binding = decode_binding(envelope(package), state=before)
-    assert binding.producer == "alignment_gate" and binding.recovery["version"] == 37
+    assert binding.producer == "alignment_gate" and binding.recovery["version"] == (39 if previous_attempts else 37)
     assert binding.request.operations == () and binding.source["history"] == binding.candidate["history"]
     assert binding.recovery["previous_attempts"] == previous_attempts
     updates = binding.recovery["result"]["state_updates"]
