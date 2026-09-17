@@ -88,6 +88,15 @@ new `tests/unit/test_managed_feasibility.py`.
 Consumes released v30 Phase 1 approval, captured context and Task 1 evaluator.
 Produces protected feasibility rounds and native structural completion proof.
 
+First-entry sub-slice completed; the execution/publication milestone below is
+still open:
+
+- [x] Authenticate an actual released v30 approval, exact native decision and
+  receipt, current identity source head and current quality/debt authorization.
+- [x] Extend the existing captured-input owner for first-entry feasibility,
+  including exact templates, read-only diagnostics and explicit calibration and
+  journal absence. Verify against real retained approvals and a fresh prefix.
+
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
   `phase2-strategic-overview`, not execute strategy implicitly.
@@ -214,3 +223,54 @@ Phase 2 acceptance is claimed by creating this plan.
   no blockers. `git diff --check` passed. No full-suite or live acceptance claim.
 - Next: Task 3 retained feasibility execution and structural completion from an
   actual released Phase 1 checkpoint. Tasks 3–6 remain open; Phase 2 is not active.
+
+### Task 3 first-entry approval and capture sub-slice
+
+- `require_feasibility_parent` authenticates only first entry from the released
+  v30 native `checkpoint-assess` approval. It rejects phase-label-only claims,
+  rejected/altered decisions, changed receipt/source digests, cancellation and
+  non-running state. The current identity source head must still be that exact
+  approval, and current quality or accepted-debt evidence remains required.
+- The existing `_capture` owner now supports that authenticated first-entry
+  context. It uses existing full ancestry/context projectors and source guards;
+  no second input inspector was introduced. It captures all five native
+  templates, including the actual `kill-report.md` template name, plus required
+  source documents and read-only quality/debt/Lexicon diagnostics.
+- Calibration/estimates and journal absence is explicit, following the native
+  Phase 2 context contract. A real managed prefix may have no journal entries;
+  this is recorded as absence rather than fabricated history. Required template
+  absence still blocks. Populated evidence preserves exact bytes, including CRLF.
+- RED: focused missing-parent-entry assertion failed before implementation.
+  Real approved input capture then failed at the old runtime identity-context
+  admission because feasibility had no ancestry projection; the added branch
+  reuses the existing authenticated projection and passes.
+- Five retained real parent corridors passed without editing their state or
+  history: user approval/rejection (`pytest-268/test_managed_checkpoint_uses_n0`
+  and `n1`), COMMANDER approval (`pytest-259/test_managed_checkpoint_uses_n0`),
+  COMMANDER rejection (`pytest-234/test_managed_gate_pass_reaches0`), and accepted
+  debt (`pytest-192/test_managed_quality_debt_choi0`). All three approved captures
+  also passed, preserving source history and the existing debt authorization.
+- Fresh scripted Codex/guided prefix and first-entry parent assertions:
+  `tests/unit/test_managed_feasibility.py -k 'real_native_checkpoint and codex'`:
+  **1 passed, 3 deselected in 368.32s**. The test process started before the later
+  capture assertions were added. Those current helpers were separately executed
+  successfully against its fresh `pytest-305/test_feasibility_parent_is_rea0`
+  fixture: capture; stale spec/context refusal; missing-template refusal; exact
+  populated calibration/estimates/journal bytes; restored absence and recapture.
+  Fault helpers changed only test-owned files and restored the originals.
+- Regression commands used the repository virtualenv, `-q --tb=short` and the
+  global retention flags. `test_discovery_inputs.py`, `test_discovery_operation.py`,
+  `test_managed_assessment_contract.py`, `test_captured_governance_gate.py`:
+  **232 passed**. `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_managed_spec_contract.py`,
+  `test_managed_lexicon_contract.py`, `test_managed_constitution_contract.py`,
+  `test_discovery_turns.py`, `test_prosaic_prompt_loader.py`: **305 passed**.
+  Native `tests/integration/test_squad_controller.py -k 'structural or feasibility
+  or alignment'`: **16 passed, 501 deselected**.
+- Read-only review found no blocker in this bounded sub-slice. Its populated
+  evidence coverage suggestion was addressed with the exact-byte checks above.
+  `git diff --check` passed. No fresh Claude prefix or full-suite claim is made.
+- Remaining Task 3: protected feasibility rounds/provider turns, exact candidate
+  and structural-report publication/completion, native repair and PASS handoff,
+  and interruption/replay acceptance. No Phase 2 execution or activation admitted
+  by this commit; all later tasks remain open.

@@ -12,6 +12,38 @@ ASSESSMENT_OUTPUTS = {
 ASSESSMENT_VERSIONS = {"feasibility": 9, "strategy": 10, "alignment": 11}
 
 
+def require_feasibility_parent(root, run, state, source):
+    """Authenticate first-entry approval; phase labels cannot authorize dispatch.
+
+    This is deliberately not repair admission. Later feasibility rounds require
+    their own released structural predecessor and cumulative native budgets.
+    """
+    from harness.discovery_completion import _require, _retained_input_projection
+    from harness.discovery_spec import clarification_source
+    from harness.element_identity_store import IdentityStore
+    from harness.phase1_quality import has_current_phase1_quality_certificate
+    from harness.phase1_quality_debt import has_current_quality_debt_authorization
+    _require(type(state) is dict and state.get("phase") == "phase2-decide"
+        and state.get("status") == "running" and not state.get("cancel_requested")
+        and type(state.get("last_human_input_completion")) is dict)
+    _require(source == clarification_source(state["last_human_input_completion"]))
+    store = IdentityStore.open(root)
+    binding, _, _ = _retained_input_projection(root, run, state, store,
+        operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+        require_checkpoint=False, required_origin="resolution",
+        required_route=("checkpoint-assess", "phase2-decide"))
+    _require(binding.producer == "checkpoint" and binding.recovery["version"] == 30
+        and binding.recovery["resolution"] == state.get("blocked_decision")
+        and binding.recovery["resolution"]["selected_option_id"] == "approve"
+        and binding.candidate["route"] == "phase2-decide")
+    authority = store.check_managed_context(spec_id=binding.spec_id,
+        run_id=state["run_id"], record=state["managed_identity"])
+    _require(authority["source_context"]["operation_id"] == binding.operation_id
+        and (has_current_phase1_quality_certificate(state, project_root=root)
+            or has_current_quality_debt_authorization(state, project_root=root)))
+    return binding
+
+
 def validate_assessment_routing(value, producer):
     """Validate author claims through the native result contract, not gate policy."""
     verdicts = {"feasibility": {"PASS", "KILL", "DEFER"}, "strategy": {"DONE"},

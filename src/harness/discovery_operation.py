@@ -84,8 +84,14 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon"} or repair_unit is not None or post_review else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2", "lexicon"} or repair_unit is not None or post_review else ()
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility"} or repair_unit is not None or post_review else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility"} or repair_unit is not None or post_review else ()
+    if producer == "feasibility":
+        from harness.discovery_assessment import ASSESSMENT_OUTPUTS
+        if (set(artifact_paths) != set(ASSESSMENT_OUTPUTS[producer]) or repair_unit is not None or clarification):
+            raise _Blocked("feasibility_capture_scope_not_admitted")
+        template_paths.pop(".echelon/runtime/templates/kill-report-template.md")
+        template_paths[".echelon/runtime/templates/kill-report.md"] = "kill-report.md"
     if producer == "lexicon":
         template_paths = {}
     if producer == "what":
@@ -104,11 +110,22 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     spec_view = runtime_view = None
     understanding = None
     evidence_paths = ()
-    if producer in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon"}:
+    if producer in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility"}:
         from harness.discovery_completion import released_discovery_input_projectors
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
+        if producer == "feasibility":
+            from harness.discovery_assessment import require_feasibility_parent
+            from harness.discovery_spec import clarification_source
+            try:
+                parent = clarification_source(state.get("last_human_input_completion"))
+                require_feasibility_parent(root, state_store.squad_dir, state, parent)
+                if source_completion is not None and source_completion != parent:
+                    raise ValueError("feasibility source changed")
+                source_completion = parent
+            except Exception:
+                raise _Blocked("feasibility_parent_requires_reconciliation") from None
         if producer == "lexicon":
             from harness.discovery_lexicon import require_lexicon_parent
             try:
@@ -210,7 +227,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         files = {}
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
-            if producer == "lexicon" and logical in {"spec-lexicon-report.json", "quality-debt.json"}:
+            if producer in {"lexicon", "feasibility"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}:
                 # Controller-authenticated diagnostics are exact model evidence,
                 # never identity definitions or provider-owned output.
                 documents[item.path] = item.content.decode("utf-8")
@@ -244,6 +261,13 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
                 raise _Blocked("discovery_reasoning_context_changed")
             if journal.content is not None:
                 evidence[journal.path] = journal.content.decode("utf-8")
+            elif producer == "feasibility":
+                evidence[journal.path] = "[ABSENT: " + journal.path + "]"
+        if producer == "feasibility":
+            if not {"spec.md", "glossary.md", "requirements-overview.md", "assumptions.md", "issues.md"} <= files.keys():
+                raise _Blocked("feasibility_source_context_incomplete")
+            for path in ("knowledge-base/calibration-profile.yaml", "knowledge-base/estimates-log.yaml"):
+                evidence.setdefault(path, "[ABSENT: " + path + "]")
         if any(item.content is None for item in sources.files if item.path in template_paths):
             raise _Blocked("discovery_template_missing")
         templates = {template_paths[item.path]: item.content.decode("utf-8") for item in sources.files if item.path in template_paths}
