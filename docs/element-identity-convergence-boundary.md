@@ -1740,3 +1740,21 @@ managed producers/input domains, whole-run identity acceptance and public,
 installed and live activation remain outstanding. Performance optimization is
 still deferred; non-default Lexicon paths remain fail-closed. No installed
 workspace, legacy build flow or provider-specific prose changed.
+
+### Managed strategy continuation (2026-09-17)
+
+The internal Phase 2 path now includes reviewed feasibility, native structural
+repair/recheck/bypass/warning/block policy, and reviewed strategy. Strategy uses
+the existing protected rounds, neutral Prosaic turns, receipt-backed replay,
+identity preview and guarded publication/completion owners. Its closed v35
+association authenticates the actual released feasibility gate and preserves
+native counters and identity history. It publishes only strategic overview and
+graph, then stops at alignment entry without dispatching alignment.
+
+The [Phase 2 plan and verification record](superpowers/plans/2026-09-17-managed-phase2.md)
+distinguishes fresh and retained scripted runs, refusal checks and interrupted
+publication recovery. Alignment, its structural/clarification/COMMANDER routes,
+KILL/DEFER and remaining timing parity, and whole-Phase-2 acceptance are still
+unfinished. Public and installed activation remain closed. This does not change
+Banzai's COMMANDER judgment owner or authorize installation, migration, a live
+provider run, push or merge.

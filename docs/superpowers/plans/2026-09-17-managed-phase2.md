@@ -154,6 +154,10 @@ Produces native alignment/structural outcome or sealed clarification resolution.
 - [x] Authenticate strategy entry from the exact released feasibility-gate
   successor and capture its required source/template/context through existing
   input owners. This first slice must not open strategy execution/publication.
+- [x] Extend existing protected round/receipt/operation owners for strategy and
+  bind its reviewed derived document through a closed v35 publication to the
+  actual released feasibility gate. Recover native completion without another
+  provider call, stopping at alignment entry; alignment execution stays closed.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -839,3 +843,69 @@ Phase 2 acceptance is claimed by creating this plan.
   installation, migration, activation, merge or push. Next is protected strategy
   round selection, reviewed provider execution and publication/native handoff
   through the existing owners. Alignment and whole Task 4 remain unfinished.
+
+### Strategy execution and guarded handoff (2026-09-17)
+
+- Added strategy to the existing retained round, operation, turn and receipt
+  owners. Selection requires an exact settled feasibility-gate source and full
+  state CAS; ordinary saves cannot replace protected components. This first
+  strategy round has no resolution or repair predecessor. Provider contracts
+  stay neutral Prosaic, with no identity allocation/revision scope.
+- Shared composition retains the exact DONE routing in author/reviewer receipts,
+  candidate and progress digests. Feasibility/Lexicon/debt diagnostics remain
+  captured evidence, not duplicate identity definitions. Existing issue
+  provenance is retained without identity operations or history changes.
+- The existing publisher/completion owner now accepts a closed v35 strategy
+  association. It authenticates the actual released v32/v34 proceeding PASS gate,
+  source chain, native state/counters and configuration. Only reviewed
+  `strategic-overview.md` plus the recomputed graph may publish. Native completion
+  permits only `phase2-tracker-alignment`; alignment and Phase 3 do not execute.
+- RED strategy selection failed with `invalid specification producer` before
+  wiring. Round-owner verification then passed **41 tests in 4.34s**. The first
+  retained execution attempt on `pytest-362/test_first_gate_preserves_nati0`
+  retained rejected attempt receipts before composition was connected; those
+  receipts were not reset or rewritten. A separate actual released parent was
+  used for the successful final execution.
+- Retained Codex/guided bypass parent
+  `pytest-370/test_strategy_captures_release0` passed exact three-call/21-token
+  author/review and zero-call replay. Publication RED failed at the absent v35
+  association before implementation. Final publication, forged-binding refusal,
+  wrong-route refusal, strict counter/type checks, interruptions before promotion,
+  after partial promotion and after identity application, and zero-call/idempotent
+  recovery all passed. Identity history and accumulated counters stayed unchanged;
+  canonical strategy/graph postimages matched and alignment was not dispatched.
+- With the repository virtualenv, `-q --tb=short` and the global retention flags,
+  `test_discovery_operation.py`, `test_discovery_turns.py`,
+  `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_managed_assessment_contract.py`,
+  `test_managed_strategy_rounds.py`, `test_managed_feasibility_rounds.py` passed
+  **404 tests in 64.28s**. Shared `test_discovery_completion.py`,
+  `test_discovery_publication.py`, `test_discovery_restoration_completion.py`,
+  `test_squad_completion.py` passed **352 tests in 374.22s**.
+- Bounded read-only reviews of execution and publication found no actionable
+  findings. No tests, writes or additional agents were delegated by the reviewer.
+  These results do not claim whole-Phase-2 acceptance or live/public activation.
+- Retained Codex repaired-PASS parent
+  `pytest-337/test_reviewed_feasibility_gate0` also passed the complete strategy
+  execution, publication, tamper/refused-route checks and interrupted handoff
+  helpers, preserving iteration 1 and the actual v34 gate ancestry. The retained
+  checks used the exact fixture-bound Prosaic inspector, not replacements for
+  production authentication or source authority.
+- Fresh Claude/Banzai with Lexicon enabled and cap-one warning policy:
+  `tests/unit/test_managed_strategy_execution.py -k claude`, same interpreter
+  and options: **1 passed, 1 deselected in 1247.40s**. Actual Phase 1 approval,
+  reviewed feasibility, structural publication/recovery and released warning
+  gate precede strategy's three-call author/review and zero-call replay in
+  `pytest-376/test_released_gate_authorizes_0`. Strategy preserved the original
+  requirement history and warning gate's one attempt. The fresh Codex
+  parametrization was not rerun; its retained bypass/repaired checks are above.
+- The same fresh Claude run was then continued in place with the publication,
+  closed-binding and interrupted-handoff helpers in
+  `test_managed_strategy_publication.py`. All passed, including the warning
+  counter's exact type/value, zero additional provider calls and settled
+  idempotent recovery at alignment entry. This was a continuation of the fresh
+  prefix, not a second fresh full-prefix pytest invocation.
+- Final diff checks passed. Commit this verified strategy increment only; no
+  installation, migration, activation, live model calls, merge or push. Next is
+  alignment entry/producer/publication and its native structural/clarification
+  routes within Task 4; Task 4 and the Phase 2 milestone remain unfinished.
