@@ -73,6 +73,38 @@ def _wire(answer: str, usages: list[dict[str, int] | None] | None = None) -> byt
     )
 
 
+def _claude_wire(answer: str) -> bytes:
+    rows = [
+        {
+            "type": "system",
+            "subtype": "init",
+            "tools": [],
+            "mcp_servers": [],
+            "slash_commands": [],
+            "skills": [],
+            "plugins": [],
+            "permissionMode": "dontAsk",
+        },
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": answer}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": answer,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens_details": {"thinking_tokens": 0},
+            },
+        },
+    ]
+    return b"".join(
+        json.dumps(row, separators=(",", ":")).encode() + b"\n" for row in rows
+    )
+
+
 def _legacy_usage_wire(input_tokens, output_tokens):
     return canonical_json_bytes({"type": "event_msg", "payload": {
         "type": "token_count", "info": {"total_token_usage": {
@@ -108,6 +140,16 @@ class _NativeHarness:
 
     def prompt(self, index: int) -> bytes:
         return Path(self.calls[index]["capture"]).read_bytes()
+
+
+class _ClaudeNativeHarness(_NativeHarness):
+    def __init__(self, monkeypatch, tmp_path: Path, account: KnowledgeDispatchAccount):
+        self._real_popen = subprocess.Popen
+        self._tmp_path = tmp_path
+        self._account = account
+        self.answers = []
+        self.calls = []
+        monkeypatch.setattr("harness.ai_cli_backends.claude.subprocess.Popen", self._launch)
 
 
 def _configured_backend(config, boundary, *, model="gpt-5.6-sol", capture=262_144):
@@ -255,7 +297,7 @@ def test_effective_execution_config_changes_contract_but_mutation_cannot_change_
 
 
 @pytest.mark.unit
-def test_unsupported_selected_provider_is_actionable_before_native_invocation(
+def test_selected_claude_provider_constructs_without_codex_fallback_or_invocation(
     tmp_path, monkeypatch
 ):
     _phase, _paths, boundary, *_ = _phase_setup(tmp_path)
@@ -263,11 +305,60 @@ def test_unsupported_selected_provider_is_actionable_before_native_invocation(
         "harness.ai_cli_backends.codex.subprocess.Popen",
         lambda *_args, **_kwargs: pytest.fail("Codex must not replace configured Claude"),
     )
-    with pytest.raises(
-        RuntimeError,
-        match="configured provider 'claude' lacks constrained-execution capability",
-    ):
-        _configured_backend(_config("claude"), boundary)
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.claude.subprocess.Popen",
+        lambda *_args, **_kwargs: pytest.fail("construction must not invoke Claude"),
+    )
+
+    module = importlib.import_module("harness.re_v2.knowledge_llm")
+    backend = module.KnowledgeLLMBackend(
+        _config("claude"),
+        model_tier="strong",
+        screen_output=boundary.screen_output,
+        max_capture_bytes=262_144,
+    )
+
+    assert backend.contract.provider_id == "claude"
+    assert backend.contract.model_id == "opus"
+
+
+@pytest.mark.unit
+def test_configured_claude_executes_a_real_discovery_step_without_codex_fallback(
+    tmp_path, monkeypatch
+):
+    phase, paths, boundary, *_ = _phase_setup(tmp_path)
+    module = importlib.import_module("harness.re_v2.knowledge_llm")
+    backend = module.KnowledgeLLMBackend(
+        _config("claude"),
+        model_tier="strong",
+        screen_output=boundary.screen_output,
+        max_capture_bytes=262_144,
+    )
+    account = KnowledgeDispatchAccount(
+        paths,
+        KnowledgeDispatchPolicy(500_000, 100_000, 3),
+        backend.contract,
+        boundary.run_authority(),
+    )
+    native = _ClaudeNativeHarness(monkeypatch, tmp_path, account)
+    native.answers.append(
+        _claude_wire(_role_response(_proposal(json.loads(phase.provider_bytes()))))
+    )
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.codex.CodexCliBackend.run_constrained_prompt",
+        lambda *_args, **_kwargs: pytest.fail("Codex must not replace configured Claude"),
+    )
+
+    result = DiscoveryController(
+        phase, account, _PRODUCER_AGENT, backend, _RESERVATION
+    ).step()
+
+    assert result.state == "proposal_ready"
+    assert len(native.calls) == 1
+    command = native.calls[0]["command"]
+    assert command[command.index("--model") + 1] == "opus"
+    assert "--restricted" in command
+    assert account.status().charged_tokens == 15
 
 
 @pytest.mark.unit
