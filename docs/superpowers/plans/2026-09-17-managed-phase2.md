@@ -151,6 +151,9 @@ resolution association; new `tests/unit/test_managed_phase2_alignment.py`.
 Consumes actual released feasibility PASS and then actual strategy completion.
 Produces native alignment/structural outcome or sealed clarification resolution.
 
+- [x] Authenticate strategy entry from the exact released feasibility-gate
+  successor and capture its required source/template/context through existing
+  input owners. This first slice must not open strategy execution/publication.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -772,3 +775,67 @@ Phase 2 acceptance is claimed by creating this plan.
   Next is Task 4's strategy/alignment continuation from actual released gate
   proofs, followed by Task 5 branch/timing parity and Task 6 acceptance. No live
   calls, installation, migration, merge or push occurred in this increment.
+
+### Task 4 — strategy admission and captured inputs
+
+- Added current strategy-parent authentication to the existing assessment
+  owner. It requires an actually released v32/v34 gate routed to strategy with
+  a PASS author verdict, exact current dispatch and source head, no pending
+  transaction, and current quality/debt authority. The existing completion
+  authenticator receives the actual saved proof and checks native counters,
+  configuration and full ancestry. There is no parallel gate policy.
+- Extended the existing captured-input reader for strategy's sole output slot,
+  `strategic-overview.md`, its template and authenticated source/context. Exact
+  structural/Lexicon/debt diagnostics remain read-only evidence, not identity
+  definitions. Journal absence is explicit; no host search is authorized.
+- Red tests first exposed the missing strategy-parent admission; both a minimal
+  forged phase and an actual released Codex gate failed at that missing entry.
+  After admission was implemented, the actual capture failed with
+  `discovery_runtime_identity_context_not_admitted` because strategy lacked
+  authenticated released-input projection. The same retained capture and its
+  changed-input checks passed after connecting the existing projectors.
+- Strategy retained rounds, provider execution, publication and all alignment
+  continuation remain closed. This is only the first Task 4 sub-slice; no
+  provider prose, COMMANDER behavior, policy owner or activation changed.
+- Bounded read-only review found no actionable findings and ran no tests or
+  mutations. It noted that repaired/PASS gate coverage relies on the retained
+  matrix; the new fresh parametrization covers bypass/warning ancestry.
+- Focused command with the repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_inputs.py`, `test_discovery_operation.py`,
+  `test_discovery_turns.py`, `test_discovery_semantics.py`,
+  `test_discovery_candidate.py`, `test_discovery_reservations.py`,
+  `test_prosaic_prompt_loader.py`, `test_managed_assessment_contract.py`,
+  `test_managed_feasibility_rounds.py`, `test_discovery_assessment_gate.py`:
+  **501 passed in 90.18s**. Minimal forged-phase negative:
+  `tests/unit/test_managed_strategy.py -k phase_label`, same options:
+  **1 passed, 2 deselected in 0.44s** after the observed red failure.
+- The final retained strategy helpers passed admission, altered-state refusals,
+  exact capture and changed feasibility/report/context refusal for six actual
+  released gate successors: Codex bypass `pytest-362`, Claude non-structural
+  bypass `pytest-363`, Claude warning `pytest-365`, Claude first PASS
+  `pytest-339`, Codex repaired PASS `pytest-337` and Claude repaired PASS
+  `pytest-331`. The policy fixtures use `test_first_gate_preserves_nati0`;
+  other fixture names are recorded in the preceding gate verification sections.
+  Thus both v32 and v34 predecessors are exercised. The exact fixture-bound
+  Prosaic inspector was used; no production authentication was replaced.
+- Actual one-attempt block `pytest-364`, repeated-exhaustion block `pytest-357`
+  and not-yet-rechecked author `pytest-352` all refused strategy admission even
+  with forged strategy/running/PASS labels. No fixture state, history, identity
+  head or proof was rewritten. Changed-input fault checks restored exact bytes
+  and timestamps. These are retained checks, not new full prefixes.
+- Shared completion/publication/restoration command with the same interpreter
+  and options: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 368.40s**. No full repository or live-provider suite was run.
+- Fresh Codex/guided, Lexicon-disabled run:
+  `tests/unit/test_managed_strategy.py -k codex`, same interpreter/options:
+  **1 passed, 2 deselected in 808.26s**. The actual Phase 1 approval, reviewed
+  feasibility author, bypass publication/recovery and released gate precede
+  strategy admission/capture in `pytest-370/test_strategy_captures_release0`.
+  Altered receipt/verdict/counter/phase and changed input checks all passed.
+  No strategy dispatch occurred. The fresh Claude parametrization was not run
+  this increment; its actual retained warning/PASS/repaired cases passed above.
+- Final diff checks passed. Commit only this admission/capture increment; no
+  installation, migration, activation, merge or push. Next is protected strategy
+  round selection, reviewed provider execution and publication/native handoff
+  through the existing owners. Alignment and whole Task 4 remain unfinished.
