@@ -179,6 +179,8 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
             resolution=row["resolution"], predecessor=row["predecessor"])
         if producer == "feasibility" and row["predecessor"] is not None:
             recovery_fields.update(version=33)
+        if producer == "alignment" and row["predecessor"] is not None:
+            recovery_fields.update(version=38)
         if producer == "what" and "constitution_parent" in row:
             recovery_fields.update(version=17, constitution_parent=row["constitution_parent"])
         if producer == "why2" and row["resolution"] is not None:

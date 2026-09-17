@@ -168,6 +168,11 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   Codex bypass and Claude warning handoffs/recovery to Phase 3 entry without
   executing Phase 3. Full repair/block handoffs, repair authoring and structural
   rechecks remain below; unit routing coverage is not their acceptance evidence.
+- [x] Admit the first structural repair only from its released v37 failure,
+  retain the accepted alignment predecessor and exact diagnostic evidence,
+  publish reviewed repair through v38, and recover to structural recheck entry.
+  Recheck publication stays closed until its retained-budget association is
+  verified; this checkpoint does not claim a complete alignment repair loop.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -1071,3 +1076,119 @@ Phase 2 acceptance is claimed by creating this plan.
   and existing COMMANDER routes; then remaining branch/timing parity and full
   acceptance. No installation, migration, public activation, live model call,
   merge or push. Disk remains nearly full; no retained evidence was cleaned up.
+
+### Task 4 — first protected alignment repair publication
+
+- Continuing the existing worktree from `f030705e`; no installation, migration,
+  public activation, live provider call, Phase 3 execution, merge or push.
+- Test-first round selection reproduced the missing structural-repair parent
+  transition (**1 failed, 11 passed**). The protected owner now retains the
+  accepted predecessor and separate receipt round without changing native
+  counters or earlier rounds; **12 passed** after the change. A separate RED
+  test confirmed the missing released repair authority helper before adding it.
+- First repair admits only the actual released v37 `repair` result and its
+  accepted v36 author. It authenticates current native state/configuration and
+  managed identity authority, captures the failed report as exact read-only
+  evidence, and publishes only alignment/graph through a closed v38 binding.
+  Historical projection validates the predecessor chain; live recovery retains
+  alignment and feasibility budgets. No question resolution can be substituted.
+- Full repair-gate and repaired-author continuation was verified against
+  the retained Claude/Banzai run at original temporary root
+  `pytest-331/test_real_review_seals_only_fe0`. Its existing released repaired
+  feasibility v34 prefix is reused as-is, not reconstructed, reset or rewritten.
+  Fresh dual-provider test composition is present but has not been run in this
+  increment. It must not be represented as fresh dual-provider acceptance.
+- With repository virtualenv, `-q --tb=short`, isolated temporary root
+  `/tmp/echelon-alignment-checks.CnKAq8` and retention count 200/policy all,
+  alignment round/repair-boundary, captured structural policy, assessment gate
+  and shared completion-shape tests passed **338 tests, 2 deselected in 5.42s**.
+  Native controller structural/feasibility/alignment routing passed
+  **16 tests, 501 deselected in 5.55s**.
+- Shared protected strategy/feasibility rounds and discovery turns passed
+  **109 tests in 21.92s**, with the same interpreter and retention settings.
+- Shared discovery completion, publication and restoration regressions passed
+  **127 tests in 360.12s**, with the same interpreter and retention settings.
+- After adding an inactive-round refusal assertion before identity lookup, the
+  focused suite passed again: **338 tests, 2 deselected in 5.22s**.
+- Read-only authentication of the actual previously released first v37 gates
+  passed on fresh-prefix Codex `pytest-2` and Claude `pytest-3` in the isolated
+  temporary root. State/history remained unchanged. The first invocation used
+  the macOS `/tmp` symlink and was refused before reading identity state; the
+  retry used its resolved `/private/tmp` path, without modifying any evidence.
+- Independent read-only review found no actionable production defects. Its
+  optional explicit boundary assertion was added: actual released v38 cannot
+  enter the still-unadmitted recheck publisher. Acceptance findings and final
+  recovery are recorded below.
+- The actual retained Claude continuation completed reviewed strategy v35,
+  ordinary alignment v36 and failed first structural gate v37. The repair
+  handoff passed wrong-route and typed-counter refusal, partial report/graph
+  promotion, interruption after identity application, exact recovery and
+  zero-call/zero-charge replay. It is settled at alignment repair entry with
+  iteration 2, alignment attempts 1, feasibility attempts 0 and 259 cumulative
+  scripted tokens. Identity history is unchanged and Phase 3 was not dispatched.
+  Repaired v38 author/publication recovery continued against that release.
+- Retained Claude repair authority and its altered-source/counter/iteration/
+  configuration/verdict refusals passed. Reviewed repair and exact zero-call
+  replay also passed: three scripted turns, 21 pending tokens, exact failed
+  report evidence, no identity operations/history changes, unchanged canonical
+  documents, preserved first round, and a separate second accepted round.
+- The v38 package passed closed-binding/tamper and exact write-scope checks,
+  but native handoff exposed a defect before promotion: v38 live authentication
+  incorrectly expected the previous alignment pass/findings/report state fields
+  to survive authoring. Native routing deliberately clears those certification
+  fields, retaining attempts and the report artifact. The failed pending
+  completion and its `intent_mismatch` diagnostic were retained, not reset.
+- Corrected only v38 expectation to match native semantic cleanup; lifecycle
+  status/reason restoration remains owned by existing completion recovery.
+  Added explicit stale-certification refusal and byte-identical retained report
+  assertions. The pending-recovery test helper now also admits an actual stored
+  failed completion without re-preparing or rewriting its proof. Recovery of
+  that same retained pending v38 passed through the native owner: stale-field
+  and counter/type refusal, partial promotion, interruption after identity
+  application, finalization and exact zero-call replay. The original diagnostic
+  was restored/cleared only by normal completion; no fixture or sealed evidence
+  was reset or rewritten to repair the test.
+- Final retained state: running `phase2-intent-alignment-structural`, iteration
+  2/max 5, alignment attempts 1, feasibility attempts 0, 280 cumulative scripted
+  tokens, two alignment author dispatches, no Phase 3 dispatch, no pending
+  publication/completion or failure diagnostic. The original v38 completion
+  `00475663f2c3499eb303cbd58146e579` is released. Identity history and all
+  non-target documents (including the old failed report) remain unchanged.
+  Structural pass/findings/report state fields are absent per native policy;
+  the next gate must evaluate the repaired document using the retained budget.
+- The actual released v38 was refused by the still-closed recheck parent guard.
+  This is verified repair authoring/publication/recovery, not a passing repaired
+  structural recheck or complete Task 4. Follow-up read-only review confirmed
+  the cleanup fix and test factoring; its pre-routing dispatch-count assertion
+  was restored. Post-fix focused checks: **338 passed, 2 deselected in 5.29s**.
+- Post-fix protected rounds/turns plus native structural/feasibility/alignment
+  routing checks: **125 passed, 501 deselected in 16.98s** (same interpreter,
+  isolated temporary root and retention settings).
+- Final read-only released-v38 authentication passed with the original fixture
+  Prosaic metadata inspector and unchanged state/history. An initial standalone
+  check omitted that fixture inspector and was refused; no production authority
+  or retained proof was changed to make the check pass.
+- The post-fix shared completion/publication/restoration rerun was interrupted
+  by disk exhaustion: **120 passed, 2 failed, 5 setup errors in 355.78s**.
+  Failures were inability to write fixture Git/config/context files or create
+  fixture directories (`ENOSPC`), so this run is not a green regression result.
+- Following explicit cleanup approval, removed only disposable `pytest-5`
+  through `pytest-19` under the isolated temporary root above (permanently,
+  about 400 MiB). Retained Codex `pytest-2`, Claude `pytest-3`, and the entire
+  original macOS pytest root including the released-v38 `pytest-331` evidence
+  were preserved. No repository, environment or other user data was removed.
+- Post-cleanup focused checks passed again: **338 passed, 2 deselected in
+  5.20s**; protected rounds/turns and native routing: **125 passed, 501
+  deselected in 16.61s**. Read-only authentication again confirmed the actual
+  released v38 with unchanged retained state/history and zero Phase 3 dispatches.
+- The post-cleanup shared completion/publication/restoration rerun completed
+  cleanly: **127 passed in 324.85s**, with the same interpreter, isolated root
+  and retention settings. Final diff checks passed. This closes verification
+  for the first protected alignment repair checkpoint, not full Task 4 or
+  fresh dual-provider repair acceptance; installation/activation remains out
+  of scope for this checkpoint.
+- Next after this checkpoint: v39 structural recheck with retained native
+  attempts/configuration, successful repair and repeated-failure exhaustion/
+  no-progress evidence; then native clarification/COMMANDER and remaining
+  branch/timing parity. No controller approval policy or identity semantics
+  are being changed.

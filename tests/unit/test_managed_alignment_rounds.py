@@ -80,3 +80,49 @@ def test_alignment_selection_refuses_unsettled_or_detached_parent(gate, damage):
 def test_alignment_receipts_refuse_missing_or_foreign_round(gate, operation):
     with pytest.raises(ValueError):
         DiscoveryReceiptFile(gate[1].squad_dir, "discovery-turns", producer="alignment", round_operation_id=operation)
+
+
+def test_alignment_repair_retains_accepted_predecessor_and_native_budget(gate, monkeypatch):
+    root, store, _, _ = gate
+    store.prepare_spec_round("alignment", source("a"), expected_state=store.load())
+    store.advance_discovery_operation(binding(), "prepare", producer="alignment")
+    state = store.load()
+    state.update(iteration=2, intent_alignment_check_structural_attempts=1,
+        feasibility_structural_attempts=2,
+        last_dispatch={**source("b"), "phase_id": "phase2-intent-alignment-structural",
+            "post_dispatch_complete": True})
+    store.save(state)
+    with pytest.raises(StateAdvanceError):
+        store.prepare_spec_round("alignment", source("b"), expected_state=store.load())
+    store.advance_discovery_operation(binding(), "begin", producer="alignment")
+    store.advance_discovery_operation(binding(), "finish", producer="alignment",
+        result=dict(status="accepted", candidate_sha256="c" * 64, findings_sha256="d" * 64))
+    before = store.load()
+    selected = store.prepare_spec_round("alignment", source("b"), expected_state=before)
+    row = tracker_round(selected, producer="alignment")
+    assert row == dict(source=source("b"), resolution=None, predecessor=binding()["operation_id"],
+        operation=None, turns=None)
+    assert selected["managed_alignment_rounds"]["rounds"][binding()["operation_id"]] == before[
+        "managed_alignment_rounds"]["rounds"][binding()["operation_id"]]
+    for key in ("iteration", "intent_alignment_check_structural_attempts", "feasibility_structural_attempts",
+            "phase_dispatch_counts"):
+        assert selected[key] == before[key]
+    assert store.prepare_spec_round("alignment", source("b"), expected_state=selected) == selected
+    for damage in ("predecessor", "resolution", "historical"):
+        changed = deepcopy(selected)
+        rounds = changed["managed_alignment_rounds"]
+        current = rounds["rounds"][rounds["active"]]
+        if damage == "predecessor": current["predecessor"] = None
+        elif damage == "resolution": current["resolution"] = {}
+        else: rounds["rounds"][binding()["operation_id"]]["operation"] = None
+        with pytest.raises(StateAdvanceError): store.save(changed)
+    with pytest.raises(StateAdvanceError):
+        store.prepare_spec_round("alignment", source("a"), expected_state=selected)
+    from harness.discovery_assessment import require_alignment_parent
+    from harness.element_identity_store import IdentityStore
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("Inactive alignment must be refused before reading identity authority")
+    monkeypatch.setattr(IdentityStore, "open", unexpected_lookup)
+    with pytest.raises(ValueError):
+        require_alignment_parent(root, store.squad_dir, selected, source("a"))
+    assert store.load() == selected

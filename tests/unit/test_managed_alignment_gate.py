@@ -156,9 +156,10 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     assert store.load() == after and not executor.calls
     if not passed:
         from tests.unit.test_managed_alignment import parent
+        from harness.discovery_producer import tracker_round
         # The old approval cannot be reused as authority for a structural retry.
         with pytest.raises((ValueError, CompletionError)):
-            parent(case)
+            parent(case, source=tracker_round(before, producer="alignment")["source"])
         assert store.load() == after and not executor.calls
 
 

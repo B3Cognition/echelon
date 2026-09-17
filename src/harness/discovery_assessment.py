@@ -124,11 +124,29 @@ def require_strategy_parent(root, run, state, source):
     return binding
 
 
+def require_alignment_repair(root, run, state, source, predecessor):
+    """Authenticate the released failure and the accepted author it sent to repair."""
+    from harness.discovery_completion import _require, _retained_input_projection
+    from harness.discovery_assessment_gate import require_alignment_gate_parent, alignment_gate_route
+    from harness.element_identity_store import IdentityStore
+    gate, _, _ = _retained_input_projection(root, run, state, IdentityStore.open(root),
+        operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+        require_checkpoint=False,
+        required_route=("phase2-intent-alignment-structural", "phase2-tracker-alignment"))
+    _require(gate.producer == "alignment_gate" and gate.recovery["version"] == 37)
+    updates = gate.recovery["result"]["state_updates"]
+    _require(updates["structural_action"] == "repair"
+        and alignment_gate_route(gate.recovery["routing_state"], updates) == "phase2-tracker-alignment")
+    author = require_alignment_gate_parent(root, run, state, gate.recovery["source_completion"])
+    _require(author.recovery["operation"]["binding"]["operation_id"] == predecessor)
+    return gate
+
+
 def require_alignment_parent(root, run, state, source):
-    """First-entry alignment requires the actual released reviewed strategy."""
+    """Require released strategy or the exact failed gate; preserve native budgets."""
     from types import SimpleNamespace
     from harness.discovery_completion import _require, _retained_input_projection, _document, authenticate
-    from harness.discovery_producer import SOURCE_FIELDS
+    from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds
     from harness.element_identity_store import IdentityStore
     from harness.phase1_quality import has_current_phase1_quality_certificate
     from harness.phase1_quality_debt import has_current_quality_debt_authorization
@@ -138,16 +156,27 @@ def require_alignment_parent(root, run, state, source):
         and not any(key in state for key in ("pending_controller_completion",
             "pending_external_publication", "product_input_mutation", "governance")))
     dispatch = state.get("last_dispatch") or {}
-    _require(dispatch.get("phase_id") == "phase2-strategic-overview"
+    rounds = tracker_rounds(state, "alignment")
+    operation_id = "alignment-" + source.get("dispatch_id", "")
+    selected = None if rounds is None else rounds["rounds"].get(operation_id)
+    if selected is not None:
+        _require(rounds["active"] == operation_id and selected["source"] == source
+            and selected["resolution"] is None)
+    predecessor = None if rounds is None else (selected["predecessor"] if selected is not None else rounds["active"])
+    _require(dispatch.get("phase_id") == ("phase2-strategic-overview" if predecessor is None
+            else "phase2-intent-alignment-structural")
         and dispatch.get("post_dispatch_complete") is True
         and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})
     store = IdentityStore.open(root)
-    binding, _, _ = _retained_input_projection(root, run, state, store,
-        operation_id="discovery-completion-" + source["dispatch_id"], source=source,
-        require_checkpoint=False,
-        required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
-    _require(binding.producer == "strategy" and binding.recovery["version"] == 35
-        and binding.candidate["routing"] == dict(verdict="DONE", state_updates={}))
+    if predecessor is None:
+        binding, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False,
+            required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
+        _require(binding.producer == "strategy" and binding.recovery["version"] == 35
+            and binding.candidate["routing"] == dict(verdict="DONE", state_updates={}))
+    else:
+        binding = require_alignment_repair(root, run, state, source, predecessor)
     row = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
     proof = _document(row["completion_payload"])
     marker, intent, receipts = validate_retained_completion_proof(proof["completion"],

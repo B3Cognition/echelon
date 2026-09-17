@@ -112,8 +112,10 @@ def tracker_rounds(state, producer="tracker"):
             raise ValueError("debt can admit only the initial derivation")
         if producer == "feasibility" and (resolution is None) == (predecessor is None):
             raise ValueError("feasibility requires initial approval or a retained structural predecessor")
-        if producer in {"strategy", "alignment"} and (resolution is not None or predecessor is not None or len(value["rounds"]) != 1):
+        if producer == "strategy" and (resolution is not None or predecessor is not None or len(value["rounds"]) != 1):
             raise ValueError("first-entry assessment requires one exact parent, without repair or resolution")
+        if producer == "alignment" and resolution is not None:
+            raise ValueError("alignment structural repair cannot borrow a clarification resolution")
         association = row.get("review_resolution", resolution)
         if association is not None:
             from harness.blocked_decision import validate_blocked_decision

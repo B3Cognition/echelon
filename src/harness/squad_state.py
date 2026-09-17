@@ -2830,7 +2830,10 @@ class SquadStateStore:
             if producer == "strategy":
                 parents = {"phase2-feasibility-structural"}
             if producer == "alignment":
-                parents = {"phase2-strategic-overview"}
+                retained = _tracker_from_state(current, producer)
+                selected = None if retained is None else retained["rounds"].get("alignment-" + source.get("dispatch_id", ""))
+                initial = retained is None or (selected is not None and selected["predecessor"] is None)
+                parents = {"phase2-strategic-overview"} if initial else {"phase2-intent-alignment-structural"}
             if resolution is not None:
                 parents = {"phase1-why2"}
             if producer == "feasibility":

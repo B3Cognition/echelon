@@ -245,7 +245,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
             if (producer in {"lexicon", "feasibility", "strategy", "alignment"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}
-                    or producer in {"feasibility", "strategy", "alignment"} and logical == "feasibility-structural-report.json"):
+                    or producer in {"feasibility", "strategy", "alignment"} and logical == "feasibility-structural-report.json"
+                    or producer == "alignment" and logical == "intent-alignment-check-structural-report.json"):
                 # Controller-authenticated diagnostics are exact model evidence,
                 # never identity definitions or provider-owned output.
                 documents[item.path] = item.content.decode("utf-8")
@@ -504,7 +505,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                                 selected["selection"]["spec_path"] + "/spec-lexicon-report.json",
                                 selected["selection"]["spec_path"] + "/quality-debt.json"})
                             and not (producer in {"feasibility", "strategy", "alignment"} and path == selected["selection"]["spec_path"]
-                                + "/feasibility-structural-report.json"))), key=lambda item: item.path))
+                                + "/feasibility-structural-report.json")
+                            and not (producer == "alignment" and path == selected["selection"]["spec_path"]
+                                + "/intent-alignment-check-structural-report.json"))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
                         report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None or post_review else ((), ())
