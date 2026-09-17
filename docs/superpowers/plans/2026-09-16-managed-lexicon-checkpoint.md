@@ -48,10 +48,10 @@ Produces: the `lexicon` producer assignment, no allocation/revision scope,
 
 ## Task 2: Retained derivation and publication
 
-Status: in progress. Ordinary and repaired derivation/publication are implemented
-and verified through retained real ancestry. Accepted-debt derivation has reached
-the released gate/checkpoint handoff; its full checkpoint continuation and exact
-replay remain under verification. See the dated verification record below.
+Status: verified within this milestone. Ordinary and repaired derivation and
+accepted-debt continuation passed through retained real ancestry, including
+publication, checkpoint approval and exact restart. See the dated record below
+for the distinction between fresh full-prefix and retained continuation checks.
 
 - [x] Verified incremental checkpoint: ordinary passing WHY2 → first derivation
   → guarded publication/checkpoint completion → stop at `phase1-lexicon`, for
@@ -65,23 +65,23 @@ Consumes: the closed contract, actual released predecessor and native quality/de
 prerequisite. Produces: authenticated retained derivation rounds and publication
 of exactly the derived artifact plus the existing graph projection.
 
-- [ ] Add failing first-derivation and repaired-round tests using real retained
+- [x] Add failing first-derivation and repaired-round tests using real retained
   WHY2 completions and scripted replies, not hand-authored authority markers.
-- [ ] Bind initial/repair rounds once through the existing state transaction,
+- [x] Bind initial/repair rounds once through the existing state transaction,
   capture exact source/glossary/findings and inspect neutral roles via Prosaic.
-- [ ] Extend receipt decoding and guarded publication to the narrow producer;
+- [x] Extend receipt decoding and guarded publication to the narrow producer;
   authenticate reference integrity without asserting unearned grammar success.
-- [ ] Verify source/ID/history preservation, out-of-scope refusal, changed-input
+- [x] Verify source/ID/history preservation, out-of-scope refusal, changed-input
   refusal, interrupted publication and zero-call replay for both providers.
 
 ## Task 3: Provider-free Lexicon gate
 
-Status: in progress. Ordinary and repaired gates now continue to native checkpoint
-approval/rejection. Accepted-debt input has reached the released gate/checkpoint
-handoff, with final continuation still under verification.
+Status: verified within this milestone. Ordinary/repaired/debt gates continue to
+native checkpoint approval/rejection. Fresh exhausted-gate recovery passed 16
+selected method-boundary interruptions; existing shared completion tests cover
+partial promotion and partial context installation separately.
 Configured non-default artifact/source/glossary/report paths fail closed rather
-than silently using the defaults. Disabled-gate checkpoint continuation passed;
-the complete gate fault/retry matrix remains unfinished.
+than silently using the defaults. Disabled-gate checkpoint continuation passed.
 
 - [x] Verified incremental checkpoint: ordinary initial derivation → captured
   native validation → guarded report/graph publication and completion → first
@@ -94,22 +94,22 @@ Consumes: actual accepted derivation, captured source/glossary/configuration and
 native prior attempts. Produces: exact native gate result/report and a sealed
 managed completion, without an LLM turn or identity revision.
 
-- [ ] Add failing tests for pass, grammar failure, missing inputs, changed report
+- [x] Add failing tests for pass, grammar failure, missing inputs, changed report
   and retries. Assert literal native outcomes: a failing validation increments
   attempts once; pass resets attempts; restart repeats neither validation charge
   nor provider work.
-- [ ] Reuse existing captured-text validation and projection association, derive
+- [x] Reuse existing captured-text validation and projection association, derive
   native state updates, and publish the exact report through the existing owner.
-- [ ] Reuse native routing, no-progress and exhaustion checks; do not create a
+- [x] Reuse native routing, no-progress and exhaustion checks; do not create a
   parallel repair policy or reopen WHAT from a grammar failure.
-- [ ] Test gate-disabled routing, source/glossary drift and failure recovery.
+- [x] Test gate-disabled routing, source/glossary drift and failure recovery.
 
 ## Task 4: Native Phase 1 checkpoint handoff
 
 Status: native user and Banzai COMMANDER approval/rejection, retained judgment
 replay and interruptions before/after native state application are verified.
-Accepted-debt checkpoint continuation remains under verification. No controller-
-only approval replaces COMMANDER judgment.
+Accepted-debt checkpoint continuation and detached contract-tamper checks passed.
+No controller-only approval replaces COMMANDER judgment.
 
 Files: `src/harness/discovery_checkpoint_resolution.py`, existing human-input,
 completion and Squad owners; `tests/unit/test_managed_checkpoint_assess.py`.
@@ -118,11 +118,11 @@ Consumes: the authenticated managed gate or disabled-gate WHY2/debt route and th
 existing checkpoint recommendation/resolution. Produces: durable native approve
 or reject completion with retained proof, ending before Phase 2 execution.
 
-- [ ] Add failing guided/semi/Banzai tests against the existing recommendation
+- [x] Add failing guided/semi/Banzai tests against the existing recommendation
   owner, including ordinary quality and exact accepted-debt authorization.
-- [ ] Bind only native checkpoint outcomes to the existing publication/completion
+- [x] Bind only native checkpoint outcomes to the existing publication/completion
   transaction. Preserve original decisions and resolver provenance on recovery.
-- [ ] Verify stale quality/Lexicon/debt evidence refusal, no invented approval,
+- [x] Verify stale quality/Lexicon/debt evidence refusal, no invented approval,
   one native COMMANDER judgment for eligible Banzai decisions (bounded native
   retries only for known failed replies), and no duplicate calls on recovery.
 
@@ -131,13 +131,13 @@ or reject completion with retained proof, ending before Phase 2 execution.
 Files: the four test modules above, convergence boundary and this verification
 record. No rollout/configuration cutover.
 
-- [ ] Run both scripted provider paths from released WHY2 through native checkpoint
+- [x] Run both scripted provider paths from released WHY2 through native checkpoint
   approval/rejection, including repaired derivation and accepted debt.
-- [ ] Run targeted existing identity, completion, quality/debt, Lexicon and human
+- [x] Run targeted existing identity, completion, quality/debt, Lexicon and human
   decision regressions. Record exact commands/results; do not sum overlapping
   runs as a full-suite claim.
-- [ ] Obtain independent read-only review; fix actionable findings test-first.
-- [ ] Update the convergence boundary and commit only verified milestone work.
+- [x] Obtain independent read-only review; fix actionable findings test-first.
+- [x] Update the convergence boundary and commit only verified milestone work.
 
 ## Verification record
 
@@ -429,3 +429,80 @@ retained accepted-debt run has since applied the user checkpoint approval and
 reached `phase2-decide` with completion bookkeeping still pending; no Phase 2
 producer was executed. Remaining acceptance/fault checks stay open below the
 existing task headings. Continue inline without installation or live spending.
+
+### Post-checkpoint acceptance continuation (2026-09-17)
+
+- Preservation commit: `e36ca9e0`. Continued verification inline; no production
+  behavior changes in this follow-up so far.
+- The retained accepted-debt continuation exited successfully: original native
+  debt authorization → three scripted Lexicon turns → passed deterministic
+  gate → explicit user checkpoint approval → released v30 completion and exact
+  restart. Final state is `phase2-decide`, revision 187, 294 cumulative scripted
+  tokens, no pending completion, unchanged identity history and original debt
+  authorization/receipt. Phase 2 was not executed. This is a retained real
+  corridor continuation, not a fresh full-prefix or live-provider run.
+- Added detached rehashed checkpoint-contract attacks to every checkpoint
+  corridor. Direct checks against four already-released real fixtures passed:
+  `pytest-259/test_managed_checkpoint_uses_n0` (COMMANDER approval),
+  `pytest-268/test_managed_checkpoint_uses_n0` (user approval), its `n1` sibling
+  (user rejection), and `pytest-234/test_managed_gate_pass_reaches0` (COMMANDER
+  rejection). Changed effects, policy, source, history, resolver, native route,
+  decision ID and effect plan are refused; an uncharged COMMANDER result also
+  fails. No retained fixture was modified by these checks.
+- New fresh exhausted-gate recovery test is running. It exercises before/after
+  eight real publication/completion boundaries sequentially on one completion,
+  checking the same operation, one failed attempt, unchanged source/history,
+  unchanged usage/report and no further provider calls. Its result remains open.
+- Read-only review confirmed the boundary order and found a conditional report
+  assertion could miss deletion of the canonical report during cleanup. The
+  test now requires continued existence after publication and final on-disk byte
+  equality. This is a test-strengthening change, not a production defect. The
+  already-running corridor loaded the earlier test body; verify the final live
+  report separately before accepting its result. These are 16 interruptions at
+  eight selected method boundaries, not every internal write or every effect.
+- New checkpoint tamper checks also passed against the completed accepted-debt
+  fixture. Focused COMMANDER/gate/checkpoint regression: **61 passed, 9 deselected
+  in 24.77s**, with the global retention options and the existing long-case
+  exclusions. Broader existing completion/publication/reservation/checkpoint
+  fault regressions are running separately.
+
+### Milestone verification closeout (2026-09-17)
+
+- Fresh exhausted-gate corridor: **1 passed in 601.21s** using
+  `python -m pytest tests/unit/test_managed_lexicon_recovery.py -xq` with the
+  global retention flags. It started from the real prerequisite phases and
+  recovered one gate completion through 16 before/after interruptions around
+  eight selected native methods. Final outcome: `terminal-blocked`, one failed
+  gate attempt, 168 scripted tokens, unchanged source/identity history, released
+  completion and no extra provider calls or pending publication.
+- That process loaded the test before the report-existence review improvement.
+  Current-code `assert_retained_gate` was then run separately against its
+  released fixture `pytest-278/test_managed_exhausted_gate_re0`: canonical report
+  **and graph** match the exact retained publication postimages, contract-tamper
+  checks pass and state remains unchanged. The stricter per-boundary report
+  assertion is committed for future full runs; it was not retroactively executed
+  at all intermediate boundaries of the already-running process.
+- Existing owner regression: **182 passed in 364.81s** using
+  `python -m pytest tests/unit/test_discovery_completion.py
+  tests/unit/test_discovery_publication.py tests/unit/test_discovery_reservations.py
+  tests/unit/test_discovery_checkpoint.py -q` with the global retention flags.
+  This includes existing partial-promotion, partial-context and checkpoint
+  interruption cases, rather than claiming that the new 16-case corridor covers
+  every internal I/O boundary itself.
+- Final current-code focused rerun after report assertion strengthening:
+  **61 passed, 9 deselected in 25.58s**, using the same three-module focused
+  command/exclusions recorded above. `git diff --check` passed. The branch and
+  worktree are preserved for continued convergence; this is not a merge or a
+  full-repository-suite claim.
+- The approved Lexicon/native Phase 1 checkpoint milestone is verified within
+  these recorded boundaries. Native user/COMMANDER decisions, rejection,
+  repaired/no-progress/exhausted gates, disabled gate, accepted debt, immutable
+  IDs/history and exact restart have acceptance evidence above. No production
+  code changed after preservation commit `e36ca9e0`; follow-up changes are tests
+  and verification documentation.
+- This does not complete the wider identity convergence or activate Echelon.
+  The stop remains before Phase 2 producer execution. Downstream producer/input
+  domains, whole-run identity acceptance, public/installed/live activation and
+  deferred performance work remain separate work. Non-default Lexicon paths
+  continue to fail closed. No installation, migration, live provider spending,
+  push or merge occurred.

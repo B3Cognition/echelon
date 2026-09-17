@@ -1,5 +1,6 @@
 """Native managed checkpoint decisions stop before Phase 2 execution."""
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -16,6 +17,58 @@ def install_commander(root):
     repo = Path(__file__).resolve().parents[2]
     shutil.copytree(repo / "prosaic", root / ".echelon/prosaic", dirs_exist_ok=True)
     shutil.copytree(repo / "runtime", root / ".echelon/runtime", dirs_exist_ok=True)
+
+
+def assert_retained_checkpoint(case):
+    """Rehashing a real receipt cannot authorize a changed checkpoint contract."""
+    from harness.discovery_completion import decode_binding
+    from harness.element_identity_publication import encode_publication_request
+    from harness.squad_completion import CompletionError, _validate_intent
+    _, store, identity, _ = case
+    state = store.load()
+    receipt = state["last_human_input_completion"]
+    row = identity.identity_publication(spec_id="game",
+        operation_id="discovery-completion-" + receipt["completion_id"])
+    assert row["state"] == "released"
+    intent = json.loads(row["completion_payload"])["proof"]["intent"]
+    publication = intent["publication"]
+    binding = decode_binding(publication, state=state)
+    assert binding.recovery["version"] == 30
+    assert binding.request.operations == ()
+    for damage in ("effects", "policy", "source", "history", "resolver"):
+        recovery = deepcopy(binding.recovery)
+        if damage == "effects":
+            recovery["effects"]["route"] = "phase4-document"
+        elif damage == "policy":
+            recovery["policy"]["semi_policy"] = "auto_if_recommended_low_risk"
+        elif damage == "source":
+            recovery["source_completion"]["dispatch_id"] = "0" * 32
+        elif damage == "history":
+            recovery["history"]["payload"] += " "
+        else:
+            recovery["resolution"]["resolved_by"] = "controller"
+        changed = deepcopy(publication)
+        changed["managed_discovery"]["request"] = encode_publication_request(replace(
+            binding.request, recovery_payload=json.dumps(recovery, sort_keys=True, separators=(",", ":"))))
+        with pytest.raises(CompletionError):
+            decode_binding(changed, state=state)
+    for damage in ("destination", "decision", "effects"):
+        changed = deepcopy(intent)
+        if damage == "destination":
+            changed["route"]["to_phase"] = "phase4-document"
+        elif damage == "decision":
+            changed["route"]["decision_id"] = "different-decision"
+        else:
+            changed["effect_plan"] = ["quality", "context"]
+        with pytest.raises(CompletionError):
+            _validate_intent(changed)
+    if binding.recovery["commander_receipt"] is not None:
+        uncharged = deepcopy(state)
+        uncharged["token_usage"] = binding.recovery["before"]["token_usage"]
+        assert binding.recovery["commander_receipt"]["token_usage"] == 7
+        with pytest.raises(CompletionError):
+            decode_binding(publication, state=uncharged)
+    assert store.load() == state
 
 
 def continue_checkpoint(case, provider="codex", *, answer="approve", fault=None):
@@ -69,6 +122,7 @@ def continue_checkpoint(case, provider="codex", *, answer="approve", fault=None)
     released_discovery_input_projectors(root, store.squad_dir, state, source=clarification_source(receipt))
     controller(case, executor).run(managed_discovery=selected)
     assert store.load() == state and len(executor.calls) == (1 if banzai else 0)
+    assert_retained_checkpoint(case)
     if before.get("spec_quality_debt_authorization"):
         from harness.phase1_quality_debt import has_current_quality_debt_authorization
         assert state["spec_quality_debt_authorization"] == before["spec_quality_debt_authorization"]

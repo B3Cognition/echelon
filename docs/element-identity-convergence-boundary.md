@@ -1702,3 +1702,41 @@ approval with the gate disabled and semi-mode rejection with it enabled also
 passed. Accepted-debt continuation and the remaining gate/completion fault matrix
 still require their recorded acceptance checks. No installation, public activation,
 live provider, push or merge was performed.
+
+### Preservation and debt continuation (2026-09-17)
+
+At the user's request, all pending repair/debt/checkpoint/COMMANDER work was
+committed as `e36ca9e0`, explicitly a preservation checkpoint rather than completed
+activation. The retained accepted-debt corridor has subsequently passed through
+Lexicon validation, explicit checkpoint approval and exact restart with its
+original debt receipt/authorization, unchanged identity history and 294 cumulative
+scripted tokens. It stops at `phase2-decide`; no Phase 2 producer ran.
+
+Detached checkpoint-contract tamper checks passed against real released user and
+COMMANDER approval/rejection records, plus that accepted-debt record. The fresh
+exhausted-gate interruption corridor and broader completion regressions remain
+under verification. No installation, provider-specific prose, live model call,
+push or merge has been added.
+
+### Managed Lexicon/native checkpoint milestone verified (2026-09-17)
+
+The approved internal milestone now continues ordinary, repaired and accepted-
+debt inputs through native Lexicon validation and user/COMMANDER checkpoint
+approval or rejection, stopping before Phase 2 execution. Successful repair,
+no-progress stop, exhausted gate, disabled gate, retained debt authorization,
+unchanged identity history and exact restart all have recorded scripted evidence.
+COMMANDER remains the Banzai judgment owner through the same neutral Prosaic role.
+
+The fresh exhausted-gate test passed 16 selected native method-boundary
+interruptions with one gate attempt and no repeated provider work; final report
+and graph bytes separately matched their retained publication postimages.
+Existing completion/publication/reservation/checkpoint regressions passed 182
+tests, including partial publication/context recovery. The plan records the
+precise fresh/retained distinction and the late report-assertion strengthening;
+these are targeted acceptance results, not a full-suite or live-provider claim.
+
+This completes only the approved Lexicon/Phase 1 checkpoint scope. Downstream
+managed producers/input domains, whole-run identity acceptance and public,
+installed and live activation remain outstanding. Performance optimization is
+still deferred; non-default Lexicon paths remain fail-closed. No installed
+workspace, legacy build flow or provider-specific prose changed.

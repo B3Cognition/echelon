@@ -280,6 +280,8 @@ def assert_retained_gate(root, store, identity):
     binding = decode_binding(publication, state=state)
     assert binding.producer == "lexicon_gate" and binding.request.operations == ()
     assert binding.candidate["history"] == binding.source["history"]
+    for operation in binding.sources.publication.operations:
+        assert (root / operation.target).read_bytes() == operation.postimage_bytes
     # Rehashing the saved policy does not authorize changing the run's limit.
     recovery = deepcopy(binding.recovery)
     recovery["routing_state"]["max_iterations"] = state["max_iterations"] + 1
