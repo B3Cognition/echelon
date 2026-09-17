@@ -1,0 +1,175 @@
+"""Ordinary alignment publishes only its report and enters native structural gating."""
+from copy import deepcopy
+from dataclasses import replace
+import json
+
+import pytest
+
+from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
+from harness.discovery_completion import decode_binding, _json, _hash
+from harness.discovery_publication import prepare_discovery_publication
+from harness.element_identity_publication import encode_publication_request
+from harness.squad_completion import CompletionError
+from tests.unit.test_managed_feasibility_publication import envelope
+from tests.unit.test_managed_alignment_execution import (
+    case, enrolled, turn_prepared, prepared, checkpoint_case, AlignmentExecutor,
+    test_released_strategy_authorizes_reviewed_alignment as complete_review,
+)
+
+
+def assert_alignment_publication(case, provider, verdict="ALIGNED"):
+    root, store, identity, _ = case
+    executor = AlignmentExecutor(provider, verdict)
+    before, history = store.load(), identity.identity_history(spec_id="game")
+    documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
+    with PhaseAExecutionLock.acquire(root, "test-alignment-publication"):
+        with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-publication"):
+            package = prepare_discovery_publication(root, store, executor, completion_id="8" * 32, producer="alignment")
+            recovery = json.loads(package.request.recovery_payload)
+            assert recovery["version"] == 36 and recovery["producer"] == "alignment"
+            binding = decode_binding(envelope(package), completion_id="8" * 32, state=before)
+            assert binding.candidate["routing"] == dict(verdict=verdict, state_updates={})
+            assert binding.request.operations == () and binding.candidate["history"] == binding.source["history"]
+            assert binding.recovery["resolution"] is None and binding.recovery["predecessor"] is None
+            writes = {op.target: op.postimage_bytes for op in package.sources.publication.operations}
+            assert set(writes) == {"specs/game/intent-alignment-check.md", "specs/game/spec-artifact-graph.json"}
+            assert writes["specs/game/spec-artifact-graph.json"] == package.graph
+            assert not executor.calls
+            assert store.load() == before and identity.identity_history(spec_id="game") == history
+            assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
+            assert identity.pending_identity_publication(spec_id="game") is None
+    return package
+
+
+def assert_closed_alignment_binding(case, package):
+    before = case[1].load()
+    for damage in ("version", "producer", "predecessor", "resolution", "scope", "routing", "review", "identity", "editable", "source", "question"):
+        recovery = json.loads(package.request.recovery_payload)
+        if damage == "version": recovery["version"] = 31
+        elif damage == "producer": recovery["producer"] = "feasibility"
+        elif damage == "predecessor": recovery["predecessor"] = "alignment-" + "a" * 32
+        elif damage == "resolution": recovery["resolution"] = {}
+        elif damage == "editable": recovery["operation"]["binding"]["editable_revisions"] = [["AC-000001", 1]]
+        elif damage == "source": recovery["source_completion"]["dispatch_id"] = "0" * 32
+        else:
+            candidate = json.loads(recovery["candidate_inputs"])
+            if damage == "question":
+                candidate["routing"] = dict(verdict="STOP_AND_ASK", state_updates=dict(status="blocked", blocked_reason="human_clarification_required", escalation_question="Approve scope drift?"))
+                recovery["review"]["routing"] = deepcopy(candidate["routing"])
+            elif damage == "scope": candidate["artifacts"]["spec.md"] = "Unauthorized replacement"
+            elif damage == "routing": candidate["routing"]["state_updates"]["feasibility_structural_attempts"] = 0
+            elif damage == "review": recovery["review"]["routing"]["verdict"] = "PASS"
+            else: candidate["proposal"]["new_subjects"] = [{"kind": "AC", "key": "extra"}]
+            recovery["candidate_inputs"] = _json(candidate)
+            recovery["candidate_sha256"] = _hash(candidate)
+            recovery["operation"]["attempts"][-1]["result"]["candidate_sha256"] = _hash(candidate)
+        request = replace(package.request, recovery_payload=_json(recovery))
+        with pytest.raises(CompletionError):
+            decode_binding(envelope(package, request), completion_id="8" * 32)
+    assert case[1].load() == before
+
+
+def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
+    from harness.squad_provider import SquadAgentResult
+    from tests.unit.test_discovery_completion import controller, drain
+    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.squad_publication import PreparedSquadPublication
+    from harness.element_identity_store import IdentityStore
+    from harness.squad_state import StateAdvanceError
+    from tests.unit.test_discovery_turns import Interrupted
+    root, store, identity, _ = case
+    executor = AlignmentExecutor(provider, verdict)
+    ctrl = controller(case, executor)
+    before, history = store.load(), identity.identity_history(spec_id="game")
+    documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
+    node = ctrl._graph.get("phase2-tracker-alignment")
+    with PhaseAExecutionLock.acquire(root, "test-alignment-handoff"):
+        with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-handoff"):
+            snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+            for destination in ("phase3-specialists", "done", "phase2-feasibility-structural", "phase1-what"):
+                with pytest.raises(StateAdvanceError):
+                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=destination,
+                        snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
+                        publication_marker=package.publication.marker.to_dict(), completion_id="8" * 32,
+                        managed_discovery_request=encode_publication_request(package.request))
+            assert store.load() == before
+            result = SquadAgentResult(exit_code=0, echelon_result=dict(verdict=verdict, state_updates={}),
+                raw_output="", duration_ms=0, timed_out=False)
+            prepared_result = ctrl._prepare_phase_result(node, result, snapshot)
+            routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
+                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                managed_discovery_request=encode_publication_request(package.request), completion_id="8" * 32,
+                token_usage_delta=21)
+            assert routing is not None, store.load()
+            promote = PreparedSquadPublication._promote
+            def before_promotion(*args, **kwargs): raise Interrupted()
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(PreparedSquadPublication, "_promote", before_promotion)
+                with pytest.raises(Interrupted):
+                    ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
+    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
+    from harness.discovery_completion import authenticate
+    from harness.squad_completion import load_prepared_controller_completion
+    pending = store.load()
+    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    changed = deepcopy(pending)
+    changed["intent_alignment_verdict"] = "DRIFT" if verdict == "ALIGNED" else "ALIGNED"
+    with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
+    for key in ("iteration", "max_iterations", "feasibility_structural_attempts", "feasibility_verdict", "structural_action"):
+        changed = deepcopy(pending)
+        changed[key] = changed[key] + 1 if type(changed[key]) is int else "forged"
+        with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
+    for key in ("iteration", "max_iterations", "feasibility_structural_attempts"):
+        changed = deepcopy(pending)
+        changed[key] = float(changed[key])
+        with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
+    assert store.load() == pending
+    interruptions = []
+    def after_one_promotion(*args, **kwargs):
+        def interrupt(position):
+            if position == 1:
+                interruptions.append(position)
+                raise Interrupted()
+        return promote(*args, **{**kwargs, "fault_hook": interrupt})
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(PreparedSquadPublication, "_promote", after_one_promotion)
+        with pytest.raises(Interrupted): drain(controller(case, executor))
+    assert interruptions == [1] and len(package.sources.publication.operations) == 2
+    apply = IdentityStore.apply_identity_publication
+    def after_identity_apply(*args, **kwargs):
+        apply(*args, **kwargs)
+        raise Interrupted()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(IdentityStore, "apply_identity_publication", after_identity_apply)
+        with pytest.raises(Interrupted): drain(controller(case, executor))
+    assert identity.pending_identity_publication(spec_id="game")["state"] == "applied"
+    assert drain(controller(case, executor)).recovered, store.load()
+    after = store.load()
+    assert after["phase"] == "phase2-intent-alignment-structural" and after["last_dispatch"]["post_dispatch_complete"] is True
+    assert after["intent_alignment_verdict"] == verdict
+    assert "governance_gate_exhausted" not in after and "blocked_reason" not in after
+    assert after["token_usage"] == before["token_usage"] + 21
+    assert after["phase_dispatch_counts"] == before["phase_dispatch_counts"]
+    for key in ("iteration", "max_iterations", "feasibility_verdict", "feasibility_structural_attempts"):
+        assert after[key] == before[key]
+    assert not after["phase_dispatch_counts"].get("phase2-intent-alignment-structural")
+    assert not after["phase_dispatch_counts"].get("phase3-specialists")
+    assert identity.identity_history(spec_id="game") == history
+    assert identity.identity_publication(spec_id="game", operation_id="discovery-completion-" + "8" * 32)["state"] == "released"
+    for op in package.sources.publication.operations:
+        assert (root / op.target).read_bytes() == op.postimage_bytes
+    assert not package.publication._transaction_root.exists()
+    assert identity.pending_identity_publication(spec_id="game") is None and not executor.calls
+    drain(controller(case, executor))
+    assert store.load() == after and not executor.calls
+
+
+@pytest.mark.parametrize("provider,mode,enabled,policy", [
+    ("codex", "guided", False, "disabled"), ("claude", "banzai", True, "warn")])
+def test_alignment_publishes_and_hands_off_without_running_structural_gate(checkpoint_case, provider, mode, enabled, policy):
+    complete_review(checkpoint_case, provider, mode, enabled, policy)
+    verdict = "ALIGNED" if provider == "codex" else "DRIFT"
+    package = assert_alignment_publication(checkpoint_case, provider, verdict)
+    assert_closed_alignment_binding(checkpoint_case, package)
+    assert_alignment_handoff(checkpoint_case, package, provider, verdict)

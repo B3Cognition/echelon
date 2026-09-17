@@ -158,6 +158,11 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   bind its reviewed derived document through a closed v35 publication to the
   actual released feasibility gate. Recover native completion without another
   provider call, stopping at alignment entry; alignment execution stays closed.
+- [x] Authenticate first-entry alignment from the actual released v35 strategy,
+  capture its exact inputs, and extend existing protected rounds and provider
+  composition. Publish reviewed ALIGNED/DRIFT through a closed v36 association
+  and recover the native handoff to `phase2-intent-alignment-structural`, without
+  executing that gate. STOP_AND_ASK cannot use this ordinary-result association.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -909,3 +914,68 @@ Phase 2 acceptance is claimed by creating this plan.
   installation, migration, activation, live model calls, merge or push. Next is
   alignment entry/producer/publication and its native structural/clarification
   routes within Task 4; Task 4 and the Phase 2 milestone remain unfinished.
+
+### Ordinary alignment execution and guarded handoff (2026-09-17)
+
+- Added first-entry alignment admission to the existing assessment owner. It
+  authenticates the actual released v35 strategy, exact settled dispatch and
+  identity head, underlying v32/v34 feasibility ancestry, current counters and
+  configuration, and current Phase 1 quality/debt authority. A phase label or
+  an earlier released gate alone cannot authorize alignment.
+- Extended the existing capture, protected round, operation, turn and receipt
+  owners. Alignment has one first-entry round, no resolution or repair
+  predecessor, and no identity allocation/revision scope. Its exact source,
+  context and template are captured; diagnostics remain read-only evidence.
+  Neutral Prosaic contracts serve both providers without provider-specific prose.
+- The existing publisher/completion owner now admits a closed v36 association
+  for ALIGNED/DRIFT only. Reviewed alignment report and recomputed graph are the
+  sole writes. Exact strategy/gate ancestry, native counters/configuration and
+  author/reviewer routing are authenticated. Native completion clears its usual
+  transient warning/reason fields and stops at alignment structural-gate entry.
+  STOP_AND_ASK remains closed until its native decision association is connected.
+- RED admission failed at the missing parent entry; the first actual capture
+  then failed at the missing released-input wiring. RED round selection failed
+  with `invalid specification producer`. After wiring, focused alignment/strategy
+  owner and minimal-parent checks passed **23 tests, 2 deselected in 2.14s**.
+- Parent admission, changed-state/source refusals, exact capture and changed-input
+  checks passed on actual retained Codex bypass strategy
+  `pytest-370/test_strategy_captures_release0` and Claude warning strategy
+  `pytest-376/test_released_gate_authorizes_0`. Repaired-PASS strategy
+  `pytest-337/test_reviewed_feasibility_gate0` also passed parent/capture checks;
+  its subsequent RED execution retained rejected attempt receipts before shared
+  composition was connected. Those receipts were not reset or rewritten.
+- Actual retained released-gate-only `pytest-339`, blocked-gate `pytest-364`,
+  and not-yet-rechecked repair `pytest-352` refused alignment despite forged
+  alignment/running/PASS labels. No state or identity authority was rewritten.
+- Final retained Codex ALIGNED and Claude DRIFT author/review helpers passed
+  three scripted calls/21 tokens apiece, unchanged canonical inputs/history,
+  and exact zero-call replay. Publication RED exposed the missing v36 binding.
+  After implementation, both passed publication, forged-binding and wrong-route
+  refusals, strict live counter/type checks, interruption before promotion,
+  after partial promotion and after identity application, and idempotent recovery.
+  Canonical postimages matched, identities/history and prior dispatch/budget
+  counters were preserved, and the 21-token completion charge was applied once.
+  Neither alignment structural evaluation nor Phase 3 was dispatched.
+- These are continuations of previously recorded real scripted prefixes, not new
+  full-prefix pytest runs. The exact fixture-bound Prosaic inspector was used;
+  production authentication was not replaced. New parametrized full-prefix tests
+  are included, but their complete prefixes were not rerun in this increment.
+- With the repository virtualenv, `-q --tb=short` and global retention flags,
+  `test_discovery_operation.py`, `test_discovery_turns.py`,
+  `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_managed_assessment_contract.py`,
+  `test_managed_alignment_rounds.py`, `test_managed_strategy_rounds.py`,
+  `test_managed_feasibility_rounds.py`: **415 passed in 62.73s**.
+- Shared completion/publication/restoration regression with the same interpreter
+  and options: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 340.01s**. Final diff checks passed. These selected regressions
+  are not a full repository or live-provider acceptance claim.
+- Bounded read-only execution and publication reviews found no actionable
+  findings and ran no tests or mutations. The optional cleanup-assertion coverage
+  note concerns alignment structural fields not produced by this first-entry
+  slice; existing native cleanup remains unchanged.
+- This increment does not complete Task 4 or whole Phase 2. Alignment structural
+  publication, repair/retry/exhaustion, native clarification and existing COMMANDER
+  routing, remaining branch/timing parity and full acceptance remain. No installed
+  workspace, public activation, live provider, merge or push changed.

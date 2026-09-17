@@ -124,6 +124,44 @@ def require_strategy_parent(root, run, state, source):
     return binding
 
 
+def require_alignment_parent(root, run, state, source):
+    """First-entry alignment requires the actual released reviewed strategy."""
+    from types import SimpleNamespace
+    from harness.discovery_completion import _require, _retained_input_projection, _document, authenticate
+    from harness.discovery_producer import SOURCE_FIELDS
+    from harness.element_identity_store import IdentityStore
+    from harness.phase1_quality import has_current_phase1_quality_certificate
+    from harness.phase1_quality_debt import has_current_quality_debt_authorization
+    from harness.squad_completion import validate_retained_completion_proof
+    _require(type(state) is dict and state.get("phase") == "phase2-tracker-alignment"
+        and state.get("status") == "running" and not state.get("cancel_requested")
+        and not any(key in state for key in ("pending_controller_completion",
+            "pending_external_publication", "product_input_mutation", "governance")))
+    dispatch = state.get("last_dispatch") or {}
+    _require(dispatch.get("phase_id") == "phase2-strategic-overview"
+        and dispatch.get("post_dispatch_complete") is True
+        and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})
+    store = IdentityStore.open(root)
+    binding, _, _ = _retained_input_projection(root, run, state, store,
+        operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+        require_checkpoint=False,
+        required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
+    _require(binding.producer == "strategy" and binding.recovery["version"] == 35
+        and binding.candidate["routing"] == dict(verdict="DONE", state_updates={}))
+    row = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
+    proof = _document(row["completion_payload"])
+    marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
+        proof["proof"]["intent"], proof["proof"]["receipts"])
+    authenticate(root, run, state, SimpleNamespace(marker=marker, intent=intent, receipts=receipts))
+    authority = store.check_managed_context(spec_id=binding.spec_id,
+        run_id=state["run_id"], record=state["managed_identity"])
+    _require(authority["source_context"]["operation_id"] == binding.operation_id
+        and store.pending_identity_publication(spec_id=binding.spec_id) is None
+        and (has_current_phase1_quality_certificate(state, project_root=root)
+            or has_current_quality_debt_authorization(state, project_root=root)))
+    return binding
+
+
 def validate_assessment_routing(value, producer):
     """Validate author claims through the native result contract, not gate policy."""
     verdicts = {"feasibility": {"PASS", "KILL", "DEFER"}, "strategy": {"DONE"},

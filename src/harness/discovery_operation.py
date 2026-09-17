@@ -84,9 +84,9 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     template_paths = {f".echelon/runtime/templates/{path.removesuffix('.md')}-template.md": path for path in artifact_paths}
     runtime_trees, runtime_files = runtime_input_paths(root, state_store.squad_dir)
     staging_paths = tuple((state_store.staging_dir / name).relative_to(root).as_posix() for name in (
-        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy"} or repair_unit is not None or post_review else ()
-    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy"} or repair_unit is not None or post_review else ()
-    if producer in {"feasibility", "strategy"}:
+        "user-clarifications.md", "feature-policy.json", "feature-policy.md")) if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None or post_review else ()
+    reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None or post_review else ()
+    if producer in {"feasibility", "strategy", "alignment"}:
         from harness.discovery_assessment import ASSESSMENT_OUTPUTS
         if (set(artifact_paths) != set(ASSESSMENT_OUTPUTS[producer]) or repair_unit is not None or clarification):
             raise _Blocked("feasibility_capture_scope_not_admitted")
@@ -111,22 +111,23 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     spec_view = runtime_view = None
     understanding = None
     evidence_paths = ()
-    if producer in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy"}:
+    if producer in {"synthesizer", "tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
         from harness.discovery_completion import released_discovery_input_projectors
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
-        if producer == "strategy":
-            from harness.discovery_assessment import require_strategy_parent
+        if producer in {"strategy", "alignment"}:
+            from harness.discovery_assessment import require_strategy_parent, require_alignment_parent
             from harness.discovery_producer import SOURCE_FIELDS
             try:
                 parent = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
-                require_strategy_parent(root, state_store.squad_dir, state, parent)
+                require_parent = require_alignment_parent if producer == "alignment" else require_strategy_parent
+                require_parent(root, state_store.squad_dir, state, parent)
                 if source_completion is not None and source_completion != parent:
                     raise ValueError("strategy source changed")
                 source_completion = parent
             except Exception:
-                raise _Blocked("strategy_parent_requires_reconciliation") from None
+                raise _Blocked(producer + "_parent_requires_reconciliation") from None
         if producer == "feasibility":
             from harness.discovery_assessment import require_feasibility_parent
             from harness.discovery_producer import SOURCE_FIELDS
@@ -243,8 +244,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         files = {}
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
-            if (producer in {"lexicon", "feasibility", "strategy"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}
-                    or producer in {"feasibility", "strategy"} and logical == "feasibility-structural-report.json"):
+            if (producer in {"lexicon", "feasibility", "strategy", "alignment"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}
+                    or producer in {"feasibility", "strategy", "alignment"} and logical == "feasibility-structural-report.json"):
                 # Controller-authenticated diagnostics are exact model evidence,
                 # never identity definitions or provider-owned output.
                 documents[item.path] = item.content.decode("utf-8")
@@ -278,11 +279,14 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
                 raise _Blocked("discovery_reasoning_context_changed")
             if journal.content is not None:
                 evidence[journal.path] = journal.content.decode("utf-8")
-            elif producer in {"feasibility", "strategy"}:
+            elif producer in {"feasibility", "strategy", "alignment"}:
                 evidence[journal.path] = "[ABSENT: " + journal.path + "]"
         if producer == "strategy" and not {"spec.md", "user-intent.md", "feasibility.md",
                 "estimates.md", "prioritization.md", "unknowns.md"} <= files.keys():
             raise _Blocked("strategy_source_context_incomplete")
+        if producer == "alignment" and not {"spec.md", "user-intent.md", "feasibility.md",
+                "mvp-scope.md", "strategic-overview.md"} <= files.keys():
+            raise _Blocked("alignment_source_context_incomplete")
         if producer == "feasibility":
             if not {"spec.md", "glossary.md", "requirements-overview.md", "assumptions.md", "issues.md"} <= files.keys():
                 raise _Blocked("feasibility_source_context_incomplete")
@@ -437,8 +441,8 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         raise _Blocked(last.reason)
                     return last.reply
                 proposal = turn(proposal_assignment, {**common, "reply_fields": dict(
-                    new_subjects=[] if producer in {"constitution", "lexicon", "feasibility", "strategy"} else [dict(key="local-key", kind="FR, NFR or AC" if producer == "what" else "ISS" if producer == "why2" else "U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
-                    revisions=[] if producer in {"constitution", "lexicon", "feasibility", "strategy"} else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
+                    new_subjects=[] if producer in {"constitution", "lexicon", "feasibility", "strategy", "alignment"} else [dict(key="local-key", kind="FR, NFR or AC" if producer == "what" else "ISS" if producer == "why2" else "U or ISS" if producer == "why1" else "UI or II" if producer == "tracker" else "U or A", subject="stable subject", caption="caption")],
+                    revisions=[] if producer in {"constitution", "lexicon", "feasibility", "strategy", "alignment"} else [dict(id="permitted existing ID", expected_revision="assigned revision")])}, fresh=create and number == 1)
                 verify()
                 if repair_unit is not None and (proposal["new_subjects"] or
                         sorted((row["id"], row["expected_revision"]) for row in proposal["revisions"]) != sorted(editable_revisions)):
@@ -455,6 +459,13 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                     reply_fields["routing"] = dict(verdict="DONE or FAIL", state_updates={})
                 if producer == "strategy":
                     reply_fields["routing"] = dict(verdict="DONE", state_updates={})
+                if producer == "alignment":
+                    reply_fields["routing"] = dict(verdict="ALIGNED, DRIFT or STOP_AND_ASK", state_updates=dict(
+                        status="blocked for STOP_AND_ASK only; otherwise use an empty state_updates object",
+                        blocked_reason="human_clarification_required for STOP_AND_ASK only",
+                        escalation_question="required nonblank question for STOP_AND_ASK only",
+                        escalation_recommended_answer="optional nonblank recommendation for STOP_AND_ASK only",
+                        escalation_risk_level="low, medium, high or critical; supply together with recommendation only"))
                 if producer == "what":
                     reply_fields["routing"] = dict(verdict="DONE or FAIL", state_updates=dict(
                         spec_status="planned or blocked", evidence_resolution_status="not_required or pending",
@@ -489,14 +500,14 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         *(CandidateArtifact(path, source_roles[path], content, content) for path, content in before.items() if path not in artifact_paths),
                         *(CandidateArtifact(path, "references", content, content) for path, content in evidence.items()
                             if ((producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))
-                            and not (producer in {"lexicon", "feasibility", "strategy"} and path in {
+                            and not (producer in {"lexicon", "feasibility", "strategy", "alignment"} and path in {
                                 selected["selection"]["spec_path"] + "/spec-lexicon-report.json",
                                 selected["selection"]["spec_path"] + "/quality-debt.json"})
-                            and not (producer in {"feasibility", "strategy"} and path == selected["selection"]["spec_path"]
+                            and not (producer in {"feasibility", "strategy", "alignment"} and path == selected["selection"]["spec_path"]
                                 + "/feasibility-structural-report.json"))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
-                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy"} or repair_unit is not None or post_review else ((), ())
+                        report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None or post_review else ((), ())
                     if occurrences:
                         operations += (PublicationOperation("issue_occurrences", f"{binding['operation_id']}-attempt-{number}-occurrences",
                             encode_request("issue_occurrences", occurrences)),)
@@ -511,7 +522,7 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                         source_citations = {path: f"source:{path}:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
                             for path, content in evidence.items()}
                         review_assignment = replace(author_assignment, dispatch_id=f"attempt-{number}-review", step="review", assigned_ids=labels,
-                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy"} else None)
+                            routing=tuple(authored["routing"].items()) if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} else None)
                         review = turn(review_assignment, {**common, "proposal": proposal, "reservations": reserved,
                             "candidate": [asdict(item) for item in artifacts], "citations": citations,
                             "source_citations": source_citations,
@@ -529,12 +540,12 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                 verify()
                 candidate_inputs = dict(artifacts=authored["artifacts"], proposal=proposal, reservations=reserved,
                     operations=[asdict(item) for item in operations], history=None if preview is None or preview.history is None else asdict(preview.history))
-                if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy"}:
+                if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
                     candidate_inputs["routing"] = authored["routing"]
                 candidate_digest = _hash(candidate_inputs)
                 finished = dict(status="rejected" if findings else "accepted", candidate_sha256=candidate_digest,
                     findings_sha256=_hash(sorted(findings, key=lambda row: json.dumps(row, sort_keys=True))))
-                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy"} else None)
+                progress = _progress(authored["artifacts"], findings, routing=authored.get("routing") if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} else None)
                 if repair_unit is not None:
                     finished["progress_sha256"] = progress
                 saved = operation_from_state(state_store.load(), producer, repair_unit=repair_unit)["attempts"][number - 1]["result"]

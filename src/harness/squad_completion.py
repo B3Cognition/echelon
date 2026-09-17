@@ -632,6 +632,8 @@ def _validate_intent(
             _raise("intent_invalid")
         if binding.producer == "strategy" and route.get("to_phase") != "phase2-tracker-alignment":
             _raise("intent_invalid")
+        if binding.producer == "alignment" and route.get("to_phase") != "phase2-intent-alignment-structural":
+            _raise("intent_invalid")
         if binding.producer == "feasibility_gate":
             from harness.discovery_assessment_gate import feasibility_gate_route
             expected = feasibility_gate_route(binding.recovery["routing_state"], binding.recovery["result"]["state_updates"])

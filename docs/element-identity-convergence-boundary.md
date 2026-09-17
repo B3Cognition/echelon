@@ -1758,3 +1758,26 @@ KILL/DEFER and remaining timing parity, and whole-Phase-2 acceptance are still
 unfinished. Public and installed activation remain closed. This does not change
 Banzai's COMMANDER judgment owner or authorize installation, migration, a live
 provider run, push or merge.
+
+### Managed ordinary alignment continuation (2026-09-17)
+
+First-entry alignment now authenticates actual released strategy and feasibility
+ancestry, captures its inputs, and uses the existing protected rounds, neutral
+Prosaic author/reviewer turns and receipt-backed replay. The closed v36 ordinary
+result association publishes only the reviewed alignment report and graph, then
+hands off to native alignment structural-gate entry without executing the gate.
+ALIGNED/DRIFT are admitted; STOP_AND_ASK requires its separate native decision
+association and cannot be smuggled through this ordinary-result route.
+
+Retained scripted Codex ALIGNED and Claude DRIFT continuations passed exact
+publication, refusal and interrupted-recovery checks with unchanged IDs/history,
+preserved feasibility budgets, one completion charge and zero repeated provider
+calls. The [verification record](superpowers/plans/2026-09-17-managed-phase2.md)
+distinguishes these retained continuations from new full-prefix and live runs.
+
+Alignment structural evaluation/publication, repair/retry/exhaustion and native
+clarification/COMMANDER routes remain within Task 4. KILL/DEFER, remaining timing
+parity and whole-Phase-2 acceptance are also unfinished. Public and installed
+activation remain closed; COMMANDER ownership, provider abstraction and legacy
+build flow are unchanged. No installation, migration, live call, merge or push
+was performed.

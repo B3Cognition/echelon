@@ -216,7 +216,7 @@ def run_discovery_step(project_root, state_store, executor, assignment, context,
                     "discovery-turns.json", "discovery-turns.lock", "discovery-reservations.json", "discovery-reservations.lock",
                     *(("synthesizer-turns.json", "synthesizer-turns.lock", "synthesizer-reservations.json", "synthesizer-reservations.lock")
                         if producer == "synthesizer" else ())))
-            if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy"} or repair_unit is not None:
+            if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None:
                 denied += (state_store.squad_dir,)
             binding = dict(contract="discovery-inspection-v1", bootstrap=selected, authority=observed,
                 roles={name: asdict(role) for name, role in roles.items()},
