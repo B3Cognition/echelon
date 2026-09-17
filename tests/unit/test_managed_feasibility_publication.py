@@ -158,9 +158,11 @@ def assert_feasibility_handoff(case, package, provider):
                         prepared_publication=package.publication)
     assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == spec_bytes
+    interruptions = []
     def after_one_promotion(*args, **kwargs):
         def interrupt(position):
             if position == 1:
+                interruptions.append(position)
                 raise Interrupted()
         return promote(*args, **{**kwargs, "fault_hook": interrupt})
     with pytest.MonkeyPatch.context() as patch:
@@ -169,8 +171,9 @@ def assert_feasibility_handoff(case, package, provider):
             drain(controller(case, executor))
     assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
     writes = package.sources.publication.operations
-    promoted = sum((root / op.target).is_file() and (root / op.target).read_bytes() == op.postimage_bytes for op in writes)
-    assert 0 < promoted < len(writes)
+    # Repair publications can preserve most documents byte-for-byte. The
+    # publisher's actual operation hook proves the partial promotion boundary.
+    assert interruptions == [1] and len(writes) > 1
     apply = IdentityStore.apply_identity_publication
     def after_identity_apply(*args, **kwargs):
         apply(*args, **kwargs)

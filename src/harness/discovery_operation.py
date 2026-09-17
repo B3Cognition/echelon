@@ -117,9 +117,13 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         state = state_store.load()
         if producer == "feasibility":
             from harness.discovery_assessment import require_feasibility_parent
+            from harness.discovery_producer import SOURCE_FIELDS
             from harness.discovery_spec import clarification_source
             try:
-                parent = clarification_source(state.get("last_human_input_completion"))
+                dispatch = state.get("last_dispatch") or {}
+                parent = ({key: dispatch[key] for key in SOURCE_FIELDS}
+                    if dispatch.get("phase_id") == "phase2-feasibility-structural"
+                    else clarification_source(state.get("last_human_input_completion")))
                 require_feasibility_parent(root, state_store.squad_dir, state, parent)
                 if source_completion is not None and source_completion != parent:
                     raise ValueError("feasibility source changed")
@@ -227,7 +231,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         files = {}
         for item in spec.files:
             logical = item.path[len(spec_path) + 1:]
-            if producer in {"lexicon", "feasibility"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}:
+            if (producer in {"lexicon", "feasibility"} and logical in {"spec-lexicon-report.json", "quality-debt.json"}
+                    or producer == "feasibility" and logical == "feasibility-structural-report.json"):
                 # Controller-authenticated diagnostics are exact model evidence,
                 # never identity definitions or provider-owned output.
                 documents[item.path] = item.content.decode("utf-8")
@@ -469,7 +474,9 @@ def run_discovery_operation(project_root, state_store, executor, *, input_tree, 
                             if ((producer == "discovery" and repair_unit is None) or not path.startswith(derived_context))
                             and not (producer in {"lexicon", "feasibility"} and path in {
                                 selected["selection"]["spec_path"] + "/spec-lexicon-report.json",
-                                selected["selection"]["spec_path"] + "/quality-debt.json"}))), key=lambda item: item.path))
+                                selected["selection"]["spec_path"] + "/quality-debt.json"})
+                            and not (producer == "feasibility" and path == selected["selection"]["spec_path"]
+                                + "/feasibility-structural-report.json"))), key=lambda item: item.path))
                     operations = (PublicationOperation("lifecycle", f"{binding['operation_id']}-attempt-{number}-lifecycle", encode_request("lifecycle", changes)),) if changes else ()
                     reports, occurrences = issue_report_changes(artifacts, changes, retained_history,
                         report_id=f"{binding['operation_id']}-attempt-{number}-issues") if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility"} or repair_unit is not None or post_review else ((), ())

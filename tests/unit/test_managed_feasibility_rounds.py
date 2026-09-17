@@ -133,6 +133,18 @@ def test_structural_retry_preserves_accepted_predecessor_and_separate_receipts(a
         store.prepare_spec_round("feasibility", source("a"), expected_state=saved)
 
 
+def test_inactive_approval_is_refused_before_identity_lookup(approved, monkeypatch):
+    from harness.element_identity_store import IdentityStore
+    from tests.unit.test_managed_feasibility import assert_approval_cannot_authorize_structural_retry
+    _, store, _, _ = approved
+    select(store)
+    store.advance_discovery_operation(binding(), "prepare", producer="feasibility")
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("An inactive round must be refused before reading identity authority")
+    monkeypatch.setattr(IdentityStore, "open", unexpected_lookup)
+    assert_approval_cannot_authorize_structural_retry(approved)
+
+
 @pytest.mark.parametrize("operation", [None, "feasibility-../outside", "lexicon-" + "a" * 32, "feasibility-" + "a" * 31])
 def test_receipts_require_exact_feasibility_round(approved, operation):
     with pytest.raises(ValueError):

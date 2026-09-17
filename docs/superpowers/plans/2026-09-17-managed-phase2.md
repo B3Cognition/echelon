@@ -115,6 +115,11 @@ still open:
   resolved configuration, exact report bytes and native route. This is a
   report/handoff increment only: it does not authorize retry authoring or open
   public Phase 2 admission.
+- [x] Authenticate retry selection/execution from the actual released v32 repair
+  gate and its accepted author predecessor, retaining the native counters and
+  exact failed report. Publish the reviewed repair with a distinct closed v33
+  association through the existing completion owner, returning to structural
+  gate entry. Re-evaluation of that retry remains a separate next increment.
 
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
@@ -531,3 +536,107 @@ Phase 2 acceptance is claimed by creating this plan.
   remaining policy-branch managed handoff coverage, and public Phase 2 admission
   only after the complete approved corridor is ready. Strategy/alignment,
   terminal/defer paths and activation tasks remain open. Task 3 is not complete.
+
+### Task 3 released repair authority and reviewed retry publication
+
+- The existing feasibility parent check now distinguishes initial approval from
+  an actual released v32 structural repair. Repair admission verifies the exact
+  gate receipt, accepted predecessor, current identity source head, quality/debt
+  authority, resolved configuration, complete native result and strict integer
+  iteration/attempt/cap values. An old checkpoint approval cannot restart a
+  repair or reset its budget. Protected round selection remains the same owner.
+- Capture supplies the exact failed structural report as read-only model
+  evidence, alongside the existing document/template/runtime inputs. The report
+  is neither an identity-definition source nor a provider-writable output.
+  Reviewed repairs retain empty identity operations and unchanged history.
+- A distinct v33 association retains the gate source and accepted predecessor;
+  v31 initial approval and v32 first-gate contracts remain unchanged. Existing
+  ancestry validation walks through the actual repair gate and prior author.
+  Native completion returns only to `phase2-feasibility-structural`, preserves
+  cumulative attempts/iteration and authenticates their exact values on recovery.
+- Red checks first refused the released repair as a non-checkpoint source, then
+  refused its captured structural report, and finally refused publication under
+  the original first-entry decoder. A separate red completion check accepted an
+  altered iteration; the new v33 live authentication rejects changed values and
+  boolean/float/string counter substitutions through canonical JSON comparison.
+- The shared publication fault helper now records the actual per-operation
+  promotion hook. Counting unequal bytes is not a valid interruption assertion
+  when a repair legitimately preserves most published documents byte-for-byte.
+- Implementation stays inline. Read-only review of the bounded increment and
+  final counter/fault-test delta found no critical or important findings. No
+  provider prose, Banzai decision route, allocator, policy owner, installation,
+  migration, public admission, live calls, merge or push changed in this increment.
+- Retained real Codex repair (`pytest-337/test_reviewed_feasibility_gate0`) and
+  Claude/Banzai/Lexicon repair (`pytest-331/test_real_review_seals_only_fe0`) both
+  passed exact parent/negative checks, three scripted repair turns, no-call
+  reviewed replay, closed v33 publication, native handoff and interrupted
+  recovery. Both now retain released completion `dddddddddddddddddddddddddddddddd`
+  at structural-gate entry, attempts=1 and iteration=1. No state/history reset
+  or live provider call was used. The Codex completion additionally supplied
+  the red/green live-counter test; both pass all final typed-counter negatives.
+- Retained user rejection (`pytest-268/test_managed_checkpoint_uses_n1`) and
+  COMMANDER rejection (`pytest-234/test_managed_gate_pass_reaches0`) remain
+  inadmissible. The passing v32 gate at
+  `pytest-339/test_valid_claude_banzai_feasi0` cannot authorize a repair even with
+  a forged `phase2-decide` label. Those checks left all three fixtures unchanged.
+- Focused regression command, repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_inputs.py`, `test_discovery_operation.py`,
+  `test_discovery_turns.py`, `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_prosaic_prompt_loader.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py`,
+  `test_managed_assessment_contract.py`, `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`:
+  **767 passed in 93.11s**. This process preceded the final live v33 counter guard;
+  the final completion group and actual retained corridors verify that guard.
+  Native `tests/integration/test_squad_controller.py -k 'structural or feasibility
+  or alignment'`: **16 passed, 501 deselected in 5.65s**.
+- Shared completion/publication/restoration group after the live counter guard,
+  before the subsequent active-source guard: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 373.05s**. The last file overlaps the 767-test group; these
+  counts must not be added as unique tests. Same interpreter/options as above.
+- The first fresh retry test failed after **504.72s** at the existing detached
+  retry negative, before publication. Looking up a round by the supplied source
+  could retrieve the now-inactive initial approval; when the identity head was
+  still checkpoint, the source-head guard alone did not refuse it. The exact
+  failure reproduced on `pytest-349/test_released_structural_gate_0`. Requiring
+  an existing source round to be active before either admission branch fixes
+  it; the same negative passes and the genuinely active approval still works.
+  No fixture state was rewritten. Added a fast round regression that verifies
+  refusal before identity lookup, and obtained follow-up read-only review of
+  that fix. The failed fresh run is not counted as a passing corridor.
+- After the active-source fix and added fast regression, feasibility rounds,
+  assessment contracts and structural associations passed **154 tests in 4.02s**.
+  Same interpreter/options as above; this overlaps the earlier 767-test group.
+- The complete shared completion/publication/restoration group was rerun after
+  that fix: **352 passed in 371.51s**. Same selection/options; this replaces,
+  rather than adds to, the earlier 352-test result.
+- The complete final helpers also passed against the unused retained Codex
+  repair at `pytest-330/test_real_review_seals_only_fe0`: real authority,
+  reviewed repair, exact failed-report feedback, zero-call replay, changed
+  spec/report/context refusal without state changes, v33 publication, native
+  handoff, all interruption boundaries and strict live budgets. This fixture
+  now has released v33 completion `dddddddddddddddddddddddddddddddd`, at
+  structural-gate entry with attempts=1 and iteration=1.
+- Read-only captured evaluation of the repaired documents in retained
+  `pytest-337` and `pytest-331` reports PASS under their existing configuration,
+  using previous_attempts=1. This preview did not publish a second report or
+  perform a structural transition, and is not claimed as managed second-gate
+  acceptance.
+- Corrected fresh Codex/guided, Lexicon-disabled full prefix and repair:
+  `tests/unit/test_managed_feasibility_retry.py -k codex -q --tb=short` with the
+  repository virtualenv and global retention flags: **1 passed, 1 deselected
+  in 1005.65s**. Fixture `pytest-352/test_released_structural_gate_0` includes
+  real approved Phase 1 ancestry, first reviewed author and failed structural
+  gate, exact retry authorization, reviewed repair, changed-input refusal,
+  both publication generations, interruption/recovery, no-call replay and
+  altered-counter refusal. It ends with released v33 completion
+  `dddddddddddddddddddddddddddddddd`, two outer feasibility dispatches,
+  attempts=1 and iteration=1, without executing the next gate or Phase 3.
+  No fresh Claude prefix or full repository suite was rerun for this increment;
+  the retained Claude continuation is reported separately above. Final diff
+  checks passed. No live acceptance or public activation is claimed.
+- Remaining Task 3: evaluate/publish the next structural gate from the released
+  v33 author while retaining the prior budget, plus remaining managed bypass and
+  exhaustion policy branches. Strategy/alignment, terminal/defer routes and
+  activation remain open; this is not completion of Task 3 or Phase 2.
