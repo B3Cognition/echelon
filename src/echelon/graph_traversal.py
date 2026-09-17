@@ -55,12 +55,26 @@ NODE_TYPE_ALIASES: Mapping[str, str] = MappingProxyType(
         "amendments": "Amendment",
         "artifact": "Artifact",
         "artifacts": "Artifact",
+        "assumption": "Assumption",
+        "assumptions": "Assumption",
         "deferral": "Deferral",
         "deferrals": "Deferral",
         "drawer": "MemPalaceDrawer",
         "drawers": "MemPalaceDrawer",
+        "identityreport": "IdentityReport",
+        "identityreports": "IdentityReport",
+        "identitysource": "IdentitySource",
+        "identitysources": "IdentitySource",
+        "issue": "Issue",
+        "issueoccurrence": "IssueOccurrence",
+        "issueoccurrences": "IssueOccurrence",
+        "issues": "Issue",
+        "referenceclaim": "ReferenceClaim",
+        "referenceclaims": "ReferenceClaim",
         "requirement": "Requirement",
         "requirements": "Requirement",
+        "revision": "ElementRevision",
+        "revisions": "ElementRevision",
         "source": "SourceRoot",
         "sources": "SourceRoot",
         "spec": "Spec",
@@ -69,6 +83,8 @@ NODE_TYPE_ALIASES: Mapping[str, str] = MappingProxyType(
         "specs": "Spec",
         "task": "Task",
         "tasks": "Task",
+        "unknown": "Unknown",
+        "unknowns": "Unknown",
         "workspace": "Workspace",
         "workspaces": "Workspace",
     }
@@ -81,13 +97,38 @@ IMPACT_RELATIONS: Mapping[
         ("Artifact", "DERIVED_FROM"): frozenset({("in", "Requirement")}),
         ("Artifact", "STORED_AS"): frozenset({("out", "MemPalaceDrawer")}),
         ("Requirement", "IMPLEMENTS"): frozenset({("in", "Task")}),
+        ("Requirement", "HAS_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Requirement", "CURRENT_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Requirement", "REFERENCES_IDENTITY"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
         ("Requirement", "VERIFIED_BY"): frozenset({("out", "Artifact")}),
         ("Requirement", "DEFERRED_BY"): frozenset({("out", "Deferral")}),
         ("Requirement", "STORED_AS"): frozenset(
             {("out", "MemPalaceDrawer")}
         ),
         ("Task", "DEFERRED_BY"): frozenset({("out", "Deferral")}),
+        ("Task", "HAS_REVISION"): frozenset({("out", "ElementRevision")}),
+        ("Task", "CURRENT_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Task", "REFERENCES_IDENTITY"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
         ("Spec", "HAS_REQUIREMENT"): frozenset({("out", "Requirement")}),
+        ("Spec", "HAS_IDENTITY"): frozenset(
+            {
+                ("out", "Requirement"),
+                ("out", "Task"),
+                ("out", "Unknown"),
+                ("out", "Assumption"),
+                ("out", "Issue"),
+            }
+        ),
         ("Spec", "AMENDED_BY"): frozenset({("out", "Amendment")}),
         ("Spec", "TARGETS"): frozenset({("out", "SourceRoot")}),
         ("Spec", "USES_SOURCE"): frozenset({("out", "SourceRoot")}),
@@ -98,6 +139,93 @@ IMPACT_RELATIONS: Mapping[
             {("out", "Artifact")}
         ),
         ("Workspace", "CONTAINS_SPEC"): frozenset({("out", "Spec")}),
+        ("Unknown", "HAS_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Unknown", "CURRENT_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Unknown", "REFERENCES_IDENTITY"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
+        ("Assumption", "HAS_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Assumption", "CURRENT_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Assumption", "REFERENCES_IDENTITY"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
+        ("Issue", "HAS_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Issue", "CURRENT_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("Issue", "REFERENCES_IDENTITY"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
+        ("Issue", "OCCURRENCE_OF"): frozenset(
+            {("in", "IssueOccurrence")}
+        ),
+        ("ElementRevision", "HAS_REVISION"): frozenset(
+            {
+                ("in", "Requirement"),
+                ("in", "Task"),
+                ("in", "Unknown"),
+                ("in", "Assumption"),
+                ("in", "Issue"),
+            }
+        ),
+        ("ElementRevision", "CURRENT_REVISION"): frozenset(
+            {
+                ("in", "Requirement"),
+                ("in", "Task"),
+                ("in", "Unknown"),
+                ("in", "Assumption"),
+                ("in", "Issue"),
+            }
+        ),
+        ("ElementRevision", "SUCCESSOR_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("ElementRevision", "ASSESSES_REVISION"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
+        ("ElementRevision", "OBSERVES_REVISION"): frozenset(
+            {("in", "IssueOccurrence")}
+        ),
+        ("ReferenceClaim", "REFERENCES_IDENTITY"): frozenset(
+            {
+                ("out", "Requirement"),
+                ("out", "Task"),
+                ("out", "Unknown"),
+                ("out", "Assumption"),
+                ("out", "Issue"),
+            }
+        ),
+        ("ReferenceClaim", "ASSESSES_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("ReferenceClaim", "HAS_SOURCE"): frozenset(
+            {("out", "IdentitySource")}
+        ),
+        ("IdentitySource", "HAS_SOURCE"): frozenset(
+            {("in", "ReferenceClaim")}
+        ),
+        ("IssueOccurrence", "OCCURRENCE_OF"): frozenset(
+            {("out", "Issue")}
+        ),
+        ("IssueOccurrence", "OBSERVES_REVISION"): frozenset(
+            {("out", "ElementRevision")}
+        ),
+        ("IssueOccurrence", "HAS_REPORT"): frozenset(
+            {("out", "IdentityReport")}
+        ),
+        ("IdentityReport", "HAS_REPORT"): frozenset(
+            {("in", "IssueOccurrence")}
+        ),
     }
 )
 

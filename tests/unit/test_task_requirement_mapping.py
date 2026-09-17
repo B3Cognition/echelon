@@ -131,3 +131,48 @@ def test_skips_unknown_task_and_invalid_requirement(tmp_path: Path) -> None:
     )
     assert "unknown task id" in applied_md
     assert "invalid requirement id" in applied_md
+
+
+def test_apply_mapping_preserves_wide_task_requirement_and_dependency_ids(
+    tmp_path: Path,
+) -> None:
+    """A fixed-width row matcher must not prevent mapping a wide task ID."""
+    tasks_path = tmp_path / "tasks.md"
+    candidate_path = tmp_path / "candidates.json"
+    out_dir = tmp_path / "out"
+    tasks_path.write_text(
+        "- [ ] T-10000000 complexity=standard phase=engine "
+        "req=UNMAPPED depends=T-1000000\n",
+        encoding="utf-8",
+    )
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "task_requirement_mappings": [
+                    {
+                        "task_id": "T-10000000",
+                        "requirements": ["FR-1000000", "NFR-10000000"],
+                        "evidence": "tasks.md#T-10000000",
+                        "reason": "the task explicitly implements both requirements",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = apply_task_requirement_mapping(
+        tasks_path=tasks_path,
+        candidate_path=candidate_path,
+        out_plan_json=out_dir / "plan.json",
+        out_plan_md=out_dir / "plan.md",
+        out_applied_json=out_dir / "applied.json",
+        out_applied_md=out_dir / "applied.md",
+        dry_run=False,
+    )
+
+    assert result.applied_count == 1
+    assert tasks_path.read_text(encoding="utf-8") == (
+        "- [ ] T-10000000 complexity=standard phase=engine "
+        "req=FR-1000000,NFR-10000000 depends=T-1000000\n"
+    )

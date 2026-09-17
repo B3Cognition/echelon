@@ -8,12 +8,17 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from harness.controller_lock_order import controller_lock_order
+
+if TYPE_CHECKING:
+    from harness.squad_publication_snapshot import PublicationSnapshot
+    from harness.squad_source_snapshot import PublicationSourcesSnapshot
 
 try:
     import fcntl as _fcntl
@@ -28,6 +33,7 @@ _PUBLICATION_LOCK_NAME = "publication.lock"
 _PUBLICATION_LOCK_RELATIVE = (
     _PUBLICATION_CONTROL_DIRECTORY / _PUBLICATION_LOCK_NAME
 )
+PUBLICATION_DIRECTORY_MODE = 0o755
 _MANIFEST_NAME = "manifest.json"
 _TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -572,7 +578,17 @@ def _target_image(
     relative: Path,
     *,
     invalid_code: str,
+    project_fd: int | None = None,
 ) -> dict[str, object]:
+    if project_fd is not None:
+        with ExitStack() as resources:
+            paths = _InspectionPaths(resources)
+            pinned = paths.current(project_fd, relative)
+            paths.verify()
+            if pinned is None:
+                return {"kind": "missing"}
+            return {"kind": "file", "sha256": pinned.sha256,
+                    "mode": stat.S_IMODE(pinned.identity[2])}
     _validate_existing_ancestors(
         project_root,
         relative,
@@ -639,14 +655,20 @@ def _open_parent_directory(
     relative: Path,
     *,
     create: bool,
+    project_fd: int | None = None,
+    guard: Callable[[], None] | None = None,
+    paths: _InspectionPaths | None = None,
 ) -> int:
-    current_fd = _open_directory(
+    current_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="target_drift",
         invalid_code="target_drift",
     )
+    next_fd: int | None = None
     try:
         for part in relative.parts[:-1]:
+            if guard is not None:
+                guard()
             try:
                 next_fd = os.open(
                     part,
@@ -664,7 +686,7 @@ def _open_parent_directory(
                         _directory_open_flags(),
                         dir_fd=current_fd,
                     )
-                    os.fchmod(next_fd, 0o755)
+                    os.fchmod(next_fd, PUBLICATION_DIRECTORY_MODE)
                     os.fsync(next_fd)
                 except FileExistsError:
                     try:
@@ -679,10 +701,16 @@ def _open_parent_directory(
                     _raise("publish_io")
             except OSError:
                 _raise("target_drift")
+            if paths is not None:
+                paths.retain_directory(current_fd, part, next_fd, code="target_drift")
+                paths.verify()
             os.close(current_fd)
             current_fd = next_fd
+            next_fd = None
         return current_fd
     except BaseException:
+        if next_fd is not None:
+            os.close(next_fd)
         os.close(current_fd)
         raise
 
@@ -690,8 +718,9 @@ def _open_parent_directory(
 def _fsync_target_directory_chain(
     project_root: Path,
     relative: Path,
+    *, project_fd: int | None = None,
 ) -> None:
-    root_fd = _open_directory(
+    root_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="publish_io",
         invalid_code="publish_io",
@@ -709,8 +738,9 @@ def _fsync_target_directory_chain(
 def _fsync_existing_target_directory_chain(
     project_root: Path,
     relative: Path,
+    *, project_fd: int | None = None,
 ) -> None:
-    root_fd = _open_directory(
+    root_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="publish_io",
         invalid_code="publish_io",
@@ -945,32 +975,24 @@ def authenticate_publication_prefix(
     operations: object,
 ) -> int:
     """Require one global manifest-order post-prefix followed by preimages."""
+    from harness.squad_publication_snapshot import _authenticate_image_prefix
+
     if type(operations) is not list:
         _raise("manifest_invalid")
-    lower_boundary = 0
-    upper_boundary = len(operations)
-    for index, operation in enumerate(operations):
-        if type(operation) is not dict:
-            _raise("manifest_invalid")
-        target = _normalize_relative_path(operation.get("target"))
-        preimage = _validate_image(operation.get("preimage"))
-        postimage = _validate_image(operation.get("postimage"))
-        current = _target_image(
-            Path(project_root),
-            target,
-            invalid_code="target_drift",
-        )
-        if current != preimage and current != postimage:
-            _raise("target_drift")
-        if preimage == postimage:
-            continue
-        if current == postimage:
-            lower_boundary = max(lower_boundary, index + 1)
-        else:
-            upper_boundary = min(upper_boundary, index)
-        if lower_boundary > upper_boundary:
-            _raise("target_drift")
-    return lower_boundary
+
+    def images() -> Iterator[tuple[object, object, object]]:
+        for operation in operations:
+            if type(operation) is not dict:
+                _raise("manifest_invalid")
+            target = _normalize_relative_path(operation.get("target"))
+            preimage = _validate_image(operation.get("preimage"))
+            postimage = _validate_image(operation.get("postimage"))
+            current = _target_image(
+                Path(project_root), target, invalid_code="target_drift"
+            )
+            yield preimage, postimage, current
+
+    return _authenticate_image_prefix(images())
 
 
 def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int]:
@@ -1029,19 +1051,25 @@ def _open_or_create_control_directory(
 
 
 @contextmanager
-def _publication_exclusivity(project_root: Path) -> Iterator[None]:
+def _publication_exclusivity(
+    project_root: Path, *, expected_project_fd: int | None = None,
+) -> Iterator[None]:
     """Serialize project-wide Echelon target prechecks and mutations."""
 
     identity = str(
         (project_root / _PUBLICATION_LOCK_RELATIVE).absolute()
     )
     with controller_lock_order("publication", identity):
-        with _publication_exclusivity_ordered(project_root):
+        with _publication_exclusivity_ordered(
+            project_root, expected_project_fd=expected_project_fd
+        ):
             yield
 
 
 @contextmanager
-def _publication_exclusivity_ordered(project_root: Path) -> Iterator[None]:
+def _publication_exclusivity_ordered(
+    project_root: Path, *, expected_project_fd: int | None = None,
+) -> Iterator[None]:
     _require_secure_posix()
     project_fd = _open_directory(
         project_root,
@@ -1053,6 +1081,15 @@ def _publication_exclusivity_ordered(project_root: Path) -> Iterator[None]:
     lock_fd: int | None = None
     created = False
     try:
+        if expected_project_fd is not None:
+            # Borrow the inspector's retained root; only project_fd is ours to close.
+            try:
+                actual_identity = _directory_identity(os.fstat(project_fd))
+                expected_identity = _directory_identity(os.fstat(expected_project_fd))
+            except OSError:
+                _raise("publish_io")
+            if actual_identity != expected_identity:
+                _raise("target_drift")
         echelon_fd = _open_or_create_control_directory(
             project_fd,
             _PUBLICATION_CONTROL_DIRECTORY.parts[0],
@@ -1528,6 +1565,192 @@ def _remove_directory_contents(directory_fd: int) -> None:
         _raise("publish_io")
 
 
+class _InspectionPaths:
+    """Retain directory, absence and regular-file bindings for one inspection."""
+
+    def __init__(self, resources: ExitStack) -> None:
+        self.resources = resources
+        self.directories: list[tuple[int, str, int, str]] = []
+        self.retained_directories: dict[tuple[int, int, str], tuple[int, int]] = {}
+        self.missing: list[tuple[int, str, str]] = []
+        self.files: list[tuple[int, _PinnedRegular, str]] = []
+        self.memberships: list[
+            tuple[int, tuple[str, ...], tuple[int, int, int], str]
+        ] = []
+
+    def retain_directory(self, parent: int, name: str, child: int, *, code: str) -> int:
+        """Own one distinct borrowed association without adopting a substitute."""
+        try:
+            parent_stat = os.fstat(parent)
+            key = (parent_stat.st_dev, parent_stat.st_ino, name)
+            existing = self.retained_directories.get(key)
+            if existing is not None:
+                retained_parent, retained_child = existing
+                if _directory_identity(os.fstat(child)) != _directory_identity(os.fstat(retained_child)):
+                    _raise(code)
+                _verify_directory_entry(retained_parent, name, retained_child)
+                return retained_child
+            _verify_directory_entry(parent, name, child)
+            retained_parent = os.dup(parent)
+            self.resources.callback(os.close, retained_parent)
+            retained_child = os.dup(child)
+            self.resources.callback(os.close, retained_child)
+            self.directories.append((retained_parent, name, retained_child, code))
+            self.retained_directories[key] = (retained_parent, retained_child)
+            return retained_child
+        except (OSError, PublicationError):
+            _raise(code)
+
+    @staticmethod
+    def _entry_names(directory_fd: int, *, code: str) -> tuple[str, ...]:
+        try:
+            names = os.listdir(directory_fd)
+        except (OSError, TypeError, NotImplementedError):
+            _raise(code)
+        for name in names:
+            if type(name) is not str:
+                _raise("manifest_invalid")
+            try:
+                name.encode("utf-8")
+            except UnicodeError:
+                _raise("manifest_invalid")
+            relative = _normalize_relative_path(name)
+            if len(relative.parts) != 1:
+                _raise("manifest_invalid")
+        return tuple(sorted(names))
+
+    def membership(self, directory_fd: int, *, code: str) -> tuple[tuple[str, ...], int]:
+        """Retain the complete name set and original directory mode."""
+        try:
+            identity = _directory_identity(os.fstat(directory_fd))
+        except OSError:
+            _raise(code)
+        names = self._entry_names(directory_fd, code=code)
+        self.memberships.append((directory_fd, names, identity, code))
+        return names, stat.S_IMODE(identity[2])
+
+    def directory(
+        self, root_fd: int, parts: tuple[str, ...], *, code: str,
+        allow_missing: bool = False,
+    ) -> int | None:
+        current = root_fd
+        for name in parts:
+            try:
+                metadata = os.stat(name, dir_fd=current, follow_symlinks=False)
+            except FileNotFoundError:
+                if not allow_missing:
+                    _raise(code)
+                self.missing.append((current, name, code))
+                return None
+            except OSError:
+                _raise(code)
+            if not stat.S_ISDIR(metadata.st_mode):
+                _raise(code)
+            child = _open_directory(
+                name, dir_fd=current, missing_code=code, invalid_code=code
+            )
+            self.resources.callback(os.close, child)
+            try:
+                opened_identity = _directory_identity(os.fstat(child))
+            except OSError:
+                _raise(code)
+            if opened_identity != _directory_identity(metadata):
+                _raise(code)
+            self.directories.append((current, name, child, code))
+            current = child
+        return current
+
+    def current(self, root_fd: int, relative: Path) -> _PinnedRegular | None:
+        parent = self.directory(
+            root_fd, relative.parts[:-1], code="target_drift", allow_missing=True
+        )
+        if parent is None:
+            return None
+        try:
+            metadata = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            self.missing.append((parent, relative.name, "target_drift"))
+            return None
+        except OSError:
+            _raise("target_drift")
+        if not stat.S_ISREG(metadata.st_mode):
+            _raise("target_drift")
+        pinned = _pin_regular_at(
+            parent, Path(relative.name),
+            missing_code="target_drift", invalid_code="target_drift",
+        )
+        self.resources.callback(os.close, pinned.fd)
+        if _regular_identity(metadata) != pinned.identity:
+            _raise("target_drift")
+        self.files.append((parent, pinned, "target_drift"))
+        return pinned
+
+    def verify(self) -> None:
+        for parent, name, child, code in self.directories:
+            try:
+                _verify_directory_entry(parent, name, child)
+            except PublicationError:
+                _raise(code)
+        for parent, name, code in self.missing:
+            try:
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                _raise(code)
+            _raise(code)
+        for parent, pinned, code in self.files:
+            _verify_pinned_regular(
+                parent, pinned, missing_code=code, invalid_code=code
+            )
+        for directory_fd, names, identity, code in self.memberships:
+            try:
+                current = _directory_identity(os.fstat(directory_fd))
+            except OSError:
+                _raise(code)
+            if current != identity or self._entry_names(directory_fd, code=code) != names:
+                _raise(code)
+
+
+@contextmanager
+def _project_inspection_scope(
+    project_root: Path,
+) -> Iterator[tuple[_InspectionPaths, int, int]]:
+    """Own retained root bindings and the existing descriptor-associated lock."""
+    _require_secure_posix()
+    with ExitStack() as resources:
+        paths = _InspectionPaths(resources)
+        filesystem_fd = _open_directory(
+            Path("/"), missing_code="publish_io", invalid_code="publish_io"
+        )
+        resources.callback(os.close, filesystem_fd)
+        project = _require_real_directory(project_root, code="manifest_invalid")
+        project_fd = paths.directory(
+            filesystem_fd, project.parts[1:], code="target_drift"
+        )
+        assert project_fd is not None
+        with _publication_exclusivity(project_root, expected_project_fd=project_fd):
+            # Includes replacement while acquiring the descriptor-bound lock.
+            paths.verify()
+            yield paths, filesystem_fd, project_fd
+
+
+def _read_pinned_bytes(pinned: _PinnedRegular, *, code: str) -> bytes:
+    """Bind a detached read to the retained file identity and digest."""
+    try:
+        if _regular_identity(os.fstat(pinned.fd)) != pinned.identity:
+            _raise(code)
+        content = _read_fd_bytes(pinned.fd, code=code)
+        if (
+            hashlib.sha256(content).hexdigest() != pinned.sha256
+            or _regular_identity(os.fstat(pinned.fd)) != pinned.identity
+        ):
+            _raise(code)
+        return content
+    except OSError:
+        _raise(code)
+
+
 @dataclass(frozen=True)
 class PreparedSquadPublication:
     """A sealed and verified transaction that is safe to publish later."""
@@ -1538,11 +1761,155 @@ class PreparedSquadPublication:
     _manifest: dict[str, object]
     marker: PublicationMarker
 
+    def _inspection_marker(self) -> PublicationMarker:
+        _require_secure_posix()
+        marker = _marker_from(self.marker)
+        expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
+        if self._transaction_root != expected_root:
+            _raise("manifest_invalid")
+        return marker
+
+    def _capture_inspection(
+        self, paths: _InspectionPaths, filesystem_fd: int, project_fd: int,
+        marker: PublicationMarker,
+        retained: tuple[PreparedSquadPublication, _PinnedTransaction] | None = None,
+        *, target_paths: _InspectionPaths | None = None,
+    ) -> tuple[PublicationSnapshot, _PinnedTransaction]:
+        """Capture sealed images in a caller-owned scope without acquiring a lock."""
+        from harness.squad_publication_snapshot import (
+            PublicationImageDescriptor,
+            PublicationOperationSnapshot,
+            PublicationSnapshot,
+            _authenticate_image_prefix,
+            _image_descriptor,
+        )
+
+        if retained is None:
+            verified, pinned = _load_prepared_pinned(
+                self._project_root, self._squad_dir, marker
+            )
+            paths.resources.callback(pinned.close)
+        else:
+            verified, pinned = retained
+            pinned.verify()
+        paths.verify()
+        squad_fd = paths.directory(
+            filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
+        )
+        assert project_fd is not None and squad_fd is not None
+        try:
+            squad_identity = _directory_identity(os.fstat(squad_fd))
+            pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
+        except OSError:
+            _raise("stage_corrupt")
+        if squad_identity != pinned_squad_identity:
+            _raise("stage_corrupt")
+        stage_bytes: dict[str, bytes] = {}
+        for name, stage in pinned.stages.items():
+            paths.directory(
+                pinned.transaction_fd, Path(name).parts[:-1],
+                code="stage_corrupt",
+            )
+            stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
+        operations: list[PublicationOperationSnapshot] = []
+        for operation in verified._manifest["operations"]:
+            first_directory = len(paths.directories)
+            current = paths.current(project_fd, Path(operation["target"]))
+            if target_paths is not None:
+                # A checked capture may be the first traversal of a new parent.
+                # Preserve exactly its target ancestor bindings before the short
+                # capture closes; missing, file and membership pins stay local.
+                for parent, name, child, code in paths.directories[first_directory:]:
+                    target_paths.retain_directory(parent, name, child, code=code)
+            if current is None:
+                descriptor = PublicationImageDescriptor("missing", None, None)
+                content = None
+            else:
+                descriptor = PublicationImageDescriptor(
+                    "file", current.sha256, stat.S_IMODE(current.identity[2])
+                )
+                content = _read_pinned_bytes(current, code="target_drift")
+            postimage = _image_descriptor(operation["postimage"])
+            post_bytes = (
+                stage_bytes[operation["staged"]]
+                if operation["action"] == "write" else None
+            )
+            if post_bytes is not None and (
+                hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
+            ):
+                _raise("stage_corrupt")
+            operations.append(PublicationOperationSnapshot(
+                action=operation["action"], target=operation["target"],
+                preimage=_image_descriptor(operation["preimage"]),
+                postimage=postimage, current=descriptor,
+                current_bytes=content, postimage_bytes=post_bytes,
+            ))
+        snapshot = PublicationSnapshot(
+            marker=marker,
+            promoted_prefix=_authenticate_image_prefix(
+                (op.preimage, op.postimage, op.current) for op in operations
+            ),
+            operations=tuple(operations),
+        )
+        return snapshot, pinned
+
+    @contextmanager
+    def inspect(self) -> Iterator[PublicationSnapshot]:
+        """Inspect exact sealed/current images under the existing publication lock.
+
+        Success includes exit validation. Keep bodies short and controller-owned;
+        never recursively publish, discard or inspect under this non-reentrant lock.
+        """
+        marker = self._inspection_marker()
+        with _project_inspection_scope(self._project_root) as scope:
+            paths, _, _ = scope
+            snapshot, pinned = self._capture_inspection(*scope, marker)
+            paths.verify()
+            pinned.verify()
+            yield snapshot
+            paths.verify()
+            pinned.verify()
+
+    @contextmanager
+    def inspect_sources(
+        self, *, tree_paths: Sequence[str] = (), file_paths: Sequence[str] = (),
+    ) -> Iterator[PublicationSourcesSnapshot]:
+        """Inspect sealed images and selected sources under one short lock scope.
+
+        Success includes normal exit. Do not run providers or recursively inspect,
+        publish or discard here. These observations grant no post-exit freshness.
+        """
+        from harness.squad_source_snapshot import (
+            PublicationSourcesSnapshot,
+            _capture_project_path,
+            _capture_project_tree,
+            _source_selection,
+        )
+
+        tree_paths, file_paths = _source_selection(tree_paths, file_paths)
+        marker = self._inspection_marker()
+        with _project_inspection_scope(self._project_root) as scope:
+            paths, _, project_fd = scope
+            publication, pinned = self._capture_inspection(*scope, marker)
+            trees = tuple(_capture_project_tree(paths, project_fd, path) for path in tree_paths)
+            files = tuple(_capture_project_path(paths, project_fd, path) for path in file_paths)
+            snapshot = PublicationSourcesSnapshot(publication, trees, files)
+            # Earlier captures must still hold after every later read, including
+            # when the selected sources are empty and only the seal is retained.
+            paths.verify()
+            pinned.verify()
+            yield snapshot
+            paths.verify()
+            pinned.verify()
+
     def _publish_write(
         self,
         operation: dict[str, object],
         pinned: _PinnedRegular,
         transaction_fd: int,
+        *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
     ) -> None:
         relative = Path(str(operation["target"]))
         expected_preimage = dict(operation["preimage"])
@@ -1564,6 +1931,7 @@ class PreparedSquadPublication:
             self._project_root,
             relative,
             create=True,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         temporary_name: str | None = None
         try:
@@ -1573,6 +1941,8 @@ class PreparedSquadPublication:
                 expected_digest,
                 expected_mode,
             )
+            if guard is not None:
+                guard()
             if (
                 _target_image_at(parent_fd, relative.name)
                 != expected_preimage
@@ -1601,26 +1971,36 @@ class PreparedSquadPublication:
                 except OSError:
                     pass
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if (
             _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             != expected_postimage
         ):
             _raise("target_drift")
 
-    def _publish_delete(self, operation: dict[str, object]) -> None:
+    def _publish_delete(
+        self, operation: dict[str, object], *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
+    ) -> None:
         relative = Path(str(operation["target"]))
         expected_preimage = dict(operation["preimage"])
         parent_fd = _open_parent_directory(
             self._project_root,
             relative,
             create=False,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         try:
+            if guard is not None:
+                guard()
             if (
                 _target_image_at(parent_fd, relative.name)
                 != expected_preimage
@@ -1637,17 +2017,23 @@ class PreparedSquadPublication:
                 _raise("target_drift")
         finally:
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if _target_image(
             self._project_root,
             relative,
             invalid_code="target_drift",
+            **({} if project_fd is None else {"project_fd": project_fd}),
         ) != {"kind": "missing"}:
             _raise("target_drift")
 
     def _durably_accept_postimage(
         self,
         operation: dict[str, object],
+        *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
     ) -> None:
         relative = Path(str(operation["target"]))
         expected_postimage = dict(operation["postimage"])
@@ -1656,16 +2042,19 @@ class PreparedSquadPublication:
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             ) != expected_postimage:
                 _raise("target_drift")
             _fsync_existing_target_directory_chain(
                 self._project_root,
                 relative,
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             if _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             ) != expected_postimage:
                 _raise("target_drift")
             return
@@ -1673,6 +2062,7 @@ class PreparedSquadPublication:
             self._project_root,
             relative,
             create=False,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         try:
             if (
@@ -1721,12 +2111,15 @@ class PreparedSquadPublication:
                 _raise("target_drift")
         finally:
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if (
             _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             != expected_postimage
         ):
@@ -1766,48 +2159,164 @@ class PreparedSquadPublication:
                 marker,
             )
             try:
-                operations = list(verified._manifest["operations"])
                 pinned.verify()
                 authenticate_publication_prefix(
                     verified._project_root,
-                    operations,
+                    list(verified._manifest["operations"]),
                 )
-                for position, operation in enumerate(operations):
-                    self._run_fault_hook(fault_hook, position)
-                    pinned.verify()
-                    relative = Path(str(operation["target"]))
-                    current = _target_image(
-                        verified._project_root,
-                        relative,
-                        invalid_code="target_drift",
-                    )
-                    postimage = dict(operation["postimage"])
-                    if current == postimage:
-                        verified._durably_accept_postimage(operation)
-                        continue
-                    if current != dict(operation["preimage"]):
-                        _raise("target_drift")
-                    if operation["action"] == "write":
-                        staged_name = str(operation["staged"])
-                        verified._publish_write(
-                            operation,
-                            pinned.stages[staged_name],
-                            pinned.transaction_fd,
-                        )
-                    else:
-                        verified._publish_delete(operation)
-                self._run_fault_hook(fault_hook, len(operations))
-                pinned.verify()
-                for operation in operations:
-                    relative = Path(str(operation["target"]))
-                    if _target_image(
-                        verified._project_root,
-                        relative,
-                        invalid_code="target_drift",
-                    ) != dict(operation["postimage"]):
-                        _raise("target_drift")
+                verified._promote(pinned, fault_hook=fault_hook)
             finally:
                 pinned.close()
+
+    def _promote(
+        self, pinned: _PinnedTransaction, *,
+        fault_hook: Callable[[int], None] | None,
+        project_fd: int | None = None,
+        boundary: Callable[[], object] | None = None,
+        verify_owner: Callable[[], None] | None = None,
+        target_paths: _InspectionPaths | None = None,
+    ) -> None:
+        """The sole promotion loop; the caller owns the lock and sealed stages."""
+        operations = list(self._manifest["operations"])
+        kwargs = ({} if project_fd is None else {
+            "project_fd": project_fd, "guard": verify_owner, "paths": target_paths,
+        })
+        for position, operation in enumerate(operations):
+            self._run_fault_hook(fault_hook, position)
+            if boundary is not None:
+                boundary()
+            pinned.verify()
+            if verify_owner is not None:
+                verify_owner()
+            relative = Path(str(operation["target"]))
+            current = _target_image(
+                self._project_root, relative, invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
+            )
+            if current == dict(operation["postimage"]):
+                self._durably_accept_postimage(operation, **kwargs)
+            elif current != dict(operation["preimage"]):
+                _raise("target_drift")
+            elif operation["action"] == "write":
+                self._publish_write(
+                    operation, pinned.stages[str(operation["staged"])],
+                    pinned.transaction_fd, **kwargs,
+                )
+            else:
+                self._publish_delete(operation, **kwargs)
+            if verify_owner is not None:
+                verify_owner()
+            if boundary is not None:
+                boundary()
+        self._run_fault_hook(fault_hook, len(operations))
+        if boundary is not None:
+            boundary()
+        pinned.verify()
+        for operation in operations:
+            if _target_image(
+                self._project_root, Path(str(operation["target"])),
+                invalid_code="target_drift", **({} if project_fd is None else {"project_fd": project_fd}),
+            ) != dict(operation["postimage"]):
+                _raise("target_drift")
+
+    def publish_sources(
+        self, initial: PublicationSourcesSnapshot, *,
+        before_publish: Callable[[PublicationSourcesSnapshot], None] | None = None,
+        after_publish: Callable[[PublicationSourcesSnapshot], None] | None = None,
+        fault_hook: Callable[[int], None] | None = None,
+    ) -> PublicationSourcesSnapshot:
+        """Opt in to selected-source progress checks under the publisher lock.
+
+        The caller authenticates the original selection and owns any durable
+        intent. Hooks are trusted, short, non-recursive and independently
+        idempotent; their exceptions propagate without reporting success.
+        """
+        from harness.squad_source_guard import _validate_source_progress
+        from harness.squad_source_manifest import snapshot_source_manifest
+        from harness.squad_source_projection import project_publication_source_manifest
+        from harness.squad_source_snapshot import (
+            PublicationSourcesSnapshot, _capture_project_path, _capture_project_tree,
+        )
+
+        final_manifest = project_publication_source_manifest(initial)
+        if any(hook is not None and not callable(hook)
+               for hook in (before_publish, after_publish, fault_hook)):
+            _raise("manifest_invalid")
+        marker = self._inspection_marker()
+        with _project_inspection_scope(self._project_root) as scope:
+            owner_paths, filesystem_fd, project_fd = scope
+            verified, pinned = _load_prepared_pinned(self._project_root, self._squad_dir, marker)
+            owner_paths.resources.callback(pinned.close)
+            # Keep the squad and every stage ancestor bound for the entire call.
+            squad_fd = owner_paths.directory(
+                filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt",
+            )
+            if _directory_identity(os.fstat(squad_fd)) != _directory_identity(os.fstat(pinned.squad_fd)):
+                _raise("stage_corrupt")
+            for name in pinned.stages:
+                owner_paths.directory(pinned.transaction_fd, Path(name).parts[:-1], code="stage_corrupt")
+            # Invocation-local ancestor identity, without absence or membership
+            # pins that would reject authorized parent creation and replacement.
+            for operation in verified._manifest["operations"]:
+                with ExitStack() as resources:
+                    paths = _InspectionPaths(resources)
+                    current_fd = project_fd
+                    for name in Path(operation["target"]).parts[:-1]:
+                        try:
+                            os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                        except FileNotFoundError:
+                            break
+                        except OSError:
+                            _raise("target_drift")
+                        child = paths.directory(current_fd, (name,), code="target_drift")
+                        current_fd = owner_paths.retain_directory(
+                            current_fd, name, child, code="target_drift",
+                        )
+
+            def verify_owner() -> None:
+                owner_paths.verify()
+                pinned.verify()
+                for operation in verified._manifest["operations"]:
+                    if operation["action"] == "write" and stat.S_IMODE(
+                        pinned.stages[operation["staged"]].identity[2]
+                    ) != operation["postimage"]["mode"]:
+                        _raise("stage_corrupt")
+
+            def capture(
+                hook: Callable[[PublicationSourcesSnapshot], None] | None = None,
+                *, final: bool = False,
+            ) -> PublicationSourcesSnapshot:
+                verify_owner()
+                with ExitStack() as resources:
+                    paths = _InspectionPaths(resources)
+                    observed, _ = self._capture_inspection(
+                        paths, filesystem_fd, project_fd, marker, (verified, pinned),
+                        target_paths=owner_paths,
+                    )
+                    trees = tuple(_capture_project_tree(paths, project_fd, item.path) for item in initial.trees)
+                    files = tuple(_capture_project_path(paths, project_fd, item.path) for item in initial.files)
+                    snapshot = PublicationSourcesSnapshot(observed, trees, files)
+                    paths.verify()
+                    verify_owner()
+                    _validate_source_progress(initial, snapshot)
+                    if final and (snapshot_source_manifest(trees=trees, files=files) != final_manifest
+                                  or any(op.current != op.postimage for op in observed.operations)):
+                        _raise("target_drift")
+                    if hook is not None:
+                        hook(snapshot)
+                    # Callback observations retain all pins until successful exit.
+                    verify_owner()
+                    paths.verify()
+                    return snapshot
+
+            capture(before_publish)
+            verified._promote(
+                pinned, fault_hook=fault_hook, project_fd=project_fd,
+                boundary=capture, verify_owner=verify_owner, target_paths=owner_paths,
+            )
+            result = capture(after_publish, final=True)
+            verify_owner()
+            return result
 
     def discard(self) -> None:
         _require_secure_posix()

@@ -11,10 +11,12 @@ OUTPUT="$2"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/element-id-functions.sh"
 
 # Build scope keyword set: requirement IDs + dependency names + glossary terms
 {
-  grep -oE '(FR|NFR)-[0-9]{3}' "$SPEC" || true
+  extract_requirement_ids 'FR|NFR' < "$SPEC"
   grep -oE '^\| *([A-Za-z][A-Za-z0-9_ -]+[A-Za-z0-9]) *\|' "$SPEC" | sed 's/|//g' | sed 's/^ *//;s/ *$//' | \
     grep -v -iE '^dependency$|^role$|^constraint$|^term$|^definition$|^operator$|^value$'
 } | tr '[:upper:]' '[:lower:]' | sort -u > "$tmpdir/scope_keywords.txt" || true
@@ -35,7 +37,12 @@ while IFS= read -r line; do
   line_lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
   found=0
   while IFS= read -r kw; do
-    if echo "$line_lower" | grep -q "$kw"; then
+    if printf '%s\n' "$kw" | grep -Eq '^(fr|nfr)-[0-9]{3,}$'; then
+      if line_has_element_id "$line_lower" "$kw"; then
+        found=1
+        break
+      fi
+    elif printf '%s\n' "$line_lower" | grep -Fq -- "$kw"; then
       found=1
       break
     fi

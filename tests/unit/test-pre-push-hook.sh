@@ -5,6 +5,13 @@ set -uo pipefail
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$REPO_ROOT/.githooks/pre-push"
 
+# This script also runs directly, outside the hook's verification boundary.
+# Clear inherited repository selection before any sandbox Git command.
+git_environment="$(git rev-parse --local-env-vars)" || exit 1
+while IFS= read -r git_variable; do
+  unset "$git_variable" || exit 1
+done <<< "$git_environment"
+
 pass=0
 fail=0
 
@@ -194,7 +201,7 @@ if [[ -f "$HOOK" ]]; then
   tmp_venv="$(make_sandbox 7)"
   install_fake_venv_python "$tmp_venv"
   set +e
-  venv_output="$(RUN_EXIT=0 run_hook "$tmp_venv" origin "$(main_push_refs "$tmp_venv")" 2>&1)"
+  venv_output="$(PYTHON= RUN_EXIT=0 run_hook "$tmp_venv" origin "$(main_push_refs "$tmp_venv")" 2>&1)"
   venv_rc=$?
   set -e
   assert "selected verification uses the repository virtualenv" "$(

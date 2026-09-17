@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from harness.element_identity_state import MANAGED_IDENTITY_KEY
+
 
 PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
 PENDING_CONTROLLER_COMPLETION_KEY = "pending_controller_completion"
@@ -174,6 +176,8 @@ PHASE_A_IDENTITY_KEYS = frozenset(
     }
 )
 
+MANAGED_IDENTITY_KEYS = frozenset({MANAGED_IDENTITY_KEY})
+
 CONTROLLER_COMPLETION_RECEIPT_KEYS = frozenset(
     {
         "controller_completion_failure",
@@ -189,6 +193,7 @@ STORE_OWNED_TRANSACTION_KEYS = frozenset().union(
     LIFECYCLE_AND_DIAGNOSTIC_KEYS,
     ATOMIC_STORE_CONTROL_KEYS,
     PHASE_A_IDENTITY_KEYS,
+    MANAGED_IDENTITY_KEYS,
     CONTROLLER_COMPLETION_RECEIPT_KEYS,
 )
 

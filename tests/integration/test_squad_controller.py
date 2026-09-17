@@ -1061,6 +1061,91 @@ def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     assert observed["phase_completion_outcomes"] == []
 
 
+def _managed_identity_state_record():
+    return {
+        "version": "1", "workspace_uuid": "12345678-1234-1234-1234-123456789abc",
+        "epoch_uuid": "23456789-2345-2345-2345-23456789abcd",
+        "spec_id": "demo", "operation_id": "managed-registration", "run_id": "first",
+        "context_id": "source", "spec_path": "squad/run-test/specs/demo",
+        "source_registration_operation_id": "source-registration", "source_manifest_sha256": "a" * 64,
+    }
+
+
+@pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
+def test_managed_identity_prepared_initialization_cannot_enter_legacy_fresh_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     autonomy_mode=mode, managed_identity=metadata)
+    preparing = store.load()
+    preparing.update(status="preparing", checkpoint_policy_version=2, phase_completion_outcomes=[])
+    store.save(preparing)
+    before = store.load()
+    result = ctrl.run("Build carefully", mode)
+
+    observed = SquadStateStore(store._squad_dir).load()
+    assert observed["managed_identity"] == metadata
+    assert observed["spec_id"] == "demo" and observed["run_id"] == "first"
+    assert result.status == "blocked"
+    assert observed == before
+    assert observed["phase"] == "phase1-tracker" and observed["status"] == "preparing"
+    assert provider.exec_agent.call_count == 0
+    assert observed["autonomy_mode"] == mode
+    assert observed["checkpoint_policy_version"] == 2
+    assert observed["phase_completion_outcomes"] == []
+
+
+def test_managed_identity_manual_replay_blocks_before_updates_or_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     managed_identity=metadata)
+    before = store.load()
+
+    result = ctrl.run_single_phase("phase1-tracker", "Build carefully", "semi",
+                                  initial_state_updates={"replay_note": "retained"})
+
+    assert provider.exec_agent.call_count == 0
+    assert result.status == "blocked"
+    assert store.load()["managed_identity"] == metadata
+    assert store.load() == before
+
+
+@pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
+@pytest.mark.parametrize("managed", [False, True])
+def test_managed_identity_manual_updates_reject_injection_before_provider_dispatch(
+    tmp_path: Path, mode: str, managed: bool,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     autonomy_mode=mode, managed_identity=metadata if managed else None)
+    before = store._path.read_bytes()
+    backup = store._path.with_suffix(".json.bak")
+    original_backup = backup.read_bytes() if backup.exists() else None
+    replacement = {**metadata, "operation_id": "replacement"}
+
+    if managed:
+        result = ctrl.run_single_phase("phase1-tracker", "Build carefully", mode,
+            initial_state_updates={"managed_identity": replacement, "spec_id": "demo"})
+        assert result.status == "blocked"
+    else:
+        with pytest.raises(StateAdvanceError) as caught:
+            ctrl.run_single_phase("phase1-tracker", "Build carefully", mode,
+                initial_state_updates={"managed_identity": replacement, "spec_id": "demo"})
+        assert caught.value.json_path == "$.managed_identity"
+    assert provider.exec_agent.call_count == 0
+    assert store._path.read_bytes() == before
+    assert (backup.read_bytes() if backup.exists() else None) == original_backup
+
+
 def _install_test_clarification_policy(
     ctrl: SquadController,
     *,
@@ -11040,10 +11125,47 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert "spec_quality_debt_authorization" not in blocked
         assert not (spec_dir / "quality-debt.json").exists()
 
+    @pytest.mark.parametrize("restoration_hooks", [False, True, "before-crash", "after-crash"])
     def test_initial_assessment_and_three_changed_repairs_restore_best_candidate(
         self,
         tmp_path: Path,
+        monkeypatch,
+        restoration_hooks,
     ) -> None:
+        observed = []
+        interrupted = False
+        if restoration_hooks:
+            import harness.squad as squad_module
+            native_effect = squad_module.apply_or_verify_proportional_quality_effect
+            def coordinated_effect(effect, **kwargs):
+                if effect.get("restore_candidate_id") is not None:
+                    root = kwargs["project_root"]
+                    def before_restore(plan, selected):
+                        nonlocal interrupted
+                        assert plan.selected_candidate_id == selected.snapshot.manifest.candidate_id
+                        assert all(hashlib.sha256((root / entry.path).read_bytes()).hexdigest() in {entry.base_sha256, entry.target_sha256}
+                            for entry in plan.entries)
+                        observed.append(("before", plan))
+                        if restoration_hooks == "before-crash" and not interrupted:
+                            interrupted = True
+                            raise KeyboardInterrupt("completion join interrupted")
+                    def after_restore(plan, selected, receipt):
+                        nonlocal interrupted
+                        assert observed[-1] == ("before", plan)
+                        assert receipt["target_commit"] == plan.target_commit
+                        assert all(hashlib.sha256((root / entry.path).read_bytes()).hexdigest() == entry.target_sha256
+                            for entry in plan.entries)
+                        observed.append(("after", plan))
+                        if restoration_hooks == "after-crash" and not interrupted:
+                            interrupted = True
+                            raise KeyboardInterrupt("completion join interrupted")
+                    kwargs.update(before_restore=before_restore, after_restore=after_restore)
+                try:
+                    return native_effect(effect, **kwargs)
+                except KeyboardInterrupt:
+                    assert interrupted
+                    return native_effect(effect, **kwargs)
+            monkeypatch.setattr(squad_module, "apply_or_verify_proportional_quality_effect", coordinated_effect)
         ctrl, store = _start_proportional_quality_loop(tmp_path)
         retained_candidate = PROPORTIONAL_HELLO_WORLD_FIXTURE.read_text(
             encoding="utf-8"
@@ -11190,6 +11312,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert (tmp_path / "runs/run-test/specs/001-demo/spec.md").read_text(
             encoding="utf-8"
         ) == retained_candidate
+        expected_hooks = [] if not restoration_hooks else ["before", "after"]
+        if restoration_hooks == "before-crash": expected_hooks = ["before", *expected_hooks]
+        if restoration_hooks == "after-crash": expected_hooks *= 2
+        assert [stage for stage, _ in observed] == expected_hooks
+        assert len({plan.target_commit for _, plan in observed}) == (1 if restoration_hooks else 0)
 
     def test_valid_unchanged_automatic_what_opens_no_progress_decision(
         self,

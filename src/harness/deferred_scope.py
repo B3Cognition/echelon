@@ -95,8 +95,19 @@ def read_ledger(spec_dir: Path) -> DeferredScopeLedger:
     if not path.exists():
         return DeferredScopeLedger(entries=())
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise DeferredScopeError(f"invalid deferred-scope ledger: {exc}") from exc
+    return parse_deferred_scope_ledger(text)
+
+
+def parse_deferred_scope_ledger(text: str) -> DeferredScopeLedger:
+    """Parse a detached compatibility observation of deferred-scope JSON."""
+    if type(text) is not str:
+        raise TypeError("text must be str")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
         raise DeferredScopeError(f"invalid deferred-scope ledger: {exc}") from exc
     if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
         raise DeferredScopeError("unsupported deferred-scope ledger schema")

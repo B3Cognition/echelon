@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -169,6 +170,110 @@ def test_echelon_bold_requirement_ids_are_structured_by_room() -> None:
         ("AC-001", "acceptance-criteria"),
         ("NFR-001", "non-functional-requirements"),
     ]
+
+
+def test_canonical_memory_plan_retains_wide_numeric_requirement_ids() -> None:
+    """Memory extraction must not truncate wide IDs to a numeric prefix."""
+    content = (
+        b"- **FR-001**: Legacy behavior remains.\n"
+        b"- **AC-000001**: Six-digit acceptance.\n"
+        b"- **FR-1000000**: Seven-digit behavior.\n"
+        b"- **NFR-10000000**: Eight-digit constraint.\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source="specs/001-demo/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [row.requirement_id for row in rows] == [
+        "FR-001",
+        "AC-000001",
+        "FR-1000000",
+        "NFR-10000000",
+    ]
+
+
+def test_canonical_memory_plan_preserves_complete_wide_fr_nfr_ac_labels() -> None:
+    suffix = "9" * 5000
+    source = "specs/001-demo/spec.md"
+    fixtures = (
+        (
+            f"FR-{suffix}",
+            "functional-requirements",
+            "Café upload works.",
+            "FR-[REDACTED]: Café upload works.",
+        ),
+        (
+            f"NFR-{suffix}",
+            "non-functional-requirements",
+            "Résumé stays intact.",
+            "NFR-[REDACTED]: Résumé stays intact.",
+        ),
+        (
+            f"AC-{suffix}",
+            "acceptance-criteria",
+            "Crème brûlée is accepted.",
+            "AC-[REDACTED]: Crème brûlée is accepted.",
+        ),
+    )
+    content = "".join(
+        f"- **{label}**: {description}\n"
+        for label, _, description, _ in fixtures
+    ).encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source=source,
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [(row.requirement_id, row.room) for row in rows] == [
+        (label, room) for label, room, _, _ in fixtures
+    ]
+    for row, (label, room, _, requirement_content) in zip(
+        rows,
+        fixtures,
+        strict=True,
+    ):
+        content_digest = hashlib.sha256(
+            requirement_content.encode("utf-8")
+        ).hexdigest()
+        identity = {
+            "schema_version": 1,
+            "wing": "demo",
+            "room": room,
+            "canonical_spec_sha256": digest,
+            "requirement_id": label,
+            "requirement_content_sha256": content_digest,
+        }
+        expected_drawer_id = f"drawer_demo_{room}_" + hashlib.sha256(
+            json.dumps(
+                identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
+        assert row.requirement_id == label
+        assert row.room == room
+        assert row.source == source
+        assert row.artifact_hash == f"sha256:{digest}"
+        assert row.canonical_spec_sha256 == digest
+        assert row.requirement_content_sha256 == content_digest
+        assert row.drawer_id == expected_drawer_id
 
 
 def test_id_header_tables_are_parsed_without_dependency_table_duplicates() -> None:

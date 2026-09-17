@@ -210,6 +210,58 @@ def _assert_target_state(repo: RestoreRepo, plan: GitFirstRestorePlan) -> None:
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry.target_sha256
 
 
+@pytest.mark.parametrize("point", [None, "after_journal", "after_first_exchange", "after_all_exchanges",
+                                  "after_ref_update", "after_index_update", "before_receipt", "complete"])
+def test_read_only_restore_worktree_inspection_covers_native_crash_boundaries(repo, monkeypatch, point):
+    plan = _restore_plan(repo)
+    if point == "complete":
+        _apply(repo, plan)
+    elif point is not None:
+        def crash(actual):
+            if actual == point:
+                raise KeyboardInterrupt(point)
+        with monkeypatch.context() as patch:
+            patch.setattr(git_first_restore_module, "_restore_fault", crash)
+            with pytest.raises(KeyboardInterrupt):
+                _apply(repo, plan)
+    def files():
+        return {str(path): (stat.S_IMODE(path.stat().st_mode), path.read_bytes())
+            for base in (repo.root, repo.run_root) for path in base.rglob("*") if path.is_file()}
+    before = files()
+    observed = git_first_restore_module.inspect_git_first_restore_worktree(
+        project_root=repo.root, spec_dir=repo.root / "specs/001-example", journal_root=repo.run_root, plan=plan)
+    assert set(observed) == {entry.path for entry in plan.entries}
+    for entry in plan.entries:
+        assert observed[entry.path] in {(int(entry.base_mode[-3:], 8), entry.base_sha256),
+                                       (int(entry.target_mode[-3:], 8), entry.target_sha256)}
+    assert files() == before
+
+
+@pytest.mark.parametrize("damage", ["journal", "file", "residue", "symlink"])
+def test_read_only_restore_worktree_inspection_rejects_unexplained_partial_state(repo, monkeypatch, damage):
+    plan = _restore_plan(repo)
+    def crash(point):
+        if point == "after_first_exchange":
+            raise KeyboardInterrupt(point)
+    with monkeypatch.context() as patch:
+        patch.setattr(git_first_restore_module, "_restore_fault", crash)
+        with pytest.raises(KeyboardInterrupt):
+            _apply(repo, plan)
+    if damage == "journal":
+        (repo.run_root / "git-first-restores" / (plan.completion_id + ".json")).unlink()
+    if damage == "file":
+        (repo.root / plan.entries[0].path).write_bytes(b"unexplained replacement")
+    if damage == "residue":
+        (repo.run_root / "git-first-restores" / ".git-first-restore-foreign").write_bytes(b"foreign")
+    if damage == "symlink":
+        target = repo.root / plan.entries[0].path
+        target.unlink()
+        target.symlink_to(repo.root / "README.md")
+    with pytest.raises(GitFirstRestoreError):
+        git_first_restore_module.inspect_git_first_restore_worktree(
+            project_root=repo.root, spec_dir=repo.root / "specs/001-example", journal_root=repo.run_root, plan=plan)
+
+
 def _owned_worktree_state(
     repo: RestoreRepo,
     plan: GitFirstRestorePlan,

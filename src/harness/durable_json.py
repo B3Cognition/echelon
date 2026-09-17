@@ -13,6 +13,9 @@ class DurableJsonError(OSError):
     """Raised when a durable JSON destination is unsafe or unavailable."""
 
 
+_UNCONDITIONAL = object()
+
+
 def write_json_atomic(
     path: Path,
     value: object,
@@ -20,10 +23,16 @@ def write_json_atomic(
     trusted_root: Path | None = None,
 ) -> None:
     """Replace JSON relative to a pinned parent directory descriptor."""
+    write_text_atomic(path, json.dumps(value, indent=2, sort_keys=True) + "\n", trusted_root=trusted_root)
+
+
+def write_text_atomic(path: Path, text: str, *, trusted_root: Path | None = None,
+                      expected_text: str | None | object = _UNCONDITIONAL) -> None:
+    """Durably replace UTF-8 text using the same descriptor-pinned boundary."""
     destination = Path(os.path.abspath(os.fspath(path)))
     if not destination.name:
         raise DurableJsonError("JSON destination has no filename")
-    content = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    content = text.encode("utf-8")
     parent_fd = _open_destination_parent(
         destination,
         trusted_root=trusted_root,
@@ -32,6 +41,7 @@ def write_json_atomic(
     temporary_fd: int | None = None
     try:
         _require_regular_destination(parent_fd, destination.name)
+        _require_expected_text(parent_fd, destination.name, expected_text)
         temporary_name, temporary_fd = _create_temporary(
             parent_fd,
             destination.name,
@@ -42,6 +52,7 @@ def write_json_atomic(
         temporary_fd = None
 
         _require_regular_destination(parent_fd, destination.name)
+        _require_expected_text(parent_fd, destination.name, expected_text)
         os.replace(
             temporary_name,
             destination.name,
@@ -66,6 +77,28 @@ def write_json_atomic(
             except OSError:
                 pass
         os.close(parent_fd)
+
+
+def _require_expected_text(parent_fd: int, name: str, expected: object) -> None:
+    """Compare the guarded before-image through the pinned directory descriptor."""
+    if expected is _UNCONDITIONAL:
+        return
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if expected is None:
+            return
+        raise DurableJsonError("documentation destination changed before publication")
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode) or expected is None:
+            raise DurableJsonError("documentation destination changed before publication")
+        wanted = expected.encode("utf-8")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            actual = stream.read(len(wanted) + 1)
+        if actual != wanted:
+            raise DurableJsonError("documentation destination changed before publication")
+    finally:
+        os.close(descriptor)
 
 
 def _open_destination_parent(

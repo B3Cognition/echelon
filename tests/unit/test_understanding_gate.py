@@ -279,6 +279,106 @@ def test_completed_gate_failure_is_not_an_operational_error(
     assert result.state_updates([])["quality_scores"][0]["pass"] is False
 
 
+@pytest.mark.parametrize("change", ["diagram_config", "spec_path"])
+def test_restart_requires_the_same_analysis_inputs(tmp_path, monkeypatch, change):
+    """A matching body hash alone cannot reuse another analysis request."""
+    from dataclasses import replace
+    project, squad_dir, spec_dir = _workspace(tmp_path)
+    def analyze(*args, **kwargs):
+        return replace(_bundle(), diagrams={"enabled": kwargs["diagrams_enabled"],
+                                           "status": "skipped", "outputs": []})
+    monkeypatch.setattr("harness.understanding_gate.analyze_spec_bundle", analyze)
+    options = dict(project_root=project, squad_dir=squad_dir, phase="phase1-why2",
+                   iteration=1, spec_dir=spec_dir, config={})
+    first = run_understanding_gate(**options)
+    if change == "diagram_config":
+        options["config"] = {"understanding": {"diagram": {"enabled": True}}}
+    else:
+        other = project / "specs/002-other"
+        other.mkdir()
+        (other / "spec.md").write_bytes((project / spec_dir / "spec.md").read_bytes())
+        options["spec_dir"] = "specs/002-other"
+    changed = run_understanding_gate(**options)
+    retried = run_understanding_gate(**options)
+    assert changed.completed
+    assert changed.report_path != first.report_path
+    assert changed.report["spec"]["path"] == options["spec_dir"] + "/spec.md"
+    assert changed.report["diagrams"]["enabled"] == (change == "diagram_config")
+    assert retried.report_path == changed.report_path
+    assert retried.report_digest == changed.report_digest
+
+
+def test_analysis_cannot_certify_a_spec_changed_during_execution(tmp_path, monkeypatch):
+    project, squad_dir, spec_dir = _workspace(tmp_path)
+    def analyze(path, **kwargs):
+        path.write_text("# Changed\n- FR-000001: A different requirement.\n")
+        return _bundle()
+    monkeypatch.setattr("harness.understanding_gate.analyze_spec_bundle", analyze)
+    result = run_understanding_gate(project_root=project, squad_dir=squad_dir,
+        phase="phase1-why2", iteration=1, spec_dir=spec_dir, config={})
+    assert not result.completed
+    assert result.operational_error
+    assert "quality_scores" not in result.state_updates([])
+    assert result.report["status"] == "error"
+
+
+def test_real_analysis_evidence_restarts_without_duplicate_scores(tmp_path):
+    """Use the actual local analyzer, report writer and current-evidence check."""
+    project, squad_dir, spec_dir = _workspace(tmp_path)
+    options = dict(project_root=project, squad_dir=squad_dir, phase="phase1-why2",
+                   iteration=1, spec_dir=spec_dir, config={})
+    first = run_understanding_gate(**options)
+    assert first.completed, first.operational_error
+    assert first.report["requirement_count"] == 1
+    updates = first.state_updates([])
+    second = run_understanding_gate(**options)
+    assert second.report_digest == first.report_digest
+    assert second.report_path == first.report_path
+    assert second.state_updates(updates["quality_scores"]) == updates
+    assert has_current_understanding_evidence({"spec_dir": spec_dir, **updates},
+        project_root=project, phase="phase1-why2")
+
+
+def test_multiple_operational_errors_do_not_occupy_success_evidence_identity(tmp_path, monkeypatch):
+    project, squad_dir, spec_dir = _workspace(tmp_path)
+    options = dict(project_root=project, squad_dir=squad_dir, phase="phase1-why2",
+        iteration=1, spec_dir=spec_dir, config={})
+    retained = []
+    for message in ("temporary analyzer failure", "different temporary failure"):
+        def fail(*args, **kwargs):
+            raise OSError(message)
+        with monkeypatch.context() as patch:
+            patch.setattr("harness.understanding_gate.analyze_spec_bundle", fail)
+            result = run_understanding_gate(**options)
+        assert result.operational_error and result.report_path is not None
+        retained.append((result.report_path, result.report_path.read_bytes()))
+    result = run_understanding_gate(**options)
+    assert result.completed, result.operational_error
+    assert all(path.read_bytes() == content for path, content in retained)
+    repeated = run_understanding_gate(**options)
+    assert repeated.report_digest == result.report_digest
+
+
+def test_legacy_digest_report_reuses_only_matching_inputs(tmp_path, monkeypatch):
+    from harness.understanding_gate import _evidence_identity
+    project, squad_dir, spec_dir = _workspace(tmp_path)
+    monkeypatch.setattr("harness.understanding_gate.analyze_spec_bundle", lambda *a, **k: _bundle())
+    options = dict(project_root=project, squad_dir=squad_dir, phase="phase1-why2",
+                   iteration=1, spec_dir=spec_dir, config={})
+    first = run_understanding_gate(**options)
+    report = dict(first.report)
+    report.pop("analysis_inputs")
+    legacy = first.report_path.with_name("phase1-why2-iter-1-" + _evidence_identity(
+        spec_digest=report["spec"]["sha256"], thresholds=report["thresholds"], diagram_enabled=False)[:12] + ".json")
+    legacy.write_text(json.dumps(report))
+    first.report_path.write_text('{"status":"error"}')
+    before = legacy.read_bytes()
+    retried = run_understanding_gate(**options)
+    assert retried.completed
+    assert retried.report_path == legacy
+    assert legacy.read_bytes() == before
+
+
 @pytest.mark.unit
 def test_missing_spec_is_persisted_as_operational_error(tmp_path: Path) -> None:
     project = tmp_path / "project"

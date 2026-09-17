@@ -41,8 +41,22 @@ def source_contract_findings(derived_text: str, source_ref: Path) -> list[Findin
     invent or drop requirement/acceptance/error IDs.
     """
 
-    findings: list[Finding] = []
     source_text = source_ref.read_text(encoding="utf-8")
+    return source_contract_findings_text(
+        derived_text,
+        source_text=source_text,
+        source_name=source_ref.name,
+    )
+
+
+def source_contract_findings_text(
+    derived_text: str,
+    *,
+    source_text: str,
+    source_name: str,
+) -> list[Finding]:
+    """Validate freshness and ID equivalence against captured source text."""
+    findings: list[Finding] = []
     source_match = _SOURCE_RE.search(derived_text)
     hash_match = _SOURCE_SHA_RE.search(derived_text)
 
@@ -55,13 +69,13 @@ def source_contract_findings(derived_text: str, source_ref: Path) -> list[Findin
                 span="SOURCE",
             )
         )
-    elif Path(source_match.group("source")).name != source_ref.name:
+    elif Path(source_match.group("source")).name != Path(source_name).name:
         findings.append(
             Finding(
                 code="source-ref-mismatch",
                 message=(
                     "derived artifact SOURCE metadata does not match "
-                    f"{source_ref.name}"
+                    f"{Path(source_name).name}"
                 ),
                 line=_line_of_match(derived_text, source_match.start()),
                 span=source_match.group("source"),
@@ -151,6 +165,11 @@ def source_approved_terms(source_ref: Path) -> set[str]:
     unresolved and therefore cannot be invented by a derivation agent.
     """
     source_text = source_ref.read_text(encoding="utf-8")
+    return source_approved_terms_text(source_text)
+
+
+def source_approved_terms_text(source_text: str) -> set[str]:
+    """Return governed identifier terms owned by captured source text."""
     return {term for term, _line in content_terms(source_text)}
 
 

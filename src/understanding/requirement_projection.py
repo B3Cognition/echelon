@@ -6,18 +6,21 @@ from dataclasses import dataclass, replace
 import re
 
 
-_CONVENTIONAL_REQUIREMENT_ID = r"[A-Z]{1,5}-\d{3,4}"
-_HEADING_REQUIREMENT_ID = r"(?:FR|NFR)-\d{3,4}"
+_CONVENTIONAL_REQUIREMENT_ID = r"[A-Z]{1,5}-\d{3,}(?![-A-Za-z0-9])"
+_HEADING_REQUIREMENT_ID = r"(?:FR|NFR)-\d{3,}(?![-A-Za-z0-9])"
+_TRACEABILITY_REQUIREMENT_ID = (
+    r"(?:AC|FR|NFR|ISS|U|A|T|REQ|SC|EDGE|C)-\d{3,}(?![-A-Za-z0-9])"
+)
 _REFERENCE_ID = r"(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)"
 _INLINE_REFERENCE_RE = re.compile(
-    rf"\b({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE
+    rf"\b({_TRACEABILITY_REQUIREMENT_ID})\b", re.IGNORECASE
 )
 _METADATA_REFERENCE_RE = re.compile(rf"\b({_REFERENCE_ID})\b", re.IGNORECASE)
 _TRAILING_VERIFICATION_RE = re.compile(
     rf",\s+verifying\s+(?P<references>"
-    rf"{_CONVENTIONAL_REQUIREMENT_ID}"
-    rf"(?:\s*,\s*{_CONVENTIONAL_REQUIREMENT_ID})*"
-    rf"(?:\s*,?\s+and\s+{_CONVENTIONAL_REQUIREMENT_ID})?"
+    rf"{_TRACEABILITY_REQUIREMENT_ID}"
+    rf"(?:\s*,\s*{_TRACEABILITY_REQUIREMENT_ID})*"
+    rf"(?:\s*,?\s+and\s+{_TRACEABILITY_REQUIREMENT_ID})?"
     rf")(?P<punctuation>[.!?])?\s*$",
     re.IGNORECASE,
 )

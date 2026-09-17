@@ -5,10 +5,31 @@ from pathlib import Path
 from typing import Any
 
 from echelon.context_metadata import artifact_hash
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_spec,
+)
+from harness.element_identity_store import IdentityStoreError
 
 
 class SpecMemoryError(RuntimeError):
     """Bounded operator-facing error for spec memory commands."""
+
+
+def _require_legacy_spec_memory(
+    project_root: Path, *, spec_id: str, resolved_spec_id: str | None = None,
+) -> None:
+    try:
+        require_legacy_identity_spec(project_root=project_root, spec_id=spec_id)
+        if resolved_spec_id is not None and resolved_spec_id != spec_id:
+            require_legacy_identity_spec(
+                project_root=project_root,
+                spec_id=resolved_spec_id,
+            )
+        return None
+    except IdentityStoreError:
+        pass
+    raise SpecMemoryError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
 @dataclass(frozen=True)
@@ -132,23 +153,38 @@ def load_canonical_spec_snapshot(project_root: Path, spec_dir: Path) -> Canonica
     spec_file = resolved_dir / "spec.md"
     content = spec_file.read_bytes()
     digest = artifact_hash(spec_file)
+    return _canonical_artifact_snapshot(
+        spec_id=relative_dir.parts[1], spec_dir=resolved_dir,
+        filename="spec.md", content=content, digest=digest, supporting=False,
+    )
+
+
+def _canonical_artifact_snapshot(
+    *, spec_id: str, spec_dir: Path, filename: str, content: bytes,
+    digest: str, supporting: bool,
+) -> CanonicalSpecSnapshot:
+    """Share native logical source metadata after each caller's acquisition."""
+    source = f"specs/{spec_id}/{filename}"
+    metadata: dict[str, Any] = {
+        "scope": "canonical-support" if supporting else "canonical",
+        "canonical": True,
+        "artifact_path": source,
+        "artifact_hash": digest,
+        "source_file": source,
+        "lifecycle_status": "active",
+        "provenance_type": "requirements_mine",
+        "added_by": "echelon",
+    }
+    if supporting:
+        metadata["artifact_kind"] = "supporting-context"
     return CanonicalSpecSnapshot(
-        spec_id=relative_dir.parts[1],
-        spec_dir=resolved_dir,
-        spec_file=spec_file,
+        spec_id=spec_id,
+        spec_dir=spec_dir,
+        spec_file=spec_dir / filename,
         content=content,
         spec_sha256=digest.removeprefix("sha256:"),
-        source=f"{relative_dir.as_posix()}/spec.md",
-        artifact_metadata={
-            "scope": "canonical",
-            "canonical": True,
-            "artifact_path": f"{relative_dir.as_posix()}/spec.md",
-            "artifact_hash": digest,
-            "source_file": f"{relative_dir.as_posix()}/spec.md",
-            "lifecycle_status": "active",
-            "provenance_type": "requirements_mine",
-            "added_by": "echelon",
-        },
+        source=source,
+        artifact_metadata=metadata,
     )
 
 
@@ -171,26 +207,14 @@ def load_supporting_artifact_snapshots(
             continue
         content = artifact.read_bytes()
         digest = artifact_hash(artifact)
-        source = f"{relative_dir.as_posix()}/{artifact.name}"
         snapshots.append(
-            CanonicalSpecSnapshot(
+            _canonical_artifact_snapshot(
                 spec_id=relative_dir.parts[1],
                 spec_dir=resolved_dir,
-                spec_file=artifact,
+                filename=artifact.name,
                 content=content,
-                spec_sha256=digest.removeprefix("sha256:"),
-                source=source,
-                artifact_metadata={
-                    "scope": "canonical-support",
-                    "canonical": True,
-                    "artifact_kind": "supporting-context",
-                    "artifact_path": source,
-                    "artifact_hash": digest,
-                    "source_file": source,
-                    "lifecycle_status": "active",
-                    "provenance_type": "requirements_mine",
-                    "added_by": "echelon",
-                },
+                digest=digest,
+                supporting=True,
             )
         )
     return snapshots
@@ -384,6 +408,11 @@ def mine_spec_requirements(
 ) -> SpecMemoryMineReport:
     spec_dir = resolve_spec_dir(project_root, spec_selector)
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=snapshot.spec_id,
+    )
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id)
     except SpecMemoryError:

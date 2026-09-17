@@ -81,7 +81,14 @@ def write_verified_ledger(path: Path, ledger: VerifiedFulfillmentLedger) -> None
 
 
 def read_verified_ledger(path: Path) -> VerifiedFulfillmentLedger:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    return parse_verified_ledger(path.read_text(encoding="utf-8"))
+
+
+def parse_verified_ledger(text: str) -> VerifiedFulfillmentLedger:
+    """Parse a detached compatibility observation of verified-ledger JSON."""
+    if type(text) is not str:
+        raise TypeError("text must be str")
+    data = json.loads(text)
     rows: list[VerifiedLedgerRow] = []
     for item in data.get("rows", []):
         if not isinstance(item, dict):

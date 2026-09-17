@@ -54,6 +54,25 @@ class ClaudeCliBackend:
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
         review_triage = _execution_profile(request) == _REVIEW_TRIAGE_PROFILE
+        exclusive_write_scope = _prompt_metadata_bool(request, "tool_write_scope_exclusive")
+        metadata = request.metadata.get("prompt_metadata")
+        explicit_write_scope = isinstance(metadata, Mapping) and isinstance(
+            metadata.get("tool_write_scope_exclusive"), bool
+        )
+        if explicit_write_scope:
+            scope_paths = (
+                str(Path(request.cwd).resolve()),
+                *_prompt_scope_paths(request, metadata, "tool_read_roots"),
+                *_prompt_scope_paths(request, metadata, "tool_write_paths"),
+            )
+            if review_triage or not _review_triage_paths_are_representable(scope_paths):
+                return CliRunResult(
+                    exit_code=125, stdout="", stderr="invalid explicit file scope",
+                    metadata={
+                        "exclusive_write_scope" if exclusive_write_scope
+                        else "workspace_write_scope": "invalid"
+                    },
+                )
         canonical_task_execution = (
             request.metadata.get("canonical_task_execution") is True
         )
@@ -67,7 +86,7 @@ class ClaudeCliBackend:
                     allow_unsafe_host_execution=False,
                     approval_reason=None,
                 )
-                if review_triage
+                if review_triage or exclusive_write_scope
                 else self._config.llm.tool_policy
             ),
             stream_json=True,
@@ -134,9 +153,9 @@ class ClaudeCliBackend:
             if isinstance(raw_prompt_metadata, Mapping)
             else ()
         )
-        if forbidden_roots:
+        if forbidden_roots or exclusive_write_scope:
             sandbox_exec = _sandbox_exec_path()
-            if sandbox_exec is None and (read_roots or write_paths):
+            if sandbox_exec is None and (read_roots or write_paths or exclusive_write_scope):
                 return CliRunResult(
                     exit_code=125,
                     stdout="",
@@ -154,6 +173,9 @@ class ClaudeCliBackend:
                         operational_roots=operational_roots,
                         operational_read_paths=operational_read_paths,
                         operational_metadata_paths=operational_metadata_paths,
+                        read_only_roots=(str(Path(request.cwd).resolve()), *read_roots)
+                        if exclusive_write_scope else (),
+                        preserve_forbidden_children=explicit_write_scope,
                     ),
                     *cmd,
                 ]
@@ -161,6 +183,23 @@ class ClaudeCliBackend:
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self.run_prompt(request)
+
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.inspection_turn import inspection_request_failure
+
+        failure = inspection_request_failure(request)
+        if failure is not None:
+            return failure
+        return self.run_review_triage_turn(request)
+
+    def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.ai_cli_backends.claude_triage import run_claude_review_triage
+
+        return run_claude_review_triage(
+            self._bin,
+            request,
+            tool_policy=self._config.llm.tool_policy,
+        )
 
     def run_constrained_prompt(
         self,
@@ -493,8 +532,38 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
     metadata = request.metadata.get("prompt_metadata")
     if not isinstance(metadata, Mapping):
         return []
+    isolation_args = [
+        "--safe-mode", "--setting-sources", "", "--strict-mcp-config",
+        "--disable-slash-commands",
+    ]
     read_roots = _prompt_scope_paths(request, metadata, "tool_read_roots")
     write_paths = _prompt_scope_paths(request, metadata, "tool_write_paths")
+    if metadata.get("tool_write_scope_exclusive") is False:
+        # Explicit nonexclusive scope adds control-file exceptions to the normal
+        # product workspace. It is not an output-only authoring assignment.
+        root = str(Path(request.cwd).resolve())
+        rules = [f"{tool}({_claude_absolute_rule_path(root)}/**)"
+                 for tool in ("Read", "Write", "Edit")]
+        rules.extend(f"Read({_claude_absolute_rule_path(path)}/**)"
+                     for path in read_roots if path != root)
+        for path in write_paths:
+            rules.extend(f"{tool}({_claude_absolute_rule_path(path)})"
+                         for tool in ("Read", "Write", "Edit"))
+        # Do not grant Bash or bypass permissions here: shell execution retains
+        # the existing explicitly approved host policy.
+        return [*isolation_args, "--allowedTools", ",".join(rules)]
+    if metadata.get("tool_write_scope_exclusive") is True:
+        rules = ["Glob", "Grep"]
+        for root in read_roots or (str(Path(request.cwd).resolve()),):
+            rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
+        for path in write_paths:
+            rules.extend(f"{tool}({_claude_absolute_rule_path(path)})"
+                         for tool in ("Read", "Write", "Edit"))
+        return [
+            *isolation_args, "--permission-mode", "dontAsk", "--tools",
+            "Read,Glob,Grep,Write,Edit" if write_paths else "Read,Glob,Grep",
+            "--allowedTools", ",".join(rules),
+        ]
     if not read_roots and not write_paths:
         return []
 
@@ -559,6 +628,8 @@ def _workspace_sandbox_profile(
     operational_roots: tuple[str, ...] = (),
     operational_read_paths: tuple[str, ...] = (),
     operational_metadata_paths: tuple[str, ...] = (),
+    read_only_roots: tuple[str, ...] = (),
+    preserve_forbidden_children: bool = False,
 ) -> str:
     exclusions: list[str] = []
     for root in forbidden_roots:
@@ -570,16 +641,32 @@ def _workspace_sandbox_profile(
             )
         )
     allowed_files = f"(require-all {' '.join(exclusions)})"
+    write_exclusions = list(exclusions)
+    for root in read_only_roots:
+        quoted = json.dumps(root)
+        write_exclusions.extend((
+            f"(require-not (literal {quoted}))",
+            f"(require-not (subpath {quoted}))",
+        ))
+    writable_files = f"(require-all {' '.join(write_exclusions)})"
+    read_rules = []
+    for root in (*read_roots, *operational_roots):
+        scope = f"(subpath {json.dumps(root)})"
+        # An enclosing scoped read root must not reopen its forbidden children.
+        # Keep legacy synthesis's explicit subtree exceptions unchanged.
+        if read_only_roots or preserve_forbidden_children:
+            nested = [f"(require-not (subpath {json.dumps(path)}))"
+                      for path in forbidden_roots if Path(path).is_relative_to(root)]
+            if nested:
+                scope = f"(require-all {scope} {' '.join(nested)})"
+        read_rules.append(f"(allow file-read* {scope})")
     lines = [
         "(version 1)",
         "(deny default)",
         "(allow process*)",
         f"(allow file-read* {allowed_files})",
-        f"(allow file-write* {allowed_files})",
-        *(
-            f"(allow file-read* (subpath {json.dumps(root)}))"
-            for root in (*read_roots, *operational_roots)
-        ),
+        f"(allow file-write* {writable_files})",
+        *read_rules,
         *(
             f"(allow file-read* (literal {json.dumps(path)}))"
             for path in operational_read_paths

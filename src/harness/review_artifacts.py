@@ -22,11 +22,13 @@ from typing import AbstractSet, Any, Literal, Sequence
 from uuid import uuid4
 
 from harness.state import is_process_alive
+from harness.task_progress import summarize_task_progress, update_task_progress_markdown
+from kernel.element_ids import format_element_id
 from kernel.task_contract import parse_task_rows
 
 
 _ARTIFACT_RE = re.compile(r"review-fix-([1-9][0-9]*)\.md\Z")
-_NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,4})\Z")
+_NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,})\Z")
 _TITLE_RE = re.compile(r"^  \*\*Title:\*\* (RF[1-9][0-9]*-T[123]) - \S.*\Z")
 _SECTION_RE = re.compile(r"^(?:---|## Review Fix [1-9][0-9]*: \S.*|> Source: review-fix-[1-9][0-9]*\.md|> PR: \S.*|> Status: pending)\Z")
 _LOCK_FIELDS = {"pid", "created_at", "strategy", "token", "released"}
@@ -393,7 +395,7 @@ class ReviewArtifactPublisher:
                 raise ReviewArtifactError("task IDs must be contiguous per artifact")
 
         append_bytes = append_path.read_bytes()
-        _validate_append_payload(append_bytes, task_ids, review_ids)
+        validate_review_tasks_append(append_bytes, task_ids, review_ids)
         allowed_names = set(artifacts) | {append_name}
         staged_names = {path.name for path in allocation.attempt_dir.iterdir()}
         if staged_names != allowed_names:
@@ -488,15 +490,42 @@ class ReviewArtifactPublisher:
                 raise ReviewArtifactError(f"published artifact digest is invalid: {artifact['name']}")
         tasks_path = self.spec_dir / "tasks.md"
         expected = _append_bytes(_decode(journal["tasks_before"]["content"]), _decode(journal["tasks_append"]["content"]))
-        if not _is_regular_file(tasks_path) or tasks_path.read_bytes() != expected:
+        if not _is_regular_file(tasks_path):
             raise ReviewArtifactError("published tasks.md does not match the journal")
-        _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
+        current = tasks_path.read_bytes()
+        if current != expected and not (
+            journal["complete"] is True
+            and _matches_completed_batch_progress(expected, current, journal["task_ids"])
+        ):
+            raise ReviewArtifactError("published tasks.md does not match the journal")
+        validate_review_tasks_append(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
     def _write_journal(self, journal: dict[str, Any]) -> None:
         _atomic_replace(self.journal_file, (json.dumps(journal, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
     def _after_publication_boundary(self, boundary: str) -> None:
         """Crash-test hook; production intentionally has no behavior here."""
+
+
+def _matches_completed_batch_progress(expected: bytes, current: bytes, task_ids: list[str]) -> bool:
+    """Admit only exact host DONE updates after publication, never definition drift.
+
+    Replaying the existing host formatter over the journal snapshot preserves
+    every other byte and limits progress changes to this published batch.
+    This does not authorize review effects; phase verification still owns that.
+    """
+    try:
+        actual = current.decode("utf-8")
+        replay = expected.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    progress = summarize_task_progress(actual, selected_task_ids=set(task_ids))
+    if not progress.valid:
+        return False
+    for task_id in task_ids:
+        if progress.task_statuses.get(task_id) == "DONE":
+            replay = update_task_progress_markdown(replay, task_id, "DONE")
+    return replay.encode("utf-8") == current
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
@@ -603,7 +632,7 @@ def _validate_journal_shape(journal: dict[str, Any]) -> None:
     all_artifacts_published = len(journal["published_artifacts"]) == len(artifact_names)
     if (journal["tasks_published"] and not all_artifacts_published) or (journal["complete"] and not (journal["tasks_published"] and all_artifacts_published)) or (journal["consumed"] and not journal["complete"]):
         raise ReviewArtifactError("review publication journal completion flags are invalid")
-    _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
+    validate_review_tasks_append(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
 
 def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedReviewBatch:
@@ -618,21 +647,18 @@ def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedRev
 
 def _allocate_canonical_task_ids(path: Path, count: int) -> tuple[str, ...]:
     if not path.exists():
-        return tuple(f"T-{number:03d}" for number in range(1, count + 1))
+        return tuple(format_element_id("T", number) for number in range(1, count + 1))
     if not _is_regular_file(path):
         raise ReviewArtifactError("canonical tasks.md is not a regular file")
     numbers: list[int] = []
-    widths: list[int] = []
     for task in parse_task_rows(path.read_text(encoding="utf-8", errors="strict")):
         match = _NUMERIC_TASK_ID_RE.fullmatch(task.task_id)
         if match is not None:
             numbers.append(int(match.group(1)))
-            widths.append(len(match.group(1)))
     first = max(numbers, default=0) + 1
-    width = max([3, *widths, len(str(first + max(0, count - 1)))])
-    if width > 4:
-        raise ReviewArtifactError("cannot allocate canonical task IDs beyond T-9999")
-    return tuple(f"T-{number:0{width}d}" for number in range(first, first + count))
+    return tuple(
+        format_element_id("T", number) for number in range(first, first + count)
+    )
 
 
 def _staged_regular_file(root: Path, name: str) -> Path:
@@ -642,7 +668,11 @@ def _staged_regular_file(root: Path, name: str) -> Path:
     return path
 
 
-def _validate_append_payload(payload: bytes, task_ids: Sequence[str], review_ids: Sequence[str]) -> None:
+def validate_review_tasks_append(
+    payload: bytes,
+    task_ids: Sequence[str],
+    review_ids: Sequence[str],
+) -> None:
     """Require the canonical rows and title detail blocks consumed by Phase 1."""
     try:
         markdown = payload.decode("utf-8", errors="strict")

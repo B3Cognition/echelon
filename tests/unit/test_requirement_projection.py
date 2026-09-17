@@ -308,3 +308,43 @@ def test_heading_projection_rejects_generic_requirement_prefixes() -> None:
         "FR-001",
         "NFR-001",
     ]
+
+
+@pytest.mark.unit
+def test_projection_retains_open_ended_numeric_ids_and_references() -> None:
+    """Restoring a fixed numeric width must not truncate current identifiers."""
+    spec = """# Requirements
+
+- **FR-001**: Legacy behavior remains stable and verifies AC-000001.
+- **AC-000001**: The caller observes success, verifying FR-001 and FR-1000000.
+- **FR-1000000**: The service records the result for NFR-10000000.
+
+### NFR-10000000: Retention
+- **Statement**: The service MUST retain the result, verifying AC-000001.
+"""
+
+    projections = project_requirements(spec)
+
+    assert [row.requirement_id for row in projections] == [
+        "FR-001",
+        "AC-000001",
+        "FR-1000000",
+        "NFR-10000000",
+    ]
+    assert projections[0].traceability_references == ("AC-000001",)
+    assert projections[1].traceability_references == ("FR-001", "FR-1000000")
+    assert projections[2].traceability_references == ("NFR-10000000",)
+    assert projections[3].traceability_references == ("AC-000001",)
+
+
+@pytest.mark.unit
+def test_projection_does_not_extract_numeric_prefix_from_malformed_reference() -> None:
+    """A widened reference matcher must still consume the complete label."""
+    spec = (
+        "- **FR-001**: The service rejects FR-1000000-extra as malformed.\n"
+        "- **FR-1000000**: The service accepts this complete identifier.\n"
+    )
+
+    projections = project_requirements(spec)
+
+    assert projections[0].traceability_references == ()

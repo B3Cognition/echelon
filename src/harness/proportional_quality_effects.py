@@ -32,6 +32,22 @@ from harness.proportional_quality import (
 from harness.squad_completion import CompletionError
 
 
+def quality_extension_updates(state, candidate, route):
+    """Native one-time extension transition, also checked by managed recovery."""
+    repair = validate_repair_state(state.get("phase1_quality_repair"))
+    if repair["extension_authorized"] != 0 or repair["extension_consumed"] != 0:
+        raise QualityCandidateIntegrityError("quality extension is already unavailable")
+    repair["extension_authorized"] = repair["extension_limit"]
+    return dict(status="running", phase=route, phase1_quality_repair=validate_repair_state(repair),
+        why_fail_count=0, why2_metric_stagnation_count=0, quality_gate_remediation=dict(
+            kind="proportional_quality", candidate_id=candidate.candidate_id,
+            evidence=state.get("understanding_evidence"),
+            baseline_spec_sha256=dict(candidate.owned_artifact_digests)["spec.md"],
+            attempt=repair["automatic_consumed"] + repair["extension_consumed"] + 1,
+            extension_active=True, qualitative_findings=[dict(item) for item in candidate.sage_finding_routes],
+            reason="Apply the single authorized proportional quality extension to the restored candidate."))
+
+
 def _inside_project(root: Path, reference: object) -> Path:
     if type(reference) is not str or not reference:
         raise QualityCandidateIntegrityError("quality effect path is invalid")
@@ -251,9 +267,21 @@ def apply_or_verify_proportional_quality_effect(
     route: Mapping[str, object],
     preceding_checkpoint_receipt: object = None,
     expected_receipt: object | None = None,
+    before_restore=None,
+    after_restore=None,
+    verify_debt_publication=False,
 ) -> dict[str, object]:
-    """Apply or verify the exact state-authorized proportional quality effect."""
+    """Apply or verify the exact state-authorized proportional quality effect.
+
+    Optional paired completion-owner callbacks join a durable publication before
+    native restoration and finish it afterwards. They do not select a candidate,
+    build a second restore writer or replace native validation. Both must be
+    idempotent: recovery repeats them around the same immutable native plan.
+    """
     try:
+        if ((before_restore is None) != (after_restore is None)
+                or (before_restore is not None and (not callable(before_restore) or not callable(after_restore)))):
+            raise QualityCandidateIntegrityError("restoration callbacks must be paired")
         if (
             not isinstance(effect, Mapping)
             or effect.get("kind") != "proportional_quality"
@@ -425,6 +453,8 @@ def apply_or_verify_proportional_quality_effect(
                     spec_id=spec_id,
                     next_phase=next_phase,
                 )
+                if before_restore is not None:
+                    before_restore(restore_plan, selected_restore)
                 restore_receipt = materialize_quality_candidate_restore(
                     project_root=root,
                     spec_dir=spec_dir,
@@ -442,6 +472,8 @@ def apply_or_verify_proportional_quality_effect(
                     restore_plan=restore_plan,
                     expected_receipt=restore_expected,
                 )
+                if after_restore is not None:
+                    after_restore(restore_plan, selected_restore, restore_receipt)
             receipt = {
                 "schema_version": 1,
                 "operation": "candidate",
@@ -546,6 +578,8 @@ def apply_or_verify_proportional_quality_effect(
                 spec_id=spec_id,
                 next_phase=next_phase,
             )
+            if before_restore is not None:
+                before_restore(restore_plan, selected_restore)
             restore_receipt = materialize_quality_candidate_restore(
                 project_root=root,
                 spec_dir=spec_dir,
@@ -560,6 +594,8 @@ def apply_or_verify_proportional_quality_effect(
                 restore_plan=restore_plan,
                 expected_receipt=restore_expected,
             )
+            if after_restore is not None:
+                after_restore(restore_plan, selected_restore, restore_receipt)
             receipt = {
                 "schema_version": 1,
                 "operation": "restore",
@@ -592,6 +628,7 @@ def apply_or_verify_proportional_quality_effect(
                 root,
                 payload,
                 expected_receipt=(expected.get("debt") if expected else None),
+                verify_only=verify_debt_publication,
             )
             receipt = {
                 "schema_version": 1,

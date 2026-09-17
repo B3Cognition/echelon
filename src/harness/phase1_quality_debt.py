@@ -383,12 +383,29 @@ def _resolution_completion_binding(
     }
 
 
+def _captured_debt_spec(sources, *, root, spec_dir):
+    """Detached exact preimages; no authority to write or accept debt."""
+    from harness.squad_source_baseline_codec import encode_initial_publication_sources, decode_initial_publication_sources
+    from harness.squad_publication import PublicationError
+    try:
+        captured = decode_initial_publication_sources(encode_initial_publication_sources(sources))
+        relative = spec_dir.relative_to(root).as_posix()
+        tree, = (tree for tree in captured.trees if tree.path == relative)
+        if not tree.exists or any(operation.target != relative + "/quality-debt.json"
+                for operation in captured.publication.operations):
+            raise ValueError("debt capture cannot change candidate artifacts")
+        return {item.path[len(relative) + 1:]: item.content for item in tree.files}
+    except (PublicationError, ValueError, TypeError, OSError) as exc:
+        raise QualityCandidateIntegrityError("quality-debt captured sources are invalid") from exc
+
+
 def _verify_restored_candidate(
     *,
     root: Path,
     spec_dir: Path,
     candidate: QualityCandidateManifest,
     candidate_manifest: Path,
+    publication_sources=None,
 ) -> tuple[str, str, Mapping[str, object]]:
     artifact_root = Path(candidate.run_artifact_root).resolve()
     evidence_path = Path(candidate.understanding_evidence).resolve()
@@ -426,15 +443,21 @@ def _verify_restored_candidate(
         raise QualityCandidateIntegrityError(
             "quality-debt candidate artifact contract is invalid"
         )
-    sage_snapshot = load_authoritative_sage_evidence_snapshot(
-        spec_dir / "issues.md",
-        project_root=root,
-    )
+    captured = None if publication_sources is None else _captured_debt_spec(publication_sources, root=root, spec_dir=spec_dir)
+    if captured is None:
+        sage_snapshot = load_authoritative_sage_evidence_snapshot(spec_dir / "issues.md", project_root=root)
+        sage_digest, sage_verdict, authoritative_issues = sage_snapshot.sha256, sage_snapshot.verdict, sage_snapshot.issues
+    else:
+        from harness.proportional_quality import _parse_authoritative_sage_assessment_bytes
+        sage_content = captured.get("issues.md", b"")
+        sage_digest = hashlib.sha256(sage_content).hexdigest()
+        sage_verdict, authoritative_issues = _parse_authoritative_sage_assessment_bytes(sage_content)
     for name, expected_digest in artifact_digests.items():
         current_digest = (
-            sage_snapshot.sha256
+            sage_digest
             if name == "issues.md"
-            else _sha256(spec_dir / name)
+            else _sha256(spec_dir / name) if captured is None
+            else hashlib.sha256(captured.get(name, b"")).hexdigest()
         )
         if (
             not _SHA256_RE.fullmatch(expected_digest)
@@ -444,8 +467,6 @@ def _verify_restored_candidate(
                 f"quality-debt candidate artifact digest mismatch: {name}"
             )
 
-    sage_verdict = sage_snapshot.verdict
-    authoritative_issues = sage_snapshot.issues
     if any(
         issue.get("severity") == "CRITICAL"
         or issue.get("type") == "contradiction"
@@ -488,11 +509,8 @@ def _verify_restored_candidate(
             raise QualityCandidateIntegrityError(
                 "quality-debt SAGE finding route is invalid"
             )
-    require_current_authoritative_sage_evidence_snapshot(
-        sage_snapshot,
-        spec_dir / "issues.md",
-        project_root=root,
-    )
+    if captured is None:
+        require_current_authoritative_sage_evidence_snapshot(sage_snapshot, spec_dir / "issues.md", project_root=root)
 
     evidence_digest = _sha256(evidence_path)
     if evidence_digest != candidate.understanding_evidence_digest:
@@ -913,6 +931,11 @@ class PreparedQualityDebtAuthorization:
         }
 
 
+def quality_debt_bytes(debt):
+    """Canonical native debt artifact bytes, shared with guarded publication."""
+    return (json.dumps(dict(debt), indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def build_quality_debt_authorization(
     *,
     project_root: Path,
@@ -929,6 +952,7 @@ def build_quality_debt_authorization(
     completion_id: str,
     from_phase: str,
     to_phase: str,
+    publication_sources=None,
 ) -> PreparedQualityDebtAuthorization:
     """Prepare schema-v1 debt and authorization without external effects."""
     if not isinstance(candidate, QualityCandidateManifest):
@@ -981,8 +1005,10 @@ def build_quality_debt_authorization(
         spec_dir=resolved_spec_dir,
         candidate=candidate,
         candidate_manifest=manifest_path,
+        publication_sources=publication_sources,
     )
-    source_digest = _sha256(source_path)
+    captured = None if publication_sources is None else _captured_debt_spec(publication_sources, root=root, spec_dir=resolved_spec_dir)
+    source_digest = _sha256(source_path) if captured is None else hashlib.sha256(captured["spec.md"]).hexdigest()
     failed_gates = _failed_gates(candidate)
 
     accepted_at = resolved_at
@@ -991,7 +1017,8 @@ def build_quality_debt_authorization(
     manifest_ref = _project_relative(manifest_path, root)
     debt_path = resolved_spec_dir / "quality-debt.json"
     debt_ref = _project_relative(debt_path, root)
-    previous_debt_digest = _regular_file_digest_or_missing(debt_path)
+    previous_debt_digest = (_regular_file_digest_or_missing(debt_path) if captured is None
+        else hashlib.sha256(captured["quality-debt.json"]).hexdigest() if "quality-debt.json" in captured else None)
     decision_digest = _canonical_sha256(resolved_decision)
     debt: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -1023,9 +1050,7 @@ def build_quality_debt_authorization(
         "resolution_completion": completion_binding,
         "previous_debt_artifact_sha256": previous_debt_digest,
     }
-    debt_content = (json.dumps(debt, indent=2, sort_keys=True) + "\n").encode(
-        "utf-8"
-    )
+    debt_content = quality_debt_bytes(debt)
     authorization = {
         "schema_version": SCHEMA_VERSION,
         "status": "accepted_with_debt",
@@ -1106,7 +1131,15 @@ def _validate_last_resolution_link(
     *,
     authorization: Mapping[str, object],
     debt: Mapping[str, object],
+    project_root: Path | None = None,
 ) -> None:
+    if "managed_identity" in state:
+        from harness.discovery_debt_resolution import require_resolution_link
+        try:
+            require_resolution_link(project_root, state, authorization, debt)
+            return
+        except Exception as exc:
+            raise QualityCandidateIntegrityError("managed quality-debt completion linkage is invalid") from exc
     completion = state.get("last_human_input_completion")
     binding = authorization.get("resolution_completion")
     if (
@@ -1460,6 +1493,7 @@ def _current_quality_debt_authorization(
         state,
         authorization=authorization,
         debt=debt,
+        project_root=root,
     )
     return authorization
 
@@ -1492,9 +1526,12 @@ def apply_or_verify_quality_debt_effect(
     payload: Mapping[str, object],
     *,
     expected_receipt: object | None = None,
+    verify_only: bool = False,
 ) -> dict[str, object]:
     """Idempotently apply one sealed debt write/removal operation."""
     root = Path(project_root).resolve()
+    if type(verify_only) is not bool:
+        raise QualityCandidateIntegrityError("quality-debt verification mode is invalid")
     if not isinstance(payload, Mapping):
         raise QualityCandidateIntegrityError("quality-debt effect is invalid")
     operation = payload.get("operation")
@@ -1539,9 +1576,7 @@ def apply_or_verify_quality_debt_effect(
             raise QualityCandidateIntegrityError(
                 "quality-debt write evidence changed"
             )
-        content = (
-            json.dumps(dict(debt), indent=2, sort_keys=True) + "\n"
-        ).encode("utf-8")
+        content = quality_debt_bytes(debt)
         digest = hashlib.sha256(content).hexdigest()
         if authorization.get("debt_artifact_sha256") != digest:
             raise QualityCandidateIntegrityError(
@@ -1556,6 +1591,8 @@ def apply_or_verify_quality_debt_effect(
             )
         observed_digest = _regular_file_digest_or_missing(debt_path)
         if observed_digest != digest:
+            if verify_only:
+                raise QualityCandidateIntegrityError("published quality-debt postimage changed")
             if observed_digest != expected_preimage:
                 raise QualityCandidateIntegrityError(
                     "quality-debt artifact preimage changed"
@@ -1591,6 +1628,8 @@ def apply_or_verify_quality_debt_effect(
             except FileNotFoundError:
                 pass
             else:
+                if verify_only:
+                    raise QualityCandidateIntegrityError("published quality-debt removal changed")
                 debt_path.unlink()
             _fsync_directory(debt_path.parent)
         except OSError as exc:

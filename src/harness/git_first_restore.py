@@ -1664,6 +1664,77 @@ def _verify_restore_paths(
     return tuple(snapshots)
 
 
+def _restore_worktree_images(worktree_fd, entries):
+    states, snapshots = [], []
+    for entry in entries:
+        snapshot = _restore_entry_snapshot(worktree_fd, Path(entry.path).name)
+        if snapshot is None:
+            raise GitFirstRestoreError("restore worktree entry is missing")
+        base = _snapshot_matches(snapshot, mode=entry.base_mode, sha256=entry.base_sha256)
+        target = _snapshot_matches(snapshot, mode=entry.target_mode, sha256=entry.target_sha256)
+        if not base and not target:
+            raise GitFirstRestoreError("restore worktree authority changed")
+        states.append("both" if base and target else "base" if base else "target")
+        snapshots.append(snapshot)
+    return tuple(states), tuple(snapshots)
+
+
+def inspect_git_first_restore_worktree(*, project_root, spec_dir, journal_root, plan):
+    """Read exact base/target file states and native exchange provenance.
+
+    This never reconstructs a plan, writes Git objects, changes the index/ref,
+    creates a journal or recovers files. It does not certify index/ledger state;
+    the existing native restore and checkpoint owners retain those checks.
+    The caller must authenticate plan selection against its completion intent.
+    """
+    root = Path(project_root).resolve()
+    verify_git_first_restore_commit(root, plan)
+    spec = Path(os.path.abspath(spec_dir))
+    try:
+        relative = spec.relative_to(root)
+    except ValueError as error:
+        raise GitFirstRestoreError("restore spec directory escapes project") from error
+    if {Path(entry.path).parent for entry in plan.entries} != {relative}:
+        raise GitFirstRestoreError("restore plan does not match spec directory")
+    current_ref = _current_ref_commit(root, plan.ref_name)
+    if current_ref not in {plan.base_commit, plan.target_commit}:
+        raise GitFirstRestoreError("restore ref authority changed")
+    worktree_fd = _open_restore_directory(spec, field="restore spec directory")
+    journal_fd = None
+    try:
+        states, snapshots = _restore_worktree_images(worktree_fd, plan.entries)
+        journal = _restore_journal(plan)
+        journal_dir = Path(journal_root) / _RESTORE_JOURNAL_DIRECTORY
+        try:
+            journal_dir.lstat()
+        except FileNotFoundError:
+            journal_exists = False
+        else:
+            journal_fd = _open_restore_directory(journal_dir, field="restore journal directory")
+            saved = _restore_entry_snapshot(journal_fd, f"{plan.completion_id}.json", missing_ok=True)
+            journal_exists = saved is not None
+            if saved is not None and (saved.mode != 0o600 or saved.content != _canonical_json_bytes(asdict(journal))):
+                raise GitFirstRestoreError("restore journal authority changed")
+            expected_temps = {entry.temporary_name for entry in journal.entries}
+            present_temps = {name for name in os.listdir(journal_fd) if name.startswith(_RESTORE_TEMP_PREFIX)}
+            if present_temps and not journal_exists:
+                raise GitFirstRestoreError("restore journal is missing")
+            if not present_temps <= expected_temps:
+                raise GitFirstRestoreError("unexplained restore temporary exists")
+            _preflight_restore_temporaries(journal_fd, entries=plan.entries,
+                journal_entries=journal.entries, current_snapshots=snapshots)
+        if not journal_exists:
+            initial = current_ref == plan.base_commit and all(state in {"base", "both"} for state in states)
+            final = current_ref == plan.target_commit and all(state in {"target", "both"} for state in states)
+            if not initial and not final:
+                raise GitFirstRestoreError("restore journal is missing")
+        return {entry.path: (snapshot.mode, snapshot.sha256) for entry, snapshot in zip(plan.entries, snapshots, strict=True)}
+    finally:
+        if journal_fd is not None:
+            os.close(journal_fd)
+        os.close(worktree_fd)
+
+
 def _verify_git_first_restore_recovery_started(
     project_root: Path,
     journal_root: Path,
@@ -1851,31 +1922,7 @@ def apply_or_recover_git_first_restore(
             raise GitFirstRestoreError(
                 "restore temporaries must share the destination filesystem"
             )
-        initial: list[str] = []
-        initial_snapshots: list[_RestoreEntrySnapshot] = []
-        for entry in plan.entries:
-            snapshot = _restore_entry_snapshot(worktree_fd, Path(entry.path).name)
-            if snapshot is None:  # pragma: no cover - missing_ok is false
-                raise GitFirstRestoreError("restore worktree entry is missing")
-            matches_base = _snapshot_matches(
-                snapshot,
-                mode=entry.base_mode,
-                sha256=entry.base_sha256,
-            )
-            matches_target = _snapshot_matches(
-                snapshot,
-                mode=entry.target_mode,
-                sha256=entry.target_sha256,
-            )
-            if matches_base and matches_target:
-                initial.append("both")
-            elif matches_base:
-                initial.append("base")
-            elif matches_target:
-                initial.append("target")
-            else:
-                raise GitFirstRestoreError("restore worktree authority changed")
-            initial_snapshots.append(snapshot)
+        initial, initial_snapshots = _restore_worktree_images(worktree_fd, plan.entries)
 
         journal_dir = lexical_journal_root / _RESTORE_JOURNAL_DIRECTORY
         journal_name = f"{plan.completion_id}.json"

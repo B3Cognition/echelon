@@ -1,5 +1,12 @@
 """Shared framing for prompts executed by Echelon's host-side providers."""
 
+DELIVERY_PREAMBLE = (
+    "You were dispatched to execute a delivery build assignment non-interactively "
+    "via an AI coding CLI. "
+    "The selected command below defines your role. "
+    "Use the explicit delivery context supplied by the controller for this invocation.\n\n"
+)
+
 COMMANDER_PREAMBLE = (
     "You were dispatched as a subagent to execute a specific task. "
     "You are COMMANDER running non-interactively via an AI coding CLI. "

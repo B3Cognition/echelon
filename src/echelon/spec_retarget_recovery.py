@@ -51,6 +51,11 @@ from harness.phase_checkpoints import (
     _commit_spec_changes,
 )
 from harness.squad_state import SquadStateStore
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_execution,
+    require_legacy_identity_spec,
+)
 
 
 _SPEC_ID = re.compile(r"^(?:[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -880,11 +885,49 @@ def activate_recovered_spec_run(
         raise RetargetRecoveryError("retarget recovery pointer activation failed") from exc
 
 
-def _require_recovery_revision(
+def _require_legacy_recovery_identity(
+    root: Path, spec_id: str, revision: RetargetRevision, replacement_state: dict,
+) -> None:
+    try:
+        require_legacy_identity_spec(project_root=root, spec_id=spec_id)
+        require_legacy_identity_execution(
+            project_root=root, run_dir=root / "runs" / replacement_state["run_id"],
+            state=replacement_state,
+        )
+        baseline_dir = root / "runs" / revision.baseline_run_id
+        for directory in (root / "runs", baseline_dir):
+            try:
+                directory_mode = directory.lstat().st_mode
+            except FileNotFoundError:
+                break
+            if not stat.S_ISDIR(directory_mode):
+                raise ValueError("retarget baseline parent must be a real directory")
+        try:
+            state_mode = (baseline_dir / "state.json").lstat().st_mode
+        except FileNotFoundError:
+            # Only an absence query for the actual retained baseline run ID.
+            baseline_state = {}
+        else:
+            if not stat.S_ISREG(state_mode):
+                raise ValueError("retarget baseline state must be a regular file")
+            baseline_state = loads_strict_json((baseline_dir / "state.json").read_text())
+            if type(baseline_state) is not dict:
+                raise ValueError("retarget baseline state must be an object")
+        require_legacy_identity_execution(
+            project_root=root, run_dir=baseline_dir, state=baseline_state,
+        )
+        return
+    except Exception:
+        pass
+    raise RetargetRecoveryError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
+
+
+def _inspect_legacy_retarget_recovery(
     project_root: Path,
     checkpoint: PhaseCheckpoint,
     replacement_state: Mapping[str, object],
 ) -> tuple[Path, RetargetRevision]:
+    """Validate native recovery identity and observe ownership without effects."""
     root = Path(project_root).resolve()
     if type(checkpoint) is not PhaseCheckpoint or checkpoint.source != "retarget-preflight":
         raise RetargetRecoveryError("checkpoint is not a retarget preflight")
@@ -924,6 +967,28 @@ def _require_recovery_revision(
         or checkpoint.run_id != revision.baseline_run_id
     ):
         raise RetargetRecoveryError("retarget recovery identity drifted")
+    _require_legacy_recovery_identity(root, checkpoint.spec_id, revision, replacement_state)
+    return spec_dir, revision
+
+
+def require_legacy_retarget_recovery(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> None:
+    """Refuse managed recovery before callers perform rewind or publication effects."""
+    _inspect_legacy_retarget_recovery(project_root, checkpoint, replacement_state)
+
+
+def _require_recovery_revision(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> tuple[Path, RetargetRevision]:
+    spec_dir, revision = _inspect_legacy_retarget_recovery(
+        project_root, checkpoint, replacement_state,
+    )
+    retarget = replacement_state["retarget"]
     raw_graph = retarget.get("graph_invalidation")
     if revision.graph_invalidation is None:
         if (

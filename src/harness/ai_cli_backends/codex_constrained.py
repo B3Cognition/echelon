@@ -172,7 +172,9 @@ def prepare_constrained_request(
         "--ephemeral",
         "--ignore-rules",
     ]
+    effort = _neutral_effort(request.metadata)
     command[-1:] = [
+        *(("-c", f'model_reasoning_effort="{effort}"') if effort else ()),
         *(
             argument
             for value in _CONSTRAINED_CONFIG_OVERRIDES
@@ -185,6 +187,18 @@ def prepare_constrained_request(
         command=tuple(command),
         env=_sanitized_environment(request.env),
         prompt_bytes=prompt_bytes,
+    )
+
+
+def _neutral_effort(metadata: Mapping[str, object]) -> str | None:
+    prompt_metadata = metadata.get("prompt_metadata")
+    if not isinstance(prompt_metadata, Mapping):
+        return None
+    effort = prompt_metadata.get("effort")
+    return (
+        effort
+        if type(effort) is str and effort in {"low", "medium", "high"}
+        else None
     )
 
 

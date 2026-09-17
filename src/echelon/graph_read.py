@@ -16,6 +16,17 @@ from echelon.workspace_graph import workspace_graph_path
 from echelon.workspace_graph_audit import WorkspaceGraphAuditReport, audit_workspace_graph
 
 
+_PRIMARY_ENTITY_ID_PROPERTIES: Mapping[str, str] = MappingProxyType(
+    {
+        "Requirement": "requirement_id",
+        "Task": "task_id",
+        "Unknown": "element_id",
+        "Assumption": "element_id",
+        "Issue": "element_id",
+    }
+)
+
+
 class GraphReadError(RuntimeError):
     """Raised when a persisted graph cannot be read safely."""
 
@@ -78,6 +89,19 @@ def resolve_node_id(model: GraphReadModel, selector: str) -> str:
         return value
 
     normalized = value.casefold()
+    primary_candidates = {
+        node_id
+        for node_id, node in model.nodes_by_id.items()
+        if _matches_primary_entity(node, normalized)
+    }
+    if len(primary_candidates) == 1:
+        return next(iter(primary_candidates))
+    if len(primary_candidates) > 1:
+        raise NodeResolutionError(
+            f"ambiguous graph node selector {value!r}: "
+            f"{_format_candidates(primary_candidates)}"
+        )
+
     candidates = {
         node_id
         for node_id, node in model.nodes_by_id.items()
@@ -224,6 +248,17 @@ def _matches_selector(node_id: str, node: Mapping[str, object], selector: str) -
         and str(identity).casefold() == selector
         for key, identity in properties.items()
     )
+
+
+def _matches_primary_entity(node: Mapping[str, object], selector: str) -> bool:
+    label_property = _PRIMARY_ENTITY_ID_PROPERTIES.get(str(node["type"]))
+    if label_property is None:
+        return False
+    properties = node["properties"]
+    if not isinstance(properties, Mapping):
+        return False
+    label = properties.get(label_property)
+    return isinstance(label, str) and label.casefold() == selector
 
 
 def _format_candidates(candidates: set[str]) -> str:

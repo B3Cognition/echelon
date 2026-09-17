@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from harness.element_identity_legacy_guard import LEGACY_IDENTITY_EXECUTION_BLOCKED
 from echelon.spec_graph import (
     GraphEdge,
     GraphInput,
@@ -778,7 +779,7 @@ def test_write_workspace_audit_rejects_earlier_symlinked_ancestor(
         unexpected_temp,
     )
 
-    with pytest.raises(OSError, match="ancestor must be a real directory"):
+    with pytest.raises(WorkspaceGraphError, match=LEGACY_IDENTITY_EXECUTION_BLOCKED):
         write_workspace_graph_audit(report, root)
 
     assert temp_calls == []

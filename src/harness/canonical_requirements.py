@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Iterable
 
+from kernel.element_ids import element_id_sort_key
+
 REQ_ID_RE = re.compile(
     r"(?<![A-Z0-9]-)\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
     r"(?:-[A-Z0-9]+(?:[_.:][A-Z0-9]+)*[a-z]?)+"
@@ -44,15 +46,43 @@ class RequirementAuditResult:
 
 
 def extract_canonical_requirements(spec_dir: Path) -> list[CanonicalRequirement]:
+    return extract_canonical_requirements_from_texts(
+        spec_text=_collect_markdown_text(spec_dir / "spec.md"),
+        plan_text=_collect_markdown_text(spec_dir / "plan.md"),
+        coverage_text=_collect_markdown_text(spec_dir / "coverage-map.md"),
+        tasks_text=_collect_task_metadata_text(spec_dir / "tasks.md"),
+    )
+
+
+def extract_canonical_requirements_from_texts(
+    *,
+    spec_text: str | None = None,
+    plan_text: str | None = None,
+    coverage_text: str | None = None,
+    tasks_text: str | None = None,
+) -> list[CanonicalRequirement]:
+    """Extract detached compatibility observations from captured source text."""
+    texts = (
+        ("spec_text", spec_text),
+        ("plan_text", plan_text),
+        ("coverage_text", coverage_text),
+        ("tasks_text", tasks_text),
+    )
+    for parameter, text in texts:
+        if text is not None and type(text) is not str:
+            raise TypeError(f"{parameter} must be str or None")
+
     rows: dict[str, CanonicalRequirement] = {}
-    for filename, source_kind in (
-        ("spec.md", "spec"),
-        ("plan.md", "plan"),
-        ("coverage-map.md", "coverage"),
+    for filename, source_kind, text in (
+        ("spec.md", "spec", spec_text),
+        ("plan.md", "plan", plan_text),
+        ("coverage-map.md", "coverage", coverage_text),
     ):
-        _collect_markdown_ids(spec_dir / filename, source_kind, rows)
-    _collect_task_metadata_ids(spec_dir / "tasks.md", rows)
-    return [rows[item_id] for item_id in sorted(rows)]
+        if text is not None:
+            _collect_markdown_text_ids(text, filename, source_kind, rows)
+    if tasks_text is not None:
+        _collect_task_metadata_text_ids(tasks_text, "tasks.md", rows)
+    return [rows[item_id] for item_id in sorted(rows, key=element_id_sort_key)]
 
 
 def write_canonical_requirements(
@@ -111,13 +141,28 @@ def write_requirement_audit(*, verify_run_dir: Path) -> RequirementAuditResult:
 def _collect_markdown_ids(
     path: Path, source_kind: str, rows: dict[str, CanonicalRequirement]
 ) -> None:
-    if not path.is_file():
+    text = _collect_markdown_text(path)
+    if text is None:
         return
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    for lineno, line in enumerate(lines, start=1):
+    _collect_markdown_text_ids(text, path.name, source_kind, rows)
+
+
+def _collect_markdown_text(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _collect_markdown_text_ids(
+    text: str,
+    source_file: str,
+    source_kind: str,
+    rows: dict[str, CanonicalRequirement],
+) -> None:
+    for lineno, line in enumerate(text.splitlines(), start=1):
         for item_id in REQ_ID_RE.findall(line):
             candidate = CanonicalRequirement(
-                item_id, source_kind, path.name, lineno, line.strip()
+                item_id, source_kind, source_file, lineno, line.strip()
             )
             existing = rows.get(item_id)
             if existing is None or (
@@ -146,10 +191,24 @@ def _is_explicit_requirement_definition(line: str, item_id: str) -> bool:
 def _collect_task_metadata_ids(
     path: Path, rows: dict[str, CanonicalRequirement]
 ) -> None:
-    if not path.is_file():
+    text = _collect_task_metadata_text(path)
+    if text is None:
         return
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    for lineno, line in enumerate(lines, start=1):
+    _collect_task_metadata_text_ids(text, path.name, rows)
+
+
+def _collect_task_metadata_text(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _collect_task_metadata_text_ids(
+    text: str,
+    source_file: str,
+    rows: dict[str, CanonicalRequirement],
+) -> None:
+    for lineno, line in enumerate(text.splitlines(), start=1):
         match = TASK_REQ_RE.search(line)
         if match is None:
             continue
@@ -159,7 +218,7 @@ def _collect_task_metadata_ids(
             rows.setdefault(
                 item_id,
                 CanonicalRequirement(
-                    item_id, "task_metadata", path.name, lineno, line.strip()
+                    item_id, "task_metadata", source_file, lineno, line.strip()
                 ),
             )
 
@@ -225,7 +284,7 @@ def _load_inventory_requirements(inventory_path: Path) -> list[CanonicalRequirem
                 source_text=str(raw.get("source_text") or ""),
             )
         )
-    return sorted(rows, key=lambda row: row.id)
+    return sorted(rows, key=lambda row: element_id_sort_key(row.id))
 
 
 def _render_requirement_audit(requirements: list[CanonicalRequirement]) -> str:

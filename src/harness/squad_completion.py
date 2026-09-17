@@ -340,13 +340,18 @@ def _validate_publication(value: object) -> dict[str, object]:
         _validate_exact_dict(value, frozenset({"kind"}))
         return {"kind": "none"}
     if kind == "external":
-        _validate_exact_dict(value, frozenset({"kind", "marker"}))
+        managed = "managed_discovery" in value
+        _validate_exact_dict(value, frozenset({"kind", "marker"} | ({"managed_discovery"} if managed else set())))
         try:
             marker = validate_pending_external_publication(
                 dict.__getitem__(value, "marker")
             )
         except ValueError:
             _raise("intent_invalid")
+        if managed:
+            from harness.discovery_completion import decode_binding
+            decode_binding(value)
+            return {"kind": "external", "marker": marker, "managed_discovery": _clone_json(value["managed_discovery"])}
         return {"kind": "external", "marker": marker}
     _raise("intent_invalid")
 
@@ -595,6 +600,57 @@ def _validate_intent(
         dict.__getitem__(record, "publication")
     )
     route = _validate_route(dict.__getitem__(record, "route"))
+    clarification = False
+    managed_debt = False
+    if "managed_discovery" in publication:
+        from harness.discovery_completion import decode_binding
+        from harness.discovery_producer import producer_phase
+        binding = decode_binding(publication, completion_id=completion_id)
+        clarification = binding.resolution_publication
+        managed_debt = binding.policy_resolution and binding.recovery["version"] == 27
+        if clarification:
+            if (origin != "resolution" or route.get("from_phase") != (
+                    binding.recovery["from_phase"] if binding.policy_resolution else producer_phase(binding.producer))
+                    or route.get("decision_id") != binding.recovery["resolution"]["id"]
+                    or route.get("to_phase") != binding.candidate["route"]):
+                _raise("intent_invalid")
+        elif (origin != "routed" or route.get("from_phase") != producer_phase(binding.producer)
+                or route.get("manual_phase_run") is not False or route.get("record_completion") is not True):
+            _raise("intent_invalid")
+        if binding.producer == "tracker" and not clarification and route.get("to_phase") != (
+                "phase1-tracker" if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK" else "phase1-why1"):
+            _raise("intent_invalid")
+        if binding.repair_unit is not None and route.get("to_phase") != binding.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"]:
+            _raise("intent_invalid")
+        if binding.recovery["version"] == 9 and route.get("to_phase") != "phase1-why1":
+            _raise("intent_invalid")
+        if binding.producer == "constitution" and route.get("to_phase") != "phase1-what":
+            _raise("intent_invalid")
+        if binding.producer == "understanding" and route.get("to_phase") != "phase1-why2":
+            _raise("intent_invalid")
+        if binding.producer == "feasibility" and route.get("to_phase") != "phase2-feasibility-structural":
+            _raise("intent_invalid")
+        if binding.producer == "feasibility_gate":
+            from harness.discovery_assessment_gate import feasibility_gate_route
+            expected = feasibility_gate_route(binding.recovery["routing_state"], binding.recovery["result"]["state_updates"])
+            if route.get("to_phase") != expected:
+                _raise("intent_invalid")
+        if binding.producer == "lexicon_gate":
+            from harness.discovery_lexicon import lexicon_gate_route
+            expected = lexicon_gate_route(binding.recovery["config"], binding.recovery["routing_state"],
+                binding.recovery["result"]["state_updates"])
+            if route.get("to_phase") != expected:
+                _raise("intent_invalid")
+        if binding.producer == "what" and route.get("to_phase") != (
+                "phase1-investigate" if binding.candidate["routing"]["state_updates"]["evidence_resolution_status"] == "pending"
+                else "phase1-understanding"):
+            _raise("intent_invalid")
+        if binding.producer == "why1" and not clarification:
+            verdict = binding.candidate["routing"]["verdict"]
+            destinations = ({"phase1-why1"} if verdict == "STOP_AND_ASK" else
+                {"phase1-constitution"} if verdict == "PASS" else {"phase1-discover", "phase1-constitution"})
+            if route.get("to_phase") not in destinations:
+                _raise("intent_invalid")
     if origin != route["kind"]:
         _raise("intent_invalid")
     effect_plan = _validate_effect_plan(
@@ -614,7 +670,7 @@ def _validate_intent(
         ["mining", "retarget"],
     ):
         _raise("intent_invalid")
-    if origin == "resolution" and effect_plan != ["quality"]:
+    if origin == "resolution" and effect_plan != (["quality", "context"] if managed_debt else ["context"] if clarification else ["quality"]):
         _raise("intent_invalid")
     checkpoint_prestate = _validate_checkpoint_prestate(
         dict.__getitem__(record, "checkpoint_prestate"),
@@ -624,6 +680,8 @@ def _validate_intent(
         dict.__getitem__(record, "quality_effect"),
         quality_planned="quality" in effect_plan,
     )
+    if managed_debt and quality_effect != binding.recovery["quality_effect"]:
+        _raise("intent_invalid")
     context_reason = _validate_bounded_string(
         dict.__getitem__(record, "context_reason"),
         maximum=_MAX_CONTEXT_REASON_LENGTH,
@@ -639,7 +697,7 @@ def _validate_intent(
         dict.__getitem__(record, "judgment_payload_sha256"),
     )
     if origin == "resolution" and (
-        publication != {"kind": "none"}
+        (not clarification and publication != {"kind": "none"})
         or judgments
         or judgment_digests
     ):
@@ -1462,10 +1520,33 @@ def load_prepared_controller_completion(
     )
 
 
+def validate_retained_completion_proof(marker_value, intent_value, receipts_value):
+    """Validate detached completion proof retained by an existing durable owner.
+
+    This verifies the same sealed bytes as outbox loading; it does not grant
+    completion provenance. The caller must authenticate the retaining owner.
+    """
+    marker = _marker_from(marker_value)
+    raw = _detach_loaded_json(intent_value, root_path="$.controller_completion", code="intent_invalid")
+    intent = _validate_intent(raw)
+    receipts = _validate_receipts(_detach_loaded_json(receipts_value,
+        root_path="$.controller_completion_receipts", code="receipts_invalid"), intent=intent)
+    if (marker.step != "complete" or marker.origin != intent["origin"]
+            or marker.completion_id != intent["completion_id"]
+            or set(receipts["effects"]) != set(intent["effect_plan"])
+            or hashlib.sha256(_canonical_json(raw)).hexdigest() != marker.intent_sha256
+            or hashlib.sha256(_canonical_json(receipts_value)).hexdigest() != marker.receipts_sha256
+            or hashlib.sha256(_canonical_json(intent["publication"])).hexdigest() != marker.publication_binding_sha256):
+        _raise("intent_mismatch")
+    return marker, _intent_view(intent, sealed_value=raw), receipts
+
+
 def discard_unreferenced_controller_completion(
     project_root: Path,
     squad_dir: Path,
     completion_id: str,
+    *,
+    managed_state: dict | None = None,
 ) -> bool:
     """Discard one exact, valid stage after its caller proves no authority."""
     completion_id = _validate_completion_id(completion_id)
@@ -1523,6 +1604,16 @@ def discard_unreferenced_controller_completion(
     ):
         _raise("intent_mismatch")
     publication = intent["publication"]
+    if "managed_discovery" in publication:
+        # A published stage still belongs exclusively to release recovery.
+        # The sole exception is a positively authenticated never-routed draft.
+        if managed_state is None or receipts["effects"]:
+            return False
+        from harness.discovery_completion import require_unpublished_orphan
+        try:
+            require_unpublished_orphan(project, squad, managed_state, intent)
+        except CompletionError:
+            return False
     if publication["kind"] == "external":
         from harness.squad_publication import (
             PublicationError,
@@ -2988,6 +3079,17 @@ def _validate_completion_context_receipt(
     prepared: PreparedControllerCompletion,
     staged: Mapping[str, bytes],
 ) -> dict[str, object]:
+    return validate_completion_context_images(receipt,
+        completion_id=prepared.intent.completion_id, images=staged)
+
+
+def validate_completion_context_images(
+    receipt: object, *, completion_id: str, images: Mapping[str, bytes],
+) -> dict[str, object]:
+    """Validate receipt-bound images, whether staged or freshly captured.
+
+    This validates bytes only; the caller authenticates the retaining completion.
+    """
     record = _validate_exact_dict(
         receipt,
         frozenset(
@@ -3007,7 +3109,7 @@ def _validate_completion_context_receipt(
     if (
         type(record["schema_version"]) is not int
         or record["schema_version"] != _SCHEMA_VERSION
-        or record["completion_id"] != prepared.intent.completion_id
+        or record["completion_id"] != completion_id
         or type(revision) is not int
         or revision < 0
         or revision > (1 << 63) - 1
@@ -3041,9 +3143,9 @@ def _validate_completion_context_receipt(
         ):
             _raise("receipts_mismatch")
         if (
-            name not in staged
-            or len(staged[name]) != size
-            or hashlib.sha256(staged[name]).hexdigest() != digest
+            name not in images
+            or len(images[name]) != size
+            or hashlib.sha256(images[name]).hexdigest() != digest
         ):
             _raise("stage_corrupt")
         validated_files.append(
@@ -3058,7 +3160,7 @@ def _validate_completion_context_receipt(
         )
     return {
         "schema_version": _SCHEMA_VERSION,
-        "completion_id": prepared.intent.completion_id,
+        "completion_id": completion_id,
         "source_state_revision": revision,
         "prepared_at": prepared_at,
         "files": validated_files,

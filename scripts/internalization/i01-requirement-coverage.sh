@@ -7,9 +7,11 @@ set -euo pipefail
 
 SPEC="$1"; OUTPUT="$2"
 tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/element-id-functions.sh"
 
-grep -oE '(FR|NFR)-[0-9]{3}' "$SPEC" | sort -u > "$tmpdir/spec.txt" || true
-grep -oE '(FR|NFR)-[0-9]{3}' "$OUTPUT" | sort -u > "$tmpdir/out.txt" || true
+extract_requirement_ids 'FR|NFR' < "$SPEC" | sort -u > "$tmpdir/spec.txt"
+extract_requirement_ids 'FR|NFR' < "$OUTPUT" | sort -u > "$tmpdir/out.txt"
 
 total=$(wc -l < "$tmpdir/spec.txt" | tr -d ' ')
 out_count=$(wc -l < "$tmpdir/out.txt" | tr -d ' ')

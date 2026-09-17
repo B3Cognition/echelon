@@ -143,6 +143,9 @@ class FulfillmentRefreshResult:
     cache_key: str | None = None
     report_path: str | None = None
     verified_ledger: Mapping[str, int] | None = None
+    token_usage: int | None = 0
+    operation_id: str | None = None
+    dispatch_count: int = 0
 
     @property
     def ok(self) -> bool:
@@ -167,8 +170,9 @@ class PromptExecutor(Protocol):
 class FulfillmentRunner:
     """Runs the verify-spec skill without teaching the LLM provider Echelon semantics."""
 
-    def __init__(self, prompt_executor: PromptExecutor) -> None:
+    def __init__(self, prompt_executor: PromptExecutor, *, controlled: bool = False) -> None:
         self._prompt_executor = prompt_executor
+        self._controlled = controlled
 
     def refresh(
         self,
@@ -188,7 +192,22 @@ class FulfillmentRunner:
         verify_run_dir: Path | str | None = None,
         source_id: str | None = None,
         source_root: Path | str | None = None,
+        token_budget: float | None = None,
+        forbidden_paths: tuple[Path, ...] = (),
+        accounted_usage: Mapping[str, int] | None = None,
+        on_run_selected=None,
     ) -> FulfillmentRefreshResult:
+        if self._controlled:
+            from harness.controlled_fulfillment_refresh import refresh_controlled_fulfillment
+            return refresh_controlled_fulfillment(self._prompt_executor,
+                worktree=Path(worktree_path), spec_id=spec_id, spec_dir=spec_dir,
+                orchestration_root=orchestration_root, scope=scope,
+                completed_task_ids=completed_task_ids or (), changed_files=changed_files or (),
+                reconcile=reconcile, dry_run=dry_run, verification_evidence=verification_evidence,
+                coverage_observation=coverage_observation, observer_required=observer_required,
+                verify_run_dir=verify_run_dir, source_id=source_id, source_root=source_root,
+                token_budget=token_budget, forbidden_paths=forbidden_paths,
+                accounted_usage=accounted_usage, on_run_selected=on_run_selected)
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
                 status="failed",
@@ -1190,6 +1209,8 @@ def _write_verified_fulfillment_ledger(
     verification_evidence_sha256: str | None = None,
     verification_evidence: Mapping[str, object] | VerificationEvidenceRef | None = None,
     coverage_observation_sha256: str | None = None,
+    contract_version: str = FULFILLMENT_VERIFIER_VERSION,
+    output_path: Path | None = None,
 ) -> dict[str, int] | None:
     if (
         spec_dir is None
@@ -1222,11 +1243,12 @@ def _write_verified_fulfillment_ledger(
     verifier_version = _ledger_verifier_version(
         verification_evidence_sha256,
         coverage_observation_sha256,
+        contract_version=contract_version,
     )
     requirement_set_fingerprint = canonical_requirement_fingerprint(
         extract_canonical_requirements(spec_dir)
     )
-    contract_hash = fulfillment_contract_hash()
+    contract_hash = hashlib.sha256(contract_version.encode("utf-8")).hexdigest()
     ledger = build_verified_ledger(
         report_path=report,
         spec_input_hash=spec_input_hash,
@@ -1238,7 +1260,7 @@ def _write_verified_fulfillment_ledger(
         contract_hash=contract_hash,
         requirement_set_fingerprint=requirement_set_fingerprint,
     )
-    write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
+    write_verified_ledger(output_path or verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
         ledger,
         current_spec_input_hash=spec_input_hash,
@@ -1263,6 +1285,7 @@ def _verified_ledger_reuse_plan(
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
     coverage_observation_sha256: str | None = None,
+    contract_version: str = FULFILLMENT_VERIFIER_VERSION,
 ) -> VerifiedLedgerReusePlan:
     if report is None or spec_input_hash is None or implementation_input_hash is None:
         return VerifiedLedgerReusePlan(
@@ -1284,6 +1307,7 @@ def _verified_ledger_reuse_plan(
             verifier_version=_ledger_verifier_version(
                 verification_evidence_sha256,
                 coverage_observation_sha256,
+                contract_version=contract_version,
             ),
         )
     return plan_verified_ledger_reuse(
@@ -1294,6 +1318,7 @@ def _verified_ledger_reuse_plan(
         current_verifier_version=_ledger_verifier_version(
             verification_evidence_sha256,
             coverage_observation_sha256,
+            contract_version=contract_version,
         ),
     )
 
@@ -1433,8 +1458,9 @@ def _prepare_coverage_observation_context(
 def _ledger_verifier_version(
     verification_evidence_sha256: str | None,
     coverage_observation_sha256: str | None = None,
+    *, contract_version: str = FULFILLMENT_VERIFIER_VERSION,
 ) -> str:
-    parts = [FULFILLMENT_VERIFIER_VERSION]
+    parts = [contract_version]
     if verification_evidence_sha256:
         parts.append(f"host:{verification_evidence_sha256}")
     if coverage_observation_sha256:

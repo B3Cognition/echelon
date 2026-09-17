@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from kernel.element_ids import format_element_id
 from kernel.task_contract import parse_task_rows
 from harness.task_targets import analyze_task_targets
 from harness.spec_frontmatter import read_targets
@@ -369,7 +370,7 @@ def _proposed_tasks(
 
 
 def _format_task_id(value: int) -> str:
-    return f"T-{value:03d}"
+    return format_element_id("T", value)
 
 
 def _safe_title_fragment(value: str) -> str:

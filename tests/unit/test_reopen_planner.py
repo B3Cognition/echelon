@@ -36,7 +36,49 @@ def test_reopened_tasks_inherit_unique_requirement_owner(tmp_path):
     assert result.status == "ready"
     ownership = analyze_task_targets("\n".join(task["row"] for task in result.proposed_tasks))
     assert ownership.unowned_tasks == ()
-    assert ownership.target_tasks == {"sources/game": ("T-003", "T-004", "T-005")}
+    assert ownership.target_tasks == {
+        "sources/game": ("T-000003", "T-000004", "T-000005")
+    }
+
+
+def test_reopen_uses_six_digit_ids_and_preserves_wide_requirement_target(
+    tmp_path: Path,
+) -> None:
+    """Reopen formatting must not narrow IDs or drop target ownership metadata."""
+    gaps, tasks, out = _write_inputs(
+        tmp_path,
+        gaps="""# Gaps
+| ID | Missing | Next Action |
+| --- | --- | --- |
+| FR-1000000 | Assertion missing | Add assertion |
+""",
+    )
+    tasks.write_text(
+        "- [x] T-040 complexity=standard phase=core "
+        "req=FR-1000000 depends=none target=sources/game\n",
+        encoding="utf-8",
+    )
+
+    result = plan_reopen_gaps(
+        gaps_path=gaps,
+        tasks_path=tasks,
+        existing_reopen_paths=[],
+        out_plan_json=out / "plan.json",
+        out_plan_md=out / "plan.md",
+    )
+
+    assert [task["task_id"] for task in result.proposed_tasks] == [
+        "T-000041",
+        "T-000042",
+        "T-000043",
+    ]
+    assert result.proposed_tasks[0]["cluster_req"] == "FR-1000000"
+    assert result.proposed_tasks[0]["row"].endswith(
+        "req=FR-1000000 depends=none target=sources/game"
+    )
+    assert result.proposed_tasks[1]["row"].endswith(
+        "req=FR-1000000 depends=T-000041 target=sources/game"
+    )
 
 
 def test_reopen_does_not_guess_ambiguous_workspace_target(tmp_path):
@@ -147,17 +189,17 @@ def test_plans_only_new_root_cause_clusters_and_dedupes_existing_work(
         "FR-046",
     ]
     assert [task["task_id"] for task in result.proposed_tasks] == [
-        "T-097",
-        "T-098",
-        "T-099",
-        "T-100",
-        "T-101",
-        "T-102",
-        "T-103",
+        "T-000097",
+        "T-000098",
+        "T-000099",
+        "T-000100",
+        "T-000101",
+        "T-000102",
+        "T-000103",
     ]
-    assert result.proposed_tasks[1]["row"].endswith("depends=T-097")
+    assert result.proposed_tasks[1]["row"].endswith("depends=T-000097")
     assert result.proposed_tasks[3]["row"] == (
-        "- [ ] T-100 complexity=standard phase=fulfillment-gap "
+        "- [ ] T-000100 complexity=standard phase=fulfillment-gap "
         "req=TASK-PROGRESS depends=none"
     )
     assert all(cluster["primary_req"] != "FR-004" for cluster in result.clusters)

@@ -3089,6 +3089,7 @@ def _cmd_harness_resume(
     recoverable_reasons = {"build_incomplete", "publish_failed"}
     continuation_reasons = {
         "blocker_escalation",
+        "delivery_prompt_invalid",
         "checkpoint_outer_cap",
         "docker_unavailable",
         "convergence_stalled",
@@ -11338,8 +11339,25 @@ def _cmd_rewind(
 
     from harness.squad_state import SquadStateStore
 
+    from harness.element_identity_legacy_guard import (
+        LEGACY_IDENTITY_EXECUTION_BLOCKED,
+        require_legacy_identity_execution,
+        require_legacy_identity_spec,
+    )
+    from harness.element_identity_store import IdentityStoreError
+    from harness.squad_state import StateAdvanceError
+
     store = SquadStateStore(squad_dir)
-    state = store.load()
+    invalid_managed_state = False
+    try:
+        state = store.load()
+    except StateAdvanceError as exc:
+        if exc.validator != "managed_identity":
+            raise
+        invalid_managed_state = True
+    if invalid_managed_state:
+        print(f"✗ Cannot rewind to {target}.\n  {LEGACY_IDENTITY_EXECUTION_BLOCKED}", file=sys.stderr)
+        raise SystemExit(1)
     spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
     if spec_dir is None or spec_dir_ref is None:
         print(
@@ -11430,7 +11448,15 @@ def _cmd_rewind(
                         raise SystemExit(1)
 
                     store = SquadStateStore(locked_squad_dir)
-                    state = store.load()
+                    invalid_managed_state = False
+                    try:
+                        state = store.load()
+                    except StateAdvanceError as exc:
+                        if exc.validator != "managed_identity":
+                            raise
+                        invalid_managed_state = True
+                    if invalid_managed_state:
+                        raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                     spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(
                         project_root,
                         state,
@@ -11447,6 +11473,19 @@ def _cmd_rewind(
                             file=sys.stderr,
                         )
                         raise SystemExit(1)
+                    admitted = False
+                    try:
+                        require_legacy_identity_spec(
+                            project_root=project_root, spec_id=spec_dir.name,
+                        )
+                        require_legacy_identity_execution(
+                            project_root=project_root, run_dir=locked_squad_dir, state=state,
+                        )
+                        admitted = True
+                    except IdentityStoreError:
+                        pass
+                    if not admitted:
+                        raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                     ledger = load_checkpoint_ledger(spec_dir)
                     try:
                         checkpoint = _resolve_rewind_checkpoint(
@@ -11500,11 +11539,23 @@ def _cmd_rewind(
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
                             RetargetRecoveryError,
+                            require_legacy_retarget_recovery,
                             resume_committed_retarget_recovery,
                             retarget_recovery_dirty_paths,
                             verified_committed_retarget_recovery,
                         )
 
+                        identity_blocked = False
+                        try:
+                            require_legacy_retarget_recovery(
+                                project_root, checkpoint, replacement_state,
+                            )
+                        except RetargetRecoveryError as exc:
+                            if str(exc) != LEGACY_IDENTITY_EXECUTION_BLOCKED:
+                                raise RewindError(str(exc)) from exc
+                            identity_blocked = True
+                        if identity_blocked:
+                            raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
                         try:
                             recovery_commit = verified_committed_retarget_recovery(
                                 project_root,
@@ -13228,6 +13279,15 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
+    if command == "build" and config.llm.features.get("delivery_gate_controller") is True:
+        print(
+            "echelon build: controlled delivery cannot run through the raw build command.\n"
+            "Use echelon delivery run <spec_id> for controller-owned task selection, "
+            "reviews and recovery. Raw --fix/--failures invocations are not accepted; "
+            "the delivery controller owns repair scope and evidence.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     cli = config.llm.cli
 
     prosaic_command = _load_prosaic_command(skill_base, arguments, project_dir)

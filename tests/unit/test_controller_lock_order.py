@@ -38,6 +38,36 @@ def test_controller_lock_ranks_are_complete_and_globally_ordered() -> None:
     }
 
 
+def test_managed_quality_restore_callbacks_precede_completion_receipt_lock(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import harness.discovery_restoration_completion as restoration
+    controller = object.__new__(squad_module.SquadController)
+    controller._project_root = tmp_path
+    controller._squad_dir = tmp_path / "run"
+    prepared = SimpleNamespace(marker=SimpleNamespace(step="quality", completion_id="a" * 32),
+        _transaction_root=tmp_path / "completion", receipts={"effects": {}},
+        intent=SimpleNamespace(publication={"managed_discovery": {}},
+            quality_effect={"restore_candidate_id": "candidate-000001"}, route={}, effect_plan=("quality",)))
+    events = []
+    def callback(*args):
+        with controller_lock_order("publication", "restoration"):
+            events.append("publication")
+    monkeypatch.setattr(restoration, "restoration_callbacks", lambda *args: dict(before_restore=callback, after_restore=callback))
+    def native(*args, before_restore, after_restore, **kwargs):
+        before_restore()
+        after_restore()
+        return {"native": "receipt"}
+    monkeypatch.setattr(squad_module, "apply_or_verify_proportional_quality_effect", native)
+    def persist(*args):
+        with pytest.raises(LockOrderViolation, match="completion.*publication"):
+            with controller_lock_order("publication", "restoration"):
+                pass
+        events.append("receipt")
+    monkeypatch.setattr(squad_module, "persist_completion_effect_receipt", persist)
+    controller._apply_controller_completion_effect(prepared, {})
+    assert events == ["publication", "publication", "receipt"]
+
+
 def test_lock_order_rejects_inversion_before_the_inner_lock_is_entered() -> None:
     inner_entered = False
 

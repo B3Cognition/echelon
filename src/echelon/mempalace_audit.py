@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -8,10 +9,12 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from echelon.context_reconciliation import reconcile_drawers
+from echelon.context_reconciliation import ReconciliationReport, reconcile_drawers
 from echelon.mempalace_requirements import (
     SpecMemoryError,
+    CanonicalSpecSnapshot,
     PlannedRequirementDrawer,
+    _require_legacy_spec_memory,
     create_requirement_memory_adapter,
     load_canonical_spec_snapshot,
     load_supporting_artifact_snapshots,
@@ -355,6 +358,13 @@ def _scan_spec_extras(
     except TypeError:
         return [], [], [], [], [], [], [], ["bounded_extra_scan_unsupported"]
     parsed = _as_collection_rows(raw)
+    return _classify_spec_extras(parsed, snapshot=snapshot, expected_rows=expected_rows)
+
+
+def _classify_spec_extras(
+    parsed: _ParsedCollectionRows,
+    *, snapshot: object, expected_rows: list[PlannedRequirementDrawer],
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
     expected_ids = {row.drawer_id for row in expected_rows}
     expected_requirement_ids = {
         row.requirement_id for row in expected_rows
@@ -433,16 +443,18 @@ def _plan_expected_spec_memory_rows(
     spec_dir: Path,
     snapshot: object,
     adapter: object,
+    supplied_supports: tuple[CanonicalSpecSnapshot, ...] | None = None,
 ) -> list[PlannedRequirementDrawer]:
     expected_rows = adapter.plan_canonical_rows(
         getattr(snapshot, "content"),
         source=getattr(snapshot, "source"),
         artifact_metadata=getattr(snapshot, "artifact_metadata"),
     )
-    for support_snapshot in load_supporting_artifact_snapshots(
-        project_root,
-        spec_dir,
-    ):
+    supports = (
+        load_supporting_artifact_snapshots(project_root, spec_dir)
+        if supplied_supports is None else supplied_supports
+    )
+    for support_snapshot in supports:
         expected_rows.extend(
             adapter.plan_canonical_support_rows(
                 support_snapshot.content,
@@ -459,6 +471,11 @@ def cleanup_stale_spec_memory(
 ) -> SpecMemoryCleanupReport:
     spec_dir = resolve_spec_dir(project_root, spec_selector)
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=snapshot.spec_id,
+    )
     adapter = create_requirement_memory_adapter(project_root, run_id="cleanup")
     expected_rows = _plan_expected_spec_memory_rows(
         project_root=project_root,
@@ -534,6 +551,25 @@ def audit_spec_memory(
         parsed = _as_collection_rows(raw)
     except (Exception, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
+    return _classify_spec_memory_audit(
+        snapshot=snapshot, adapter=adapter, expected_rows=expected_rows,
+        parsed=parsed, probe_retrieval=probe_retrieval,
+        reconcile=lambda drawers: reconcile_drawers(drawers, project_root),
+        scan_extras=lambda: _scan_spec_extras(
+            collection, adapter=adapter, snapshot=snapshot, expected_rows=expected_rows,
+        ),
+    )
+
+
+def _classify_spec_memory_audit(
+    *, snapshot: CanonicalSpecSnapshot, adapter: object,
+    expected_rows: list[PlannedRequirementDrawer], parsed: _ParsedCollectionRows,
+    probe_retrieval: bool,
+    reconcile: Callable[[list[_CollectionDrawer]], ReconciliationReport],
+    scan_extras: Callable[[], tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str], list[str]]],
+) -> SpecMemoryAuditReport:
+    """Native report policy; callbacks preserve legacy reconciliation/read order."""
+    expected = [row.drawer_id for row in expected_rows]
     rows = parsed.rows
     missing = [
         drawer_id
@@ -560,7 +596,7 @@ def audit_spec_memory(
         for drawer_id, (document, metadata) in rows.items()
     ]
     try:
-        reconciliation = reconcile_drawers(drawers, project_root)
+        reconciliation = reconcile(drawers)
     except (Exception, SystemExit) as exc:
         return _failure_report(
             snapshot=snapshot,
@@ -641,12 +677,7 @@ def audit_spec_memory(
             duplicate_canonical,
             scan_errors,
             scan_recommendations,
-        ) = _scan_spec_extras(
-            collection,
-            adapter=adapter,
-            snapshot=snapshot,
-            expected_rows=expected_rows,
-        )
+        ) = scan_extras()
     except (Exception, SystemExit) as exc:
         return _unavailable_report(
             snapshot=snapshot,

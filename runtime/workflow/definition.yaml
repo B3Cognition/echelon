@@ -23,6 +23,17 @@
 #
 # Schema version: 1
 # =============================================================================
+# Opt-in delivery_gate_controller profile registrations (Python-owned sequence):
+#   echelon.delivery-implementer, echelon.delivery-spec-guard,
+#   echelon.delivery-code-reviewer, echelon.delivery-test-guardian.
+# These bounded profiles are dispatched by harness.delivery_slice_runner, not
+# the legacy build graph below. They never consume its DEGRADED transitions.
+# Controlled fulfillment semantic profiles (Python-owned, not legacy routing):
+#   echelon.fulfillment-mapper, echelon.fulfillment-judge.
+# These inspect assigned evidence only; Python owns preparation and publication.
+# Inactive managed discovery semantic profiles (not legacy phase routing):
+#   echelon.discovery-producer, echelon.discovery-reviewer.
+# Their proposal/author/review contracts do not activate managed Squad execution.
 
 schema_version: 1
 controller_runtime_compatibility_version: 3
@@ -483,6 +494,8 @@ phases:
       to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain
       context, calls the skill, verifies output, and fixes placeholders if needed.
       See phase1-constitution.md for phase contract; chief.md for full protocol.
+      Managed execution uses neutral echelon.constitution-producer and
+      echelon.constitution-reviewer contracts under the same CHIEF stewardship.
     outputs:
       - constitution.md
     allowed_state_updates:

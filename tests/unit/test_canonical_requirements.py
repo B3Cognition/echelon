@@ -94,6 +94,36 @@ def test_explicit_requirement_definition_supersedes_earlier_reference(
     assert rows["AC-001"].source_line == 1
 
 
+def test_canonical_inventory_retains_and_numerically_orders_wide_ids(
+    tmp_path: Path,
+) -> None:
+    """Inventory ordering must not place a million before 999999."""
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-1000000**: Millionth behavior.\n"
+        "- **FR-999999**: Prior behavior.\n"
+        "- **FR-001**: Legacy behavior.\n"
+        "- **NFR-10000000**: Eight-digit behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-10000000 complexity=standard phase=build "
+        "req=AC-000001 depends=T-1000000\n",
+        encoding="utf-8",
+    )
+
+    rows = extract_canonical_requirements(spec_dir)
+
+    assert [row.id for row in rows] == [
+        "AC-000001",
+        "FR-001",
+        "FR-999999",
+        "FR-1000000",
+        "NFR-10000000",
+    ]
+
+
 def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
     tmp_path,
 ):

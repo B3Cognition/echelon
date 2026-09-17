@@ -13,9 +13,10 @@ from echelon.mempalace_requirements import (
     _read_int,
     _read_mempalace_wing,
     _read_str_list,
+    _require_legacy_spec_memory,
     resolve_spec_dir,
 )
-from echelon.mempalace_memory_audit import audit_artifact_memory
+from echelon.mempalace_memory_audit import ArtifactMemoryAuditReport, audit_artifact_memory
 from harness.spec_frontmatter import read_frontmatter
 from harness.verify_evidence_discovery import (
     discover_verify_evidence_runs,
@@ -244,11 +245,20 @@ def _snapshot_for_artifact(
     spec_id = spec_dir.name
     source = artifact.resolve().relative_to(project_root.resolve()).as_posix()
     digest = artifact_hash(artifact)
+    return _evidence_artifact_snapshot(
+        spec_id=spec_id, spec_dir=spec_dir, artifact=artifact,
+        content=artifact.read_bytes(), source=source, digest=digest,
+    )
+
+
+def _evidence_artifact_snapshot(
+    *, spec_id: str, spec_dir: Path, artifact: Path, content: bytes, source: str, digest: str,
+) -> SpecEvidenceArtifactSnapshot:
     return SpecEvidenceArtifactSnapshot(
         spec_id=spec_id,
         spec_dir=spec_dir,
         artifact_file=artifact,
-        content=artifact.read_bytes(),
+        content=content,
         source=source,
         artifact_metadata={
             "scope": "spec-evidence",
@@ -303,6 +313,11 @@ def publish_spec_evidence_package(
     spec_dir = resolve_spec_dir(root, spec_selector)
     _require_landed_spec(spec_dir, allow_unlanded=allow_unlanded)
     source_run_dir = _resolve_verify_evidence_run_dir(root, spec_dir.name, run_id)
+    _require_legacy_spec_memory(
+        root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=spec_dir.resolve().name,
+    )
     evidence_dir = spec_dir / PUBLISHED_EVIDENCE_DIR
     evidence_dir.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
@@ -537,9 +552,15 @@ def audit_spec_evidence_memory(
         spec_id=spec_dir.name,
         planner_name="plan_spec_evidence_artifact_rows",
     )
+    return _evidence_audit_report(generic, spec_id=spec_dir.name)
+
+
+def _evidence_audit_report(
+    generic: ArtifactMemoryAuditReport, *, spec_id: str,
+) -> SpecEvidenceMemoryAuditReport:
     return SpecEvidenceMemoryAuditReport(
         schema_version=generic.schema_version,
-        spec_id=spec_dir.name,
+        spec_id=spec_id,
         spec_dir=generic.root,
         wing=generic.wing,
         palace_path=generic.palace_path,
@@ -603,6 +624,11 @@ def mine_spec_evidence_memory(
         allow_unlanded=allow_unlanded,
     )
     spec_dir = resolve_spec_dir(project_root, spec_selector)
+    _require_legacy_spec_memory(
+        project_root,
+        spec_id=spec_dir.name,
+        resolved_spec_id=spec_dir.resolve().name,
+    )
     try:
         adapter = create_spec_evidence_memory_adapter(project_root, run_id)
     except SpecMemoryError:

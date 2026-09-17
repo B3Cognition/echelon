@@ -14,8 +14,9 @@ from harness.review_artifacts import ReviewArtifactError, ReviewArtifactPublishe
 
 
 def _task(task_id: str) -> str:
-    number = int(task_id.removeprefix("T-"))
-    return f"- [ ] T-{number:03d} complexity=standard phase=review-fix req=UNMAPPED depends=none\n"
+    suffix = task_id.removeprefix("T-")
+    label = task_id if len(suffix) >= 3 else f"T-{int(suffix):03d}"
+    return f"- [ ] {label} complexity=standard phase=review-fix req=UNMAPPED depends=none\n"
 
 
 def _append(*entries: tuple[str, str]) -> str:
@@ -42,16 +43,22 @@ def _write_manifest(allocation, *, artifacts: list[str], tasks: list[dict[str, s
 
 def _stage_one_group(publisher: ReviewArtifactPublisher):
     allocation = publisher.allocate(("c1",))
+    first, second, third = allocation.task_ids[:3]
     (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
     (allocation.attempt_dir / "tasks-append.md").write_text(
-        _append(("T-002", "RF1-T1"), ("T-003", "RF1-T2"), ("T-004", "RF1-T3")), encoding="utf-8"
+        _append((first, "RF1-T1"), (second, "RF1-T2"), (third, "RF1-T3")),
+        encoding="utf-8",
     )
     _write_manifest(
         allocation,
         artifacts=["review-fix-1.md"],
         tasks=[
-            {"task_id": f"T-{number:03d}", "review_task_id": f"RF1-T{number - 1}", "artifact": "review-fix-1.md"}
-            for number in (2, 3, 4)
+            {
+                "task_id": task_id,
+                "review_task_id": f"RF1-T{index}",
+                "artifact": "review-fix-1.md",
+            }
+            for index, task_id in enumerate((first, second, third), start=1)
         ],
     )
     return allocation
@@ -70,8 +77,87 @@ def test_allocate_uses_numeric_max_and_three_task_ids_per_possible_group(tmp_pat
         allocation = publisher.allocate(("c1", "c2"))
 
     assert allocation.artifact_names == ("review-fix-8.md", "review-fix-9.md")
-    assert allocation.task_ids == ("T-041", "T-042", "T-043", "T-044", "T-045", "T-046")
+    assert allocation.task_ids == (
+        "T-000041",
+        "T-000042",
+        "T-000043",
+        "T-000044",
+        "T-000045",
+        "T-000046",
+    )
     assert allocation.attempt_dir.parent == state_dir / "review-staging"
+
+
+def test_fresh_allocation_uses_six_digit_minimum(tmp_path: Path) -> None:
+    """Fresh task producers must not emit the legacy three-digit width."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = publisher.allocate(("c1",))
+
+    assert allocation.task_ids == ("T-000001", "T-000002", "T-000003")
+
+
+def test_wide_allocation_publishes_and_round_trips_without_a_numeric_cap(
+    tmp_path: Path,
+) -> None:
+    """A task after 999999 must allocate, publish, and remain fully parseable."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+    tasks_path = spec_dir / "tasks.md"
+    tasks_path.write_text(
+        "- [ ] T-999999 complexity=standard phase=review-fix "
+        "req=FR-999999 depends=none\n",
+        encoding="utf-8",
+    )
+
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = publisher.allocate(("c1",))
+        assert allocation.task_ids == ("T-1000000", "T-1000001", "T-1000002")
+        (allocation.attempt_dir / "review-fix-1.md").write_text(
+            "# Review Fix 1\n", encoding="utf-8"
+        )
+        (allocation.attempt_dir / "tasks-append.md").write_text(
+            _append(
+                ("T-1000000", "RF1-T1"),
+                ("T-1000001", "RF1-T2"),
+                ("T-1000002", "RF1-T3"),
+            ),
+            encoding="utf-8",
+        )
+        _write_manifest(
+            allocation,
+            artifacts=["review-fix-1.md"],
+            tasks=[
+                {
+                    "task_id": "T-1000000",
+                    "review_task_id": "RF1-T1",
+                    "artifact": "review-fix-1.md",
+                },
+                {
+                    "task_id": "T-1000001",
+                    "review_task_id": "RF1-T2",
+                    "artifact": "review-fix-1.md",
+                },
+                {
+                    "task_id": "T-1000002",
+                    "review_task_id": "RF1-T3",
+                    "artifact": "review-fix-1.md",
+                },
+            ],
+        )
+        result = publisher.accept_manifest(allocation.status_file)
+
+    assert result.task_ids == ("T-1000000", "T-1000001", "T-1000002")
+    assert [row.task_id for row in parse_task_rows(tasks_path.read_text())] == [
+        "T-999999",
+        "T-1000000",
+        "T-1000001",
+        "T-1000002",
+    ]
 
 
 def test_no_blocking_manifest_requires_no_staged_output(tmp_path: Path) -> None:
@@ -174,19 +260,7 @@ def test_recovery_completes_partial_publication_without_duplicate_tasks(tmp_path
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
-        allocation = publisher.allocate(("c1",))
-        (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
-        (allocation.attempt_dir / "tasks-append.md").write_text(
-            _append(("T-002", "RF1-T1"), ("T-003", "RF1-T2"), ("T-004", "RF1-T3")), encoding="utf-8"
-        )
-        _write_manifest(
-            allocation,
-            artifacts=["review-fix-1.md"],
-            tasks=[
-                {"task_id": f"T-{number:03d}", "review_task_id": f"RF1-T{number - 1}", "artifact": "review-fix-1.md"}
-                for number in (2, 3, 4)
-            ],
-        )
+        allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda boundary: (_ for _ in ()).throw(RuntimeError("crash")) if boundary == "artifact-write:review-fix-1.md" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
@@ -195,8 +269,8 @@ def test_recovery_completes_partial_publication_without_duplicate_tasks(tmp_path
         result = publisher.recover_publication(set())
 
     assert result is not None
-    assert result.task_ids == ("T-002", "T-003", "T-004")
-    assert (spec_dir / "tasks.md").read_text(encoding="utf-8").count("T-002") == 1
+    assert result.task_ids == ("T-000002", "T-000003", "T-000004")
+    assert (spec_dir / "tasks.md").read_text(encoding="utf-8").count("T-000002") == 1
 
 
 def test_publication_rejects_canonical_tasks_changed_after_allocation(tmp_path: Path) -> None:
@@ -208,20 +282,8 @@ def test_publication_rejects_canonical_tasks_changed_after_allocation(tmp_path: 
     tasks_path.write_text(_task("T-1"), encoding="utf-8")
 
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
-        allocation = publisher.allocate(("c1",))
+        allocation = _stage_one_group(publisher)
         tasks_path.write_text(_task("T-1") + _task("T-99"), encoding="utf-8")
-        (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
-        (allocation.attempt_dir / "tasks-append.md").write_text(
-            _append(("T-002", "RF1-T1"), ("T-003", "RF1-T2"), ("T-004", "RF1-T3")), encoding="utf-8"
-        )
-        _write_manifest(
-            allocation,
-            artifacts=["review-fix-1.md"],
-            tasks=[
-                {"task_id": f"T-{number:03d}", "review_task_id": f"RF1-T{number - 1}", "artifact": "review-fix-1.md"}
-                for number in (2, 3, 4)
-            ],
-        )
 
         with pytest.raises(ReviewArtifactError, match="changed"):
             publisher.accept_manifest(allocation.status_file)
@@ -238,24 +300,25 @@ def test_manifest_rejects_task_numbers_assigned_to_the_wrong_artifact(tmp_path: 
 
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
         allocation = publisher.allocate(("c1", "c2"))
+        first, second, third, fourth, fifth, sixth = allocation.task_ids
         for artifact in allocation.artifact_names:
             (allocation.attempt_dir / artifact).write_text("# Fix\n", encoding="utf-8")
         (allocation.attempt_dir / "tasks-append.md").write_text(
             _append(
-                ("T-002", "RF1-T1"), ("T-003", "RF2-T1"), ("T-004", "RF2-T2"),
-                ("T-005", "RF2-T3"), ("T-006", "RF1-T2"), ("T-007", "RF1-T3"),
+                (first, "RF1-T1"), (second, "RF2-T1"), (third, "RF2-T2"),
+                (fourth, "RF2-T3"), (fifth, "RF1-T2"), (sixth, "RF1-T3"),
             ), encoding="utf-8"
         )
         _write_manifest(
             allocation,
             artifacts=list(allocation.artifact_names),
             tasks=[
-                {"task_id": "T-002", "review_task_id": "RF1-T1", "artifact": "review-fix-1.md"},
-                {"task_id": "T-003", "review_task_id": "RF2-T1", "artifact": "review-fix-2.md"},
-                {"task_id": "T-004", "review_task_id": "RF2-T2", "artifact": "review-fix-2.md"},
-                {"task_id": "T-005", "review_task_id": "RF2-T3", "artifact": "review-fix-2.md"},
-                {"task_id": "T-006", "review_task_id": "RF1-T2", "artifact": "review-fix-1.md"},
-                {"task_id": "T-007", "review_task_id": "RF1-T3", "artifact": "review-fix-1.md"},
+                {"task_id": first, "review_task_id": "RF1-T1", "artifact": "review-fix-1.md"},
+                {"task_id": second, "review_task_id": "RF2-T1", "artifact": "review-fix-2.md"},
+                {"task_id": third, "review_task_id": "RF2-T2", "artifact": "review-fix-2.md"},
+                {"task_id": fourth, "review_task_id": "RF2-T3", "artifact": "review-fix-2.md"},
+                {"task_id": fifth, "review_task_id": "RF1-T2", "artifact": "review-fix-1.md"},
+                {"task_id": sixth, "review_task_id": "RF1-T3", "artifact": "review-fix-1.md"},
             ],
         )
 
@@ -273,7 +336,7 @@ def test_allocation_and_append_round_trip_through_canonical_task_parser(tmp_path
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
         allocation = publisher.allocate(("c1",))
 
-    assert allocation.task_ids == ("T-010", "T-011", "T-012")
+    assert allocation.task_ids == ("T-000010", "T-000011", "T-000012")
 
 
 def test_lock_release_preserves_a_replacement_lock(tmp_path: Path) -> None:
@@ -327,16 +390,22 @@ def test_manifest_append_requires_canonical_rows_and_review_title_details(tmp_pa
 
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
         allocation = publisher.allocate(("c1",))
+        first, second, third = allocation.task_ids
         (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
         (allocation.attempt_dir / "tasks-append.md").write_text(
-            _task("T-002") + _task("T-003") + _task("T-004") + "untrusted prose\n", encoding="utf-8"
+            _task(first) + _task(second) + _task(third) + "untrusted prose\n",
+            encoding="utf-8",
         )
         _write_manifest(
             allocation,
             artifacts=["review-fix-1.md"],
             tasks=[
-                {"task_id": f"T-{number:03d}", "review_task_id": f"RF1-T{number - 1}", "artifact": "review-fix-1.md"}
-                for number in (2, 3, 4)
+                {
+                    "task_id": task_id,
+                    "review_task_id": f"RF1-T{index}",
+                    "artifact": "review-fix-1.md",
+                }
+                for index, task_id in enumerate((first, second, third), start=1)
             ],
         )
         with pytest.raises(ReviewArtifactError, match="review title|malformed"):
@@ -352,19 +421,7 @@ def test_recovery_rejects_corrupt_journal_before_canonical_mutation(tmp_path: Pa
     (spec_dir / "tasks.md").write_text(original, encoding="utf-8")
 
     with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
-        allocation = publisher.allocate(("c1",))
-        (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
-        (allocation.attempt_dir / "tasks-append.md").write_text(
-            _append(("T-002", "RF1-T1"), ("T-003", "RF1-T2"), ("T-004", "RF1-T3")), encoding="utf-8"
-        )
-        _write_manifest(
-            allocation,
-            artifacts=["review-fix-1.md"],
-            tasks=[
-                {"task_id": f"T-{number:03d}", "review_task_id": f"RF1-T{number - 1}", "artifact": "review-fix-1.md"}
-                for number in (2, 3, 4)
-            ],
-        )
+        allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda boundary: (_ for _ in ()).throw(RuntimeError("crash")) if boundary == "journal-created" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
@@ -404,7 +461,62 @@ def test_recovery_is_idempotent_after_each_publication_write_boundary(tmp_path: 
 
     assert first is not None and second == first
     tasks = (spec_dir / "tasks.md").read_text(encoding="utf-8")
-    assert [row.task_id for row in parse_task_rows(tasks)] == ["T-001", "T-002", "T-003", "T-004"]
+    assert [row.task_id for row in parse_task_rows(tasks)] == [
+        "T-001",
+        "T-000002",
+        "T-000003",
+        "T-000004",
+    ]
+
+
+@pytest.mark.parametrize("completed_count", [1, 3])
+def test_completed_publication_recovers_after_host_batch_progress(tmp_path: Path, completed_count: int) -> None:
+    from harness.task_progress import update_task_progress_markdown
+    spec_dir, state_dir = tmp_path / "spec", tmp_path / "state"
+    spec_dir.mkdir()
+    tasks = spec_dir / "tasks.md"
+    tasks.write_text(_task("T-001"))
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = _stage_one_group(publisher)
+        batch = publisher.accept_manifest(allocation.status_file)
+    updated = tasks.read_text()
+    for task_id in batch.task_ids[:completed_count]:
+        updated = update_task_progress_markdown(updated, task_id, "DONE")
+    tasks.write_text(updated)
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        assert publisher.recover_publication(set()) == batch
+        assert publisher.recover_publication(set()) == batch
+    assert tasks.read_text() == updated
+
+
+@pytest.mark.parametrize("mutation", ["unrelated_progress", "title", "requirement", "append", "checkbox_only", "duplicate_status"])
+def test_completed_publication_still_rejects_non_host_batch_changes(tmp_path: Path, mutation: str) -> None:
+    from harness.task_progress import update_task_progress_markdown
+    spec_dir, state_dir = tmp_path / "spec", tmp_path / "state"
+    spec_dir.mkdir()
+    tasks = spec_dir / "tasks.md"
+    tasks.write_text(_task("T-001"))
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        allocation = _stage_one_group(publisher)
+        batch = publisher.accept_manifest(allocation.status_file)
+    updated = update_task_progress_markdown(tasks.read_text(), batch.task_ids[0], "DONE")
+    if mutation == "unrelated_progress":
+        updated = update_task_progress_markdown(updated, "T-001", "DONE")
+    elif mutation == "title":
+        updated = updated.replace("Review follow-up", "Changed definition", 1)
+    elif mutation == "requirement":
+        updated = updated.replace("req=UNMAPPED", "req=FR-999999")
+    elif mutation == "append":
+        updated += _task("T-999999")
+    elif mutation == "checkbox_only":
+        updated = updated.replace("  **Status:** DONE\n", "")
+    else:
+        updated = updated.replace("  **Status:** DONE\n", "  **Status:** DONE\n  **Status:** DONE\n")
+    tasks.write_text(updated)
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+        with pytest.raises(ReviewArtifactError, match="tasks.md does not match"):
+            publisher.recover_publication(set())
+    assert tasks.read_text() == updated
 
 
 def test_recovery_preserves_conflicting_artifact_after_crash(tmp_path: Path) -> None:
@@ -455,7 +567,7 @@ def test_recovery_validates_each_journal_contract_before_replaying(tmp_path: Pat
     elif mutation == "duplicate_comment":
         journal["comment_ids"] *= 2
     elif mutation == "task_relationship":
-        journal["task_ids"][1] = "T-005"
+        journal["task_ids"][1] = "T-000005"
     else:
         journal["tasks_append"]["content"] = "eA=="
     journal_path.write_text(json.dumps(journal), encoding="utf-8")
@@ -486,7 +598,10 @@ def test_consumed_journal_removal_boundary_never_replays_published_work(tmp_path
             publisher.allocate(())
 
     assert not (state_dir / "default-review-publication.json").exists()
-    assert [row.task_id for row in parse_task_rows((spec_dir / "tasks.md").read_text(encoding="utf-8"))] == ["T-001", "T-002", "T-003", "T-004"]
+    assert [
+        row.task_id
+        for row in parse_task_rows((spec_dir / "tasks.md").read_text(encoding="utf-8"))
+    ] == ["T-001", "T-000002", "T-000003", "T-000004"]
 
 
 def test_repeated_lock_contention_resets_contender_ownership_state(tmp_path: Path) -> None:

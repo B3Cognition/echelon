@@ -86,16 +86,16 @@ Every requirement MUST be a bullet in this exact form:
 ```
 
 - The line MUST start with `- **` (dash, space, double-asterisk).
-- The ID MUST match `[A-Z]{1,5}-\d{3,4}` — **exactly 3 or 4 digits, no letter suffix, no dash-suffix**.
-- Valid: `FR-001`, `SC-042`, `NFR-003`
+- Match the complete ID as `[A-Z]{1,5}-\d{3,}` with no upper numeric width, letter suffix, or dash-suffix. Preserve existing legacy labels exactly; new labels MUST use at least six digits.
+- Valid legacy IDs: `FR-001`, `SC-042`, `NFR-003`. Valid new IDs: `FR-000001`, `SC-1000000`, `NFR-10000000`.
 - **Invalid: `FR-004a`, `FR-001-N`, `SC-002b`** — these IDs are invisible to the quality analysis tool.
 - A colon and space MUST follow the closing `**`: `**: `.
 
 ### Splitting requirements
 
 When splitting one requirement into multiple atomic ones, allocate new numeric IDs from the next available block. Examples:
-- Splitting `FR-004` into 4 parts → use `FR-005`, `FR-006`, `FR-007`, `FR-008` (not `FR-004a/b/c/d`).
-- Splitting a SHALL NOT constraint out of an existing FR → allocate a new ID (e.g., `FR-101`), not a suffixed variant.
+- Splitting `FR-004` into 4 parts → use new six-digit-minimum IDs such as `FR-000005`, `FR-000006`, `FR-000007`, `FR-000008` (not `FR-004a/b/c/d`).
+- Splitting a SHALL NOT constraint out of an existing FR → allocate a new six-digit-minimum ID (e.g., `FR-000101`), not a suffixed variant.
 
 ### Headers vs. bullets
 

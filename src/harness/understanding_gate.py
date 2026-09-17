@@ -97,7 +97,7 @@ def run_understanding_gate(
             error=error,
         )
         try:
-            report_path = _write_immutable_report(base_path, report)
+            report_path = _write_immutable_report(_error_report_path(base_path, report), report)
             report_digest = _file_digest(report_path)
         except OSError as exc:
             return UnderstandingGateResult(
@@ -121,23 +121,39 @@ def run_understanding_gate(
             operational_error=error,
         )
 
+    spec_identity = _spec_identity(spec_path)
     spec_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    display_path = _project_relative(spec_path, project_root)
+    analysis_inputs = {
+        "spec_path": display_path, "spec_sha256": spec_digest,
+        "thresholds": thresholds, "diagram_enabled": diagram_enabled,
+    }
     evidence_identity = _evidence_identity(
         spec_digest=spec_digest,
         thresholds=thresholds,
         diagram_enabled=diagram_enabled,
+        spec_path=display_path,
     )
     digest_path = base_path.with_name(
         f"{base_path.stem}-{evidence_identity[:12]}{base_path.suffix}"
     )
+    # Older versions could put operational errors in both the base and input
+    # digest slots. Reserve a distinct success slot without overwriting either.
+    completed_identity = hashlib.sha256((evidence_identity + ":completed").encode("ascii")).hexdigest()
+    completed_path = base_path.with_name(f"{base_path.stem}-{completed_identity[:12]}{base_path.suffix}")
     reusable = None
-    for candidate in (base_path, digest_path):
+    # Keep older immutable reports reusable when they prove all the same inputs.
+    legacy_identity = _evidence_identity(spec_digest=spec_digest,
+        thresholds=thresholds, diagram_enabled=diagram_enabled)
+    legacy_path = base_path.with_name(f"{base_path.stem}-{legacy_identity[:12]}{base_path.suffix}")
+    for candidate in (base_path, completed_path, digest_path, legacy_path):
         reusable = _load_reusable_report(
             candidate,
             phase=phase,
             iteration=iteration,
             spec_digest=spec_digest,
             thresholds=thresholds,
+            analysis_inputs=analysis_inputs,
         )
         if reusable is not None:
             break
@@ -166,11 +182,14 @@ def run_understanding_gate(
             ),
         )
         payload = bundle.to_dict()
+        if _spec_identity(spec_path) != spec_identity or _file_digest(spec_path) != spec_digest:
+            raise ValueError("specification changed during Understanding analysis")
         report: dict[str, object] = {
             "schema_version": SCHEMA_VERSION,
             "status": "completed",
             "phase": phase,
             "iteration": iteration,
+            "analysis_inputs": analysis_inputs,
             "spec": {
                 "path": _project_relative(spec_path, project_root),
                 "sha256": spec_digest,
@@ -197,7 +216,7 @@ def run_understanding_gate(
             error=error,
             spec_digest=spec_digest,
         )
-        error_target = base_path if not base_path.exists() else digest_path
+        error_target = _error_report_path(base_path, report)
         try:
             report_path = _write_immutable_report(error_target, report)
             report_digest = _file_digest(report_path)
@@ -223,7 +242,7 @@ def run_understanding_gate(
             operational_error=error,
         )
 
-    target = base_path if not base_path.exists() else digest_path
+    target = base_path if not base_path.exists() else completed_path
     try:
         report_path = _write_immutable_report(target, report)
         report_digest = _file_digest(report_path)
@@ -334,6 +353,7 @@ def _evidence_identity(
     spec_digest: str,
     thresholds: Mapping[str, float],
     diagram_enabled: bool,
+    spec_path: str | None = None,
 ) -> str:
     payload = json.dumps(
         {
@@ -341,6 +361,7 @@ def _evidence_identity(
             "spec_sha256": spec_digest,
             "thresholds": dict(thresholds),
             "diagram_enabled": diagram_enabled,
+            **({"spec_path": spec_path} if spec_path is not None else {}),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -362,6 +383,7 @@ def _load_reusable_report(
     iteration: int,
     spec_digest: str,
     thresholds: Mapping[str, float],
+    analysis_inputs: Mapping[str, object],
 ) -> tuple[Path, dict[str, object]] | None:
     if not path.is_file():
         return None
@@ -369,15 +391,23 @@ def _load_reusable_report(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(payload, dict):
+        return None
     spec = payload.get("spec")
+    inputs = payload.get("analysis_inputs")
+    diagrams = payload.get("diagrams")
+    inputs_match = (inputs == dict(analysis_inputs) if inputs is not None else
+        isinstance(diagrams, dict) and diagrams.get("enabled") is analysis_inputs["diagram_enabled"])
     if (
         payload.get("schema_version") == SCHEMA_VERSION
         and payload.get("status") == "completed"
         and payload.get("phase") == phase
         and payload.get("iteration") == iteration
         and isinstance(spec, dict)
+        and spec.get("path") == analysis_inputs["spec_path"]
         and spec.get("sha256") == spec_digest
         and payload.get("thresholds") == dict(thresholds)
+        and inputs_match
     ):
         return path, payload
     return None
@@ -415,8 +445,20 @@ def _write_immutable_report(path: Path, payload: Mapping[str, object]) -> Path:
     return path
 
 
+def _error_report_path(base: Path, report: Mapping[str, object]) -> Path:
+    comparable = {key: value for key, value in report.items() if key != "generated_at"}
+    digest = hashlib.sha256(json.dumps(comparable, sort_keys=True, allow_nan=False).encode("utf-8")).hexdigest()
+    return base.with_name(f"{base.stem}-error-{digest[:12]}{base.suffix}")
+
+
 def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _spec_identity(path: Path) -> tuple[int, ...]:
+    metadata = path.stat()
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mode,
+            metadata.st_mtime_ns, metadata.st_ctime_ns)
 
 
 def _error_report(
@@ -476,8 +518,8 @@ def _failing_gates(report: Mapping[str, object]) -> list[str]:
     raw_gates = report.get("gates")
     if not isinstance(raw_gates, Mapping):
         return []
-    return [
+    return sorted(
         str(name)
         for name, gate in raw_gates.items()
         if isinstance(gate, Mapping) and gate.get("pass") is False
-    ]
+    )

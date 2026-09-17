@@ -98,3 +98,16 @@ def test_migrate_leaves_existing_canonical_rows_unchanged() -> None:
     source = "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
 
     assert migrate_tasks_markdown(source) == source
+
+
+def test_migrate_leaves_wide_hyphenated_canonical_rows_unchanged() -> None:
+    """Wide canonical IDs use the shared parser, not compact legacy-ID grammar."""
+    source = (
+        "- [ ] T-1000000 complexity=standard phase=foundation "
+        "req=FR-1000000 depends=T-999999\n"
+    )
+
+    migrated = migrate_tasks_markdown(source)
+
+    assert migrated == source
+    assert [row.task_id for row in parse_task_rows(migrated)] == ["T-1000000"]

@@ -413,6 +413,10 @@ def test_spec_memory_audit_write_respects_availability(
     from echelon.mempalace_audit import SpecMemoryAuditReport
 
     writes = []
+    if status == "pass":
+        spec_dir = tmp_path / "specs" / "003-demo"
+        spec_dir.mkdir(parents=True)
+        spec_dir.joinpath("spec.md").write_text("# demo\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "echelon.mempalace_audit.audit_spec_memory",

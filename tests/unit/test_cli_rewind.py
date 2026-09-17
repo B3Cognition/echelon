@@ -968,6 +968,35 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
     assert "echelon spec continue" in capsys.readouterr().out
 
 
+def _seed_retarget_recovery_identity(spec_dir: Path, run_dir: Path, checkpoint: PhaseCheckpoint) -> PhaseCheckpoint:
+    from dataclasses import replace
+    from echelon.spec_retarget_history import RetargetRecoveryProjection, append_prepared_revision
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    revision = append_prepared_revision(
+        spec_dir,
+        operation_id="retarget-operation",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-replacement",
+        old_targets=("services/api",),
+        replacement_targets=("apps/web",),
+        original_prompt_digest="sha256:" + "a" * 64,
+        recovery=RetargetRecoveryProjection(
+            run_id="squad-base", status="done", phase="phase4-document", spec_status="planned",
+            completed_phases=("phase4-document",), implementation_targets=("services/api",),
+            ready_to_build=True,
+        ),
+    )
+    checkpoint = replace(checkpoint, id=f"retarget-preflight-{revision.revision_id}")
+    state["retarget"].update(
+        revision_id=revision.revision_id,
+        checkpoint_id=checkpoint.id,
+        checkpoint_commit=checkpoint.commit,
+    )
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return checkpoint
+
+
 def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1008,6 +1037,7 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
         run_id="squad-base",
         created_at="2026-08-05T00:00:00+00:00",
     )
+    checkpoint = _seed_retarget_recovery_identity(spec_dir, run_dir, checkpoint)
     record_checkpoint_metadata(spec_dir, checkpoint)
     captured: dict[str, object] = {}
 
@@ -1096,6 +1126,7 @@ def test_retarget_checkpoint_resumes_committed_recovery_before_git_reset(
         run_id="squad-base",
         created_at="2026-08-05T00:00:00+00:00",
     )
+    checkpoint = _seed_retarget_recovery_identity(spec_dir, run_dir, checkpoint)
     record_checkpoint_metadata(spec_dir, checkpoint)
     calls: list[str] = []
 
@@ -1138,7 +1169,7 @@ def test_unconfirmed_committed_recovery_is_read_only(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    _write_run_state(
+    run_dir = _write_run_state(
         tmp_path,
         {
             "run_id": "squad-replacement",
@@ -1169,6 +1200,7 @@ def test_unconfirmed_committed_recovery_is_read_only(
         run_id="squad-base",
         created_at="2026-08-05T00:00:00+00:00",
     )
+    checkpoint = _seed_retarget_recovery_identity(spec_dir, run_dir, checkpoint)
     record_checkpoint_metadata(spec_dir, checkpoint)
     monkeypatch.setattr(
         "echelon.spec_retarget_recovery.verified_committed_retarget_recovery",

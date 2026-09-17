@@ -1,0 +1,78 @@
+# Captured memory reconciliation implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Reconcile retrieved drawer metadata against exact supplied artifact bytes without rereading mutable project files, while preserving the existing disk-based reconciliation behavior.
+
+**Architecture:** Factor the existing classification loop around a private artifact-check function. Keep the public Path adapter unchanged and add an explicit inactive byte-table adapter returning the existing report. This supplies the missing pure reconciliation dependency for later truthful captured memory audits; it neither queries a collection nor certifies lifecycle revisions or publication.
+
+**Tech Stack:** Existing Python standard-library hashing, native MemPalace drawer plans and reconciliation reports, pytest with local temporary fixtures.
+
+**Spec:** `docs/superpowers/specs/2026-09-12-durable-element-identities-design.md`
+
+## Global Constraints
+
+- Work only in the existing delivery-controller-contract worktree; no global installation, main mutation, or stopped-smoke edits.
+- IDs travel through interfaces as strings.
+- Existing graph keys remain valid.
+- Historical evidence is retained, not relabeled as proof of the new content.
+- Identity failures cannot become quality debt or banzai waivers.
+- Keep existing disk reconciliation behavior and audit callers unchanged. The canonical spec-directory prefix policy is not an element-ID width restriction and must not change.
+- Captured byte equality is not current storage acquisition, identity revision authentication, semantic approval or authority to publish. Do not activate any managed runtime or waive an existing memory audit gate.
+- No collection/provider/filesystem/registry acquisition or mutation in the new captured entry point; no new DTO, wire schema, cache, generic registry or dependency.
+
+---
+
+### Task 1: share native drawer classification with captured artifact reconciliation
+
+**Files:** Modify `src/echelon/context_reconciliation.py`; create `tests/unit/test_context_reconciliation_captured.py`; document this inactive boundary in `docs/element-identity-storage.md`. No other production file or existing test changes without root escalation. Root owns plan/brief/progress; no subagents.
+
+**Interfaces:** Consume the existing `ReconciliationReport`, `_metadata`, `ACTIVE_STATUSES`, native `artifact_hash`, and the normalized project-relative path contract of `harness.squad_source_snapshot._source_path`. Add only this public function:
+
+```python
+def reconcile_captured_drawers(
+    drawers: Sequence[Any],
+    artifact_images: dict[str, bytes | None],
+    include_statuses: set[str] | None = None,
+) -> ReconciliationReport:
+    # Exact supplied images, never resolve/open/hash a Path here.
+    # None is an explicitly captured absence; no key is unobserved.
+```
+
+Keep `reconcile_drawers(drawers, project_root, include_statuses=None)` and its callers behavior-compatible. Both adapters must use one private classification loop for metadata extraction, lifecycle/path/hash preconditions, artifact-check result, accepted ordering and rejection shape. Do not duplicate the current loop or introduce a pluggable public framework. A private callable taking `(artifact_rel, expected_hash)` and returning a rejection reason or None is sufficient; the loop alone adds drawer ID/artifact path and preserves accepted original drawer objects. Extract disk-specific resolution/canonical-prefix/existence/hash checks without changing their ordering or exception propagation. Preserve project_root.resolve at existing entry time, relative and absolute path resolution, symlink behavior, exact existing `^\d{3}-.*` spec-directory rule and native sha256-prefixed artifact_hash. The regex's existing semantics are compatibility, not a new naming policy.
+
+For the captured adapter, validate and copy the entire supplied image table before iterating drawers: exact dict, exact str keys that round-trip `_source_path(path).as_posix() == path`, and exact bytes or None values. `_source_path` is a pure path validator; inspect its implementation before importing. Every supplied key must validate, including unrelated images. This table may contain other normalized project-relative artifacts; canonical eligibility is a drawer-level check, not a table-wide spec-only restriction. No normalization, path alias lookup, supplied digest field or integer coercion. Copying the table owns its lookup membership; bytes are immutable. An empty table is valid and does not mean all project artifacts are missing.
+
+Captured drawer paths must themselves be exact normalized project-relative strings after the existing metadata-to-string extraction. Invalid/absolute/traversal/alias paths return `non_canonical_artifact_path`; this new API has no project root and cannot safely infer aliases or symlink destinations. For valid normalized paths, apply the same canonical first component and spec-prefix rule as the disk adapter. Keep the legacy precondition order: lifecycle exclusion first, missing path next, missing expected hash next, then path/artifact check. A well-formed canonical path omitted from the table returns `artifact_unobserved`. An explicit None returns `artifact_missing`. Present empty bytes are real content, hashed as empty bytes. Present bytes compare `"sha256:" + hashlib.sha256(content).hexdigest()` to the existing expected hash string, returning `hash_mismatch` or acceptance. Preserve the `source_file` fallback and lifecycle_status/status precedence, arbitrary original drawer object identity, ordering, duplicate occurrences and include_statuses semantics (None uses ACTIVE_STATUSES, an empty set excludes everything). Do not claim deep-detached drawer ownership or identity/revision validation from this report.
+
+The captured public wrapper bounds ordinary failures (invalid table shape, conversion/access/iteration/hash exceptions) as `ValueError("invalid captured reconciliation input")`, raised after leaving the exception handler with neither cause nor context. Process-control BaseException subclasses propagate. Preserve legacy exception behavior; no broad catch added to `reconcile_drawers`. A malformed metadata path that is classified as a drawer rejection is not a malformed image table. Validation of the complete table happens even for empty drawers or a lifecycle filter that would exclude all drawers. Input errors must not reveal source bytes, metadata or source-bearing nested errors.
+
+**First RED and native fixture:** Use real `plan_canonical_requirement_drawers` for old and changed bytes at `specs/001-game/spec.md`, with preserved `FR-1000000`. Wrap the actual row's source/artifact_hash/drawer_id in ordinary drawer objects; keep original content or metadata as needed. Write old bytes to a resolved temporary project path. First demonstrate native disk reconciliation accepts the old-hash drawer and rejects the candidate-hash drawer. Then call the missing new API with the changed byte table; it must accept only the candidate-hash drawer and reject the old one as hash_mismatch. This demonstrates why the two sources differ, not a fabricated change to legacy semantics. The initial new-API failure is expected, but native assertions must run first. Test name: `test_captured_reconciliation_uses_candidate_bytes_not_published_disk`.
+
+```python
+disk = reconciliation.reconcile_drawers([old_drawer, candidate_drawer], root)
+assert disk.accepted == [old_drawer]
+assert disk.rejected == [{"drawer_id": candidate_drawer.drawer_id,
+    "reason": "hash_mismatch", "artifact_path": source}]
+captured = reconciliation.reconcile_captured_drawers(
+    [old_drawer, candidate_drawer], {source: candidate_bytes})
+assert captured.accepted == [candidate_drawer]
+assert captured.rejected == [{"drawer_id": old_drawer.drawer_id,
+    "reason": "hash_mismatch", "artifact_path": source}]
+assert spec_path.read_bytes() == old_bytes
+```
+
+- [ ] Read the scoped implementation, existing seven reconciliation tests and native planner signature. Run the first new test to RED before production edits with `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_context_reconciliation_captured.py::test_captured_reconciliation_uses_candidate_bytes_not_published_disk -q` from this worktree. Notify root of actual outcome before production work; distinguish fixture failures from expected absent-API RED.
+- [ ] Extract the shared classification loop and disk checker, implement the inactive captured wrapper/checker with the exact contract above, then rerun the first test to GREEN. No speculative audit acquisition or graph integration changes.
+- [ ] Add native disk/captured parity for normalized canonical paths and unchanged byte images: matching/stale/missing hashes, lifecycle_status overriding writer status, default active/changed versus terminal statuses, explicit empty/custom filters, source_file fallback, object and dict drawers, missing metadata, ordered duplicate occurrences, and exact report to_dict. Compare complete accepted/rejected results, not just status labels.
+- [ ] Add explicit new-boundary cases: omitted canonical image yields artifact_unobserved; None yields artifact_missing; empty bytes can match; mismatched empty hash rejects; canonical versus run-local/non-spec paths; normalized table may contain unrelated binary bytes; malformed unused entries reject before drawer iteration. Check invalid outer dict/subclass, keys (non-string, empty, absolute, `..`, `./`, duplicate slash, trailing slash, backslash, NUL, invalid UTF-8), values (str, bytearray, nonexact bytes, numeric). Keep portable pure-value tests free of a blanket POSIX skip.
+- [ ] Prove the stricter new path policy is local: legacy valid absolute/normalized alias/symlink paths still reconcile through actual temporary files, while the new API refuses aliases rather than reading disk. Legacy outside-project classification remains artifact_outside_project. Put only symlink-specific fixtures behind the necessary platform condition. Do not change the canonical directory regex as part of the ID-width work; test native accepted/rejected prefix examples and a very wide element label independently.
+- [ ] Test purity after native fixtures are constructed: block Path.resolve/read_bytes/read_text/open/exists and builtins.open/io.open/os.open/os.scandir during the captured call, assert correct complete results and zero reads. Change or delete disk files after constructing the table and retain the candidate result. Use a drawer iterable that clears/replaces the original image dict during iteration to prove table membership was copied first; accepted drawer identity intentionally remains original.
+- [ ] Test bounded captured exceptions with source-bearing sentinel messages from drawer metadata access/iteration/conversion, and process-control exceptions. Assert exact ValueError message, no cause/context and no source text in formatted traceback. Confirm a representative native disk hash/read failure still propagates as before. Test invalid table plus an iteration tripwire to prove validation precedes drawer access.
+- [ ] Document missing/unobserved/present semantics, canonical logical paths and no filesystem alias inference, unchanged disk adapter, table detachment versus original accepted drawer objects, and no acquisition/lifecycle/publication authority. Existing graph observations remain supplied claims; actual captured collection auditing and runtime integration are still required.
+- [ ] Self-review then run once the exact covering command with the same executable/workdir: `pytest tests/unit/test_context_reconciliation_captured.py tests/unit/test_context_reconciliation.py tests/unit/test_mempalace_audit.py tests/unit/test_spec_graph_memory.py -q`. Use the absolute pytest executable above in the actual command. No full unit/bare pytest, repeated unchanged coverage, live service, provider, capacity run or install. Report exact output and staged implementation tree; later amendments get named scoped checks with separate tree identities.
+- [ ] Commit only the scoped implementation, new tests and storage docs, excluding root administrative files. Write the complete report at the authorized report path, force-add that exact path if ignored, and commit report-only after implementation if necessary. Include all actual failures/fixture corrections/RED/GREEN/commands/results, self-review and exact tree chronology. Root provides independent original-BASE review. Escalate any additional API/owner/file changes rather than broadening.
+
+## Remaining integration
+
+This task supplies a pure dependency for a captured memory audit, not that audit. Actual collection rows, native planner/source selection and complete audit classifications must still be acquired truthfully. Identity revision/lifecycle-aware retrieval, graph publication and completion ordering, managed producers and bounded repair remain within the approved overall work but outside this focused phase. No live consumer switches here.

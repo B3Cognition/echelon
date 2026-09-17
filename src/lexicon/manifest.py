@@ -20,6 +20,11 @@ def required_sections(template_path: Path) -> list[str]:
         text = template_path.read_text(errors="replace")
     except OSError:
         return []
+    return required_sections_from_text(text)
+
+
+def required_sections_from_text(text: str) -> list[str]:
+    """Derive the same section contract from already captured template text."""
     out: list[str] = []
     for line in text.splitlines():
         m = _H2.match(line)

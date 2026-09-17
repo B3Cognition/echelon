@@ -18,7 +18,7 @@ _REQ_ID_FIND_RE = re.compile(
     r"\b(?:FR|US|AC|EDGE|NFR|SC|REQ|OQ|INV|TC)-?[A-Za-z0-9_.-]+\b|\bINFRA\b"
 )
 _TASK_ROW_RE = re.compile(
-    r"^(?P<prefix>- \[[ xX]\]\s+(?P<task_id>T-(?:\d{3,4}|S\d{2}[A-Za-z]?))"
+    r"^(?P<prefix>- \[[ xX]\]\s+(?P<task_id>T-(?:\d{3,}|S\d{2}[A-Za-z]?))"
     r"(?:\s+\[P\])?\s+complexity=(?:trivial|standard|complex)\s+"
     r"phase=[A-Za-z0-9_.-]+\s+)req=(?P<requirements>[A-Za-z0-9_,.-]+)"
     r"(?P<suffix>\s+depends=(?:none|[A-Za-z0-9_,.-]+))$"

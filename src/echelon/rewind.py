@@ -25,6 +25,11 @@ from harness.phase_checkpoints import (
     resolve_rewind_checkpoint,
     rewindable_checkpoint_targets,
 )
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_spec,
+)
+from harness.element_identity_store import IdentityStoreError
 
 
 class RewindError(RuntimeError):
@@ -197,6 +202,16 @@ def prepare_rewind(
         )
 
     head = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    if confirm:
+        admitted = False
+        try:
+            require_legacy_identity_spec(project_root=project_root, spec_id=resolved_spec_dir.name)
+            require_legacy_identity_spec(project_root=project_root, spec_id=checkpoint.spec_id)
+            admitted = True
+        except IdentityStoreError:
+            pass
+        if not admitted:
+            raise RewindError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
     same_head = head == checkpoint.commit
     if same_head and not recovery_dirty_paths:
         return RewindResult(

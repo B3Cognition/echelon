@@ -57,6 +57,22 @@ class ConstrainedPromptBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class InspectionTurnBackend(Protocol):
+    """Optional no-tools turn with evidence access owned by the host caller."""
+
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        ...
+
+
+@runtime_checkable
+class ReviewTriageBackend(Protocol):
+    """Optional native operation for one isolated, no-tools review turn."""
+
+    def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
+        ...
+
+
 def create_ai_cli_backend(config: HarnessConfig) -> AICodingCliBackend:
     from harness.ai_cli_backends.claude import ClaudeCliBackend
     from harness.ai_cli_backends.codex import CodexCliBackend

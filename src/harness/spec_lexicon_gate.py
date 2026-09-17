@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harness.lexicon_gate_io import write_json_atomic
-from lexicon.glossary import load_glossary_terms
+from lexicon.glossary import load_glossary_terms, parse_glossary_terms
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,26 @@ class SpecLexiconGateResult:
         if self.report_path is not None:
             updates["lexicon_report"] = str(self.report_path)
         return updates
+
+
+def lexicon_gate_exhausted(*, gate, artifact, state, updates, default_max_iterations):
+    """Native spec/tasks exhaustion policy, shared with retained gate proofs."""
+    if not isinstance(gate, dict) or not gate.get("enabled", False):
+        return False
+    artifacts = gate.get("artifacts", {})
+    artifact_gate = artifacts.get(artifact, {}) if isinstance(artifacts, dict) else {}
+    if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
+        return False
+    try:
+        repair_cap = int(gate.get("max_repair_attempts", 3))
+    except (TypeError, ValueError):
+        repair_cap = 3
+    prefix = "lexicon" if artifact == "spec" else "tasks_lexicon"
+    attempts = updates.get(prefix + "_attempts", state.get(prefix + "_attempts"))
+    exhausted = (isinstance(attempts, int) and repair_cap > 0 and attempts >= repair_cap)
+    exhausted = exhausted or int(state.get("iteration") or 0) >= int(state.get("max_iterations") or default_max_iterations)
+    return bool(exhausted and updates.get(prefix + "_pass") is not True
+        and (artifact == "spec" or str(gate.get("on_exhausted", "block")).lower() != "warn"))
 
 
 def has_current_spec_lexicon_evidence(
@@ -156,6 +176,48 @@ def run_spec_lexicon_gate(
     except Exception as exc:
         return _pending(f"spec Lexicon validation could not execute: {exc}")
 
+    return _report_result(report, report_path, previous_attempts)
+
+
+def evaluate_captured_spec_lexicon(
+    *,
+    derived_text: str | None,
+    source_text: str | None,
+    glossary_text: str | None,
+    derived_path: Path,
+    source_path: Path,
+    glossary_path: Path,
+    report_path: Path,
+    artifact_type: str,
+    previous_attempts: object,
+) -> tuple[SpecLexiconGateResult, dict[str, object] | None]:
+    """Evaluate exact captured inputs without reading or publishing files.
+
+    Paths are report labels only. The managed completion owner must authenticate
+    the capture and publish the returned report before treating it as evidence.
+    A result alone grants neither certification nor permission to advance.
+    """
+    if derived_text is None:
+        return _pending(f"derived artifact is missing: {derived_path}"), None
+    if source_text is None:
+        return _pending(f"source artifact is missing: {source_path}"), None
+    try:
+        report = validate_spec_lexicon_texts(
+            derived_text=derived_text,
+            source_text=source_text,
+            source_name=source_path.name,
+            glossary_text=glossary_text,
+            artifact_type=artifact_type,
+        )
+        report.update(artifact_path=str(derived_path), source_path=str(source_path),
+            glossary_path=str(glossary_path))
+        return _report_result(report, report_path, previous_attempts), report
+    except Exception as exc:
+        return _pending(f"spec Lexicon validation could not execute: {exc}"), None
+
+
+def _report_result(report, report_path, previous_attempts):
+    """One native attempt policy for file-backed and captured validation."""
     if report["ok"]:
         attempts = 0
         evaluation = "passed"
@@ -191,24 +253,64 @@ def _validate_spec_lexicon_artifacts(
     glossary_path: Path,
     artifact_type: str,
 ) -> dict[str, object]:
+    derived_text = derived_path.read_text(encoding="utf-8")
+    source_text = source_path.read_text(encoding="utf-8")
+    glossary_text = (
+        glossary_path.read_text(encoding="utf-8")
+        if glossary_path.is_file()
+        else None
+    )
+    report = validate_spec_lexicon_texts(
+        derived_text=derived_text,
+        source_text=source_text,
+        source_name=source_path.name,
+        glossary_text=glossary_text,
+        artifact_type=artifact_type,
+    )
+    return {
+        "schema_version": report["schema_version"],
+        "artifact_type": report["artifact_type"],
+        "artifact_path": str(derived_path),
+        "source_path": str(source_path),
+        "glossary_path": str(glossary_path),
+        "artifact_sha256": _sha256_file(derived_path),
+        "source_sha256": _sha256_file(source_path),
+        "glossary_sha256": _optional_sha256_file(glossary_path),
+        "ok": report["ok"],
+        "findings": report["findings"],
+    }
+
+
+def validate_spec_lexicon_texts(
+    *,
+    derived_text: str,
+    source_text: str,
+    source_name: str,
+    glossary_text: str | None,
+    artifact_type: str,
+) -> dict[str, object]:
+    """Validate one exact captured Lexicon/source/glossary text snapshot."""
     from lexicon.source_contract import (
-        source_approved_terms,
-        source_contract_findings,
+        source_approved_terms_text,
+        source_contract_findings_text,
     )
     from lexicon.validity import validate as validate_lexicon
 
-    derived_text = derived_path.read_text(encoding="utf-8")
     validation = validate_lexicon(
         derived_text,
         glossary=(
-            _load_glossary_terms(glossary_path)
-            | source_approved_terms(source_path)
+            (parse_glossary_terms(glossary_text) if glossary_text is not None else set())
+            | source_approved_terms_text(source_text)
         ),
         artifact_type=artifact_type,
     )
     raw_findings = [
         *validation.findings,
-        *source_contract_findings(derived_text, source_path),
+        *source_contract_findings_text(
+            derived_text,
+            source_text=source_text,
+            source_name=source_name,
+        ),
     ]
     findings = [
         {
@@ -222,12 +324,13 @@ def _validate_spec_lexicon_artifacts(
     return {
         "schema_version": 1,
         "artifact_type": artifact_type,
-        "artifact_path": str(derived_path),
-        "source_path": str(source_path),
-        "glossary_path": str(glossary_path),
-        "artifact_sha256": _sha256_file(derived_path),
-        "source_sha256": _sha256_file(source_path),
-        "glossary_sha256": _optional_sha256_file(glossary_path),
+        "artifact_sha256": hashlib.sha256(derived_text.encode("utf-8")).hexdigest(),
+        "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        "glossary_sha256": (
+            hashlib.sha256(glossary_text.encode("utf-8")).hexdigest()
+            if glossary_text is not None
+            else None
+        ),
         "ok": not findings,
         "findings": findings,
     }

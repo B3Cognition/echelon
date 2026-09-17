@@ -116,6 +116,42 @@ def test_dispatch_skill_command_routes_prosaic_build_with_execution_metadata(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("extra_args", [[], ["--fix", "--failures", "gate failed"]])
+def test_public_build_cannot_bypass_enabled_delivery_controller(
+    monkeypatch, tmp_path: Path, extra_args,
+) -> None:
+    from typer.testing import CliRunner
+    from echelon.cli_app import app
+
+    _install_prosaic_command(monkeypatch, tmp_path, body="build {{args}}")
+    config = HarnessConfig(llm=LlmConfig(cli="codex"))
+    config.llm.features["delivery_gate_controller"] = True
+    calls = []
+
+    class FakeProvider:
+        capabilities = CLI_PROVIDER_CAPABILITIES
+
+        def __init__(self, loaded_config):
+            pass
+
+        def run_prompt_result(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return SimpleNamespace(exit_code=0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECHELON_LLM", "codex")
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+
+    result = CliRunner().invoke(app, ["build", "001-demo", *extra_args])
+
+    assert result.exit_code == 2, result.output
+    assert "echelon delivery run" in result.output
+    assert "controller" in result.output
+    assert not calls
+
+
+@pytest.mark.unit
 def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill(
     monkeypatch,
     tmp_path: Path,

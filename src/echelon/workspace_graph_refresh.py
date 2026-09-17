@@ -23,6 +23,7 @@ from echelon.spec_graph_audit import (
 )
 from echelon.workspace_graph import (
     WorkspaceGraphBuildResult,
+    _require_legacy_workspace_projection,
     build_workspace_graph,
     discover_canonical_spec_dirs,
     write_workspace_graph,
@@ -84,6 +85,8 @@ def refresh_workspace_graph(
             report=audit_workspace_graph(root, candidate),
             outcomes=(),
         )
+
+    _require_legacy_workspace_projection(root)
 
     outcomes: list[WorkspaceGraphRefreshOutcome] = [_refresh_re_memory(root)]
     for spec_dir in discover_canonical_spec_dirs(root):

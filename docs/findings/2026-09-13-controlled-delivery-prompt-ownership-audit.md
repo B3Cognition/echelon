@@ -1,0 +1,299 @@
+# Controlled delivery prompt ownership audit
+
+Audited implementation: `b6bfceda`, in the isolated delivery-controller worktree.
+This is a read-only behavior audit plus findings record, not a code correction
+or acceptance of the entire delivery pipeline.
+
+## Scope
+
+The user excluded legacy `echelon build`, its native command and recipe from
+convergence. This audit follows the enabled `delivery_gate_controller` route:
+initial implementation, source repair, documentation repair, and the immediately
+connected fulfillment and PR-triage prompt boundaries. It does not change
+feature-off behavior, provider configuration, modes, defaults or identity scope.
+
+## Findings
+
+### Confirmed: dedicated delivery roles have the intended ownership
+
+`coordinator.py:get_build_prompt` passes controller context rather than loading
+the legacy build command when controlled delivery is enabled. The internal
+`echelon build` strategy label is not a legacy CLI invocation.
+
+`DeliverySliceRunner` loads four `echelon.delivery-*` profiles with Prosaic and
+renders each with its exact assignment and JSON result contract. It does not use
+the generic COMMANDER preamble. `DeliveryDocumentationRunner` does the same for
+TECH WRITER and DOCS VERIFIER with a returned report value. All six current role
+files have zero recognized companion references, so no hidden phase recipe is
+inlined through their companions. Their provider metadata remains neutral.
+
+This confirms the six profiles and their direct rendering boundary, not that
+every other model call in delivery has the same ownership contract.
+
+### Important: legacy completion instructions reach controlled source repairs
+
+`ralph.py:_make_feedback_prompt` says to stop after writing the harness status
+marker. `_exec_feedback` replaces this prose with structured failure evidence
+only for documentation-only failures. Source/mixed repairs retain the generated
+text, and `_exec_controlled_slice` persists it as operation feedback before
+`DeliverySliceRunner._render_prompt` appends it to every assigned role.
+
+Consequently the same provider request both forbids completion markers and tells
+the model to write one. Calling that section data rather than routing authority
+does not remove the conflicting instruction. The JSON validator still rejects
+marker-only success; the demonstrated defect is contradictory provider input,
+not a demonstrated gate bypass.
+
+The shared feedback formatter also emits only failure category, ID and error.
+Generic `FailureEntry.details` and `verification_evidence` are not included
+there; the coverage-specific helper preserves a selected subset separately.
+The probe's source location stored in `details` did not reach any role.
+
+One-off consuming probes used the existing temporary project, real Ralph and
+slice runner, Prosaic inspection stand-in, and scripted external role results.
+An initial accepted task established the actual repair pointer. For each route:
+
+| Route | Actual dispatched steps | Marker instruction + prohibition | Generic source detail delivered |
+| --- | --- | --- | --- |
+| Inner source feedback | IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN | Both in all four prompts | No |
+| `run_downstream_feedback`, visual | Same four steps | Both in all four prompts | No |
+| `run_downstream_feedback`, review | Same four steps | Both in all four prompts | No |
+
+Each operation passed with the scripted JSON results. That is not evidence that
+a live model obeys contradictory instructions. The first diagnostic invocation
+completed the inner probe, then used the wrong downstream method name and raised
+AttributeError. The corrected invocation ran the remaining two routes and the
+six-role companion inventory successfully; this was a probe typo, not a product
+failure. No production file or permanent test was changed.
+
+### Ownership guidance is stale
+
+Root `AGENTS.md` and `CLAUDE.md` describe command wrappers as COMMANDER-owned,
+make COMMANDER the universal state/journal writer, and require every new agent
+to emit `echelon_result`. Those statements conflict with the controlled delivery
+JSON assignments, Python journal owner and controller-published documentation.
+They need an explicit controlled-delivery exception, not a blanket claim that
+all Echelon workflows have already migrated.
+
+### Separate remaining boundaries: fulfillment and PR triage
+
+`FulfillmentRunner._build_verify_spec_prompt` still loads `echelon.verify-spec`
+with COMMANDER framing and embeds `verify-spec-*.md`. The mapping/judgment phases
+instruct the model to invoke deterministic helpers, dispatch mapper/guard roles
+and advance phases. Python owns admission, run initialization and validation,
+but it does not independently dispatch every semantic step in this path.
+
+`ReviewLoopController._invoke_staged_review_skill` invokes `echelon.review` with
+COMMANDER framing. That prompt instructs the model to sequence DEBUGGER,
+SENTINEL and SPEC GUARD. The controller validates/publishes the staged batch,
+but these diagnostic calls remain model-sequenced. `_read_review_agent` also
+reads `.claude/agents/echelon-*.md` rather than neutral Prosaic subagents.
+
+These are existing active boundary limitations, not regressions introduced by
+the documentation checkpoint. They were inspected at their callers and declared
+prompt contracts, not live-executed or fully behaviorally validated in this audit.
+Do not relabel them Python-owned in project guidance. Migrating them requires
+separate bounded designs/acceptance; no such migration is implemented or silently
+authorized by this report. They remain visible in convergence tracking.
+
+### Later approved PR-triage checkpoint
+
+The PR-triage finding above is preserved as the result at audited implementation
+`b6bfceda`. A separately approved correction is now implemented on
+`fix/delivery-controller-contract` and independently accepted through code commit
+`602ee524` after task-level and final cross-component review.
+The host controller owns grouping and the debugger, sentinel, spec-guard and
+composer sequence; the four self-contained artifacts come from Prosaic. Model
+reads cross only the bounded triage channel, and the existing publisher retains
+canonical files, locks, allocation, acceptance, recovery and journaling.
+
+Focused consuming tests cover both real provider facades/adapters with only the
+external CLI process scripted, plus the real publisher. Failure tests cover
+schema, read, deadline, byte-limit, allocation and no-follow boundaries. This is
+not live-provider, installed-bundle, migration, default-activation, push or merge
+evidence, and it does not change the fulfillment finding above.
+
+The final affected controller, publisher, Prosaic, facade and backend batch
+passed 560 tests in 8.14s; direct inspection of all four changed Prosaic
+artifacts, compilation and whitespace checks also passed. A complete existing
+execution-policy inventory test separately retains one baseline failure: the
+base-commit delivery docs-verifier and tech-writer files are absent from its
+policy table. The three new review roles have the approved `strong`/`medium`
+entries; the unrelated historical mismatch was not changed by this checkpoint.
+
+Review corrections reuse the publisher's task-row validator before staging,
+supply canonical row/title syntax and allocated dependencies in the host composer
+contract, and convert JSON nesting failures into blocked outcomes with retained
+usage. Their covering runs passed 77 tests in 2.63s and then 78 tests in 2.70s;
+these are separate from the earlier 560-test run. Final scoped re-review found
+both final findings addressed and no residual or newly introduced findings.
+
+Implementation decisions retained for future convergence:
+
+- `.` lists only an already-pinned read root; it does not add a root or traversal
+  alias. If misunderstood, root listing could be broadened beyond this boundary.
+- Prosaic inspection accepts the attempt's remaining timeout; shared-loader
+  defaults are unchanged. Too small a remaining budget can reject slow inspection.
+- The 64 KiB read-reply cap applies to serialized JSON, including escaping and
+  metadata. A text payload slightly below 64 KiB can therefore be unavailable.
+- Claude uses safe-mode, not bare mode, to retain ordinary authentication while
+  disabling customizations; native tools are explicitly empty and filesystem
+  access is separately restricted. Compatibility remains a live-validation limit.
+
+## CLAUDE.md quality report
+
+Files found: one repository `CLAUDE.md`; no nested or local Claude instruction
+files found by the scoped repository search. `AGENTS.md` has matching ownership
+text and is included in the proposed correction. Personal/global files are out
+of scope. Overall assessment: **70/100 (B)**; one Claude file needs an update.
+This is an editorial assessment, not execution verification of all listed
+commands. The audit targets currency of delivery ownership.
+
+| Criterion | Score | Notes |
+| --- | --- | --- |
+| Commands/workflows | 15/20 | Test and delivery entries are present; controlled opt-in distinctions are missing. |
+| Architecture clarity | 15/20 | Useful module map, but no controlled slice/documentation owner description. |
+| Non-obvious patterns | 15/15 | Target resolution, installed bundles and shared ownership cautions are documented. |
+| Conciseness | 10/15 | Dense guidance, with repeated legacy-wide claims. |
+| Currency | 5/15 | COMMANDER/state/result claims conflict with current controlled delivery. |
+| Actionability | 10/15 | Concrete commands, but applying the universal output/writer instructions to delivery is wrong. |
+
+## Original proposed guidance edit (subsequently approved)
+
+Add the following narrow section to both root instruction files and qualify the
+existing universal COMMANDER/journal guidance as legacy/command-specific. Leave
+unrelated sections and legacy command behavior unchanged. This prevents future
+work from reintroducing a second owner or the wrong result format.
+
+```diff
++ ## Controlled delivery ownership
++
++ With `llm.features.delivery_gate_controller: true`, `echelon delivery run`
++ bypasses the legacy build prompt. Ralph and its Python helpers own task
++ selection, gate sequencing, bounded repairs, durable operation journals,
++ progress, authoritative verification and documentation report publication.
++ Prosaic supplies the six neutral `echelon.delivery-*` role bodies and metadata;
++ provider-specific permissions remain in the provider adapters.
++
++ Delivery roles return their assignment-bound JSON, not `echelon_result` or
++ harness completion markers. They never dispatch another agent or write
++ controller state. Successful slice review is not final delivery acceptance.
++
++ These ownership rules apply to the controlled slice/documentation path, not
++ every fulfillment or PR-triage model call. Those retain separate contracts.
++ Legacy `echelon build` and feature-off behavior remain outside this migration;
++ do not alias, remove or rewrite them as part of controlled convergence.
+```
+
+## Original recommended bounded correction (subsequently approved)
+
+Correct controlled source-repair feedback at Ralph's producer boundary, using
+structured failure/context data as documentation repair already does. Preserve
+the actual failure details, verification/coverage evidence, downstream phase and
+evidence references, and relevant user/strategy context. Keep execution restrictions
+in the applicable role/controller contract, not mixed into legacy completion
+recipes. Preserve the existing operation snapshot, journal/retry/budget semantics
+and conservative recovery of old records; do not rewrite a pending journal.
+
+Acceptance should capture actual role requests through inner and downstream
+repair, prove one output contract and retained evidence, and preserve legacy,
+documentation, both-provider and all-mode behavior. This is a bounded correction
+to existing feedback construction, not a new flow/controller. Apply the narrow
+guidance edit alongside it after approval. Fulfillment/PR migration, bundle/live
+acceptance, defaults and identity activation remain separate.
+
+## Controlled source-feedback checkpoint
+
+The user subsequently approved the bounded source/mixed feedback correction and
+narrow ownership-guidance update. The implementation is complete locally and
+independently accepted after scoped re-review; the earlier findings remain the historical audit of
+`b6bfceda`, not a claim about the corrected tree.
+
+Ralph now carries the original base context, strategy context, repair iteration,
+downstream phase and evidence paths separately from its legacy formatter. At the
+controlled feedback boundary it serializes those inputs with complete failure
+details and verification/coverage references. The existing operation stores that
+exact string. The four role requests have one controller-owned execution/output
+contract, including browser/fulfillment restrictions and coverage tag syntax;
+the legacy completion recipe is not forwarded to them. Documentation-only
+feedback and feature-off formatting retain their existing behavior.
+
+New source-repair snapshots resume from their original feedback, with existing
+attempt limits and cumulative accounting. A pre-format pending source-repair
+snapshot blocks for reconciliation before further dispatch; its operation and
+journal bytes are not rewritten, nor is its budget reset. This intentionally does
+not migrate old in-flight repairs. Initial-build and documentation recovery keep
+their existing contracts. AGENTS.md and CLAUDE.md now scope legacy COMMANDER and
+`echelon_result` guidance and describe the controlled and separate PR contracts.
+
+Verification: the new consuming tests first produced 21 failures and one passing
+legacy check, reproducing the marker conflict, missing evidence, and old-record
+replay. After correction, one surrounding batch passed 164 tests across source
+feedback, controller integration, slice runner/recovery, documentation integration
+and Ralph's inner loop. A focused test then exposed missing coverage-tag syntax
+in the new host contract; after supplying it, the final new test file passed 22
+tests and the legacy outer-feedback selection passed 13 (242 deselected).
+
+The route matrix covers Claude/Codex facades, all three modes, the real inner
+feedback entry, and direct `run_downstream_feedback` probes labeled visual/review,
+with four real role dispatches. Production currently wires this downstream
+method from visual feedback; these tests do not establish Phase 3 PR re-entry
+coverage. Prosaic
+inspection and the external coding backend are scripted; local Git checkpointing
+is real and remote push is stubbed. Inner-route tests stop before authoritative
+verification rather than claiming full delivery convergence. No installation,
+live model execution, push, merge, default change, fulfillment rewrite or identity
+activation occurred. The previously recorded policy-inventory failure is outside
+this checkpoint and unchanged.
+
+Independent review found a shared repair imperative still reaching read-only
+reviewers. A consuming regression failed on the actual reviewer request; the
+controller now supplies repair/reproduction instructions only to IMPLEMENTER and
+inspect/assess-only instructions to the three reviewers. The amended source
+feedback and slice-runner suites passed 49 tests in 15.50s. The review-route
+evidence claim above was also narrowed. Scoped re-review accepted both corrections
+with no remaining or newly introduced findings. This is bounded-checkpoint
+acceptance, not whole-branch merge or live-provider acceptance.
+
+## Production PR-review → controlled repair re-entry (2026-09-13)
+
+`tests/integration/test_controlled_review_reentry.py` now follows the production
+coordinator through the real PR review loop, neutral Prosaic triage/composer,
+publisher, Ralph and controlled slice runner. It starts with real initial slice
+receipts/progress and a seeded preceding authoritative-verification checkpoint.
+Only external coding backends, Prosaic inspection and Git/PR service interfaces
+are scripted. Local initial candidate commits are real. No runtime reads of
+developer AGENTS.md/CLAUDE.md are introduced or tested as product behavior.
+
+The first consuming restart test failed with 121 tokens instead of 129: the
+initial 100 and repair's 21 were retained, but triage's 8 were only in coordinator
+memory. The opt-in coordinator now checkpoints cumulative usage before invoking
+repair. Ralph's existing re-entry baseline excludes that already-accounted usage
+from the implementation delta. Uninterrupted and restarted runs count it once;
+triage also consumes the repair admission budget. This is not a new accounting
+framework or a migration of old undercounted records.
+
+The acceptance matrix checks both Claude/Codex facades and banzai/semi/guided
+gate blocking, no repeated completed role dispatch after interruption, only
+published task scope and current artifact evidence, pending unrelated work left
+untouched, and no early PR resolution/re-review side effects. A separate accepted
+path runs all four roles, applies the first review task's progress, and reaches
+authoritative verification; replay reaches the same boundary without redispatch
+or extra usage. It deliberately stops there rather than manufacturing verifier,
+fulfillment or finalization success. It does not establish the full three-task
+batch's verified completion or post-verification effects, and does not close
+installed-bundle/live-provider acceptance or broader convergence.
+
+Verification: 16 new acceptance cases and the surrounding coordinator, review
+loop, review publisher, controlled integration, source-feedback and slice-recovery
+suites passed together: **235 passed in 46.20s**. The uninterrupted/restarted
+matrix and low-budget cases exercise exact-once accounting after triage returns
+to the coordinator; they do not establish crash-safe accounting inside an
+unfinished triage/publication call. No install, live model, push, merge or rollout
+was performed.
+
+Independent read-only review accepted this bounded checkpoint with no important
+correctness or regression findings. It confirmed the cumulative/delta accounting
+and noted that accepted verification-entry replay is banzai-only; all-mode
+coverage is the interrupted/uninterrupted blocked-gate path. The reviewer did
+not duplicate the verification suites.

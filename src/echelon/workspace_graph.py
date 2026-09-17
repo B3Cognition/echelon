@@ -25,6 +25,11 @@ from echelon.spec_graph import (
     build_spec_graph,
 )
 from echelon.spec_graph_audit import audit_spec_graph, classify_spec_graph_audit
+from harness.element_identity_legacy_guard import (
+    LEGACY_IDENTITY_EXECUTION_BLOCKED,
+    require_legacy_identity_workspace,
+)
+from harness.element_identity_store import IdentityStoreError
 from harness.spec_frontmatter import read_frontmatter, read_target_entries
 
 
@@ -33,6 +38,15 @@ WORKSPACE_GRAPH_FILENAME = "workspace-artifact-graph.json"
 
 class WorkspaceGraphError(RuntimeError):
     """Raised when a workspace cannot produce a deterministic graph."""
+
+
+def _require_legacy_workspace_projection(project_root: Path) -> None:
+    try:
+        require_legacy_identity_workspace(project_root=project_root)
+        return None
+    except IdentityStoreError:
+        pass
+    raise WorkspaceGraphError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
 
 
 @dataclass(frozen=True)
@@ -315,6 +329,7 @@ def workspace_graph_path(project_root: Path) -> Path:
 
 def write_workspace_graph(graph: WorkspaceArtifactGraph, project_root: Path) -> Path:
     """Atomically publish a rendered workspace graph beside its project root."""
+    _require_legacy_workspace_projection(project_root)
     path = workspace_graph_path(project_root)
     return write_workspace_graph_bytes(path, render_workspace_graph(graph))
 

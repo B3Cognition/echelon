@@ -559,6 +559,60 @@ def _reseal_debt_completion(
     }
 
 
+def test_captured_debt_builder_reuses_native_candidate_checks_without_live_spec_reads(tmp_path):
+    from harness.squad_publication import SquadPublicationTransaction
+    state, candidate, prepared, paths = _debt_fixture(tmp_path, apply_effect=False)
+    publication = SquadPublicationTransaction.begin(tmp_path, tmp_path / "runs/run-1", "d" * 32).seal()
+    with publication.inspect_sources(tree_paths=("specs/001-demo",), file_paths=()) as captured:
+        sources = captured
+    paths["spec"].write_text("Changed live specification\n")
+    paths["debt"].write_text("Changed live debt\n")
+    authorization = prepared.authorization
+    kwargs = dict(project_root=tmp_path, spec_dir=paths["spec"].parent, candidate=candidate,
+        candidate_manifest=paths["manifest"], repair_state=state["phase1_quality_repair"],
+        understanding_state=state["understanding_evidence"],
+        candidate_evidence_state=state["proportional_quality_candidate_evidence"],
+        decision=authorization["resolved_decision"], decision_id=authorization["decision_id"],
+        resolved_by=authorization["resolved_by"], resolved_at=authorization["accepted_at"],
+        completion_id=authorization["resolution_completion"]["completion_id"],
+        from_phase="terminal-blocked", to_phase="checkpoint-assess")
+    assert build_quality_debt_authorization(**kwargs, publication_sources=sources) == prepared
+    with pytest.raises(QualityCandidateIntegrityError):
+        build_quality_debt_authorization(**kwargs)
+    tree, = sources.trees
+    changed = replace(tree, files=tuple(replace(item, content=b"Unsealed bytes")
+        if item.path.endswith("/spec.md") else item for item in tree.files))
+    with pytest.raises(QualityCandidateIntegrityError):
+        build_quality_debt_authorization(**kwargs, publication_sources=replace(sources, trees=(changed,)))
+    assert paths["spec"].read_text() == "Changed live specification\n"
+    assert paths["debt"].read_text() == "Changed live debt\n"
+
+
+def test_managed_debt_cannot_use_a_legacy_publication_free_resolution_link(tmp_path):
+    state, _, _, paths = _debt_fixture(tmp_path)
+    assert has_current_quality_debt_authorization(state, project_root=tmp_path)
+    state["managed_identity"] = {"unproven": "managed association"}
+    before = paths["debt"].read_bytes()
+    assert not has_current_quality_debt_authorization(state, project_root=tmp_path)
+    assert paths["debt"].read_bytes() == before
+
+
+def test_published_debt_verifier_never_writes_or_deletes_drifted_files(tmp_path):
+    _, _, prepared, paths = _debt_fixture(tmp_path, apply_effect=False)
+    payload = prepared.effect_payload()
+    with pytest.raises(QualityCandidateIntegrityError):
+        apply_or_verify_quality_debt_effect(tmp_path, payload, verify_only=True)
+    assert not paths["debt"].exists()
+    receipt = apply_or_verify_quality_debt_effect(tmp_path, payload)
+    assert apply_or_verify_quality_debt_effect(tmp_path, payload, verify_only=True) == receipt
+    remove = dict(operation="debt_remove", debt_path=prepared.debt_path)
+    with pytest.raises(QualityCandidateIntegrityError):
+        apply_or_verify_quality_debt_effect(tmp_path, remove, verify_only=True)
+    assert paths["debt"].exists()
+    paths["debt"].unlink()
+    assert apply_or_verify_quality_debt_effect(tmp_path, remove, verify_only=True)["removed"] is True
+
+
 def test_builder_prepares_complete_content_bound_schema_v1_debt(
     tmp_path: Path,
 ) -> None:

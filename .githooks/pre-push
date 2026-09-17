@@ -37,12 +37,23 @@ if [[ -z "$python_exec" || ! -x "$python_exec" ]] && ! command -v "$python_exec"
   exit 1
 fi
 
+run_verification() (
+  # Hooks inherit repository-local Git variables. Verification creates its own
+  # temporary repositories; those commands must not target the pushed checkout.
+  local git_environment git_variable
+  git_environment="$(git rev-parse --local-env-vars)" || return
+  while IFS= read -r git_variable; do
+    unset "$git_variable" || return
+  done <<< "$git_environment"
+  cd "$repo_root" || return
+  "$@"
+)
+
 run_full_suite() {
   local reason="$1"
   printf 'Echelon pre-push: running full test suite (%s).\n' "$reason"
   printf 'Command: bash tests/run-all.sh\n\n'
-  cd "$repo_root"
-  bash "$runner"
+  run_verification bash "$runner"
 }
 
 zero_sha="0000000000000000000000000000000000000000"
@@ -105,7 +116,7 @@ fi
 
 printf 'Echelon pre-push: running selected verification for clean main fast-forward to %s (%s).\n' "$remote" "$url"
 set +e
-"$python_exec" "$selector" run --repo "$repo_root" --base "$remote_sha" --head "$local_sha"
+run_verification "$python_exec" "$selector" run --repo "$repo_root" --base "$remote_sha" --head "$local_sha"
 selector_rc=$?
 set -e
 

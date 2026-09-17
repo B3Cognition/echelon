@@ -502,16 +502,9 @@ def _write_coverage_evidence() -> None:
         )
         sys.exit(1)
 
-    import hashlib
-    import json
     from pathlib import Path
 
-    from harness.coverage_evidence import write_coverage_evidence
-    from harness.coverage_observation import (
-        CoverageObservationError,
-        load_coverage_observation,
-    )
-    from harness.deferred_scope import active_entries
+    from harness.fulfillment_preparation_steps import prepare_coverage, PreparationObservationError
 
     spec_dir = Path(sys.argv[2]).resolve()
     verify_run_dir = Path(sys.argv[3]).resolve()
@@ -532,104 +525,16 @@ def _write_coverage_evidence() -> None:
             continue
         print(f"invalid write-coverage-evidence option: {option}", file=sys.stderr)
         sys.exit(1)
-    canonical_path = verify_run_dir / "canonical-requirements.json"
-    _require_inputs([canonical_path])
+    _require_inputs([verify_run_dir / "canonical-requirements.json"])
     _require_verify_spec_state(verify_run_dir)
-    payload = json.loads(canonical_path.read_text(encoding="utf-8"))
-    requirements = payload.get("requirements", [])
-    canonical_ids = tuple(
-        str(row.get("id") or "").strip()
-        for row in requirements
-        if isinstance(row, dict) and str(row.get("id") or "").strip()
-    )
-    deferred_ids = {
-        item_id
-        for entry in active_entries(spec_dir)
-        for item_id in entry.selected_ids
-        if not item_id.startswith("T-")
-    }
-    observation = None
-    if not observer_required and observation_path is None:
-        context_path = verify_run_dir / "coverage-observation-context.json"
-        if context_path.is_file():
-            try:
-                context = json.loads(context_path.read_text(encoding="utf-8"))
-                raw_ref = (
-                    context.get("coverage_observation")
-                    if isinstance(context, dict)
-                    else None
-                )
-                from harness.coverage_observation import CoverageObservationRef
-
-                ref = CoverageObservationRef.from_mapping(raw_ref or {})
-                observation_path = ref.path
-                observer_required = (
-                    isinstance(context, dict)
-                    and context.get("schema_version") == 1
-                    and context.get("observer_required") is True
-                )
-                if not observer_required:
-                    raise CoverageObservationError(
-                        "coverage observation context is malformed"
-                    )
-            except (CoverageObservationError, OSError, json.JSONDecodeError) as exc:
-                _stamp_verify_spec_state(
-                    verify_run_dir,
-                    {
-                        "coverage_evidence": "invalid",
-                        "coverage_evidence_reason": str(exc),
-                    },
-                )
-                print(f"coverage observation context is invalid: {exc}", file=sys.stderr)
-                sys.exit(1)
-    if observer_required:
-        if observation_path is None:
-            _stamp_verify_spec_state(
-                verify_run_dir,
-                {
-                    "coverage_evidence": "invalid",
-                    "coverage_evidence_reason": (
-                        "selected stack requires a validated coverage observation"
-                    ),
-                },
-            )
-            print(
-                "coverage observation required but no observation path was supplied",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        try:
-            observation = load_coverage_observation(observation_path)
-            coverage_map_path = spec_dir / "coverage-map.md"
-            coverage_map_hash = hashlib.sha256(
-                coverage_map_path.read_bytes()
-            ).hexdigest()
-            if observation.fingerprints.get("coverage_map_hash") != coverage_map_hash:
-                raise CoverageObservationError(
-                    "coverage map fingerprint does not match the observation"
-                )
-        except (CoverageObservationError, OSError) as exc:
-            _stamp_verify_spec_state(
-                verify_run_dir,
-                {
-                    "coverage_evidence": "invalid",
-                    "coverage_evidence_reason": str(exc),
-                },
-            )
-            print(f"coverage observation is invalid: {exc}", file=sys.stderr)
-            sys.exit(1)
-    result = write_coverage_evidence(
-        spec_dir=spec_dir,
-        verify_run_dir=verify_run_dir,
-        canonical_ids=canonical_ids,
-        deferred_ids=deferred_ids,
-        observation=observation,
-        observer_required=observer_required,
-    )
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {"coverage_evidence": "ready"},
-    )
+    try:
+        result = prepare_coverage(
+            spec_dir=spec_dir, verify_run_dir=verify_run_dir,
+            observer_required=observer_required, observation_path=observation_path,
+        )
+    except PreparationObservationError as exc:
+        print(exc.diagnostic, file=sys.stderr)
+        sys.exit(1)
     print(f"OK: wrote coverage evidence to {result.json_path}")
 
 
@@ -1058,33 +963,19 @@ def _write_codegraph_evidence() -> None:
 
     from pathlib import Path
 
-    from harness.codegraph_evidence import (
-        CodeGraphEvidenceError,
-        write_codegraph_evidence,
-    )
+    from harness.codegraph_evidence import CodeGraphEvidenceError
+    from harness.fulfillment_preparation_steps import prepare_codegraph
 
     verify_run_dir = Path(sys.argv[3])
     _require_verify_spec_state(verify_run_dir)
     try:
-        result = write_codegraph_evidence(
-            project_root=Path(sys.argv[2]),
-            verify_run_dir=verify_run_dir,
+        result = prepare_codegraph(
+            project_root=Path(sys.argv[2]), verify_run_dir=verify_run_dir,
             spec_dir=Path(sys.argv[4]),
         )
     except CodeGraphEvidenceError as exc:
-        _stamp_verify_spec_state(
-            verify_run_dir,
-            {
-                "structural_evidence": "degraded",
-                "codegraph_evidence_quality": "manual_fallback_required",
-                "codegraph_summary_path": str(verify_run_dir / "codegraph-summary.json"),
-                "codegraph_error_path": str(exc),
-            },
-        )
         print(f"CodeGraph evidence degraded; see {exc}", file=sys.stderr)
         sys.exit(1)
-
-    _stamp_verify_spec_state(verify_run_dir, {"structural_evidence": "ready"})
     print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
 
 
@@ -1098,39 +989,19 @@ def _write_perlgraph_evidence() -> None:
 
     from pathlib import Path
 
-    from harness.perlgraph_evidence import (
-        PerlGraphEvidenceError,
-        write_perlgraph_evidence,
-    )
+    from harness.perlgraph_evidence import PerlGraphEvidenceError
+    from harness.fulfillment_preparation_steps import prepare_perlgraph
 
     verify_run_dir = Path(sys.argv[3])
     _require_verify_spec_state(verify_run_dir)
     try:
-        result = write_perlgraph_evidence(
-            project_root=Path(sys.argv[2]),
-            verify_run_dir=verify_run_dir,
+        result = prepare_perlgraph(
+            project_root=Path(sys.argv[2]), verify_run_dir=verify_run_dir,
             spec_dir=Path(sys.argv[4]),
         )
     except PerlGraphEvidenceError as exc:
-        _stamp_verify_spec_state(
-            verify_run_dir,
-            {
-                "perlgraph_evidence": "degraded",
-                "perlgraph_evidence_quality": "manual_fallback_required",
-                "perlgraph_summary_path": str(verify_run_dir / "perlgraph-summary.json"),
-                "perlgraph_error_path": str(exc),
-            },
-        )
         print(f"PerlGraph evidence degraded; see {exc}", file=sys.stderr)
         sys.exit(1)
-
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {
-            "perlgraph_evidence": "ready",
-            "perlgraph_summary_path": str(result.summary_path),
-        },
-    )
     print(f"OK: wrote PerlGraph evidence to {result.analysis_path}")
 
 
@@ -1234,20 +1105,13 @@ def _write_canonical_requirements() -> None:
 
     from pathlib import Path
 
-    from harness.canonical_requirements import write_canonical_requirements
+    from harness.fulfillment_preparation_steps import prepare_canonical_requirements
 
     verify_run_dir = Path(sys.argv[3])
     _require_verify_spec_state(verify_run_dir)
-    result = write_canonical_requirements(
+    result = prepare_canonical_requirements(
         spec_dir=Path(sys.argv[2]),
         verify_run_dir=verify_run_dir,
-    )
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {
-            "canonical_requirements": "ready",
-            "canonical_requirements_count": result.count,
-        },
     )
     print(
         "OK: wrote canonical requirements to "
@@ -1267,21 +1131,13 @@ def _write_product_inventory() -> None:
 
     from pathlib import Path
 
-    from harness.product_inventory import write_product_inventory
+    from harness.fulfillment_preparation_steps import prepare_product_inventory
 
     verify_run_dir = Path(sys.argv[3])
     _require_verify_spec_state(verify_run_dir)
-    result = write_product_inventory(
+    result = prepare_product_inventory(
         project_root=Path(sys.argv[2]),
         verify_run_dir=verify_run_dir,
-    )
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {
-            "product_inventory": "ready",
-            "product_inventory_count": result.entry_count,
-            "product_inventory_source": result.inventory_source,
-        },
     )
     print(
         "OK: wrote product inventory to "
@@ -1300,18 +1156,11 @@ def _write_requirement_audit() -> None:
 
     from pathlib import Path
 
-    from harness.canonical_requirements import write_requirement_audit
+    from harness.fulfillment_preparation_steps import prepare_requirement_audit
 
     verify_run_dir = Path(sys.argv[2])
     _require_verify_spec_state(verify_run_dir)
-    result = write_requirement_audit(verify_run_dir=verify_run_dir)
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {
-            "requirement_audit": "ready",
-            "requirement_audit_count": result.count,
-        },
-    )
+    result = prepare_requirement_audit(verify_run_dir=verify_run_dir)
     print(
         "OK: wrote requirement audit to "
         f"{result.audit_path} ({result.count} requirements)"
@@ -1330,108 +1179,27 @@ def _write_codegraph_evidence_map() -> None:
 
     from pathlib import Path
 
-    from harness.codegraph_evidence_mapper import write_codegraph_evidence_map
+    from harness.fulfillment_preparation_steps import prepare_evidence_map
 
-    analysis_path = Path(sys.argv[3])
-    out_json_path = Path(sys.argv[5])
-    out_md_path = Path(sys.argv[6])
-    verify_run_dir = out_json_path.parent
-    _require_verify_spec_state(verify_run_dir)
-    if not analysis_path.is_file():
-        if _verify_spec_state_value(verify_run_dir, "structural_evidence") == "degraded":
-            _write_skipped_codegraph_evidence_map(
-                out_json_path=out_json_path,
-                out_md_path=out_md_path,
-                analysis_path=analysis_path,
-            )
-            _stamp_verify_spec_state(
-                verify_run_dir,
-                {"codegraph_evidence_map": "skipped_degraded_codegraph"},
-            )
-            print(
-                "OK: skipped degraded CodeGraph evidence map "
-                f"({out_json_path} and {out_md_path})"
-            )
-            return
-
-    _require_inputs(
-        [
-            Path(sys.argv[2]),
-            analysis_path,
-            Path(sys.argv[4]),
-        ]
-    )
-    result = write_codegraph_evidence_map(
-        requirement_audit_path=Path(sys.argv[2]),
-        codegraph_analysis_path=analysis_path,
-        tasks_path=Path(sys.argv[4]),
-        out_json_path=out_json_path,
-        out_md_path=out_md_path,
-        coverage_map_path=Path(sys.argv[7]) if len(sys.argv) >= 8 else None,
-    )
-    _stamp_verify_spec_state(
-        verify_run_dir,
-        {"codegraph_evidence_map": "ready"},
-    )
-    print(
-        "OK: wrote CodeGraph evidence map to "
-        f"{result.out_json_path} and {result.out_md_path} "
-        f"({result.total_requirements} requirements)"
-    )
-
-
-def _verify_spec_state_value(verify_run_dir: "Path", key: str) -> str | None:
-    import json
-
+    out_json_path, out_md_path = Path(sys.argv[5]), Path(sys.argv[6])
+    _require_verify_spec_state(out_json_path.parent)
     try:
-        state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-    if not isinstance(state, dict):
-        return None
-    value = state.get(key)
-    return str(value) if value is not None else None
-
-
-def _write_skipped_codegraph_evidence_map(
-    *,
-    out_json_path: "Path",
-    out_md_path: "Path",
-    analysis_path: "Path",
-) -> None:
-    import json
-
-    payload = {
-        "schema_version": 2,
-        "status": "skipped_degraded_codegraph",
-        "reason": "CodeGraph evidence was degraded and codegraph-analysis.json is absent.",
-        "source_files": {
-            "codegraph_analysis": str(analysis_path),
-        },
-        "summary": {
-            "total_requirements": 0,
-            "counts": {
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "none": 0,
-                "ambiguous": 0,
-            },
-            "fallback_requirement_ids": [],
-        },
-        "requirements": [],
-    }
-    out_json_path.parent.mkdir(parents=True, exist_ok=True)
-    out_md_path.parent.mkdir(parents=True, exist_ok=True)
-    out_json_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    out_md_path.write_text(
-        "# CodeGraph Evidence Map\n\n"
-        "CodeGraph evidence was degraded and `codegraph-analysis.json` is absent.\n",
-        encoding="utf-8",
-    )
+        result = prepare_evidence_map(
+            requirement_audit_path=Path(sys.argv[2]), codegraph_analysis_path=Path(sys.argv[3]),
+            tasks_path=Path(sys.argv[4]), out_json_path=out_json_path, out_md_path=out_md_path,
+            coverage_map_path=Path(sys.argv[7]) if len(sys.argv) >= 8 else None,
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
+    if result is None:
+        print(f"OK: skipped degraded CodeGraph evidence map ({out_json_path} and {out_md_path})")
+    else:
+        print(
+            "OK: wrote CodeGraph evidence map to "
+            f"{result.out_json_path} and {result.out_md_path} "
+            f"({result.total_requirements} requirements)"
+        )
 
 
 def _verify_docs() -> None:

@@ -59,6 +59,7 @@ from harness.runnability_disposition import (
     read_runnability_disposition,
 )
 from harness.runnability_evidence import (
+    runnability_product_fingerprint,
     RunnabilityEvidenceRef,
     load_runnability_evidence_ref,
     validate_runnability_report,
@@ -1547,7 +1548,7 @@ def _runnability_warning(
                 return f"passing user-runnability evidence is unavailable: {error}"
 
             try:
-                candidate_fingerprint = product_evidence_fingerprint(candidate)
+                candidate_fingerprint = runnability_product_fingerprint(candidate, find_spec_dir(spec_id, candidate))
                 contract_hash = runnability_contract_sha256(contract)
             except (OSError, ValueError) as exc:
                 return f"could not fingerprint the runnable candidate: {exc}"

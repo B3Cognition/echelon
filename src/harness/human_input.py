@@ -985,6 +985,26 @@ class AppliedHumanInputResolution:
     confidence: Literal["high", "medium", "low"] | None = None
 
 
+def why2_safeguard_question(reason: str, count: int) -> str:
+    """One native wording for sealing and authenticating counter decisions."""
+    if type(count) is not int or count < 2:
+        raise HumanInputPolicyError("WHY2 safeguard count is invalid")
+    if reason == "why2_metric_stagnation":
+        return ("WHY2 certified metrics did not improve across "
+            f"{count} consecutive repair cycles. "
+            "Provide new evidence, narrow scope, or authorize a "
+            "different repair strategy.")
+    if reason == "consecutive_why_fails":
+        return (f"phase1-why2 still fails after {count} assessments without "
+            "a spec artifact change. No automatic retry is authorized. Run "
+            '`echelon spec resume "<your answer>"` with new evidence, narrowed '
+            "scope, or a concrete repair instruction. The resume records that "
+            "free-text answer, resets the consecutive WHY failure count, and "
+            "reopens phase1-why2. Then `echelon spec continue` retries that "
+            "phase under the normal validation gates.")
+    raise HumanInputPolicyError("WHY2 safeguard reason is invalid")
+
+
 # Historical callers construct this internal value directly.  Keep the old
 # import name as an alias while making the complete applied result the one
 # concrete runtime type accepted by handlers and state transactions.

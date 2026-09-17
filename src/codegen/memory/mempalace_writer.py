@@ -59,7 +59,6 @@ def deterministic_requirement_drawer_id(
         or len(room) > 256
         or type(requirement_id) is not str
         or not requirement_id
-        or len(requirement_id) > 512
         or type(content) is not str
         or type(spec_sha256) is not str
         or _SHA256_PATTERN.fullmatch(spec_sha256) is None

@@ -64,7 +64,32 @@ When debugging, first determine whether the failure is bundle installation, Pros
 
 `echelon land <id>` and `echelon spec target …` are pure-Python (no LLM); `_cmd_init`, `_cmd_land`, `_cmd_harness_init`, `_cmd_harness_run` in `src/echelon/cli.py` are the dispatch points.
 
+## Controlled delivery ownership
+
+With `llm.features.delivery_gate_controller: true`, `echelon delivery run`
+bypasses the legacy build prompt. Ralph and its Python helpers own task
+selection, gate sequencing, bounded repairs, durable operation journals,
+progress, authoritative verification and documentation report publication.
+Prosaic supplies the six neutral `echelon.delivery-*` role bodies and metadata;
+provider-specific permissions remain in the provider adapters.
+
+Delivery roles return their assignment-bound JSON, not `echelon_result` or
+harness completion markers. They never dispatch another agent or write
+controller state. Successful slice review is not final delivery acceptance.
+Source-repair feedback is structured evidence/context; execution and output
+rules belong to the controller contract. Pending legacy repair snapshots require
+reconciliation, not rewriting the journal or resetting attempts.
+
+PR triage separately uses neutral Prosaic diagnostic/composer roles, with Python
+owning sequencing and canonical publication. Fulfillment verify-spec retains its
+separate command-driven contract; do not claim every delivery model call has
+migrated. Legacy `echelon build` and feature-off behavior remain outside this
+migration; do not alias, remove or rewrite them as part of convergence.
+
 ## Thin command wrappers + externalized workflow
+
+The following wrapper and journal conventions apply to command-driven legacy
+workflows, not the controlled delivery roles described above.
 
 The big squad commands (`echelon.run.md`, `echelon.bugfix.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.codegenlight.md`) are **thin wrappers — typically 35–75 lines**. They set the COMMANDER role, load `agents/control/commander.md`, then delegate to:
 
@@ -75,9 +100,9 @@ When modifying phase logic, edit the workflow files — do not bloat the command
 
 ## Journal architecture (compaction-safe dispatch)
 
-Agents return structured output as a trailing `echelon_result:` YAML block. **COMMANDER is the sole writer to `state.json` and the reasoning journal.** Other agents never write either.
+In these command-driven workflows, agents return structured output as a trailing `echelon_result:` YAML block. **COMMANDER is the sole writer to `state.json` and the reasoning journal.** Other agents never write either.
 
-Before each dispatch COMMANDER writes a `last_dispatch` sentinel to `state.json` with `post_dispatch_complete: false`. After the Post-Dispatch Protocol (parse echelon_result → write journal entries → apply state updates) it flips the flag to `true`. On every bootstrap COMMANDER reads this flag to detect and recover from mid-dispatch context compaction. Don't bypass this — any new agent must emit an `echelon_result` block, and COMMANDER must be the one to persist it.
+Before each dispatch COMMANDER writes a `last_dispatch` sentinel to `state.json` with `post_dispatch_complete: false`. After the Post-Dispatch Protocol (parse echelon_result → write journal entries → apply state updates) it flips the flag to `true`. On every bootstrap COMMANDER reads this flag to detect and recover from mid-dispatch context compaction. Don't bypass this — a new agent participating in this legacy protocol must emit an `echelon_result` block, and COMMANDER must be the one to persist it. Controller-owned roles instead follow their assignment-bound result contract.
 
 The canonical set of valid journal entry types lives in `runtime/workflow/journal-entry-types.yaml`.
 

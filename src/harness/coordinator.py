@@ -15,6 +15,7 @@ import os
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -48,7 +49,7 @@ from harness.repair_loop import (
 )
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
-from harness.skill_loader import resolve_llm_prompt
+from harness.delivery_prompt import DeliveryPromptError, resolve_delivery_build_prompt
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
 from harness.task_progress import (
     TaskProgressError,
@@ -693,6 +694,14 @@ class StrategyCoordinator:
             )
             ledger_path = verified_fulfillment_ledger_path(spec_dir)
             if ledger_path.is_file():
+                ledger = read_verified_ledger(ledger_path)
+                contracts = {item.contract_hash for item in ledger.rows}
+                if len(contracts) != 1 or not next(iter(contracts)):
+                    # An immutable checkpoint must not relabel mixed or
+                    # unbound rows as the currently configured verifier.
+                    updates["verified_contract_hash"] = ""
+                    return updates
+                updates["verified_contract_hash"] = next(iter(contracts))
                 updates["verified_fulfillment_rows"] = [
                     {
                         "requirement_id": item.requirement_id,
@@ -700,7 +709,7 @@ class StrategyCoordinator:
                         "evidence_refs": list(item.selected_evidence or item.evidence_refs),
                         "verified_at": item.verified_at,
                     }
-                    for item in read_verified_ledger(ledger_path).rows
+                    for item in ledger.rows
                 ]
         return updates
 
@@ -832,23 +841,24 @@ class StrategyCoordinator:
         outer_iterations: int,
         tokens_used: int,
         final_verify: Any = None,
+        diagnostic: str | None = None,
     ) -> DeliveryResult:
         """Persist a recoverable phase failure with its exact restart point."""
         state = state_store.read()
         effective_verify = (
             final_verify if final_verify is not None else implementation.final_verify
         )
-        state_store.transition(
-            "blocked",
-            updates={
-                "blocked_phase": phase,
-                "termination_reason": reason,
-                "pr_url": implementation.pr_url,
-                "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
-                "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
-                "last_verify_result": _serialize_verify_result(effective_verify),
-            },
-        )
+        updates = {
+            "blocked_phase": phase,
+            "termination_reason": reason,
+            "pr_url": implementation.pr_url,
+            "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
+            "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
+            "last_verify_result": _serialize_verify_result(effective_verify),
+        }
+        if diagnostic is not None:
+            updates.update(build_status=reason, build_reason=diagnostic)
+        state_store.transition("blocked", updates=updates)
         return DeliveryResult(
             status="blocked",
             termination_reason=reason,
@@ -1356,15 +1366,36 @@ class StrategyCoordinator:
             if strategy_context:
                 arguments += f"\n\n{strategy_context}"
 
-            if llm_provider is not None:
-                build_prompt = resolve_llm_prompt(
-                    build_command=spec.build_command,
-                    arguments=arguments,
-                    project_dir=Path(self._base_dir),
-                    cli=self._config.llm.cli,
-                )
-            else:
-                build_prompt = arguments
+            build_prompt: str | None = None
+            prompt_error: str | None = None
+            initial_review_artifacts: tuple[Path, ...] = ()
+
+            def get_build_prompt() -> str:
+                """Resolve only when implementation or repair actually needs a model."""
+                nonlocal build_prompt, prompt_error
+                if build_prompt is None:
+                    try:
+                        if self._config.llm.features.get("delivery_gate_controller") is True:
+                            if spec.build_command.split() != ["echelon", "build"]:
+                                raise DeliveryPromptError("Controlled delivery requires 'echelon build'")
+                            resolved = arguments
+                        else:
+                            resolved = (
+                                resolve_delivery_build_prompt(
+                                    spec.build_command, arguments, Path(self._base_dir),
+                                )
+                                if llm_provider is not None else arguments
+                            )
+                    except DeliveryPromptError as exc:
+                        prompt_error = str(exc)
+                        raise
+                    if initial_review_artifacts:
+                        resolved = self._build_reentry_prompt(
+                            resolved, intent.spec_id, spec_dir=spec_dir,
+                            published_artifacts=initial_review_artifacts,
+                        )
+                    build_prompt = resolved
+                return build_prompt
 
             controller_state = state_store.read()
             downstream_reentry = controller_state.get("downstream_reentry")
@@ -1449,13 +1480,8 @@ class StrategyCoordinator:
                 resumed_phase,
             )[0]
             if pending_reentry is not None:
-                build_prompt = self._build_reentry_prompt(
-                    build_prompt,
-                    intent.spec_id,
-                    spec_dir=spec_dir,
-                    published_artifacts=tuple(
-                        Path(path) for path in pending_reentry["artifact_paths"]
-                    ),
+                initial_review_artifacts = tuple(
+                    Path(path) for path in pending_reentry["artifact_paths"]
                 )
             if current_phase == "implementation":
                 implementation_result = (
@@ -1470,22 +1496,10 @@ class StrategyCoordinator:
                         token_budget=budget,
                         build_command=spec.build_command,
                         strategy_context=strategy_context,
-                        build_prompt=build_prompt,
+                        build_prompt=get_build_prompt(),
                     )
             else:
-                resumed = state_store.read()
-                implementation_result = ImplementationResult(
-                    status="verified",
-                    termination_reason=str(
-                        resumed.get("termination_reason") or "converged"
-                    ),
-                    outer_iterations=int(resumed.get("outer_iter") or 0),
-                    inner_iterations=int(resumed.get("inner_iter") or 0),
-                    pr_url=resumed.get("pr_url"),
-                    tokens_used=int(resumed.get("tokens_used") or 0),
-                    final_verify=None,
-                    branch=resumed.get("branch") or resumed.get("branch_name"),
-                )
+                implementation_result = self._implementation_from_state(state_store.read())
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
             if implementation_result.status == "verified" and current_phase == "implementation":
@@ -1554,9 +1568,11 @@ class StrategyCoordinator:
                             verify_result=verify,
                             build_command=spec.build_command,
                             strategy_context=strategy_context,
-                            build_prompt=build_prompt,
+                            build_prompt=get_build_prompt(),
                             phase="visual",
                             evidence_paths=tuple(evidence_paths),
+                            token_budget=budget,
+                            tokens_used=implementation_tokens + visual_tokens + verify.token_usage,
                         )
                     ),
                 )
@@ -1617,16 +1633,20 @@ class StrategyCoordinator:
                         return current_visual_result
                     state_store.transition("running")
                     controller.reuse_worktree_on_next_run(worktree_path)
+                    reentry_usage_baseline = (
+                        state_store.read().get("tokens_used", 0)
+                        if self._config.llm.features.get("delivery_gate_controller") is True else 0
+                    )
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,
                         token_budget=budget,
                         build_command=spec.build_command,
                         strategy_context=strategy_context,
-                        build_prompt=build_prompt,
+                        build_prompt=get_build_prompt(),
                     )
                     implementation_outer_iterations += implementation_result.outer_iterations
-                    implementation_tokens += implementation_result.tokens_used
+                    implementation_tokens += max(0, implementation_result.tokens_used - reentry_usage_baseline)
                     if implementation_result.status == "verified":
                         visual_reentry_block = self._checkpoint_verified_result(
                             state_store,
@@ -1665,6 +1685,7 @@ class StrategyCoordinator:
                     outer_iterations=implementation_outer_iterations + visual_iterations,
                     tokens_used=implementation_tokens + visual_tokens,
                     final_verify=visual_result.final_verify,
+                    diagnostic=prompt_error,
                 )
 
             review_result: ReviewResult | None = None
@@ -1760,6 +1781,17 @@ class StrategyCoordinator:
                             )
                         review_iterations += review_result.iterations
                         review_tokens += review_result.tokens_used
+                        if self._config.llm.features.get("delivery_gate_controller") is True:
+                            # Ralph may be interrupted during the queued repair.
+                            # Its durable baseline must already include triage;
+                            # the re-entry delta below excludes that baseline.
+                            current = state_store.read()
+                            state_store.transition(current["status"], updates={
+                                "tokens_used": max(
+                                    current.get("tokens_used", 0),
+                                    implementation_tokens + visual_tokens + review_tokens,
+                                ),
+                            })
                         if review_result.status != "review_fix_queued":
                             return RepairAttempt(
                                 output={
@@ -1816,13 +1848,27 @@ class StrategyCoordinator:
                                     "review_result": review_result,
                                 }
                             )
-                        reentry_prompt = self._build_reentry_prompt(
-                            build_prompt,
-                            intent.spec_id,
-                            spec_dir=spec_dir,
-                            published_artifacts=published_artifacts,
-                        )
+                        try:
+                            reentry_prompt = self._build_reentry_prompt(
+                                get_build_prompt(),
+                                intent.spec_id,
+                                spec_dir=spec_dir,
+                                published_artifacts=published_artifacts,
+                            )
+                        except DeliveryPromptError:
+                            review_result = replace(
+                                review_result, status="blocked",
+                                termination_reason="delivery_prompt_invalid",
+                            )
+                            return RepairAttempt(output={
+                                "result": implementation_result,
+                                "review_result": review_result,
+                            })
                         state_store.transition("running")
+                        reentry_usage_baseline = (
+                            state_store.read().get("tokens_used", 0)
+                            if self._config.llm.features.get("delivery_gate_controller") is True else 0
+                        )
                         implementation_result = controller.run_loop(
                             max_outer=intent.max_outer,
                             max_inner=intent.max_inner,
@@ -1834,7 +1880,7 @@ class StrategyCoordinator:
                         implementation_outer_iterations += (
                             implementation_result.outer_iterations
                         )
-                        implementation_tokens += implementation_result.tokens_used
+                        implementation_tokens += max(0, implementation_result.tokens_used - reentry_usage_baseline)
                         if implementation_result.status == "verified":
                             checkpoint_updates = self._verified_checkpoint_updates(
                                 spec_id=intent.spec_id,
@@ -2040,6 +2086,7 @@ class StrategyCoordinator:
                     outer_iterations=total_outer_iterations,
                     tokens_used=total_tokens,
                     final_verify=final_verify,
+                    diagnostic=prompt_error,
                 )
             elif delivery_status == "failed":
                 state_store.transition("failed")
@@ -2061,6 +2108,24 @@ class StrategyCoordinator:
                 branch=implementation_result.branch,
             )
 
+        except DeliveryPromptError as exc:
+            state = state_store.read()
+            phase = {
+                "running": "implementation",
+                "validating": "visual",
+                "reviewing": "review",
+                "finalizing": "finalization",
+            }.get(str(state.get("status")), "implementation")
+            implementation = self._implementation_from_state(state)
+            return self._persist_phase_block(
+                state_store,
+                phase=phase,
+                reason="delivery_prompt_invalid",
+                implementation=implementation,
+                outer_iterations=implementation.outer_iterations,
+                tokens_used=implementation.tokens_used,
+                diagnostic=str(exc),
+            )
         finally:
             state_store.release_lock()
 

@@ -87,29 +87,23 @@ class TestManualCommandContracts:
         assert "Scan `specs/`" in text
         assert "Check specs/ for available IDs." in text
 
-    def test_review_command_accepts_authoritative_spec_dir(self) -> None:
+    def test_review_command_only_composes_host_diagnosed_allocated_output(self) -> None:
         text = (COMMAND_DIR / "echelon.review.md").read_text(encoding="utf-8")
 
-        assert "`spec_dir`" in text
-        assert "treat it as authoritative" in text
-        assert "do not locate, glob, or\nsearch for `specs/{spec_id}-*/`" in text
-        assert "`{spec_dir}/spec.md`" in text
-        assert "`{spec_dir}/tasks.md`" in text
-        assert "Harness Review Input" in text
-        assert "review_staging_dir" in text
-        assert "review_status_file" in text
-        assert "tasks-append.md" in text
-        assert text.count('"review_task_id"') >= 3
-        assert "**Title:** RF7-T1" in text
-        assert "**Title:** RF7-T2" in text
-        assert "**Title:** RF7-T3" in text
+        assert "host-supplied set of diagnosed review groups" in text
+        assert "allocated artifact name, task ID, manifest entry" in text
+        assert "one nonempty review-fix artifact per diagnosed group" in text
+        assert "exact JSON envelope" in text
+        assert "COMMANDER" not in text
+        assert "dispatch roles" in text
+        assert "request reads" in text
+        assert "write files" in text
+        assert "review_staging_dir" not in text
+        assert "review_status_file" not in text
+        assert "Harness Review Input" not in text
         assert "gh api" not in text
         assert "glab api" not in text
         assert "```bash" not in text
-        assert "ls \"{spec_dir}\"/review-fix-*.md" not in text
-        assert "`specs/{spec_id}-{spec_name}/spec.md`" not in text
-        assert "`specs/{spec_id}-{spec_name}/tasks.md`" not in text
-        assert "Never checkout, switch, or stash branches" in text
         assert "git checkout" not in text
         assert "git stash" not in text
 

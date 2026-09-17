@@ -14,10 +14,12 @@ from echelon.spec_authoring import PROPORTIONAL_MODE, normalize_spec_authoring_m
 from harness.phase1_quality_debt import has_current_quality_debt_authorization
 from harness.proportional_quality import (
     AuthoritativeSageEvidenceSnapshot,
+    ProjectedSageEvidenceSnapshot,
     QualityCandidateIntegrityError,
     is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
     require_current_authoritative_sage_evidence_snapshot,
+    require_projected_authoritative_sage_evidence_snapshot,
 )
 from harness.understanding_gate import has_current_understanding_evidence
 
@@ -37,7 +39,7 @@ class AuthoritativeQualityAssessment:
     ordinary_pass: bool
     proportional_failure: bool
     hard_blockers: tuple[str, ...]
-    sage_evidence: AuthoritativeSageEvidenceSnapshot | None = None
+    sage_evidence: AuthoritativeSageEvidenceSnapshot | ProjectedSageEvidenceSnapshot | None = None
 
 
 def build_phase1_quality_certificate(
@@ -67,17 +69,20 @@ def build_phase1_quality_certificate(
     if base is None:
         return None
     sage_snapshot = assessment.sage_evidence
-    if not isinstance(sage_snapshot, AuthoritativeSageEvidenceSnapshot):
+    if type(sage_snapshot) not in {AuthoritativeSageEvidenceSnapshot, ProjectedSageEvidenceSnapshot}:
         return None
     issues_path = _authoritative_issues_path(state, project_root)
     if issues_path is None:
         return None
     try:
-        require_current_authoritative_sage_evidence_snapshot(
-            sage_snapshot,
-            issues_path,
-            project_root=project_root,
-        )
+        if type(sage_snapshot) is ProjectedSageEvidenceSnapshot:
+            artifacts = require_projected_authoritative_sage_evidence_snapshot(
+                sage_snapshot, issues_path, project_root=project_root)
+            if hashlib.sha256(artifacts["spec.md"]).hexdigest() != base["source_sha256"]:
+                return None
+        else:
+            require_current_authoritative_sage_evidence_snapshot(
+                sage_snapshot, issues_path, project_root=project_root)
     except QualityCandidateIntegrityError:
         return None
     if (

@@ -11,12 +11,14 @@ OUTPUT="$2"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/element-id-functions.sh"
 
 # Build valid ID set from spec
-grep -oE '(FR|NFR|AC|C)-[0-9]{3}[a-z]?' "$SPEC" | sort -u > "$tmpdir/valid_ids.txt" || true
+extract_requirement_ids 'FR|NFR|AC|C' '([0-9]{3,}|[0-9]{3}[a-z])' < "$SPEC" | sort -u > "$tmpdir/valid_ids.txt"
 
 # Extract all citations from output
-grep -oE '(FR|NFR|AC|C)-[0-9]{3}[a-z]?' "$OUTPUT" | sort -u > "$tmpdir/cited_ids.txt" || true
+extract_requirement_ids 'FR|NFR|AC|C' '([0-9]{3,}|[0-9]{3}[a-z])' < "$OUTPUT" | sort -u > "$tmpdir/cited_ids.txt"
 
 total=$(wc -l < "$tmpdir/cited_ids.txt" | tr -d ' ')
 

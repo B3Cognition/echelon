@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -238,6 +239,185 @@ def test_deterministic_requirement_drawer_ids_are_unique_and_path_run_independen
     assert len(first.rsplit("_", 1)[-1]) == 64
 
 
+def test_deterministic_drawer_identity_accepts_complete_wide_id():
+    label = "AC-" + "9" * 5000
+    identity = {
+        "schema_version": 1,
+        "wing": "demo",
+        "room": "acceptance-criteria",
+        "canonical_spec_sha256": "a" * 64,
+        "requirement_id": label,
+        "requirement_content_sha256": hashlib.sha256(b"Accepted").hexdigest(),
+    }
+    expected = "drawer_demo_acceptance-criteria_" + hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    assert writer_module.deterministic_requirement_drawer_id(
+        wing="demo", room="acceptance-criteria", spec_sha256="a" * 64,
+        requirement_id=label, content="Accepted",
+    ) == expected
+
+
+@pytest.mark.parametrize("family", ("AC", "FR", "NFR", "ISS", "U", "A", "T"))
+@pytest.mark.parametrize(
+    "ordinal",
+    ("000001", "999999", "1000000", "9" * 5000),
+)
+def test_deterministic_drawer_identity_hashes_complete_authority_labels(
+    family: str,
+    ordinal: str,
+) -> None:
+    label = f"{family}-{ordinal}"
+    content = "Preserve café identity."
+    digest = "b" * 64
+    identity = {
+        "schema_version": 1,
+        "wing": "demo",
+        "room": "identity-compatibility",
+        "canonical_spec_sha256": digest,
+        "requirement_id": label,
+        "requirement_content_sha256": hashlib.sha256(
+            content.encode("utf-8")
+        ).hexdigest(),
+    }
+    expected = "drawer_demo_identity-compatibility_" + hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="identity-compatibility",
+        spec_sha256=digest,
+        requirement_id=label,
+        content=content,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "X" * 512,
+        "X" * 513,
+        "FR-001",
+        "FR-MP-006",
+        "NFR-legacy--" + "component_release--" * 40 + "historical",
+    ),
+)
+def test_deterministic_drawer_identity_preserves_opaque_label_boundaries(
+    label: str,
+) -> None:
+    digest = "c" * 64
+    identity = {
+        "schema_version": 1,
+        "wing": "demo",
+        "room": "functional-requirements",
+        "canonical_spec_sha256": digest,
+        "requirement_id": label,
+        "requirement_content_sha256": hashlib.sha256(b"Stable").hexdigest(),
+    }
+    expected = "drawer_demo_functional-requirements_" + hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id=label,
+        content="Stable",
+    ) == expected
+
+
+def test_deterministic_drawer_identity_distinguishes_suffix_beyond_old_cap() -> None:
+    shared = "AC-" + "7" * 509
+    first_label = shared + "first"
+    second_label = shared + "second"
+    kwargs = {
+        "wing": "demo",
+        "room": "acceptance-criteria",
+        "spec_sha256": "d" * 64,
+        "content": "Accepted",
+    }
+
+    first = writer_module.deterministic_requirement_drawer_id(
+        requirement_id=first_label,
+        **kwargs,
+    )
+    second = writer_module.deterministic_requirement_drawer_id(
+        requirement_id=second_label,
+        **kwargs,
+    )
+    replay = writer_module.deterministic_requirement_drawer_id(
+        requirement_id=first_label,
+        **kwargs,
+    )
+
+    assert first != second
+    assert replay == first
+
+
+@pytest.mark.parametrize("requirement_id", ("", None, 1, b"FR-001"))
+def test_deterministic_drawer_identity_rejects_invalid_requirement_labels(
+    requirement_id: object,
+) -> None:
+    with pytest.raises(ValueError, match="invalid deterministic drawer identity"):
+        writer_module.deterministic_requirement_drawer_id(
+            wing="demo",
+            room="functional-requirements",
+            spec_sha256="e" * 64,
+            requirement_id=requirement_id,  # type: ignore[arg-type]
+            content="Stable",
+        )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"wing": ""},
+        {"wing": None},
+        {"wing": "x" * 257},
+        {"wing": "bad/wing"},
+        {"wing": "bad\nwing"},
+        {"room": ""},
+        {"room": 1},
+        {"room": "x" * 257},
+        {"room": "bad\\room"},
+        {"room": "bad\x00room"},
+        {"room": "bad\rroom"},
+        {"spec_sha256": b"f" * 64},
+        {"spec_sha256": "A" * 64},
+        {"spec_sha256": "f" * 63},
+    ),
+)
+def test_deterministic_drawer_identity_keeps_other_validation_controls(
+    overrides: dict[str, object],
+) -> None:
+    values = {
+        "wing": "demo",
+        "room": "functional-requirements",
+        "spec_sha256": "f" * 64,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match="invalid deterministic drawer identity"):
+        writer_module.deterministic_requirement_drawer_id(
+            **values,
+            requirement_id="FR-001",
+            content="Stable",
+        )
+
+
 def test_write_exact_distinguishes_written_from_exact_existing() -> None:
     ctx = _make_ctx(wing="demo", run_id="run-one")
     writer = MemPalaceWriter(ctx)
@@ -279,6 +459,58 @@ def test_write_exact_distinguishes_written_from_exact_existing() -> None:
     assert first.outcome == "written"
     assert replay.outcome == "already_present"
     assert first.drawer_id == replay.drawer_id == drawer_id
+    assert collection.add_calls == 1
+    assert collection.upsert_calls == 0
+
+
+def test_write_exact_preserves_complete_wide_label_and_detects_readback_drift() -> None:
+    ctx = _make_ctx(wing="demo", run_id="run-wide")
+    writer = MemPalaceWriter(ctx)
+    collection = _ExactCollection()
+    label = "AC-" + "9" * 5000
+    digest = "8" * 64
+    content = f"{label}: Accepted."
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="acceptance-criteria",
+        spec_sha256=digest,
+        requirement_id=label,
+        content=content,
+    )
+
+    with patch.object(writer, "_get_collection", return_value=collection):
+        with patch("codegen.memory.mempalace_writer.add_drawer", object()):
+            written = writer.write_exact(
+                room="acceptance-criteria",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id=label,
+            )
+            replay = writer.write_exact(
+                room="acceptance-criteria",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id=label,
+            )
+            stored_label = collection.records[drawer_id][1]["requirement_id"]
+            collection.records[drawer_id][1]["requirement_id"] = label[:-1]
+            drift = writer.write_exact(
+                room="acceptance-criteria",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id=label,
+            )
+
+    assert written.outcome == "written"
+    assert replay.outcome == "already_present"
+    assert stored_label == label
+    assert drift.outcome == "drift"
     assert collection.add_calls == 1
     assert collection.upsert_calls == 0
 

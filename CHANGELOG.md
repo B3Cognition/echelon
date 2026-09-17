@@ -13,6 +13,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   noninteractive requests stop safely with a rerun command. Existing requests
   retain frozen accounting and limits, and active-time ceilings are unchanged.
 
+- **Opt-in controller-owned delivery gates** — `harness.llm.features.delivery_gate_controller`
+  selects one dependency-ready task and runs IMPLEMENTER, SPEC GUARD, CODE
+  REVIEWER, and TEST GUARDIAN as separate provider calls. Every repair reruns
+  all reviews; two unsuccessful repairs block, including in banzai. Strict
+  dispatch-bound results, protected-input checks, read-only reviewers, and
+  per-dispatch budget checks prevent legacy completion markers from authorizing
+  progress. The trial requires an enforced read-only provider boundary (currently
+  Codex on a supported host). Default execution is unchanged;
+  documentation-only dispatch remains a subsequent migration phase.
+
+- **Durable controlled-delivery recovery** — Opt-in slices persist dispatch
+  intent and validated receipts under an OS-held lock. Restart reuses only
+  matching receipts, preserves the original uncommitted worktree and repair
+  limits, and applies task progress and usage idempotently. Missing candidates,
+  uncertain completion, changed inputs, corrupt journals, or disabling the
+  controller with pending work block for reconciliation rather than starting
+  over. Tightened finite ceilings survive restart; visual/review re-entry counts
+  only new implementation usage. Offline regression tested; no live rollout.
+
 - **Adaptive delivery convergence lease** — Phase B now persists a
   controller-owned high-water snapshot across delivery restarts and classifies
   canonical task progress, fulfillment debt, stable blocking failures, and
@@ -39,6 +58,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   or explicit partial-finalization/publication commands. Existing synthesis
   drafts are no longer misleadingly labeled pending. Reporting remains read-only
   and does not change repair policy or authorize higher token/time ceilings.
+
+- **Delivery command setup** — LLM delivery requires a valid canonical build
+  command and uses role-neutral framing, removing the extra COMMANDER assignment.
+  Missing or malformed command resources block recoverably without dispatching
+  a bare prompt. Build resources load only when execution or repair needs them;
+  downstream setup failures retain usage, pending repairs, and verification
+  evidence. Continue/resume accepts the setup blocker after resources are fixed.
+  Review sequencing remains unchanged in this first migration phase.
 
 - **Typed delivery status boundary** — `echelon delivery status` now passes
   Typer-validated `spec_id`, strategy, and JSON values directly to its status

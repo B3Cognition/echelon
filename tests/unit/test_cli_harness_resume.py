@@ -587,6 +587,33 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    @pytest.mark.parametrize("phase", ["implementation", "visual", "review"])
+    def test_delivery_command_setup_block_can_continue_without_git_recovery(
+        self, tmp_path: Path, phase: str,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "blocked_phase": phase,
+            "termination_reason": "delivery_prompt_invalid",
+            "build_reason": "Missing canonical delivery command echelon.build",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as recover, \
+             patch("harness.skills.run_skill.run") as run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        recover.assert_not_called()
+        run.assert_called_once()
+        assert run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "resume" in run.call_args.args[0]
+        persisted = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert persisted["blocked_phase"] == phase
+
     def test_verification_infrastructure_retries_after_harness_update(
         self, tmp_path: Path
     ) -> None:

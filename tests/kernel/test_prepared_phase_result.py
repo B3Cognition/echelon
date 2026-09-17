@@ -1735,6 +1735,56 @@ def test_routing_decision_tampering_breaks_attestation() -> None:
         )
 
 
+@pytest.mark.parametrize("effect", ["provider_echo", "controller", "control", "removal", "trusted_removal"])
+def test_managed_identity_cannot_be_owned_by_prepared_phase(effect):
+    # A literal structurally valid record, including identical echoes, is still
+    # never provider/controller enrichment or control-intent ownership.
+    metadata = {
+        "version": "1", "workspace_uuid": "12345678-1234-1234-1234-123456789abc",
+        "epoch_uuid": "23456789-2345-2345-2345-23456789abcd",
+        "spec_id": "demo", "operation_id": "managed-registration", "run_id": "first",
+        "context_id": "source", "spec_path": "specs/demo",
+        "source_registration_operation_id": "source-registration", "source_manifest_sha256": "a" * 64,
+    }
+    options = {"controller_updates": {}}
+    result = _result({})
+    if effect == "provider_echo":
+        result = _result({"managed_identity": metadata})
+    elif effect == "controller":
+        options["controller_updates"] = {"managed_identity": metadata}
+    elif effect == "control":
+        options["control_updates"] = {"managed_identity": metadata}
+    elif effect == "removal":
+        options["state_removals"] = {"managed_identity"}
+    else:
+        options["trusted_transaction_state_removals"] = {"managed_identity"}
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=["managed_identity"]),
+            result, **options,
+        )
+
+
+@pytest.mark.parametrize("target", ["queued_state_updates", "transaction_state_updates", "transaction_state_removals", "phase_updates"])
+def test_managed_identity_tampered_frozen_envelopes_fail_attestation(target):
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}), controller_updates={},
+    )
+    decision = prepare_routing_decision(prepared, from_phase="provider", to_phase="next",
+        expected_state_revision=1, expected_previous_dispatch_sha256="0" * 64)
+    if target == "phase_updates":
+        object.__setattr__(prepared._result, "echelon_result",
+            {"verdict": "DONE", "state_updates": {"managed_identity": {"version": "1"}}})
+        object.__setattr__(prepared, "provider_update_keys", frozenset({"managed_identity"}))
+    else:
+        object.__setattr__(decision, "_" + target,
+            frozenset({"managed_identity"}) if target.endswith("removals")
+            else {"managed_identity": {"version": "1"}})
+    with pytest.raises(PreparedPhaseResultAttestationError):
+        verify_prepared_routing_decision_attestation(decision, from_phase="provider", to_phase="next")
+
+
 def test_routing_checkpoint_policy_tampering_breaks_attestation() -> None:
     prepared = prepare_phase_result(
         PhaseNode(id="provider", type="agent", allowed_state_updates=[]),

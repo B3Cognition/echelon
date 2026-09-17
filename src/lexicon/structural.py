@@ -90,7 +90,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .completeness import placeholder_findings
-from .manifest import required_sections
+from .manifest import required_sections, required_sections_from_text
 
 _TEMPLATES = Path("runtime/templates")
 
@@ -101,13 +101,16 @@ class StructuralReport:
     findings: list[Finding] = field(default_factory=list)
 
 
-def structural_validate(text: str, entry: dict, spec_text: str = "") -> StructuralReport:
+def structural_validate(text: str, entry: dict, spec_text: str = "", *,
+                        template_text: str | None = None) -> StructuralReport:
     """Run the Tier-2 structural checks for one artifact. Never raises."""
     findings: list[Finding] = []
 
     template = entry.get("template")
     if template:
-        findings += section_findings(text, required_sections(_TEMPLATES / template))
+        sections = (required_sections(_TEMPLATES / template) if template_text is None
+                    else required_sections_from_text(template_text))
+        findings += section_findings(text, sections)
 
     findings += placeholder_findings(text)
 

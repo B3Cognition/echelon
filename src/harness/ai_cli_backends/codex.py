@@ -58,6 +58,33 @@ class CodexCliBackend:
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self._run_codex(request, use_final_message=True)
 
+    def run_inspection_turn(self, request: CliRunRequest) -> CliRunResult:
+        from harness.inspection_turn import inspection_request_failure
+
+        failure = inspection_request_failure(request)
+        if failure is not None:
+            return failure
+        return self.run_review_triage_turn(request)
+
+    def run_review_triage_turn(self, request: CliRunRequest) -> CliRunResult:
+        metadata = _review_triage_metadata(request)
+        if metadata is None:
+            return _screened_failure("invalid_request")
+        model_tier, _effort = metadata
+        model = self.model_for_tier(model_tier)
+        if model is None:
+            return _screened_failure("invalid_request")
+        result = self.run_constrained_prompt(
+            request,
+            model=model,
+            screen_output=lambda value: value,
+            max_input_bytes=1024 * 1024,
+            max_capture_bytes=256 * 1024,
+        )
+        if result.exit_code == 0:
+            result.stdout = result.stdout.strip()
+        return result
+
     def run_prompt_screened(
         self,
         request: CliRunRequest,
@@ -532,6 +559,8 @@ def _run_screened_process(
             isinstance(item, dict) and item.get("type") == "error"
         ):
             failure_reason = failure_reason or "provider_event_failure"
+            if event_type == "turn.failed" and "usage" in event:
+                usage.add_modern(event["usage"])
             usage.fail_modern()
         if isinstance(item, dict) and item.get("type") in {
             "command_execution",
@@ -871,6 +900,32 @@ def _codex_model_for_request(request: CliRunRequest) -> str | None:
     if not isinstance(tier, str):
         return None
     return _MODEL_TIER_TO_CODEX_MODEL.get(tier.strip().lower())
+
+
+def _review_triage_metadata(request: CliRunRequest) -> tuple[str, str] | None:
+    if set(request.metadata) != {"prompt_metadata"}:
+        return None
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    if {
+        "model",
+        "provider",
+        "model_id",
+        "model_name",
+        "reasoning_effort",
+    }.intersection(metadata):
+        return None
+    tier = metadata.get("model_tier")
+    effort = metadata.get("effort")
+    if (
+        type(tier) is not str
+        or tier not in _MODEL_TIER_TO_CODEX_MODEL
+        or type(effort) is not str
+        or effort not in {"low", "medium", "high"}
+    ):
+        return None
+    return tier, effort
 
 
 def _prompt_scope_paths(
