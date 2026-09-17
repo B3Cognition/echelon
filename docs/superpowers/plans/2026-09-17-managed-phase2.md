@@ -31,9 +31,10 @@ Files: `src/harness/governance_structural_gate.py`, `src/lexicon/structural.py`,
 `src/lexicon/manifest.py`, `tests/unit/test_captured_governance_gate.py`.
 Consumes captured text/configuration plus native counters. Produces
 `evaluate_captured_governance_structural_gate(...) -> (GovernanceStructuralGateResult,
-dict | None)`, with no filesystem reads/writes. Existing native runner stays public.
+dict | None)`, with no live input reads or report writes. Bundled validator
+resources (the Lexicon grammar) may load. Existing native runner stays public.
 
-- [ ] Add red tests for both artifact types, source/template capture, missing
+- [x] Add red tests for both artifact types, source/template capture, missing
   input, bypass, counters, warn/block exhaustion and write-free evaluation.
   Assert literal outcomes, for example:
   ```python
@@ -42,16 +43,16 @@ dict | None)`, with no filesystem reads/writes. Existing native runner stays pub
   assert report["ok"] is False
   assert not report_path.exists()
   ```
-- [ ] Run `python -m pytest tests/unit/test_captured_governance_gate.py -q` and
+- [x] Run `python -m pytest tests/unit/test_captured_governance_gate.py -q` and
   confirm missing captured entry, not a fixture/import error.
-- [ ] Add `required_sections_from_text(text)` in the existing manifest owner,
+- [x] Add `required_sections_from_text(text)` in the existing manifest owner,
   and optional captured `template_text` to `structural_validate`. Extract shared
   report-to-outcome policy in the existing governance owner; preserve native
   write-failure accounting. Captured evaluation requires every declared input
   rather than falling back to live paths.
-- [ ] Run new tests plus `test_governance_structural_gate.py` and
+- [x] Run new tests plus `test_governance_structural_gate.py` and
   `test_structural_*.py`; compare live/captured results and reports on real inputs.
-- [ ] Commit this inactive, verified evaluation boundary; do not claim Phase 2
+- [x] Commit this inactive, verified evaluation boundary; do not claim Phase 2
   runtime admission or whole-milestone completion.
 
 ## Task 2: Closed Phase 2 producer contracts
@@ -162,3 +163,19 @@ Files: the new tests, this record, convergence/deferred-scope records.
 
 Approved Phase 2 scope recorded before implementation. No runtime admission or
 Phase 2 acceptance is claimed by creating this plan.
+
+### Task 1 — captured structural evaluation
+
+- Initial red: 22 failures, each at the missing captured-entry assertion.
+- Template confinement: two new cases failed before the guard, then passed.
+- PASS compatibility: two new cases exposed eager failure-budget evaluation;
+  restored native failure-only evaluation, then both passed.
+- Fresh verification: `test_captured_governance_gate.py`,
+  `test_governance_structural_gate.py`, `test_structural_*.py`: **77 passed**.
+- Native `tests/integration/test_squad_controller.py -k 'structural or feasibility
+  or alignment'`: **16 passed, 501 deselected**. All pytest invocations used the
+  repository virtualenv and the global retention flags above.
+- Read-only review: no actionable findings after template confinement. Its
+  coverage note is addressed by cold-grammar alignment tests (valid and invalid
+  references), allowing only the bundled grammar read, not live input/report I/O.
+- No managed runtime caller, provider dispatch, installation or activation added.

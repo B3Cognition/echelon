@@ -141,17 +141,8 @@ def run_governance_structural_gate(
             str(exc),
         )
 
-    validation_attempts = 0 if report["ok"] else attempts + 1
-    exhausted = False
-    if not report["ok"]:
-        repair_cap = _nonnegative_int(governance.get("max_repair_attempts", 3))
-        iteration_value = _nonnegative_int(iteration)
-        iteration_cap = _nonnegative_int(max_iterations)
-        exhausted = (
-            (repair_cap > 0 and validation_attempts >= repair_cap)
-            or (iteration_cap > 0 and iteration_value >= iteration_cap)
-        )
-
+    result = _report_result(artifact_key, report_path, report, governance,
+                            attempts, iteration, max_iterations)
     try:
         _write_json_atomic(report_path, report)
     except Exception as exc:
@@ -162,11 +153,27 @@ def run_governance_structural_gate(
             attempts=attempts,
             findings=len(report["findings"]),
             report_path=None,
-            exhausted_artifact=artifact_key if exhausted else None,
+            exhausted_artifact=result.exhausted_artifact,
             blocked_reason="governance_structural_evidence_write_failed",
             detail=f"could not persist governance structural report: {exc}",
         )
 
+    return result
+
+
+def _report_result(artifact_key, report_path, report, governance, attempts,
+                   iteration, max_iterations):
+    """One native policy for captured and file-backed validation outcomes."""
+    validation_attempts = 0 if report["ok"] else attempts + 1
+    exhausted = False
+    if not report["ok"]:
+        repair_cap = _nonnegative_int(governance.get("max_repair_attempts", 3))
+        iteration_value = _nonnegative_int(iteration)
+        iteration_cap = _nonnegative_int(max_iterations)
+        exhausted = (
+            (repair_cap > 0 and validation_attempts >= repair_cap)
+            or (iteration_cap > 0 and iteration_value >= iteration_cap)
+        )
     findings = len(report["findings"])
     if report["ok"]:
         action: StructuralAction = "proceed"
@@ -196,6 +203,95 @@ def run_governance_structural_gate(
         blocked_reason=blocked_reason,
         detail=f"{findings} finding(s)",
     )
+
+
+def evaluate_captured_governance_structural_gate(
+    *, artifact_key: str, spec_dir: Path, governance_config: Mapping[str, object],
+    artifact_text: str | None, reference_texts: Mapping[str, str | None],
+    template_text: str | None, previous_attempts: object, iteration: object,
+    max_iterations: object,
+) -> tuple[GovernanceStructuralGateResult, dict[str, object] | None]:
+    """Evaluate caller-authenticated captures; grant no read or publication authority.
+
+    Paths are lexical names of the captured inputs, never resolved against the
+    live filesystem. The capture owner must authenticate the actual descriptors.
+    Missing mapping keys are uncaptured inputs; None means captured absence.
+    Only bundled validator resources may be loaded; live artifact, reference,
+    template reads and report writes are outside this evaluation boundary.
+    """
+    attempts = _nonnegative_int(previous_attempts)
+    if artifact_key not in _ARTIFACTS:
+        return _blocked(artifact_key, attempts, "governance_structural_artifact_unknown",
+                        f"unknown governance structural artifact: {artifact_key}"), None
+    try:
+        governance, entry = _resolve_config(governance_config, artifact_key)
+    except ValueError as exc:
+        return _blocked(artifact_key, attempts, "governance_structural_config_invalid", str(exc)), None
+    if (not governance.get("enabled", False) or entry is None
+            or entry.get("enabled", True) is False
+            or str(entry.get("tier") or "").lower() != "structural"):
+        return GovernanceStructuralGateResult(artifact_key, "proceed", True, 0, 0,
+            None, None, None, "governance structural gate bypassed"), None
+    try:
+        root = Path(spec_dir)
+        if not root.is_absolute() or ".." in root.parts:
+            raise ValueError("captured specification root must be absolute")
+        def selected_path(configured, default):
+            candidate = root / str(configured or default).strip()
+            if candidate == root or ".." in candidate.parts or not candidate.is_relative_to(root):
+                raise ValueError("captured governance path escapes its specification")
+            return candidate
+        artifact_path = selected_path(entry.get("path"), _ARTIFACTS[artifact_key][0])
+        report_path = selected_path(entry.get("report"), f"{artifact_key}-structural-report.json")
+        if artifact_text is not None and type(artifact_text) is not str:
+            raise ValueError("captured artifact must be text or explicit absence")
+        if entry.get("template"):
+            template = Path(str(entry["template"]).strip())
+            if template.is_absolute() or ".." in template.parts or template == Path("."):
+                raise ValueError("captured template selection must stay within templates")
+            if type(template_text) is not str:
+                raise ValueError("configured structural template was not captured")
+        if not isinstance(reference_texts, Mapping):
+            raise ValueError("captured references must be a mapping")
+        references = []
+        for ref in entry.get("cross_refs") or []:
+            if not isinstance(ref, Mapping):
+                raise ValueError("governance cross-reference must be an object")
+            against = str(ref.get("against") or "").strip()
+            if not against:
+                continue
+            selected_path(against, against)
+            if against not in reference_texts or (reference_texts[against] is not None
+                    and type(reference_texts[against]) is not str):
+                raise ValueError("configured reference was not captured")
+            references.append((against, reference_texts[against]))
+    except (TypeError, ValueError) as exc:
+        return _blocked(artifact_key, attempts, "governance_structural_capture_invalid", str(exc)), None
+
+    findings = []
+    if artifact_text is None:
+        findings.append(dict(code="missing-structural-artifact",
+            message=f"required governance artifact is missing: {artifact_path.name}", artifact=artifact_path.name))
+    else:
+        chunks = []
+        for against, text in references:
+            if text is None:
+                findings.append(dict(code="missing-cross-reference",
+                    message=f"structural reference artifact is missing: {against}", artifact=against))
+            else:
+                chunks.append(text)
+        try:
+            from lexicon.structural import structural_validate
+            validation = structural_validate(artifact_text, dict(entry),
+                spec_text="\n\n".join(chunks), template_text=template_text)
+            findings.extend(dict(code=str(item.code), message=str(item.message),
+                line=int(item.line), span=str(item.span)) for item in validation.findings)
+        except Exception as exc:
+            findings.append(dict(code="structural-validator-error", message=f"structural validator failed: {exc}"))
+    report = dict(schema_version=1, artifact=artifact_key, path=str(artifact_path),
+                  ok=not findings, findings=findings)
+    return _report_result(artifact_key, report_path, report, governance,
+                          attempts, iteration, max_iterations), report
 
 
 def _resolve_config(
