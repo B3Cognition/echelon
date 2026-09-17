@@ -628,6 +628,8 @@ def _validate_intent(
             _raise("intent_invalid")
         if binding.producer == "understanding" and route.get("to_phase") != "phase1-why2":
             _raise("intent_invalid")
+        if binding.producer == "feasibility" and route.get("to_phase") != "phase2-feasibility-structural":
+            _raise("intent_invalid")
         if binding.producer == "lexicon_gate":
             from harness.discovery_lexicon import lexicon_gate_route
             expected = lexicon_gate_route(binding.recovery["config"], binding.recovery["routing_state"],

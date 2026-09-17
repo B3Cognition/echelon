@@ -104,6 +104,11 @@ still open:
   the shared provider turn and identity-preview owners; retain routing in the
   review assignment, candidate and progress digests. Preserve source issue
   provenance without creating identity or occurrence changes.
+- [x] Add the closed first-entry v31 publication association to the existing
+  publisher/completion owner, retaining exact approved v30 ancestry. Confine
+  native handoff to `phase2-feasibility-structural`; author verdicts cannot skip
+  structural evaluation. This lower-level handoff does not open public managed
+  Phase 2 admission or execute the gate.
 
 - [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
@@ -360,3 +365,89 @@ Phase 2 acceptance is claimed by creating this plan.
   report publication/completion, native structural retry and PASS handoff, plus
   publication interruption/replay acceptance. Public runtime admission remains
   closed; nothing has been installed or activated.
+
+### Task 3 first-entry guarded publication and native handoff sub-slice
+
+- Extended the existing publication/recovery envelope with closed v31
+  feasibility association: exact approved v30 checkpoint decision/receipt,
+  accepted operation, source capture, matching author/reviewer routing, empty
+  identity operations/reservations and unchanged history. The only published
+  files are reviewed feasibility outputs and the captured identity graph;
+  non-KILL preserves the captured kill-report slot.
+- Native completion is confined to `phase2-decide` ->
+  `phase2-feasibility-structural`. Direct strategy, Phase 3, terminal and WHAT
+  destinations are refused. No new publisher, policy owner, provider prose,
+  live-model call or public Phase 2 admission was added.
+- Red/green checks used the real retained Codex reviewed-candidate fixture
+  (`pytest-313/test_feasibility_parent_is_rea0`). Publication initially lacked
+  the producer-specific envelope; after that addition, the destination test
+  proved that structural skipping was accepted until the native guard was
+  added. Initial standalone replay also correctly rejected a different Prosaic
+  inspector; retained scripted receipts were subsequently replayed with their
+  original test inspector, without weakening production receipt matching.
+- Read-only review identified a historical checkpoint validation error: after
+  native advancement, v30 live-effects decoding still required the old phase.
+  A real retained Claude/Banzai checkpoint reproduced it. Released ancestry
+  now uses its authenticated historical proof, preserving current genesis,
+  bootstrap, native parent/COMMANDER evidence and exact resolution receipt.
+  Direct live decoding still rejects advanced state, and changed receipt,
+  identity or bootstrap is refused. Follow-up review found no remaining issue.
+- The retained Codex continuation recovered interruptions before promotion,
+  after batch promotion and after identity application, then released at
+  structural-gate entry. Exact published bytes/graph, unchanged identity
+  history and zero-call settled replay were verified. A test-only field-name
+  typo was corrected to the native `feasibility_verdict`; the two in-progress
+  fresh prefixes were deliberately interrupted and restarted with the corrected
+  assertions. Those interrupted runs (`pytest-323`/`pytest-324`) are not passes.
+- A stricter fresh-run assertion then exposed that the test's supposed
+  per-file interruption wrapped the whole promotion loop: all five writes were
+  already present. The test now injects through the publisher's existing
+  position fault hook at position 1 and requires a nonempty, incomplete prefix
+  before recovery. No publication implementation or source guard was changed.
+  The two pre-correction runs (`pytest-326`/`pytest-327`) failed that assertion
+  after reaching native handoff and are not passes. With the corrected hook,
+  the complete publication/negative-binding/historical-proof/handoff helper
+  sequence passed against retained Claude/Banzai candidate `pytest-320`,
+  including exact partial-prefix recovery, post-identity-apply recovery,
+  unchanged history/dispatch counts, one usage charge and zero extra calls.
+- Post-change focused completion/state/contracts/checkpoint/captured-gate
+  regression group (`test_squad_completion.py`, `test_managed_assessment_contract.py`,
+  `test_managed_feasibility_rounds.py`, `test_managed_constitution_contract.py`,
+  `test_discovery_checkpoint.py`, `test_captured_governance_gate.py`,
+  `test_governance_structural_gate.py`): **435 passed in 141.92s**. Native structural/feasibility/
+  alignment routing: **16 passed, 501 deselected in 5.73s**. The earlier shared
+  publication/completion/contracts group passed **219 tests** before the
+  historical-checkpoint fix. Final shared regression (`test_discovery_completion.py`,
+  `test_discovery_publication.py`, `test_discovery_restoration_completion.py`,
+  `test_managed_lexicon_contract.py`, `test_managed_lexicon_rounds.py`):
+  **153 passed in 361.48s**. All pytest runs use the repository virtualenv,
+  `-q --tb=short`, and global retention flags; the native selection uses
+  `tests/integration/test_squad_controller.py -k 'structural or feasibility or alignment'`.
+- Corrected fresh Codex/guided corridor, Lexicon disabled:
+  `test_managed_feasibility_publication.py -k codex`:
+  **1 passed, 1 deselected in 698.67s**. Fixture
+  `pytest-330/test_real_review_seals_only_fe0` is now a released v31 input at
+  `phase2-feasibility-structural`, with no structural/Phase 3 execution. This
+  includes fresh approved ancestry, reviewed provider receipts, closed negative
+  cases, all three corrected interruptions, exact publication and zero-call replay.
+- Corrected fresh Claude/Banzai corridor, Lexicon enabled:
+  `test_managed_feasibility_publication.py -k claude`:
+  **1 passed, 1 deselected in 916.60s**. Fixture
+  `pytest-331/test_real_review_seals_only_fe0` is likewise a released v31 input
+  at structural-gate entry. The native COMMANDER approval route, extra Lexicon
+  ancestry, all corrected crash boundaries and no-extra-call replay passed.
+  Neither fresh corridor made live provider calls. Final verification totals
+  **606 passing focused tests**, excluding earlier, interrupted and faulty-hook
+  runs. Both faulty-hook fixture completions (`pytest-326`/`pytest-327`) were
+  also safely drained and released with exact bytes and no extra calls/charges.
+- Read-only review and follow-up are complete with no remaining actionable
+  findings. Final diff checks passed. The native handoff is verified, but the
+  structural evaluation/report itself and public runtime admission remain open.
+- Retained user rejection (`pytest-268/test_managed_checkpoint_uses_n1`) and
+  COMMANDER rejection (`pytest-234/test_managed_gate_pass_reaches0`) still refuse
+  first-entry feasibility after the historical-proof change.
+- Remaining Task 3: captured structural report publication/completion, released
+  gate retry authority, native PASS handoff to strategy, and public managed
+  Phase 2 admission only when its full approved corridor is ready. Structural
+  evaluation was not executed by this publication/handoff slice; Task 3 is not
+  complete and Phase 2 remains inactive.
