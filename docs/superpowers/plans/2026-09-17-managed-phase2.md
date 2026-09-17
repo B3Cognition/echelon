@@ -163,6 +163,11 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   composition. Publish reviewed ALIGNED/DRIFT through a closed v36 association
   and recover the native handoff to `phase2-intent-alignment-structural`, without
   executing that gate. STOP_AND_ASK cannot use this ordinary-result association.
+- [x] Add closed first-entry v37 alignment structural publication through the
+  existing captured evaluator and report/graph completion owner. Verify fresh
+  Codex bypass and Claude warning handoffs/recovery to Phase 3 entry without
+  executing Phase 3. Full repair/block handoffs, repair authoring and structural
+  rechecks remain below; unit routing coverage is not their acceptance evidence.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -979,3 +984,90 @@ Phase 2 acceptance is claimed by creating this plan.
   publication, repair/retry/exhaustion, native clarification and existing COMMANDER
   routing, remaining branch/timing parity and full acceptance remain. No installed
   workspace, public activation, live provider, merge or push changed.
+
+### First alignment structural publication (2026-09-17)
+
+- Extended the existing assessment-gate adapter, sealed report/graph publisher
+  and completion decoder for closed v37 `alignment_gate`. The native governance
+  evaluator remains the only structural policy owner. Source selection confines
+  the alignment artifact, template, cross-references and report; it grants no
+  live-input fallback or identity edit authority.
+- First-entry admission requires the actual released v36 ordinary alignment,
+  its v35 strategy and v32/v34 feasibility ancestry, unchanged feasibility
+  budgets/configuration, and zero prior alignment attempts. Completion admits
+  only the native repair, terminal-blocked or Phase 3 entry destination; it does
+  not execute any successor. Repaired alignment and STOP_AND_ASK remain closed.
+- RED adapter/routing tests exposed the missing alignment entries. An initial
+  test-only I/O guard also blocked the permitted bundled grammar load; it was
+  narrowed to allow only that resource, retaining the live-input prohibition.
+  Alignment/feasibility adapter and captured-policy checks then passed
+  **79 tests in 0.57s**. Publication RED against the actual retained v36 Codex
+  parent exposed the missing alignment publication entry before implementation.
+- Initial retained publication helpers exposed two test-only mistakes: a wrong
+  artifact key for template tampering, and a bypass action tamper that did not
+  change the original value. Both were corrected. Publication/refusal then
+  passed on retained Codex `pytest-370` and Claude `pytest-376`, but native
+  handoff correctly rejected the test's completion ID because strategy had
+  already used it. Both blocked records, receipts and sealed evidence remain
+  untouched. The gate helper now creates a unique completion ID. These failed
+  handoffs are not represented as successful recovery or reset for retesting.
+- New verification uses a separate fresh temporary root,
+  `/tmp/echelon-alignment-checks.CnKAq8`, with the same retention flags. This
+  avoids automatic retirement of older acceptance evidence from the original
+  pytest root; no retained fixture was moved, reset, rewritten or deleted.
+- With the repository virtualenv, `-q --tb=short` and global retention flags,
+  `test_discovery_alignment_gate.py`, `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_alignment_rounds.py` passed
+  **329 tests in 4.40s** before the final additional reference/template/state
+  cases. Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'` passed **16 tests, 501 deselected in 5.43s**.
+- The added cross-reference test initially supplied an unparseable Markdown
+  heading as its specification; native Lexicon deliberately cannot resolve IDs
+  without a parsed specification. Replacing that test input with the existing
+  valid controlled-language fixture made the unresolved-reference assertion
+  meaningful. Final focused command above, including all added cases:
+  **336 passed in 4.74s**. Production structural policy was not changed.
+- Read-only admission checks on actual retained gate-only `pytest-339` and
+  strategy-only `pytest-337` refused both as alignment-gate parents without
+  changing their state. A released alignment author is required.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`, same
+  interpreter/options and isolated temporary root: **352 passed in 351.26s**.
+  The prior combined run had **382 passed, 1 failed in 341.40s**; its only
+  failure was the invalid cross-reference test fixture described above.
+- The actual released repaired-feasibility v34 proof under
+  `pytest-337/test_reviewed_feasibility_gate0` also passed retained proof
+  validation and shared decoding with its original `proceed` result. This
+  read-only regression changed no state and is not a new repaired full prefix.
+- Read-only review found no remaining actionable production defects after the
+  helper correction. Full managed repair/block handoff coverage remains distinct
+  from the bypass/warning corridors and must not be claimed from routing tests.
+- Fresh scripted Codex/guided, Lexicon-disabled full prefix:
+  `tests/unit/test_managed_alignment_gate.py -k codex`, repository virtualenv,
+  `-q --tb=short`, global retention flags and the fresh temporary root:
+  **1 passed, 1 deselected in 1637.11s**. The fixture is
+  `pytest-of-michalbachorik/pytest-2/test_alignment_gate_reaches_ph0` under that
+  root. Actual released Phase 1 approval, feasibility, strategy and ALIGNED
+  publication precede the new v37 bypass. The graph-only handoff, tamper and
+  wrong-route refusals, strict counter/type checks, interruption after promotion
+  and identity application, and exact recovery all passed. It stops settled at
+  `phase3-specialists` entry, with zero Phase 3 dispatches, 210 cumulative scripted
+  tokens, unchanged IDs/history and no extra gate provider calls or charges.
+- Fresh scripted Claude/Banzai, Lexicon-enabled cap-one warning full prefix:
+  `tests/unit/test_managed_alignment_gate.py -k claude`, same interpreter/options
+  and temporary root: **1 passed, 1 deselected in 2042.69s**. The fixture is
+  `pytest-of-michalbachorik/pytest-3/test_alignment_gate_reaches_ph0` under that
+  root. Existing COMMANDER Phase 1 approval, reviewed feasibility, strategy and
+  DRIFT publication precede the v37 warning gate. Exact report/graph writes,
+  binding/route/counter refusals, partial publication and post-identity-apply
+  interruptions, recovery and zero-call replay passed. It stops settled at
+  `phase3-specialists` entry, `proceed_with_warning`, alignment attempts=1,
+  preserved feasibility attempts=1 and 238 cumulative scripted tokens. No
+  Phase 3 dispatch, additional gate usage or identity/history change occurred.
+- Final diff checks passed. Commit this verified first-entry gate increment,
+  not whole Task 4 or Phase 2 acceptance. Next: full repair/block gate handoffs,
+  protected alignment repair/recheck/no-progress/exhaustion, native clarification
+  and existing COMMANDER routes; then remaining branch/timing parity and full
+  acceptance. No installation, migration, public activation, live model call,
+  merge or push. Disk remains nearly full; no retained evidence was cleaned up.

@@ -1781,3 +1781,26 @@ parity and whole-Phase-2 acceptance are also unfinished. Public and installed
 activation remain closed; COMMANDER ownership, provider abstraction and legacy
 build flow are unchanged. No installation, migration, live call, merge or push
 was performed.
+
+### First managed alignment structural gate (2026-09-17)
+
+The ordinary internal Phase 2 path now reaches Phase 3 entry through the first
+alignment structural gate. Its closed v37 association requires the actual
+released alignment/strategy/feasibility ancestry, captures exact evidence and
+publishes only the native structural report and graph. The existing governance
+policy, native routing, budgets and guarded publication/recovery remain owners.
+
+Fresh scripted Codex/guided bypass and Claude/Banzai warning runs both passed
+from their Phase 1 prefixes through settled Phase 3 entry, without dispatching
+Phase 3. Partial publication and post-identity-application recovery, refused
+forged routes/counters, unchanged IDs/history and zero repeated gate calls or
+charges passed. Focused regressions passed 336 tests, shared completion and
+publication regressions 352, and selected native controller checks 16. Exact
+commands, failed test-fixture attempts and retained/fresh distinctions are in
+the [Phase 2 verification record](superpowers/plans/2026-09-17-managed-phase2.md).
+
+This is not full Phase 2 acceptance or public activation. Managed repair/block
+handoffs, alignment repair/recheck/no-progress/exhaustion, clarification through
+existing native decisions and COMMANDER, KILL/DEFER and remaining timing/acceptance
+work remain. No provider-specific prose, additional COMMANDER role, installation,
+migration, live provider run, merge or push was introduced.

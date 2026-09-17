@@ -639,6 +639,11 @@ def _validate_intent(
             expected = feasibility_gate_route(binding.recovery["routing_state"], binding.recovery["result"]["state_updates"])
             if route.get("to_phase") != expected:
                 _raise("intent_invalid")
+        if binding.producer == "alignment_gate":
+            from harness.discovery_assessment_gate import alignment_gate_route
+            expected = alignment_gate_route(binding.recovery["routing_state"], binding.recovery["result"]["state_updates"])
+            if route.get("to_phase") != expected:
+                _raise("intent_invalid")
         if binding.producer == "lexicon_gate":
             from harness.discovery_lexicon import lexicon_gate_route
             expected = lexicon_gate_route(binding.recovery["config"], binding.recovery["routing_state"],
