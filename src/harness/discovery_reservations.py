@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from harness.discovery_candidate import DiscoveryReservation
+from harness.discovery_assessment import ASSESSMENT_VERSIONS
 from harness.discovery_semantics import DiscoveryAssignment, decode_discovery_assignment, validate_discovery_reply
 from harness.discovery_receipts import DiscoveryReceiptFile
 from harness.element_identity_lifecycle import text
@@ -45,9 +46,9 @@ def _pairs(pairs):
 def _assignment(value):
     fields = {"schema_version", "operation_id", "dispatch_id", "spec_id", "run_id", "step",
               "input_fingerprint", "artifact_paths", "editable_revisions", "assigned_ids"}
-    if value.get("schema_version") in {2, 3, 4, 5, 6, 7, 8}:
+    if value.get("schema_version") in {2, 3, 4, 5, 6, 7, 8, *ASSESSMENT_VERSIONS.values()}:
         fields.add("producer")
-    if value.get("schema_version") in {3, 4, 6, 7, 8} and value.get("step") == "review":
+    if value.get("schema_version") in {3, 4, 6, 7, 8, *ASSESSMENT_VERSIONS.values()} and value.get("step") == "review":
         fields.add("routing")
     identity = {key: value[key] for key in fields if key in value}
     return decode_discovery_assignment(identity)

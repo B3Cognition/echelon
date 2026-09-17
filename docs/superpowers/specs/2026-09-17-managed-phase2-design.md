@@ -51,7 +51,8 @@ they do not become new policy owners or a new COMMANDER role.
 The existing `governance_structural_gate` remains the policy owner for both
 feasibility and alignment. Separate its deterministic evaluation from live input
 reading/report writing. Captured artifact, cross-reference and template text are
-evaluated without file access; exact report bytes go through guarded publication.
+evaluated without live input reads or report writes; bundled validator resources
+(the Lexicon grammar) may load. Exact report bytes go through guarded publication.
 Reuse structural checks, attempt normalization, repair/iteration caps and warn
 versus block exhaustion behavior. Existing native callers retain their current
 file-based interface and evidence-write-failure behavior.

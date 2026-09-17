@@ -213,7 +213,8 @@ def test_constitution_completion_cannot_route_outside_what(tmp_path, monkeypatch
     # Isolate routing validation from the separately tested v12 decoder.
     monkeypatch.setattr(completion, "_validate_publication", lambda value: publication)
     monkeypatch.setattr(discovery, "decode_binding", lambda *args, **kwargs: SimpleNamespace(
-        clarification=False, resolution_publication=False, producer="constitution", repair_unit=None, recovery={"version": version}))
+        clarification=False, resolution_publication=False, policy_resolution=False,
+        producer="constitution", repair_unit=None, recovery={"version": version}))
     assert completion._validate_intent(record)["route"]["to_phase"] == "phase1-what"
     record["route"]["to_phase"] = "phase1-discover"
     with pytest.raises(completion.CompletionError): completion._validate_intent(record)

@@ -346,6 +346,9 @@ def producer_key(producer, suffix):
 
 
 def producer_phase(producer):
+    if producer in {"feasibility", "strategy", "alignment"}:
+        return {"feasibility": "phase2-decide", "strategy": "phase2-strategic-overview",
+                "alignment": "phase2-tracker-alignment"}[producer]
     if producer == "checkpoint":
         return "checkpoint-assess"
     if producer == "lexicon_gate":
@@ -359,7 +362,7 @@ def producer_phase(producer):
 
 
 def producer_role(producer, role):
-    if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon"} and role in {"producer", "reviewer"}:
+    if producer in {"tracker", "why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} and role in {"producer", "reviewer"}:
         return "echelon." + producer + "-" + role
     producer_key(producer, "operation")
     if role not in {"producer", "reviewer"}:

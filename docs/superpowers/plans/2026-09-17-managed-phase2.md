@@ -58,13 +58,14 @@ resources (the Lexicon grammar) may load. Existing native runner stays public.
 ## Task 2: Closed Phase 2 producer contracts
 
 Files: new `src/harness/discovery_assessment.py`; existing
-`discovery_semantics.py`, `discovery_producer.py`, `discovery_candidate.py`;
+`discovery_semantics.py`, `discovery_producer.py`, `discovery_candidate.py`,
+`discovery_reservations.py` (the same persisted-assignment decoder);
 new `tests/unit/test_managed_assessment_contract.py` and neutral Prosaic role
 contracts for feasibility, strategy and alignment author/reviewer turns.
 Consumes `DiscoveryAssignment`. Produces closed artifact/routing validation for
 producers `feasibility`, `strategy`, `alignment`, all with no identity edit scope.
 
-- [ ] Add assignment/reply tests using these literal write sets:
+- [x] Add assignment/reply tests using these literal write sets:
   ```python
   feasibility = {"feasibility.md", "prioritization.md", "estimates.md", "mvp-scope.md", "kill-report.md"}
   strategy = {"strategic-overview.md"}
@@ -73,9 +74,9 @@ producers `feasibility`, `strategy`, `alignment`, all with no identity edit scop
   Require a kill report for KILL; conditional absence must be explicit. Reject
   source edits, structural state/counters, invented identities and mismatched
   review routing. Clarification metadata must follow native STOP_AND_ASK rules.
-- [ ] Run the new contract suite red; extend only semantic decoding and neutral
+- [x] Run the new contract suite red; extend only semantic decoding and neutral
   role mappings, not runtime admission. Bind reviews to exact author routing.
-- [ ] Run semantic, candidate, reservation and existing producer contract tests;
+- [x] Run semantic, candidate, reservation and existing producer contract tests;
   commit only the closed contract/role slice after read-only review.
 
 ## Task 3: Retained feasibility producer and structural gate
@@ -179,3 +180,37 @@ Phase 2 acceptance is claimed by creating this plan.
   coverage note is addressed by cold-grammar alignment tests (valid and invalid
   references), allowing only the bundled grammar read, not live input/report I/O.
 - No managed runtime caller, provider dispatch, installation or activation added.
+
+### Task 2 — closed Phase 2 producer contracts
+
+- Added assignment versions 9/10/11 for feasibility/strategy/alignment, exact
+  output-slot sets, native verdict syntax, empty identity edit scopes and bound
+  author routing on reviews. Native selection/operation admission remains closed.
+- KILL requires a nonblank kill report. Non-KILL preserves its captured slot
+  exactly (including explicit null for absence); it cannot create, erase or
+  rewrite prior kill evidence. Existing identity preview rejects unknown
+  references and leaves durable history unchanged for all three producers.
+- Added six neutral Prosaic producer/reviewer role bodies; no provider-specific
+  prose, new COMMANDER role, native decision policy or dispatch path added.
+- Initial contract run: **65 failed, 8 passed**; failures identified unsupported
+  producers/missing roles, not missing imports. Nine added persisted-reply
+  round-trip cases then failed at the older decoder whitelist; extending that
+  whitelist uses the same closed decoder and does not admit execution.
+- Broader testing exposed two pre-existing Constitution routing-test failures:
+  its unchanged HEAD test double omitted `policy_resolution`, already consumed
+  by unchanged native completion code. Added only the missing false field to
+  that test double; no production completion behavior changed.
+- Final combined command used the repository virtualenv, `-q --tb=short` and the
+  global retention flags, selecting these unit tests: `test_captured_governance_gate.py`,
+  `test_governance_structural_gate.py`, `test_structural_*.py`,
+  `test_managed_assessment_contract.py`, `test_discovery_semantics.py`,
+  `test_discovery_candidate.py`, `test_discovery_reservations.py`,
+  `test_managed_spec_contract.py`, `test_managed_lexicon_contract.py`,
+  `test_managed_constitution_contract.py`, `test_discovery_turns.py`,
+  `test_prosaic_prompt_loader.py`: **479 passed in 17.43s**.
+- Native `tests/integration/test_squad_controller.py -k 'structural or feasibility
+  or alignment'`, same interpreter/options: **16 passed, 501 deselected in 5.64s**.
+- Read-only review of the contract slice and final decoder/test additions found
+  no blockers. `git diff --check` passed. No full-suite or live acceptance claim.
+- Next: Task 3 retained feasibility execution and structural completion from an
+  actual released Phase 1 checkpoint. Tasks 3–6 remain open; Phase 2 is not active.

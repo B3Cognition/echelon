@@ -48,6 +48,9 @@ def author_artifacts(assignment, reply, *, before: Mapping[str, str | None]) -> 
     if assignment.producer in {"what", "why2"}:
         from harness.discovery_spec import validate_spec_artifacts
         validate_spec_artifacts(value["artifacts"], value["routing"], assignment.producer)
+    if assignment.producer in {"feasibility", "strategy", "alignment"}:
+        from harness.discovery_assessment import validate_assessment_baseline
+        validate_assessment_baseline(value["artifacts"], value["routing"], assignment.producer, before)
     if any(before.get(path) is not None and value["artifacts"].get(path) is None
             for path in optional_artifacts(assignment.producer)):
         raise ValueError("optional absence cannot remove an existing artifact")
