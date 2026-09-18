@@ -129,8 +129,9 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     state, selected, operation = _selected(root, state_store, store, producer, repair_unit=repair_unit)
     binding, selection = operation["binding"], selected["selection"]
     candidate = _replay(root, state_store, executor, binding, producer, repair_unit=repair_unit)
-    if producer == "alignment" and json.loads(candidate.candidate_inputs)["routing"]["verdict"] not in {"ALIGNED", "DRIFT"}:
-        raise ValueError("alignment clarification requires its native decision association")
+    if (producer == "alignment" and json.loads(candidate.candidate_inputs)["routing"]["verdict"] == "STOP_AND_ASK"
+            and tracker_round(state, producer="alignment")["predecessor"] is not None):
+        raise ValueError("repair alignment clarification requires its native decision association")
     fingerprint, *_, original, source_inputs = _capture(root, state_store, store, selected,
         binding["input_tree"], tuple(binding["artifact_paths"]), producer=producer, repair_unit=repair_unit)
     if fingerprint != candidate.source_fingerprint:

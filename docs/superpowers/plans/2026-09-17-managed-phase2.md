@@ -192,6 +192,10 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   assert state["phase"] == "phase3-specialists"  # entry only
   assert not state["phase_dispatch_counts"].get("phase3-specialists")
   ```
+  - [x] Seal and recover the initial reviewed alignment question as a native
+    pending decision; authenticate the exact question and preserve budgets,
+    history and usage. Keep answer application/COMMANDER execution closed until
+    its resolution association is verified separately.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -1322,3 +1326,90 @@ Phase 2 acceptance is claimed by creating this plan.
   exhaustion only. Native clarification/COMMANDER transport, remaining
   branch/timing parity and whole-Phase-2 acceptance remain open. No installation,
   public/live activation, Phase 3 execution, merge or push occurred.
+
+### Task 4 — initial alignment question publication and native pending decision
+
+- Continuing inline from `165d9150` in the existing clean isolated worktree.
+  This checkpoint addresses the initial question and interrupted recovery only,
+  not answer publication or COMMANDER dispatch. No native policy, provider prose,
+  installation, activation, Phase 3 execution, merge or push changes.
+- Existing clarification, COMMANDER and assessment-contract baseline passed
+  **151 tests in 28.91s**, with repository virtualenv, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short`, retention count
+  200/policy all. The new question-claim test failed at the unsupported alignment
+  producer; it extends the existing native claim reader, not a decision owner.
+- Fresh Codex/guided prefix and retained Claude/Banzai continuation from actual
+  released feasibility warning (`pytest-365/test_first_gate_preserves_nati0`)
+  exercise reviewed questions. Retained configuration/state/proofs are not reset.
+- New native pending-decision tests first needed their actual fixture runtime
+  installed, then failed at the absent alignment association helper. The helper
+  rebuilds the exact initial decision through the existing workspace policy
+  registry and native decision builder; it grants no answer or dispatch authority.
+  Guided/semi wait and eligible Banzai pending, plus altered question/risk/
+  recommendation/eligibility/attempt/answer refusals, passed **4 tests,
+  2 deselected in 15.42s**. Existing clarification policy plus question-claim
+  checks separately passed **25 tests, 2 deselected in 10.44s**.
+- Read-only early review found no actionable helper defect. Its optional
+  no-recommendation case was added along with high risk: both preserve native
+  Banzai human waiting, while recommended low risk remains eligible/pending.
+  The expanded focused suite passed **6 tests, 2 deselected in 18.91s**.
+- The real retained Claude author/reviewer accepted the question; publication
+  then failed. A replay-only diagnostic confirmed the exact old refusal:
+  `alignment clarification requires its native decision association`. No
+  canonical state or proof was reset. The same accepted candidate now resumes
+  through the first-entry v36 envelope and same-phase native decision route.
+  Repaired-author v38 questions and all alignment answer/COMMANDER dispatch
+  paths remain closed. Existing native policy derives the sealed question;
+  completion authentication preserves gate counters/exhaustion and refuses
+  provider-supplied answer authority or a fabricated alignment verdict.
+- Integrated focused question/policy/assessment/completion/round regressions
+  passed **364 tests, 2 deselected in 23.40s**. Final read-only review found no
+  production authority issue, but identified an obsolete stateless negative
+  expecting every v36 question to be invalid. Its failure was reproduced against
+  the real retained ordinary v36 at isolated-root `pytest-3`; the question
+  mutation now supplies protected state, proving it cannot replace the accepted
+  ordinary operation. All closed-binding negatives then passed with unchanged
+  state/history, and the original ordinary binding still decodes.
+- Shared discovery completion/publication/restoration and native human-input
+  plus structural/feasibility/alignment routing regressions passed **377 tests,
+  501 deselected in 399.67s**. Latest focused question/policy/assessment/
+  completion/round/retry checks passed **365 tests, 4 deselected in 23.06s**.
+  Both used the repository interpreter and isolated retention settings above.
+- Retained Claude/Banzai continuation passed question publication, exact native
+  pending decision, interruption before promotion, after the first file and
+  after identity application, recovery and zero-call replay. State/history,
+  usage and closed direct-answer/pending-resume entry points were checked.
+  Final state remains blocked at alignment with an unanswered pending decision,
+  238 scripted tokens, iteration 0, feasibility attempts 1 and its prior warning
+  exhaustion intact; no Phase 3 dispatch. This is retained acceptance, not a
+  fresh full-prefix Claude run or a live model invocation.
+- Fresh Codex/guided prefix reached its reviewed question and failed at the old
+  publication guard after **1354.38s** (the process started before the patch).
+  Preserve isolated-root `pytest-10/test_alignment_question_reache0`; its
+  accepted candidate is continued under current code without a state reset.
+- Added a repair-envelope question forgery to the existing v38 closed-binding
+  negatives. All passed against the actual retained repaired-author proof at
+  original-root `pytest-331`, without modifying saved state/history. Final
+  read-only review of the test extraction and new negative found no actionable
+  issue; production was unchanged since the preceding completed review.
+- An additional standalone audit initially compared nested controller checkpoint
+  metadata against its pre-completion image and failed. Inspection isolated the
+  difference to `.echelon/checkpoints.json`, which the existing native checkpoint
+  effect deliberately updates and completion authentication projects. No
+  production fix or fixture rewrite was needed; document preservation is checked
+  separately from the authenticated checkpoint ledger.
+- Corrected final read-only Claude audit passed on current code: released
+  question authentication, typed iteration/cap/feasibility-attempt refusals,
+  prior warning exhaustion and 22 unchanged non-output spec documents, with
+  saved state/history unchanged.
+- The fresh Codex prefix's post-fix retained continuation passed the updated
+  publication/handoff/recovery helper, including wrong-route and question
+  tampering refusals, typed budgets, non-output document preservation, exact
+  native pending decision, single usage charge, zero-call replay and both closed
+  answer entry points. This is not an uninterrupted green fresh pytest run.
+  No fixture state, accepted operation, proof or configuration was reset.
+- This checkpoint completes only initial alignment question publication and
+  native pending-decision recovery. Answer publication, COMMANDER transport,
+  repair-round questions, remaining branch/timing parity and whole-Phase-2
+  acceptance remain open. Final diff checks passed; no installation, activation,
+  live model calls, Phase 3 execution, merge or push occurred.

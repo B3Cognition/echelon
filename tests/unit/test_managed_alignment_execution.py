@@ -13,8 +13,9 @@ class AlignmentExecutor:
     supports_inspection_turn = True
     constrained_execution_configuration_id = "inspection-v1"
 
-    def __init__(self, provider, verdict="ALIGNED"):
+    def __init__(self, provider, verdict="ALIGNED", *, routing=None):
         self.verdict = verdict
+        self.routing = routing
         self.cli = self.provider_id = provider
         self.calls = []
 
@@ -31,13 +32,13 @@ class AlignmentExecutor:
             fields = dict(action="final", new_subjects=[], revisions=[])
         elif assignment["step"] == "author":
             fields = dict(action="final", artifacts={"intent-alignment-check.md": "# Intent Alignment Check\n## Metadata\nCompared accepted intent, feasibility and strategy.\n## Alignment Verdict\nMovement remains in scope.\n## Divergence Points\nLighting polish is deferred.\n## Required Action\nRetain the MVP movement scope.\n"},
-                routing=dict(verdict=self.verdict, state_updates={}))
+                routing=self.routing if self.routing is not None else dict(verdict=self.verdict, state_updates={}))
         else:
             fields = dict(action="final", verdict="accept", reason="Risks fit the accepted feasibility scope", assessments=[])
         return CliRunResult(0, json.dumps({**assignment, **fields}), "", token_usage=7)
 
 
-def assert_reviewed_alignment(case, provider, verdict="ALIGNED"):
+def assert_reviewed_alignment(case, provider, verdict="ALIGNED", *, routing=None):
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
     from harness.discovery_operation import run_discovery_operation
     from harness.discovery_producer import SOURCE_FIELDS, tracker_round
@@ -48,7 +49,7 @@ def assert_reviewed_alignment(case, provider, verdict="ALIGNED"):
     source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
     args = dict(input_tree=selection(case)["input_tree"], artifact_paths=("intent-alignment-check.md",),
         unowned_writable_paths=("intent-alignment-check.md",), intent=dict(kind="align", request="Compare accepted intent with feasibility and strategy"), producer="alignment")
-    executor = AlignmentExecutor(provider, verdict)
+    executor = AlignmentExecutor(provider, verdict, routing=routing)
     with PhaseAExecutionLock.acquire(root, "test-alignment"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment"):
             parent(case)
@@ -57,7 +58,7 @@ def assert_reviewed_alignment(case, provider, verdict="ALIGNED"):
             assert result.status == "reviewed", result.reason
             assert result.dispatch_count == 3 and result.token_usage == 21
             assert result.candidate.operations == () and result.candidate.history == history
-            assert json.loads(result.candidate.candidate_inputs)["routing"] == dict(verdict=verdict, state_updates={})
+            assert json.loads(result.candidate.candidate_inputs)["routing"] == (routing if routing is not None else dict(verdict=verdict, state_updates={}))
             assert [call["assignment"]["step"] for call in executor.calls] == ["propose", "author", "review"]
             accepted = store.load()
             replay = run_discovery_operation(root, store, executor, **args, replay_only=True)

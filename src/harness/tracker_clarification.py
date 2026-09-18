@@ -26,9 +26,13 @@ from harness.squad_source_snapshot import PublicationSourcesSnapshot
 
 def question_claim(routing, producer):
     """Read an exact reviewed question; this grants no resolution authority."""
-    if producer == "why2":
-        from harness.discovery_spec import validate_spec_routing
-        validate_spec_routing(routing, producer)
+    if producer in {"why2", "alignment"}:
+        if producer == "alignment":
+            from harness.discovery_assessment import validate_assessment_routing
+            validate_assessment_routing(routing, producer)
+        else:
+            from harness.discovery_spec import validate_spec_routing
+            validate_spec_routing(routing, producer)
         updates = routing["state_updates"]
         claim = dict(question=updates.get("escalation_question"),
             recommended_answer=updates.get("escalation_recommended_answer"), risk_level=updates.get("escalation_risk_level"))

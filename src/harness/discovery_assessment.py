@@ -191,6 +191,29 @@ def require_alignment_parent(root, run, state, source):
     return binding
 
 
+def require_alignment_question(root, state, routing):
+    """Bind a pending question to native policy; grant no answer authority."""
+    from harness.blocked_decision import validate_blocked_decision, build_blocked_decision_v3
+    from harness.discovery_completion import _require, _json
+    from harness.human_input import select_initial_decision_status
+    from harness.phase_graph import load_workspace_phase_graph
+    from harness.tracker_clarification import question_claim
+    claim = question_claim(routing, "alignment")
+    _require(claim is not None and state.get("phase") == "phase2-tracker-alignment"
+        and "intent_alignment_verdict" not in state)
+    decision = validate_blocked_decision(state["blocked_decision"])
+    _require(decision["autonomy_mode"] == state["autonomy_mode"])
+    registry = load_workspace_phase_graph(root)[0].human_input_policy_registry()
+    request = registry.prepare(source_kind="provider_escalation", producer_id="phase2-tracker-alignment",
+        phase_id="phase2-tracker-alignment", reason_code="human_clarification_required", **claim,
+        source_state_revision=decision["source_state_revision"])
+    policy = registry.lookup("provider_escalation", "phase2-tracker-alignment", "human_clarification_required")
+    expected = build_blocked_decision_v3(prepared=request, decision_id=decision["id"],
+        status=select_initial_decision_status(state["autonomy_mode"], policy, request),
+        autonomy_mode=state["autonomy_mode"], created_at=decision["created_at"])
+    _require(_json(expected) == _json(state["blocked_decision"]))
+
+
 def validate_assessment_routing(value, producer):
     """Validate author claims through the native result contract, not gate policy."""
     verdicts = {"feasibility": {"PASS", "KILL", "DEFER"}, "strategy": {"DONE"},

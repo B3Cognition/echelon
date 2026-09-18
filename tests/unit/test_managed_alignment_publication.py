@@ -65,7 +65,10 @@ def assert_closed_alignment_binding(case, package):
             recovery["operation"]["attempts"][-1]["result"]["candidate_sha256"] = _hash(candidate)
         request = replace(package.request, recovery_payload=_json(recovery))
         with pytest.raises(CompletionError):
-            decode_binding(envelope(package, request), completion_id="8" * 32)
+            # A question is now a valid first-entry shape, but this accepted
+            # ordinary operation did not ask it. Bind that forgery to state.
+            decode_binding(envelope(package, request), completion_id="8" * 32,
+                state=before if damage == "question" else None)
     assert case[1].load() == before
 
 

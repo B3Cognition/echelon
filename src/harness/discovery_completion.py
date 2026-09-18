@@ -208,7 +208,8 @@ def _decode(publication, completion_id, state):
             and candidate["history"] == source["history"]
             and candidate["proposal"]["new_subjects"] == [] and candidate["proposal"]["revisions"] == [])
     if producer == "alignment":
-        _require(candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"})
+        _require(candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"}
+            or (recovery["version"] == 36 and candidate["routing"]["verdict"] == "STOP_AND_ASK"))
     if producer == "lexicon":
         from harness.discovery_lexicon import validate_lexicon_routing, validate_lexicon_artifacts
         validate_lexicon_routing(candidate["routing"])
@@ -531,12 +532,18 @@ def authenticate(root, run, state, completion):
                 required_route=("phase2-feasibility-structural", "phase2-strategic-overview"))
             expected = {**gate.recovery["routing_state"], **gate.recovery["result"]["state_updates"]}
             if binding.producer == "alignment":
-                # Native ordinary alignment clears the previous gate's transient
-                # exhaustion/reason fields; its feasibility budgets remain intact.
-                for key in ("governance_gate_exhausted", "blocked_reason"):
-                    expected.pop(key, None)
-                    _require(key not in state)
-                expected["intent_alignment_verdict"] = binding.candidate["routing"]["verdict"]
+                if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK":
+                    from harness.discovery_assessment import require_alignment_question
+                    require_alignment_question(root, state, binding.candidate["routing"])
+                    # Native STOP retains the failed gate's evidence and budgets.
+                    # Human-input/completion recovery owns the blocked reason.
+                    expected.pop("blocked_reason", None)
+                else:
+                    # Ordinary alignment invalidates transient certification.
+                    for key in ("governance_gate_exhausted", "blocked_reason"):
+                        expected.pop(key, None)
+                        _require(key not in state)
+                    expected["intent_alignment_verdict"] = binding.candidate["routing"]["verdict"]
             _require(_json({key: state.get(key) for key in expected}) == _json(expected)
                 and get_full_resolved_config(root) == gate.recovery["config"])
         if binding.producer == "alignment" and binding.recovery["version"] == 38:

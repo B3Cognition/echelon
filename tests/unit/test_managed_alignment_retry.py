@@ -114,7 +114,7 @@ def assert_reviewed_retry(case, provider, *, alignment_text=None, round_number=2
 
 def assert_retry_publication(case, provider):
     from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
-    from harness.discovery_completion import decode_binding, _json
+    from harness.discovery_completion import decode_binding
     from harness.discovery_publication import prepare_discovery_publication
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
@@ -128,16 +128,28 @@ def assert_retry_publication(case, provider):
     assert binding.request.operations == () and binding.source["history"] == binding.candidate["history"]
     assert {op.target for op in package.sources.publication.operations} == {
         "specs/game/intent-alignment-check.md", "specs/game/spec-artifact-graph.json"}
-    for damage in ("version", "predecessor", "resolution", "source"):
+    assert_closed_retry_binding(package)
+    assert store.load() == before and identity.identity_history(spec_id="game") == history and not executor.calls
+    return package
+
+
+def assert_closed_retry_binding(package):
+    from harness.discovery_completion import decode_binding, _json, _hash
+    for damage in ("version", "predecessor", "resolution", "source", "question"):
         recovery = json.loads(package.request.recovery_payload)
         if damage == "version": recovery["version"] = 36
         elif damage == "predecessor": recovery["predecessor"] = None
         elif damage == "resolution": recovery["resolution"] = {}
-        else: recovery["source_completion"]["dispatch_id"] = "0" * 32
+        elif damage == "source": recovery["source_completion"]["dispatch_id"] = "0" * 32
+        else:
+            candidate = json.loads(recovery["candidate_inputs"])
+            candidate["routing"] = dict(verdict="STOP_AND_ASK", state_updates=dict(status="blocked",
+                blocked_reason="human_clarification_required", escalation_question="Approve scope drift?"))
+            recovery["review"]["routing"] = deepcopy(candidate["routing"])
+            recovery["candidate_inputs"], recovery["candidate_sha256"] = _json(candidate), _hash(candidate)
+            recovery["operation"]["attempts"][-1]["result"]["candidate_sha256"] = _hash(candidate)
         with pytest.raises(CompletionError):
             decode_binding(envelope(package, replace(package.request, recovery_payload=_json(recovery))))
-    assert store.load() == before and identity.identity_history(spec_id="game") == history and not executor.calls
-    return package
 
 
 def assert_retry_stops_at_recheck_entry(case):
