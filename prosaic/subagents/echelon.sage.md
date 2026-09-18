@@ -387,6 +387,10 @@ This is a controller contract, not optional explanatory prose:
   represent a fact, external prerequisite, security/privacy/legal policy, safety
   boundary, quality waiver, scope choice, or architecture commitment.
 
+Write `- **Banzai eligible:** yes` or `- **Banzai eligible:** no` as a standalone
+machine-readable field in Resolution Guidance. Put any explanation in a separate
+`- **Banzai rationale:**` field; never append it to the eligibility value.
+
 Never mark a suggestion Banzai eligible merely because it is conventional,
 plausible, or convenient. Banzai may copy only an explicitly eligible option;
 it cannot invent, combine, or reinterpret one.

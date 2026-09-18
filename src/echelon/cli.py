@@ -3762,7 +3762,13 @@ def _recovery_action_from_instruction(
             "manual_recovery",
             reason=reason,
             command="inspect echelon spec status, then diagnose the failed decision",
-            note="the controller exhausted automatic decision resolution",
+            note=("the issue report contains no explicitly eligible automatic recovery option"
+                  if reason == "phase_dispatch_limit_evidence_ineligible"
+                  else "the issue report exceeds the bounded recovery option count"
+                  if reason == "phase_dispatch_limit_evidence_too_many_candidates"
+                  else "the controller could not read valid issue-resolution evidence"
+                  if reason.startswith("phase_dispatch_limit_evidence_")
+                  else "the controller exhausted automatic decision resolution"),
         )
     return _RunRecoveryAction(
         "manual_recovery",
@@ -6145,6 +6151,7 @@ def _phase_a_summary_facts(
     *,
     spec_dir: str,
     stopped: str,
+    publication_verified: bool = False,
 ):
     from harness.run_summary import (
         SummaryFact,
@@ -6153,7 +6160,7 @@ def _phase_a_summary_facts(
     )
 
     facts: list[SummaryFact] = []
-    if spec_dir:
+    if spec_dir and publication_verified:
         facts.append(
             SummaryFact(
                 SummaryFactCategory.WORK,
@@ -6217,6 +6224,13 @@ def _phase_a_summary_facts(
                 len(facts),
             )
         )
+    counts = state.get("phase_dispatch_counts")
+    if isinstance(counts, Mapping) and counts and all(type(value) is int and value >= 0 for value in counts.values()):
+        facts.append(SummaryFact(
+            SummaryFactCategory.HANDOFF, SummaryFactImportance.NORMAL,
+            f"Current dispatch counters record {sum(counts.values())} phase executions; completed-phase totals count distinct phases, not executions.",
+            len(facts),
+        ))
     return tuple(facts)
 
 
@@ -6350,7 +6364,12 @@ def _print_squad_summary(
 
     from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
-    facts = _phase_a_summary_facts(state, spec_dir=spec_dir, stopped=stopped)
+    published = state.get("published_spec_dir")
+    published_path = Path(str(published)) if published else None
+    if published_path is not None and not published_path.is_absolute():
+        published_path = project_root / published_path
+    publication_verified = bool(published_path is not None and (published_path / "spec.md").is_file())
+    facts = _phase_a_summary_facts(state, spec_dir=spec_dir, stopped=stopped, publication_verified=publication_verified)
     worked_on = summarize_run_for_cli(
         RunSummaryContext(
             project_root=project_root,

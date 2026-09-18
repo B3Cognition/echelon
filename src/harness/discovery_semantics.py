@@ -229,6 +229,12 @@ def _author(value, assignment):
         if type(content) is not str or "\x00" in content:
             raise ValueError("discovery artifact must be exact UTF-8 text without NUL")
         content.encode("utf-8")
+    if assignment.producer in {"why1", "why2"}:
+        from harness.proportional_quality import QualityCandidateIntegrityError, validate_sage_resolution_guidance
+        try:
+            validate_sage_resolution_guidance(value["artifacts"].get("issues.md") or "")
+        except QualityCandidateIntegrityError as exc:
+            raise ValueError(str(exc)) from exc
     if assignment.producer in {"tracker", "why1"}:
         required = "assumption-review.md" if assignment.producer == "why1" else "user-intent.md"
         if not value["artifacts"][required].strip():

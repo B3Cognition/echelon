@@ -14,6 +14,16 @@ from tests.unit.test_element_identity_candidate_preview import op, sql_state
 PATHS = ("assumption-review.md", "issues.md", "unknowns.md")
 
 
+def test_managed_why1_rejects_inline_eligibility_during_authoring():
+    bound = assignment("author")
+    value = reply(bound)
+    value["artifacts"]["issues.md"] += ("### Resolution Guidance\n"
+        "- **Decision required:** correction\n- **Suggested option:** repair\n"
+        "- **Evidence basis:** source\n- **Banzai eligible:** yes — explanation\n")
+    with pytest.raises(ValueError, match="Banzai eligible"):
+        validate_discovery_reply(value, bound)
+
+
 def routing(verdict="PASS"):
     return dict(verdict=verdict, question="Which audience?" if verdict == "STOP_AND_ASK" else None,
         recommended_answer=None, risk_level=None)

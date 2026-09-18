@@ -1804,3 +1804,40 @@ Phase 2 acceptance is claimed by creating this plan.
   accepted authors, reset fixtures or infer that public Phase 2 is activated.
   Installation/migration, live models, Phase 3 execution, merge/push, legacy
   build and AGENTS/CLAUDE changes remain out of scope.
+
+### Bounded interruption: retained SAGE eligibility / misleading summaries
+
+- User approved fixing the older run's immediate recovery defect before resuming
+  the next Phase 2 checkpoint. The original run directory is absent on this host;
+  no run evidence was edited or restarted.
+- Recovery now decodes explicit `yes`/`no`, including retained `yes/no — rationale`
+  rows, without rewriting evidence or fingerprints. Duplicate/ambiguous values
+  and duplicate guidance remain errors. An explicit `no` is never authority.
+- New managed WHY1/WHY2 author replies validate supplied Resolution Guidance
+  immediately: standalone eligibility, separate optional rationale, and complete
+  decision/option/evidence fields. Bare issue references remain allowed at
+  authoring, but are not recovery options; recovery still requires complete
+  guidance for every issue. Legacy unmanaged review production is not migrated
+  by this checkpoint. Neutral SAGE prose/template documents the grammar.
+- Publication summary facts require recorded `published_spec_dir` plus an actual
+  `spec.md`. Current dispatch counters are reported separately from distinct
+  completed phases, not presented as lifetime totals (repair can reset counters).
+  Malformed, ineligible and over-count evidence have distinct recovery notes.
+- Regression run: **494 passed in 84.10s**, covering eligibility, WHY1 candidates,
+  CLI summary/continue, proportional/projected quality and human-input routing.
+  Subsequent focused run: **111 passed, 233 deselected in 11.83s**, including
+  managed WHY2 early rejection and retained mixed eligible/ineligible recovery.
+  Both used the repository interpreter, isolated retained TMPDIR, and mandatory
+  pytest retention settings. One redundant full-prefix WHY1 sweep was interrupted
+  and is not acceptance evidence; its fixtures were retained. No live provider
+  acceptance or installation is claimed.
+- Independent read-only review found no critical/important issues; its minor
+  ineligible-evidence wording finding was corrected and tested.
+- Final current-code focused check: **25 passed, 238 deselected in 11.16s**;
+  `git diff --check` also passed.
+- Still deferred: direct bounded owner repair routing, consolidated genuine user
+  questions, artifact/history compaction, and universal review-schema enforcement.
+  These must reuse existing repair/decision/publication owners, preserve identity
+  and accepted decisions, and must not add authority or raise iteration limits.
+  Resume the recorded released-v42 structural continuation checkpoint next;
+  this interruption does not finish or activate Phase 2.

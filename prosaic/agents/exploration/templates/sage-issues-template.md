@@ -26,6 +26,9 @@
 - **Evidence basis:** <specific cited artifact/evidence, or `None`>
 - **Values not inferable:** <what only the user can decide, or `None`>
 - **Banzai eligible:** yes | no
+- **Banzai rationale:** <explanation, separate from eligibility>
+
+The eligibility field must contain only `yes` or `no`. Never append explanatory prose to it.
 
 ### ISS-002: ...
 

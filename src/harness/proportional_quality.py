@@ -385,6 +385,36 @@ def _safe_authoritative_sage_path(
     return issue_path, relative_path
 
 
+def sage_banzai_eligibility(body: str, *, allow_legacy: bool = False) -> bool:
+    """Decode explicit authority without modifying source evidence or its digest."""
+    values = re.findall(r"^- \*\*Banzai eligible:\*\*[ \t]*([^\n]*)$", body, re.MULTILINE | re.IGNORECASE)
+    pattern = r"(yes|no)" + (r"(?:[ \t]+—[ \t]+\S[^\n]*)?" if allow_legacy else "")
+    match = re.fullmatch(pattern, values[0].strip(), re.IGNORECASE) if len(values) == 1 else None
+    if match is None:
+        raise QualityCandidateIntegrityError("Banzai eligible must be one standalone yes or no; put explanations in Banzai rationale")
+    return match.group(1).lower() == "yes"
+
+
+def validate_sage_resolution_guidance(report: str) -> None:
+    """Validate supplied guidance at authoring; recovery still requires complete guidance."""
+    sections = re.findall(r"^### Resolution Guidance[ \t]*\n(.*?)(?=^### |\Z)", report, re.MULTILINE | re.DOTALL)
+    eligibility_rows = re.findall(r"^- \*\*Banzai eligible:\*\*", report, re.MULTILINE | re.IGNORECASE)
+    if len(eligibility_rows) != len(sections):
+        raise QualityCandidateIntegrityError("Each eligibility field requires its own complete Resolution Guidance section")
+    for issue in re.split(r"^### ISS-[^\n]+\n", report, flags=re.MULTILINE)[1:]:
+        if len(re.findall(r"^### Resolution Guidance[ \t]*$", issue, re.MULTILINE)) > 1:
+            raise QualityCandidateIntegrityError("An issue must not contain duplicate Resolution Guidance sections")
+    for guidance in sections:
+        sage_banzai_eligibility(guidance)
+        for label in ("Decision required", "Suggested option", "Evidence basis"):
+            values = re.findall(rf"^- \*\*{label}:\*\*[ \t]*([^\n]*)$", guidance, re.MULTILINE)
+            if len(values) != 1 or not values[0].strip():
+                raise QualityCandidateIntegrityError(f"Resolution Guidance requires one nonblank {label}")
+        rationale = re.findall(r"^- \*\*Banzai rationale:\*\*[ \t]*([^\n]*)$", guidance, re.MULTILINE)
+        if len(rationale) > 1 or (rationale and not rationale[0].strip()):
+            raise QualityCandidateIntegrityError("Banzai rationale must be a single nonblank field when supplied")
+
+
 def sage_issue_fields(body: str) -> dict[str, str]:
     """Parse the existing required SAGE fields; this grants no authority."""
     fields = {

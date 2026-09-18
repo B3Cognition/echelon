@@ -15624,12 +15624,12 @@ class SquadController:
                 r"(ISS-\d+):\s*(\S(?:.*\S)?)",
                 title.strip(),
             )
-            guidance = re.search(
+            guidance = re.findall(
                 r"^### Resolution Guidance[ \t]*\n(.*?)(?=^### |\Z)",
                 body,
                 re.MULTILINE | re.DOTALL,
             )
-            if issue_match is None or guidance is None:
+            if issue_match is None or len(guidance) != 1:
                 raise _DispatchCapEvidenceError(
                     "phase_dispatch_limit_evidence_malformed"
                 )
@@ -15639,7 +15639,7 @@ class SquadController:
                     "phase_dispatch_limit_evidence_malformed"
                 )
             seen_issue_ids.add(issue_id)
-            guidance_text = guidance.group(1)
+            guidance_text = guidance[0]
             field_patterns = {
                 "decision_required": "Decision required",
                 "suggested_option": "Suggested option",
@@ -15657,16 +15657,14 @@ class SquadController:
                         "phase_dispatch_limit_evidence_malformed"
                     )
                 fields[field] = matches[0].strip()
-            eligibility = re.findall(
-                r"^- \*\*Banzai eligible:\*\*[ \t]*(yes|no)[ \t]*$",
-                guidance_text,
-                re.MULTILINE | re.IGNORECASE,
-            )
-            if len(eligibility) != 1:
+            from harness.proportional_quality import sage_banzai_eligibility
+            try:
+                eligible = sage_banzai_eligibility(guidance_text, allow_legacy=True)
+            except QualityCandidateIntegrityError as exc:
                 raise _DispatchCapEvidenceError(
                     "phase_dispatch_limit_evidence_malformed"
-                )
-            if eligibility[0].lower() == "no":
+                ) from exc
+            if not eligible:
                 continue
             repair_phase = (
                 StagedParallelExecutor._why3_repair_phase_from_issues(body)
