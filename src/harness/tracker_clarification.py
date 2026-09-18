@@ -104,7 +104,7 @@ def validate_clarification_history(newest_first, *, pending=None):
     for binding in chronological:
         version, producer = binding.recovery["version"], binding.producer
         if type(version) is not int or (version, producer) not in {
-                (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2")}:
+                (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment")}:
             raise ValueError("unsupported clarification history binding")
         if binding.recovery["previous"] != [asdict(item) for item in records]:
             raise ValueError("clarification prefix differs from native source ancestry")
@@ -150,9 +150,11 @@ def retained_clarification_records(store, *, spec_id, source):
         producer, version = recovery.get("producer", "discovery"), recovery["version"]
         versions = {"discovery": {2, 8}, "synthesizer": {3, 9}, "tracker": {4, 5, 10, 18},
             "why1": {6, 7, 11, 18}, "constitution": {12, 16}, "what": {13, 17, 20, 22, 26},
-            "understanding": {14}, "why2": {15, 18, 19, 24}, "why2-policy": {21, 23, 25, 27}}
+            "understanding": {14}, "why2": {15, 18, 19, 24}, "why2-policy": {21, 23, 25, 27},
+            "lexicon": {28}, "lexicon_gate": {29}, "checkpoint": {30}, "feasibility": {31, 33},
+            "feasibility_gate": {32, 34}, "strategy": {35}, "alignment": {36, 38, 40}, "alignment_gate": {37, 39}}
         _require(type(version) is int and version in versions.get(producer, set()))
-        if version in {5, 7, 18}:
+        if version in {5, 7, 18, 40}:
             _require(intent.origin == "resolution" and intent.route["decision_id"] == recovery["resolution"]["id"])
             records.append(SimpleNamespace(producer=producer, recovery=recovery))
         source = recovery.get("source_completion")
@@ -180,6 +182,8 @@ def _resolution_rows(state, producer):
 
 def capture_clarification_history(state, operation_id, producer, native_previous):
     """Keep original formats unless the authenticated history crosses WHY2."""
+    if producer == "alignment":
+        return 40, native_previous
     if producer not in {"tracker", "why1", "why2"}:
         raise ValueError("unsupported clarification producer")
     why2_answers = {association["decision"]["id"] for _, association in _resolution_rows(state, "why2")}
@@ -262,9 +266,16 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
     selection = selected["selection"]
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     store = IdentityStore.open(root)
+    commander = None
+    if producer == "alignment":
+        from harness.discovery_assessment import require_alignment_question_parent, require_alignment_answer
+        from harness.managed_commander import resolution_receipt
+        parent = require_alignment_question_parent(root, state_store.squad_dir, state, source)
+        policy = require_alignment_answer(root, state, resolved, parent.candidate["routing"])
+        commander = resolution_receipt(state_store.squad_dir, state, resolved, policy)
     _, _, _, history, _, _, original, source_inputs = _capture(root, state_store, store, selected,
         operation["binding"]["input_tree"], tuple(operation["binding"]["artifact_paths"]),
-        producer=producer, source_completion=source, clarification=producer == "why2")
+        producer=producer, source_completion=source, clarification=producer in {"why2", "alignment"})
     native_previous = retained_clarification_records(store, spec_id=selection["spec_id"], source=source)
     version, previous = capture_clarification_history(state, operation["binding"]["operation_id"], producer, native_previous)
     candidate, texts, before = _candidate(original, selection["spec_path"],
@@ -282,7 +293,7 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         for path, text in texts.items() if path != spec_path + "/" + report)
     scope_paths = (report, *(path for path in texts if path != spec_path + "/" + report))
     from harness.discovery_candidate import issue_report_changes
-    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer in {"why1", "why2"} or post_review else ((), ())
+    reports, _ = issue_report_changes(artifacts, (), history, report_id=completion_id) if producer in {"why1", "why2", "alignment"} or post_review else ((), ())
     preview = store.preview_identity_candidate(spec_id=selection["spec_id"], artifacts=artifacts,
         scope=IdentityEditScope(scope_paths, (), scope_paths), operations=(), issue_reports=reports)
     if preview.check.diagnostics or preview.history != history:
@@ -305,6 +316,8 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
         source_inputs=_json(source_inputs), source_fingerprint=_hash(source_inputs),
         candidate_inputs=_json(dict(artifacts=texts, history=asdict(history))),
         sources=encode_initial_publication_sources(sources), graph_sha256=hashlib.sha256(graph).hexdigest())
+    if producer == "alignment":
+        recovery.update(before=state, commander_receipt=commander)
     context = source_inputs["authority"]["source_context"]
     request = PublicationIntentRequest(publication.marker.manifest_sha256, _json(recovery), (),
         PublicationSourceClaim(context["context_id"], context["operation_id"], encode_initial_publication_sources(baseline)),
@@ -319,10 +332,11 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
 def decode_clarification_binding(publication, request, recovery, completion_id, state):
     from harness.discovery_completion import _closed, _require, _document, _hash, DiscoveryCompletionBinding
     _closed(recovery, ("version", "producer", "completion_id", "operation", "source_completion", "resolution",
-        "previous", "source_inputs", "source_fingerprint", "candidate_inputs", "sources", "graph_sha256"))
+        "previous", "source_inputs", "source_fingerprint", "candidate_inputs", "sources", "graph_sha256",
+        *(("before", "commander_receipt") if recovery.get("version") == 40 else ())))
     producer = recovery["producer"]
     _require(type(recovery["version"]) is int and ((recovery["version"], producer) in {
-            (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2")})
+            (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment")})
         and (completion_id is None or completion_id == recovery["completion_id"]) and request.operations == ())
     source = _document(recovery["source_inputs"])
     _closed(source, ("manifest", "history", "authority", "runtime", *(("quality_policy",) if producer == "why2" else ())))
@@ -357,6 +371,34 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
     run_path = context_tree.path.removesuffix("/context")
     previous = tuple(ClarificationRecord(**row) for row in recovery["previous"])
     prepared, texts, _ = _candidate(sources, spec_path, run_path, recovery["resolution"], previous, producer)
+    if producer == "alignment":
+        from harness.discovery_completion import _json
+        from harness.human_input import AppliedHumanInputResolution
+        from harness.squad import SquadController
+        from harness.squad_state import build_human_input_resolution_postimage
+        before, resolved, commander = recovery["before"], recovery["resolution"], recovery["commander_receipt"]
+        decision = validate_blocked_decision(before["blocked_decision"])
+        answer = AppliedHumanInputResolution(None, resolved["answer_text"], resolved["resolved_by"],
+            rationale=resolved["resolution_rationale"], confidence=resolved["resolution_confidence"])
+        _require(before["phase"] == "phase2-tracker-alignment" and before["status"] == "blocked"
+            and before["autonomy_mode"] == resolved["autonomy_mode"] and before["managed_identity"] == genesis
+            and before["last_dispatch"]["post_dispatch_complete"] is True
+            and recovery["source_completion"] == {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
+            and _json(build_human_input_resolution_postimage(decision, answer,
+                resolved_at=resolved["resolved_at"])) == _json(resolved)
+            and resolved["resolved_by"] in {"user", "COMMANDER"})
+        SquadController._validate_human_input_resolver(decision, answer)
+        if resolved["resolved_by"] == "COMMANDER":
+            import re
+            _closed(commander, ("sha256", "token_usage"))
+            _require(decision["automatic_eligible"] is True and type(commander["sha256"]) is str
+                and re.fullmatch(r"[0-9a-f]{64}", commander["sha256"])
+                and type(commander["token_usage"]) is int and commander["token_usage"] >= 0)
+        else:
+            _require(commander is None and not (decision["autonomy_mode"] == "banzai" and decision["automatic_eligible"] is True))
+        # This detached association does not admit native answer application.
+        # A later completion increment must bind its exact post-resolution effects.
+        _require(state is None or _json(state) == _json(before))
     _require(candidate["artifacts"] == texts)
     writes = {path: text.encode("utf-8") for path, text in texts.items()}
     graph = _graph(sources, history, dict(spec_id=selected["spec_id"], spec_path=spec_path))
@@ -375,11 +417,11 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
             and selected["run_id"] == bootstrap["selection"]["run_id"]
             and selected["spec_id"] == bootstrap["selection"]["spec_id"]
             and operation_from_state(state, producer, operation_id=selected["operation_id"]) == recovery["operation"])
-        if recovery["version"] == 18:
+        if recovery["version"] in {18, 40}:
             # Chronology/completeness is checked against native ancestry by
             # authenticate and retained reads, never inferred from this set.
             known = {}
-            for owner in ("tracker", "why1", "why2"):
+            for owner in ("tracker", "why1", "why2", "alignment"):
                 for _, association in _resolution_rows(state, owner):
                     record = _record(association["decision"], owner)
                     _require(record.decision_id not in known or known[record.decision_id] == record)

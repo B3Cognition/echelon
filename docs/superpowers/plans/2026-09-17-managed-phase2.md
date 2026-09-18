@@ -196,6 +196,13 @@ Produces native alignment/structural outcome or sealed clarification resolution.
     pending decision; authenticate the exact question and preserve budgets,
     history and usage. Keep answer application/COMMANDER execution closed until
     its resolution association is verified separately.
+  - [ ] Bind alignment answers to the released question and native resolver,
+    using existing clarification publication and retained COMMANDER receipts.
+    Verify detached preparation before admitting native answer application;
+    preserve ancestry, budgets and identity history through recovery.
+    - [x] Verify detached answer preparation and closed native entry points.
+    - [ ] Bind native post-resolution effects and reauthenticate retained
+      COMMANDER receipts during completion/recovery before opening application.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -1413,3 +1420,79 @@ Phase 2 acceptance is claimed by creating this plan.
   repair-round questions, remaining branch/timing parity and whole-Phase-2
   acceptance remain open. Final diff checks passed; no installation, activation,
   live model calls, Phase 3 execution, merge or push occurred.
+
+### Task 4 — detached alignment answer association
+
+- Continuing inline from `24dee015` in the existing isolated worktree. Existing
+  design/plan approval covers answer publication and COMMANDER transport; no
+  new decision owner, provider prose, activation or Phase 3 execution is added.
+- Baseline clarification/COMMANDER/initial-question checks passed **60 tests,
+  2 deselected in 36.08s**, with repository interpreter and isolated retention.
+- The real retained Codex pending question at isolated-root `pytest-10` rejects
+  detached answer preparation at `alignment_parent_requires_reconciliation`:
+  capture currently expects strategy/structural-repair entry, not the released
+  question. The fixture was not reset or rewritten.
+- Native answer tests initially failed at the absent association helper. The
+  Banzai fixture first needed a reachable native claim (pending before resolving,
+  with attempt 1); after correcting that setup all three modes failed at the
+  missing helper. Minimal resolver/answer validation then passed together with
+  prior initial-question checks: **9 tests, 4 deselected in 23.37s**.
+- The existing assessment owner now authenticates the released initial v36
+  question and its actual ancestry/budgets. Native mutable claim fields are
+  projected only for historical initial-question authentication; immutable
+  question metadata is checked against the workspace policy registry. The
+  existing capture/publisher builds a v40 clarification draft, pins its exact
+  pre-resolution state, and binds a COMMANDER answer to the existing accepted
+  transport receipt. No canonical publication or answer application is admitted.
+- Retained Codex detached preparation passed without changing state/history.
+  Retained Claude/Banzai used the existing constrained COMMANDER transport to
+  choose WASD instead of the recommended arrow keys, then replayed that exact
+  response without another call. It passed draft preparation and initial
+  tamper/closed-entry checks. The actual fixture retains a native resolving claim
+  with attempt 1 and its accepted 7-token response; the answer remains unapplied
+  and its charge belongs to the later native application/failure transaction.
+- Expanded focused answer/question/policy/COMMANDER/assessment/completion/round
+  checks passed **397 tests, 4 deselected in 47.87s** using the same isolated
+  retention settings. Fresh Codex full-prefix and shared regressions are pending.
+- Read-only review found no actionable defect for this inactive checkpoint.
+  Preserve the activation constraint: v40 decoding checks receipt shape, while
+  detached preparation authenticates the actual COMMANDER receipt. Before
+  opening application, completion/recovery must reauthenticate that receipt and
+  bind exact native post-resolution state/usage effects (following existing
+  checkpoint v30 ownership). Do not relax the exact-before-state decoder guard
+  or public managed exclusion in isolation. Repair-round questions and resumed
+  authoring still need their own retained-round association.
+- Both retained provider cases passed expanded source/phase/unfinished/pending/
+  cancellation/question/typed-budget refusals and closed envelope mutations.
+  Replacing the COMMANDER answer with its original recommendation is rejected
+  by the actual retained judgment receipt; no canonical state/history changes.
+- Shared discovery completion/publication/restoration and native human-input/
+  structural/feasibility/alignment regressions passed **377 tests,
+  501 deselected in 399.21s**. Existing clarification history/candidate tests
+  passed **53 tests in 10.34s**. The native resolver test with the canonical
+  decision builder's attempt parameter passed **3 tests, 2 deselected in 15.86s**.
+- Final current-code retained checks passed for both user and COMMANDER drafts,
+  including byte-for-byte unchanged spec/staging files, refusal of a forged
+  already-resolved state, exact answer/receipt binding and closed public entry
+  points. Only the test-owned unpublished drafts were discarded; retained
+  question/COMMANDER evidence, native claim state and identity history remain.
+- Fresh acceptance command: repository virtualenv `python -m pytest
+  tests/unit/test_managed_alignment_resolution.py -k 'prepares_without and codex'
+  -q --tb=short -o tmp_path_retention_count=200 -o tmp_path_retention_policy=all`,
+  with `PYTHONDONTWRITEBYTECODE=1` and the isolated TMPDIR above. Preserve its
+  `pytest-23/test_alignment_answer_prepares0` evidence. The process loaded the
+  tests before the final source-refusal/document-byte assertions were added;
+  the current-code retained checks above cover those additions separately.
+- Fresh Codex/guided acceptance passed **1 test, 4 deselected in 1508.49s**
+  (25:08): actual Phase 1 approval, feasibility/strategy/alignment, reviewed
+  initial question, interrupted native question recovery and detached answer
+  preparation/refusal checks. This is an uninterrupted green scripted prefix,
+  not a live model run. Final question remains unanswered/awaiting human at
+  alignment, settled, with 210 scripted tokens, iteration 0 and no Phase 3
+  dispatch. The retained Claude case remains resolving attempt 1, unanswered,
+  with 238 charged scripted tokens and its separate retained 7-token judgment.
+- This checkpoint completes detached preparation only. Native answer
+  application, completion-time COMMANDER receipt authentication/accounting,
+  recovery and public automatic dispatch remain next. No provider prose,
+  installation, activation, Phase 3 execution, merge or push changes. Final
+  diff checks passed; preserve both fresh and retained evidence for continuation.

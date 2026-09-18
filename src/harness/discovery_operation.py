@@ -69,7 +69,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     state = state_store.load()
     if clarification:
         from harness.discovery_producer import SOURCE_FIELDS
-        if (producer != "why2" or repair_unit is not None
+        if (producer not in {"why2", "alignment"} or repair_unit is not None
                 or source_completion != {key: (state.get("last_dispatch") or {}).get(key) for key in SOURCE_FIELDS}):
             raise _Blocked("clarification_source_changed")
     post_review = post_why1_context(state, producer)
@@ -88,7 +88,8 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
     reasoning_paths = ((state_store.squad_dir / "reasoning-journal.jsonl").relative_to(root).as_posix(),) if producer in {"why1", "constitution", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} or repair_unit is not None or post_review else ()
     if producer in {"feasibility", "strategy", "alignment"}:
         from harness.discovery_assessment import ASSESSMENT_OUTPUTS
-        if (set(artifact_paths) != set(ASSESSMENT_OUTPUTS[producer]) or repair_unit is not None or clarification):
+        if (set(artifact_paths) != set(ASSESSMENT_OUTPUTS[producer]) or repair_unit is not None
+                or (clarification and producer != "alignment")):
             raise _Blocked("feasibility_capture_scope_not_admitted")
         if producer == "feasibility":
             template_paths.pop(".echelon/runtime/templates/kill-report-template.md")
@@ -116,7 +117,7 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         if repair_unit is not None:
             raise _Blocked("synthesis_repair_not_admitted")
         state = state_store.load()
-        if producer in {"strategy", "alignment"}:
+        if producer in {"strategy", "alignment"} and not clarification:
             from harness.discovery_assessment import require_strategy_parent, require_alignment_parent
             from harness.discovery_producer import SOURCE_FIELDS
             try:
@@ -156,16 +157,21 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         if clarification:
             from harness.discovery_completion import _retained_input_projection
             from harness.tracker_clarification import question_claim
+            from harness.discovery_producer import producer_phase
+            if producer == "alignment":
+                from harness.discovery_assessment import require_alignment_question_parent
+                require_alignment_question_parent(root, state_store.squad_dir, state, source_completion)
             parent_binding, _, _ = _retained_input_projection(root, state_store.squad_dir, state, store,
                 operation_id="discovery-completion-" + source_completion["dispatch_id"], source=source_completion,
-                require_checkpoint=False, required_route=("phase1-why2", "phase1-why2"))
-            if (parent_binding.producer != "why2" or parent_binding.clarification
-                    or question_claim(parent_binding.candidate["routing"], "why2") is None
-                    or parent_binding.recovery["operation"] != operation_from_state(state, "why2")):
+                require_checkpoint=False, required_route=(producer_phase(producer), producer_phase(producer)))
+            if (parent_binding.producer != producer or parent_binding.clarification
+                    or question_claim(parent_binding.candidate["routing"], producer) is None
+                    or parent_binding.recovery["operation"] != operation_from_state(state, producer)):
                 raise _Blocked("clarification_parent_changed")
-            prefix = state_store.squad_dir.relative_to(root).as_posix() + "/evidence/understanding/"
-            understanding, = (item for item in parent_binding.sources.files if item.path.startswith(prefix))
-            evidence_paths = (understanding.path,)
+            if producer == "why2":
+                prefix = state_store.squad_dir.relative_to(root).as_posix() + "/evidence/understanding/"
+                understanding, = (item for item in parent_binding.sources.files if item.path.startswith(prefix))
+                evidence_paths = (understanding.path,)
         elif producer in {"what", "why2"}:
             from harness.discovery_spec import require_spec_parent
             parent = tracker_input_source(state, producer=producer)

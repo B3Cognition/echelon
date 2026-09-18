@@ -71,7 +71,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def clarification(self):
-        return self.recovery["version"] in {5, 7, 18}
+        return self.recovery["version"] in {5, 7, 18, 40}
 
     @property
     def policy_resolution(self):
@@ -162,7 +162,7 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
-    if recovery.get("version") in {5, 7, 18}:
+    if recovery.get("version") in {5, 7, 18, 40}:
         from harness.tracker_clarification import decode_clarification_binding
         return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",

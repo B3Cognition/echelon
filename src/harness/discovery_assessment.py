@@ -191,11 +191,9 @@ def require_alignment_parent(root, run, state, source):
     return binding
 
 
-def require_alignment_question(root, state, routing):
-    """Bind a pending question to native policy; grant no answer authority."""
-    from harness.blocked_decision import validate_blocked_decision, build_blocked_decision_v3
-    from harness.discovery_completion import _require, _json
-    from harness.human_input import select_initial_decision_status
+def _alignment_question_policy(root, state, routing):
+    from harness.blocked_decision import validate_blocked_decision
+    from harness.discovery_completion import _require
     from harness.phase_graph import load_workspace_phase_graph
     from harness.tracker_clarification import question_claim
     claim = question_claim(routing, "alignment")
@@ -208,10 +206,89 @@ def require_alignment_question(root, state, routing):
         phase_id="phase2-tracker-alignment", reason_code="human_clarification_required", **claim,
         source_state_revision=decision["source_state_revision"])
     policy = registry.lookup("provider_escalation", "phase2-tracker-alignment", "human_clarification_required")
+    return request, policy
+
+
+def require_alignment_question(root, state, routing):
+    """Bind a pending question to native policy; grant no answer authority."""
+    from harness.blocked_decision import build_blocked_decision_v3
+    from harness.discovery_completion import _require, _json
+    from harness.human_input import select_initial_decision_status
+    request, policy = _alignment_question_policy(root, state, routing)
+    decision = state["blocked_decision"]
     expected = build_blocked_decision_v3(prepared=request, decision_id=decision["id"],
         status=select_initial_decision_status(state["autonomy_mode"], policy, request),
         autonomy_mode=state["autonomy_mode"], created_at=decision["created_at"])
     _require(_json(expected) == _json(state["blocked_decision"]))
+
+
+def require_alignment_answer(root, before, resolved, routing):
+    """Validate native resolver/answer semantics, not source or dispatch authority."""
+    from harness.discovery_completion import _require, _json
+    from harness.discovery_policy_resolution import require_native_decision
+    from harness.human_input import AppliedHumanInputResolution
+    from harness.squad import SquadController
+    from harness.squad_state import build_human_input_resolution_postimage
+    from harness.tracker_clarification import _record
+    request, policy = _alignment_question_policy(root, before, routing)
+    decision = before["blocked_decision"]
+    require_native_decision(request, decision)
+    _record(resolved, "alignment")
+    answer = AppliedHumanInputResolution(None, resolved["answer_text"], resolved["resolved_by"],
+        rationale=resolved["resolution_rationale"], confidence=resolved["resolution_confidence"])
+    _require(resolved["resolved_by"] in {"user", "COMMANDER"}
+        and (resolved["resolved_by"] != "COMMANDER" or decision["automatic_eligible"] is True)
+        and not (resolved["resolved_by"] == "user" and decision["autonomy_mode"] == "banzai"
+            and decision["automatic_eligible"] is True))
+    SquadController._validate_human_input_resolver(decision, answer)
+    reader = object.__new__(SquadController)
+    reader._validate_human_input_resolution_answer(decision, answer)
+    _require(_json(build_human_input_resolution_postimage(decision, answer,
+        resolved_at=resolved["resolved_at"])) == _json(resolved))
+    return policy
+
+
+def require_alignment_question_parent(root, run, state, source):
+    """Authenticate the released initial question before preparing its answer."""
+    from types import SimpleNamespace
+    from harness.blocked_decision import build_blocked_decision_v3
+    from harness.discovery_completion import _require, _retained_input_projection, _document, authenticate
+    from harness.discovery_policy_resolution import require_native_decision
+    from harness.discovery_producer import SOURCE_FIELDS
+    from harness.element_identity_store import IdentityStore
+    from harness.human_input import select_initial_decision_status
+    from harness.squad_completion import validate_retained_completion_proof
+    _require(state.get("phase") == "phase2-tracker-alignment" and state.get("status") == "blocked"
+        and not state.get("cancel_requested") and not any(key in state for key in (
+            "pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
+    dispatch = state.get("last_dispatch") or {}
+    _require(dispatch.get("phase_id") == "phase2-tracker-alignment" and dispatch.get("post_dispatch_complete") is True
+        and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})
+    store = IdentityStore.open(root)
+    parent, _, _ = _retained_input_projection(root, run, state, store,
+        operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+        require_checkpoint=False, required_route=("phase2-tracker-alignment", "phase2-tracker-alignment"))
+    _require(parent.producer == "alignment" and parent.recovery["version"] == 36
+        and parent.candidate["routing"]["verdict"] == "STOP_AND_ASK")
+    request, policy = _alignment_question_policy(root, state, parent.candidate["routing"])
+    decision = state["blocked_decision"]
+    _require(decision["status"] in {"pending", "resolving", "awaiting_human"})
+    require_native_decision(request, decision)
+    # The released question seals initial status; native claim/failure fields
+    # may now have advanced. Project only those fields for historical checking.
+    initial = build_blocked_decision_v3(prepared=request, decision_id=decision["id"],
+        status=select_initial_decision_status(state["autonomy_mode"], policy, request),
+        autonomy_mode=state["autonomy_mode"], created_at=decision["created_at"])
+    row = store.identity_publication(spec_id=parent.spec_id, operation_id=parent.operation_id)
+    proof = _document(row["completion_payload"])
+    marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
+        proof["proof"]["intent"], proof["proof"]["receipts"])
+    authenticate(root, run, {**state, "blocked_decision": initial},
+        SimpleNamespace(marker=marker, intent=intent, receipts=receipts))
+    authority = store.check_managed_context(spec_id=parent.spec_id, run_id=state["run_id"], record=state["managed_identity"])
+    _require(authority["source_context"]["operation_id"] == parent.operation_id
+        and store.pending_identity_publication(spec_id=parent.spec_id) is None)
+    return parent
 
 
 def validate_assessment_routing(value, producer):
