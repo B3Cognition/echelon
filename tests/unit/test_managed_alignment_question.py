@@ -162,10 +162,9 @@ def assert_question_handoff(case, package, provider):
         if name not in {"intent-alignment-check.md", "spec-artifact-graph.json"}:
             assert (root / "specs/game" / name).read_bytes() == content
     assert identity.identity_history(spec_id="game") == history
-    # Until the answer association is implemented, neither legacy execution nor
-    # a direct answer may bypass the managed exclusion guard.
-    with pytest.raises(HumanInputPolicyError): controller(case, executor).resume_with_human_input("Use arrow keys")
-    with pytest.raises(HumanInputPolicyError): controller(case, executor).resume_pending_human_input()
+    # Stop at the pending question. The answer-application suite exercises the
+    # newly admitted public path separately, including COMMANDER replay.
+    assert controller(case, executor)._managed_alignment_human_input(after)
     assert store.load() == after and not executor.calls
 
 

@@ -4660,6 +4660,8 @@ class SquadController:
 
     def _managed_tracker_human_input(self, state):
         """Authenticate a specific managed STOP_AND_ASK, not legacy execution."""
+        if (state.get("blocked_decision") or {}).get("source_phase") == "phase2-tracker-alignment":
+            return self._managed_alignment_human_input(state)
         phase = state.get("phase")
         if "managed_identity" not in state or phase not in {"phase1-tracker", "phase1-why1", "phase1-why2"}:
             return False
@@ -4706,6 +4708,52 @@ class SquadController:
             return matches
         except Exception:
             return False
+
+    def _managed_alignment_human_input(self, state):
+        """Admit only the released question or its exact native answer recovery."""
+        try:
+            from harness.discovery_completion import authenticate, _retained_input_projection
+            from harness.discovery_assessment import require_alignment_question_parent
+            from harness.discovery_producer import SOURCE_FIELDS
+            from harness.element_identity_store import IdentityStore
+            decision = validate_blocked_decision(state["blocked_decision"])
+            if decision["source_phase"] != "phase2-tracker-alignment":
+                return False
+            marker = state.get(PENDING_CONTROLLER_COMPLETION_KEY)
+            if marker is not None and marker.get("origin") == "resolution":
+                completion = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+                self._state_store._require_controller_completion_provenance(state, marker, completion.intent.to_dict())
+                binding = authenticate(self._project_root, self._squad_dir, state, completion)
+                return binding.recovery["version"] == 41 and binding.recovery["resolution"] == decision
+            if decision["status"] == "resolved":
+                from harness.discovery_spec import clarification_source
+                receipt = state["last_human_input_completion"]
+                source = clarification_source(receipt)
+                store = IdentityStore.open(self._project_root)
+                row = store.identity_publication(spec_id=state["managed_identity"]["spec_id"],
+                    operation_id="discovery-completion-" + source["dispatch_id"])
+                if row is not None and row["state"] == "applied":
+                    marker = {key: value for key, value in receipt.items() if key != "decision_id"}
+                    marker.update(origin="resolution", step="complete")
+                    completion = load_prepared_controller_completion(self._project_root, self._squad_dir, marker)
+                    binding = authenticate(self._project_root, self._squad_dir, state, completion)
+                else:
+                    binding, _, _ = _retained_input_projection(self._project_root, self._squad_dir, state,
+                        store, operation_id="discovery-completion-" + source["dispatch_id"],
+                        source=source, require_checkpoint=False)
+                return binding.recovery["version"] == 41 and binding.recovery["resolution"] == decision
+            require_alignment_question_parent(self._project_root, self._squad_dir, state,
+                {key: state["last_dispatch"][key] for key in SOURCE_FIELDS})
+            return True
+        except Exception:
+            return False
+
+    def _clarification_state_effects(self, state, route, feature_policy, report):
+        """Native answer effects, shared by preparation and proof validation."""
+        updates, removals = self._clarification_quality_effects(state)
+        return _HumanInputResolutionEffects(state_updates=dict(updates, status="running", phase=route,
+            feature_policy=feature_policy, feature_policy_reconciliation=report,
+            context_dir=str(self._squad_dir / "context")), state_removals=removals, route=route)
 
     def _managed_why2_completion_wait(self, state):
         """Permit exact completion recovery while leaving a WHY2 decision pending.
@@ -4757,7 +4805,7 @@ class SquadController:
             raise HumanInputPolicyError("managed Tracker clarification requires reconciliation")
         default_candidate = self._banzai_default_candidate_for_decision(state, decision)
         phase = state["phase"]
-        producer = phase.removeprefix("phase1-")
+        producer = "alignment" if phase == "phase2-tracker-alignment" else phase.removeprefix("phase1-")
         resolved_at = datetime.now(timezone.utc).isoformat()
         resolved = build_human_input_resolution_postimage(decision, resolution, resolved_at=resolved_at)
         completion_id = uuid.uuid4().hex
@@ -4776,6 +4824,10 @@ class SquadController:
             if "phase1-what" not in self._graph.all_phase_ids():
                 raise HumanInputPolicyError("clarification repair route is unavailable")
             route = "phase1-what"
+        effects = self._clarification_state_effects(state, route, json.loads(candidate.policy_text), report)
+        if producer == "alignment":
+            from harness.tracker_clarification import bind_alignment_effects
+            request = bind_alignment_effects(publication, request, effects, state)
         snapshot = self._state_store.capture_routing_snapshot(expected_phase=phase)
         if snapshot.state != state:
             raise HumanInputPolicyError("managed Tracker clarification state changed")
@@ -4783,11 +4835,7 @@ class SquadController:
             snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
             publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
             completion_id=completion_id, managed_discovery_request=encode_publication_request(request))
-        quality_updates, removals = self._clarification_quality_effects(state)
-        return _HumanInputResolutionEffects(state_updates=dict(quality_updates, status="running", phase=route,
-            feature_policy=json.loads(candidate.policy_text), feature_policy_reconciliation=report,
-            context_dir=str(self._squad_dir / "context")), state_removals=removals, route=route,
-            completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
+        return replace(effects, completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
 
     def _managed_policy_human_input(self, state):
         """Admit native input/recovery; the selected handler still owns effects."""
@@ -5966,10 +6014,26 @@ class SquadController:
         return rendered
 
     def _dispatch_managed_checkpoint_commander(self, state, policy):
+        # One constrained COMMANDER transport for checkpoint and alignment;
+        # each caller still authenticates its own native question/evidence.
         from harness.managed_commander import run_commander_turn
         from harness.discovery_turns import _hash
         def check_inputs():
-            if not self._managed_checkpoint_human_input(self._state_store.load()):
+            current = self._state_store.load()
+            if (current.get("blocked_decision") or {}).get("source_phase") == "phase2-tracker-alignment":
+                if not self._managed_alignment_human_input(current):
+                    raise ValueError("managed_commander_alignment_evidence_changed")
+                from harness.discovery_operation import _capture
+                from harness.discovery_operation_state import operation_from_state
+                from harness.discovery_bootstrap_state import bootstrap_from_state
+                from harness.discovery_producer import SOURCE_FIELDS
+                from harness.element_identity_store import IdentityStore
+                operation = operation_from_state(current, "alignment")["binding"]
+                _capture(self._project_root, self._state_store, IdentityStore.open(self._project_root),
+                    bootstrap_from_state(current), operation["input_tree"], tuple(operation["artifact_paths"]),
+                    producer="alignment", source_completion={key: current["last_dispatch"][key] for key in SOURCE_FIELDS},
+                    clarification=True)
+            elif not self._managed_checkpoint_human_input(current):
                 raise ValueError("managed_commander_checkpoint_evidence_changed")
         while state["blocked_decision"]["status"] in {"pending", "resolving"}:
             budget = self._token_budget or state.get("token_budget", 0)
@@ -6626,6 +6690,9 @@ class SquadController:
                 self._managed_tracker_human_input(pending) or self._managed_automatic_policy_input(pending)
                 or self._managed_checkpoint_human_input(pending)):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
+        if ((pending.get("blocked_decision") or {}).get("status") == "resolved"
+                and self._managed_alignment_human_input(pending)):
+            return self._drain_pending_controller_completion().recovered
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
                 return False
@@ -6652,7 +6719,8 @@ class SquadController:
         pending = self._rearm_awaiting_banzai_recommendation(pending)
         decision = pending.get("blocked_decision")
         if (isinstance(decision, Mapping) and decision.get("status") in {"pending", "resolving"} and decision.get("autonomy_mode") == "banzai"
-                and decision.get("automatic_eligible") is True and self._managed_checkpoint_human_input(pending)):
+                and decision.get("automatic_eligible") is True
+                and (self._managed_checkpoint_human_input(pending) or self._managed_alignment_human_input(pending))):
             # Preserve the native claim and replay its retained response before
             # legacy interrupted-claim recovery could allocate another attempt.
             return self._dispatch_managed_checkpoint_commander(pending, self._policy_for_human_input_decision(decision))
@@ -6726,7 +6794,7 @@ class SquadController:
                     expected_state_revision=int(state["state_revision"]),
                     resolution=controller_resolution,
                 )
-            if self._managed_checkpoint_human_input(state):
+            if self._managed_checkpoint_human_input(state) or self._managed_alignment_human_input(state):
                 return self._dispatch_managed_checkpoint_commander(state, policy)
             return self._dispatch_commander_human_input(
                 state,

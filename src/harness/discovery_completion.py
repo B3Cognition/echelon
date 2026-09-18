@@ -71,7 +71,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def clarification(self):
-        return self.recovery["version"] in {5, 7, 18, 40}
+        return self.recovery["version"] in {5, 7, 18, 40, 41}
 
     @property
     def policy_resolution(self):
@@ -162,7 +162,7 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
-    if recovery.get("version") in {5, 7, 18, 40}:
+    if recovery.get("version") in {5, 7, 18, 40, 41}:
         from harness.tracker_clarification import decode_clarification_binding
         return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
@@ -517,35 +517,8 @@ def authenticate(root, run, state, completion):
         if binding.producer == "alignment_gate":
             from harness.discovery_assessment_gate import authenticate_alignment_gate
             authenticate_alignment_gate(root, run, state, completion, binding)
-        if binding.producer in {"strategy", "alignment"} and binding.recovery["version"] != 38:
-            from harness.config import get_full_resolved_config
-            gate_source = binding.recovery["source_completion"]
-            if binding.producer == "alignment":
-                strategy, _, _ = _retained_input_projection(root, run, state, store,
-                    operation_id="discovery-completion-" + gate_source["dispatch_id"],
-                    source=gate_source, require_checkpoint=False,
-                    required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
-                gate_source = strategy.recovery["source_completion"]
-            gate, _, _ = _retained_input_projection(root, run, state, store,
-                operation_id="discovery-completion-" + gate_source["dispatch_id"],
-                source=gate_source, require_checkpoint=False,
-                required_route=("phase2-feasibility-structural", "phase2-strategic-overview"))
-            expected = {**gate.recovery["routing_state"], **gate.recovery["result"]["state_updates"]}
-            if binding.producer == "alignment":
-                if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK":
-                    from harness.discovery_assessment import require_alignment_question
-                    require_alignment_question(root, state, binding.candidate["routing"])
-                    # Native STOP retains the failed gate's evidence and budgets.
-                    # Human-input/completion recovery owns the blocked reason.
-                    expected.pop("blocked_reason", None)
-                else:
-                    # Ordinary alignment invalidates transient certification.
-                    for key in ("governance_gate_exhausted", "blocked_reason"):
-                        expected.pop(key, None)
-                        _require(key not in state)
-                    expected["intent_alignment_verdict"] = binding.candidate["routing"]["verdict"]
-            _require(_json({key: state.get(key) for key in expected}) == _json(expected)
-                and get_full_resolved_config(root) == gate.recovery["config"])
+        if binding.producer in {"strategy", "alignment"} and binding.recovery["version"] != 38 and not binding.clarification:
+            require_assessment_entry_state(root, run, state, binding, store)
         if binding.producer == "alignment" and binding.recovery["version"] == 38:
             from harness.config import get_full_resolved_config
             from harness.discovery_assessment import require_alignment_repair
@@ -578,7 +551,7 @@ def authenticate(root, run, state, completion):
             _require(_json({key: state.get(key) for key in expected}) == _json(expected))
         if binding.clarification:
             from harness.tracker_clarification import require_parent
-            require_parent(state, binding, store)
+            require_parent(state, binding, store, root=root, run=run)
         if binding.policy_resolution:
             from harness.discovery_policy_resolution import require_parent
             require_parent(root, run, state, binding, store)
@@ -607,6 +580,37 @@ def authenticate(root, run, state, completion):
     except Exception:
         pass
     raise CompletionError("intent_mismatch")
+
+
+def require_assessment_entry_state(root, run, state, binding, store):
+    """Native entry effects, also checked for a retained question's prestate."""
+    from harness.config import get_full_resolved_config
+    gate_source = binding.recovery["source_completion"]
+    if binding.producer == "alignment":
+        strategy, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + gate_source["dispatch_id"],
+            source=gate_source, require_checkpoint=False,
+            required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
+        gate_source = strategy.recovery["source_completion"]
+    gate, _, _ = _retained_input_projection(root, run, state, store,
+        operation_id="discovery-completion-" + gate_source["dispatch_id"],
+        source=gate_source, require_checkpoint=False,
+        required_route=("phase2-feasibility-structural", "phase2-strategic-overview"))
+    expected = {**gate.recovery["routing_state"], **gate.recovery["result"]["state_updates"]}
+    if binding.producer == "alignment":
+        if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK":
+            from harness.discovery_assessment import require_alignment_question
+            require_alignment_question(root, state, binding.candidate["routing"])
+            # Native STOP retains the failed gate's evidence and budgets.
+            # Human-input/completion recovery owns the blocked reason.
+            expected.pop("blocked_reason", None)
+        else:
+            for key in ("governance_gate_exhausted", "blocked_reason"):
+                expected.pop(key, None)
+                _require(key not in state)
+            expected["intent_alignment_verdict"] = binding.candidate["routing"]["verdict"]
+    _require(_json({key: state.get(key) for key in expected}) == _json(expected)
+        and get_full_resolved_config(root) == gate.recovery["config"])
 
 
 def require_unpublished_orphan(root, run, state, intent):
@@ -1095,7 +1099,7 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             deriving = specification is not None and specification.producer == "lexicon"
             assessing = specification is not None and specification.producer == "feasibility"
             strategizing = specification is not None and specification.producer == "strategy"
-            aligning = specification is not None and specification.producer == "alignment"
+            aligning = specification is not None and specification.producer == "alignment" and not specification.clarification
             aligning_retry = aligning and specification.recovery["version"] == 38
             assessing_retry = assessing and specification.recovery["version"] == 33
             assessment_gate = specification is not None and specification.producer == "feasibility_gate"
@@ -1310,7 +1314,7 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
         _require(binding.restoration is not None and binding.restoration.state == "released")
     if binding.clarification:
         from harness.tracker_clarification import require_parent, require_resolution_receipt
-        require_parent(state, binding, store)
+        require_parent(state, binding, store, root=root, run=run)
         require_resolution_receipt(state, binding, marker)
     elif binding.policy_resolution:
         from harness.discovery_policy_resolution import require_parent, require_resolution_receipt

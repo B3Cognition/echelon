@@ -4971,9 +4971,16 @@ class SquadStateStore:
                     if (not binding.resolution_publication or binding.recovery["resolution"] != resolved
                             or expected_resolved is None or PENDING_EXTERNAL_PUBLICATION_KEY in before):
                         raise StateAdvanceError("clarification publication association changed", validator="completion_binding")
-                    if binding.policy_resolution and (detached_updates != binding.recovery["effects"]["state_updates"]
+                    if (binding.policy_resolution or binding.recovery["version"] == 41) and (detached_updates != binding.recovery["effects"]["state_updates"]
                             or sorted(removals) != binding.recovery["effects"]["state_removals"]):
                         raise StateAdvanceError("native policy effects changed", validator="completion_binding")
+                    if binding.recovery["version"] == 41:
+                        from harness.discovery_completion import _json
+                        if _json(detached_updates) != _json(binding.recovery["effects"]["state_updates"]):
+                            raise StateAdvanceError("native answer effects changed", validator="completion_binding")
+                    if binding.recovery["version"] == 41 and token_usage_delta != (
+                            binding.recovery["commander_receipt"] or {}).get("token_usage", 0):
+                        raise StateAdvanceError("native answer charge changed", validator="completion_binding")
                     desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
             return self._commit_human_input_state_unlocked(
                 before,

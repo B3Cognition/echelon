@@ -104,7 +104,7 @@ def validate_clarification_history(newest_first, *, pending=None):
     for binding in chronological:
         version, producer = binding.recovery["version"], binding.producer
         if type(version) is not int or (version, producer) not in {
-                (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment")}:
+                (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment"), (41, "alignment")}:
             raise ValueError("unsupported clarification history binding")
         if binding.recovery["previous"] != [asdict(item) for item in records]:
             raise ValueError("clarification prefix differs from native source ancestry")
@@ -152,9 +152,9 @@ def retained_clarification_records(store, *, spec_id, source):
             "why1": {6, 7, 11, 18}, "constitution": {12, 16}, "what": {13, 17, 20, 22, 26},
             "understanding": {14}, "why2": {15, 18, 19, 24}, "why2-policy": {21, 23, 25, 27},
             "lexicon": {28}, "lexicon_gate": {29}, "checkpoint": {30}, "feasibility": {31, 33},
-            "feasibility_gate": {32, 34}, "strategy": {35}, "alignment": {36, 38, 40}, "alignment_gate": {37, 39}}
+            "feasibility_gate": {32, 34}, "strategy": {35}, "alignment": {36, 38, 40, 41}, "alignment_gate": {37, 39}}
         _require(type(version) is int and version in versions.get(producer, set()))
-        if version in {5, 7, 18, 40}:
+        if version in {5, 7, 18, 40, 41}:
             _require(intent.origin == "resolution" and intent.route["decision_id"] == recovery["resolution"]["id"])
             records.append(SimpleNamespace(producer=producer, recovery=recovery))
         source = recovery.get("source_completion")
@@ -329,14 +329,62 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
     return publication, request, candidate
 
 
+def bind_alignment_effects(publication, request, effects, state):
+    """Bind the existing native effects; v40 remains a detached-only draft."""
+    from dataclasses import replace
+    from harness.discovery_completion import _document, _require, _json, decode_binding
+    from harness.element_identity_publication import encode_publication_request
+    recovery = _document(request.recovery_payload)
+    _require(recovery["version"] == 40)
+    recovery.update(version=41, effects=dict(route=effects.route, state_updates=effects.state_updates,
+        state_removals=sorted(effects.state_removals)))
+    request = replace(request, recovery_payload=_json(recovery))
+    decode_binding(dict(kind="external", marker=publication.marker.to_dict(),
+        managed_discovery=dict(version=1, request=encode_publication_request(request))), state=state)
+    return request
+
+
+def _require_alignment_effects(recovery, prepared, run_path, publication, state):
+    from pathlib import Path
+    from harness.discovery_completion import _require, _json
+    from harness.discovery_policy_resolution import _require_resolved_effects
+    from harness.squad import SquadController
+    before = recovery["before"]
+    reader = object.__new__(SquadController)
+    reader._squad_dir = Path(bootstrap_from_state(before)["selection"]["project_root"]) / run_path
+    report = json.loads(prepared.reconciliation_json)
+    route = clarification_target("alignment", recovery["resolution"], requires_repair=report["requires_repair"])
+    effects = reader._clarification_state_effects(before, route, json.loads(prepared.policy_text), report)
+    _require(_json(recovery["effects"]) == _json(dict(route=effects.route,
+        state_updates=effects.state_updates, state_removals=sorted(effects.state_removals))))
+    if state is None or _json(state) == _json(before):
+        return
+    _require(_json(state["blocked_decision"]) == _json(recovery["resolution"]))
+    _require_resolved_effects(state, recovery, publication)
+    _require(_json({key: state.get(key) for key in effects.state_updates if key != "status"})
+        == _json({key: value for key, value in effects.state_updates.items() if key != "status"}))
+    charge = (recovery["commander_receipt"] or {}).get("token_usage", 0)
+    _require(type(state["token_usage"]) is int and state["token_usage"] == before["token_usage"] + charge)
+    # Native answer/completion owns these lifecycle fields. Every other field
+    # (including budgets, ancestry, dispatch and gate evidence) stays unchanged.
+    changing = set(effects.state_updates) | set(effects.state_removals) | {
+        "blocked_decision", "recovery_instruction", "token_usage", "state_revision", "updated_at",
+        "blocked_reason", "escalation_question", "escalation_options", "escalation_resolved",
+        "autonomous_default_candidate", "pending_controller_completion", "pending_external_publication",
+        "external_publication_failure", "controller_completion_failure", "last_human_input_completion"}
+    _require(_json({key: value for key, value in state.items() if key not in changing})
+        == _json({key: value for key, value in before.items() if key not in changing}))
+
+
 def decode_clarification_binding(publication, request, recovery, completion_id, state):
     from harness.discovery_completion import _closed, _require, _document, _hash, DiscoveryCompletionBinding
     _closed(recovery, ("version", "producer", "completion_id", "operation", "source_completion", "resolution",
         "previous", "source_inputs", "source_fingerprint", "candidate_inputs", "sources", "graph_sha256",
-        *(("before", "commander_receipt") if recovery.get("version") == 40 else ())))
+        *(("before", "commander_receipt") if recovery.get("version") in {40, 41} else ()),
+        *(("effects",) if recovery.get("version") == 41 else ())))
     producer = recovery["producer"]
     _require(type(recovery["version"]) is int and ((recovery["version"], producer) in {
-            (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment")})
+            (5, "tracker"), (7, "why1"), (18, "tracker"), (18, "why1"), (18, "why2"), (40, "alignment"), (41, "alignment")})
         and (completion_id is None or completion_id == recovery["completion_id"]) and request.operations == ())
     source = _document(recovery["source_inputs"])
     _closed(source, ("manifest", "history", "authority", "runtime", *(("quality_policy",) if producer == "why2" else ())))
@@ -396,9 +444,11 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
                 and type(commander["token_usage"]) is int and commander["token_usage"] >= 0)
         else:
             _require(commander is None and not (decision["autonomy_mode"] == "banzai" and decision["automatic_eligible"] is True))
-        # This detached association does not admit native answer application.
-        # A later completion increment must bind its exact post-resolution effects.
-        _require(state is None or _json(state) == _json(before))
+        if recovery["version"] == 40:
+            # Detached drafts never acquire native application authority.
+            _require(state is None or _json(state) == _json(before))
+        else:
+            _require_alignment_effects(recovery, prepared, run_path, publication, state)
     _require(candidate["artifacts"] == texts)
     writes = {path: text.encode("utf-8") for path, text in texts.items()}
     graph = _graph(sources, history, dict(spec_id=selected["spec_id"], spec_path=spec_path))
@@ -417,7 +467,7 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
             and selected["run_id"] == bootstrap["selection"]["run_id"]
             and selected["spec_id"] == bootstrap["selection"]["spec_id"]
             and operation_from_state(state, producer, operation_id=selected["operation_id"]) == recovery["operation"])
-        if recovery["version"] in {18, 40}:
+        if recovery["version"] in {18, 40, 41}:
             # Chronology/completeness is checked against native ancestry by
             # authenticate and retained reads, never inferred from this set.
             known = {}
@@ -465,7 +515,7 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
     return DiscoveryCompletionBinding(request, recovery, candidate, source, sources, baseline)
 
 
-def require_parent(state, binding, store):
+def require_parent(state, binding, store, *, root=None, run=None):
     """Authenticate the exact retained Tracker result that asked this question."""
     from harness.discovery_completion import _document, _require, decode_binding
     from harness.squad_completion import validate_retained_completion_proof
@@ -486,6 +536,13 @@ def require_parent(state, binding, store):
     _require(question_claim(parent.candidate["routing"], binding.producer) == {
         key: decision[key] for key in ("question", "recommended_answer", "risk_level")})
     require_question_default(parent.candidate["routing"], binding.producer, decision)
+    if binding.producer == "alignment":
+        from harness.discovery_assessment import require_alignment_answer, require_alignment_question_evidence
+        from harness.managed_commander import resolution_receipt
+        before = binding.recovery["before"]
+        require_alignment_question_evidence(root, run, before, source)
+        policy = require_alignment_answer(root, before, decision, parent.candidate["routing"])
+        _require(resolution_receipt(run, before, decision, policy) == binding.recovery["commander_receipt"])
 
 
 def require_resolution_receipt(state, binding, marker):

@@ -606,6 +606,9 @@ def _validate_intent(
         from harness.discovery_completion import decode_binding
         from harness.discovery_producer import producer_phase
         binding = decode_binding(publication, completion_id=completion_id)
+        if binding.recovery["version"] == 40:
+            # A detached alignment draft cannot become a native transaction.
+            _raise("intent_invalid")
         clarification = binding.resolution_publication
         managed_debt = binding.policy_resolution and binding.recovery["version"] == 27
         if clarification:
@@ -632,7 +635,7 @@ def _validate_intent(
             _raise("intent_invalid")
         if binding.producer == "strategy" and route.get("to_phase") != "phase2-tracker-alignment":
             _raise("intent_invalid")
-        if binding.producer == "alignment" and route.get("to_phase") != (
+        if binding.producer == "alignment" and not clarification and route.get("to_phase") != (
                 "phase2-tracker-alignment" if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK"
                 else "phase2-intent-alignment-structural"):
             _raise("intent_invalid")

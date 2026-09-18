@@ -250,14 +250,24 @@ def require_alignment_answer(root, before, resolved, routing):
 
 def require_alignment_question_parent(root, run, state, source):
     """Authenticate the released initial question before preparing its answer."""
-    from types import SimpleNamespace
+    from harness.discovery_completion import _require
+    from harness.element_identity_store import IdentityStore
+    parent = require_alignment_question_evidence(root, run, state, source)
+    store = IdentityStore.open(root)
+    authority = store.check_managed_context(spec_id=parent.spec_id, run_id=state["run_id"], record=state["managed_identity"])
+    _require(authority["source_context"]["operation_id"] == parent.operation_id
+        and store.pending_identity_publication(spec_id=parent.spec_id) is None)
+    return parent
+
+
+def require_alignment_question_evidence(root, run, state, source):
+    """Historical question proof; live-head authority is checked separately."""
     from harness.blocked_decision import build_blocked_decision_v3
-    from harness.discovery_completion import _require, _retained_input_projection, _document, authenticate
+    from harness.discovery_completion import _require, _retained_input_projection, require_assessment_entry_state, _receipts
     from harness.discovery_policy_resolution import require_native_decision
     from harness.discovery_producer import SOURCE_FIELDS
     from harness.element_identity_store import IdentityStore
     from harness.human_input import select_initial_decision_status
-    from harness.squad_completion import validate_retained_completion_proof
     _require(state.get("phase") == "phase2-tracker-alignment" and state.get("status") == "blocked"
         and not state.get("cancel_requested") and not any(key in state for key in (
             "pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
@@ -279,15 +289,8 @@ def require_alignment_question_parent(root, run, state, source):
     initial = build_blocked_decision_v3(prepared=request, decision_id=decision["id"],
         status=select_initial_decision_status(state["autonomy_mode"], policy, request),
         autonomy_mode=state["autonomy_mode"], created_at=decision["created_at"])
-    row = store.identity_publication(spec_id=parent.spec_id, operation_id=parent.operation_id)
-    proof = _document(row["completion_payload"])
-    marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
-        proof["proof"]["intent"], proof["proof"]["receipts"])
-    authenticate(root, run, {**state, "blocked_decision": initial},
-        SimpleNamespace(marker=marker, intent=intent, receipts=receipts))
-    authority = store.check_managed_context(spec_id=parent.spec_id, run_id=state["run_id"], record=state["managed_identity"])
-    _require(authority["source_context"]["operation_id"] == parent.operation_id
-        and store.pending_identity_publication(spec_id=parent.spec_id) is None)
+    require_assessment_entry_state(root, run, {**state, "blocked_decision": initial}, parent, store)
+    _receipts(root, run, state, parent, store)
     return parent
 
 

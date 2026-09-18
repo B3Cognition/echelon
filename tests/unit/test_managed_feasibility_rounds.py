@@ -84,6 +84,56 @@ def test_selection_retains_approval_and_charges_only_one_operation(approved):
     assert store.load() == prepared
 
 
+def test_checkpoint_receipt_survives_a_later_native_answer(approved):
+    from types import SimpleNamespace
+    from harness.discovery_checkpoint_resolution import require_receipt
+    from harness.squad_completion import CompletionError
+    state = select(approved[1])
+    association = approval()
+    receipt = association["completion"]
+    marker = SimpleNamespace(**receipt)
+    binding_ = SimpleNamespace(recovery={"resolution": association["decision"]})
+    state["last_human_input_completion"] = {**receipt, "completion_id": "b" * 32, "decision_id": "dec-later"}
+    state["blocked_decision"] = {**association["decision"], "id": "dec-later"}
+    from harness.blocked_decision import validate_blocked_decision
+    validate_blocked_decision(state["blocked_decision"])
+    require_receipt(state, binding_, marker)
+    for damage in ("absent", "decision", "receipt"):
+        changed = deepcopy(state)
+        if damage == "absent":
+            del changed["managed_feasibility_rounds"]
+        else:
+            row = changed["managed_feasibility_rounds"]["rounds"][binding()["operation_id"]]
+            if damage == "decision": row["resolution"]["decision"]["resolution_rationale"] = "changed"
+            else: row["resolution"]["completion"]["intent_sha256"] = "d" * 64
+        with pytest.raises((CompletionError, ValueError)):
+            require_receipt(changed, binding_, marker)
+
+
+@pytest.mark.parametrize("damage", ["digest", "decision", "missing", "pending_question", "different_resolved"])
+def test_checkpoint_round_cannot_mask_a_damaged_current_receipt(approved, damage):
+    from types import SimpleNamespace
+    from harness.discovery_checkpoint_resolution import require_receipt
+    from harness.squad_completion import CompletionError
+    state = select(approved[1])
+    association = approval()
+    if damage == "digest": state["last_human_input_completion"]["intent_sha256"] = "0" * 64
+    elif damage == "decision": state["last_human_input_completion"]["decision_id"] = "different"
+    elif damage in {"pending_question", "different_resolved"}:
+        state["blocked_decision"] = {**association["decision"], "id": "dec-new-question"}
+        if damage == "pending_question":
+            state["blocked_decision"].update(status="awaiting_human", selected_option_id=None,
+                answer_text=None, resolved_by=None, resolved_at=None, resolution_rationale=None,
+                resolution_confidence=None, recommendation_followed=None, override_reason=None)
+        state["last_human_input_completion"]["decision_id"] = "different"
+    else: del state["last_human_input_completion"]
+    from harness.blocked_decision import validate_blocked_decision
+    validate_blocked_decision(state["blocked_decision"])
+    with pytest.raises((CompletionError, ValueError)):
+        require_receipt(state, SimpleNamespace(recovery={"resolution": association["decision"]}),
+            SimpleNamespace(**association["completion"]))
+
+
 @pytest.mark.parametrize("damage", ["reject", "missing_receipt", "different_receipt", "wrong_owner", "unfinished", "cancelled", "blocked", "wrong_phase", "wrong_parent", "pending_completion"])
 def test_first_selection_requires_exact_settled_approval_shape(approved, damage):
     _, store, _, _ = approved

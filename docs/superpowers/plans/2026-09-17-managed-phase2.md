@@ -201,8 +201,11 @@ Produces native alignment/structural outcome or sealed clarification resolution.
     Verify detached preparation before admitting native answer application;
     preserve ancestry, budgets and identity history through recovery.
     - [x] Verify detached answer preparation and closed native entry points.
-    - [ ] Bind native post-resolution effects and reauthenticate retained
+    - [x] Bind native post-resolution effects and reauthenticate retained
       COMMANDER receipts during completion/recovery before opening application.
+    - [ ] Admit authoring from the released answer association, including
+      native reconciliation-to-WHAT and repair-round questions; retain the
+      original question/answer and close at Phase 3 entry only.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -1496,3 +1499,134 @@ Phase 2 acceptance is claimed by creating this plan.
   recovery and public automatic dispatch remain next. No provider prose,
   installation, activation, Phase 3 execution, merge or push changes. Final
   diff checks passed; preserve both fresh and retained evidence for continuation.
+
+### Task 4 — native initial alignment answer application and recovery
+
+- Continuing inline from `3b7489c7` under the existing Phase 2 approval. This
+  increment opens native application of the initial reviewed alignment answer,
+  not resumed alignment authoring, repair-round questions or Phase 3 execution.
+- Public Codex/guided application first failed at the managed legacy-execution
+  guard on the actual retained question (`pytest-23` in the isolated root).
+  No question, native state, identity history or accepted proof was reset.
+- v40 remains a detached-only draft. v41 binds the same guarded clarification
+  publication to native answer effects, the exact before/resolved decision,
+  retained COMMANDER receipt and one exact token charge. Native Squad remains
+  the effects/CAS owner; the existing completion performs publication/context
+  work and releases the immutable proof. No new publisher, policy, allocator,
+  provider-specific prose or decision log was introduced.
+- The existing constrained COMMANDER transport also serves the exact eligible
+  alignment question. Admission checks live captured inputs before a provider
+  call and before accepting its response. A resolving claim replays its retained
+  answer before legacy interrupted-claim recovery can allocate another attempt.
+- First real application passed native state save, first-file interruption and
+  post-identity-apply interruption, then exposed a final-release failure: the
+  historical checkpoint validator looked only at the latest answer receipt,
+  which the alignment answer had legitimately replaced. Its exact checkpoint
+  decision/receipt was already retained by the first feasibility round. The
+  validator now checks that existing native association as a historical fallback;
+  the new regression failed before this change and passed afterward (**1 test,
+  30 deselected in 10.40s**). No history was reconstructed or overwritten.
+- Public resume recovered that Codex post-state-save release with unchanged
+  state/history, no new provider call and no additional charge. The retained
+  Claude/Banzai case at original-root `pytest-365` then passed answer application,
+  first-file/post-identity/late-release interruptions and public resume: retained
+  WASD judgment, zero new calls, exactly 7 tokens charged once, prior warning
+  exhaustion/counters preserved and no Phase 3 dispatch.
+- Read-only review found two gaps, both addressed: v40 must be explicitly
+  rejected by native completion validation (not merely fail after state save),
+  and historical question validation must retain the original native
+  turn/reservation/Prosaic-role receipt checks after separating live-head checks.
+  Final production review reported no remaining actionable finding.
+- Added native CAS wrong-charge/wrong-effects/wrong-removal refusals with exact
+  state preservation; v41 decoder negatives for changed charge, counters, typed
+  iteration, route, effects, ancestry, answer and policy; and actual receipt
+  refusal for a forged COMMANDER hash. Changed neutral role text and missing
+  native alignment evidence are rejected without altering canonical fixtures.
+- Retained Codex at isolated-root `pytest-10` passed the updated v40 closure,
+  native CAS negatives, decoder negatives, answer publication and all recovery
+  boundaries. The first v40 closure assertion initially expected the internal
+  completion exception; the controller correctly wraps it in StateAdvanceError.
+  The test expectation was corrected, without a production change or state reset.
+- Focused checks passed **116 tests, 4 deselected in 41.97s**, followed by broader
+  native completion/COMMANDER/clarification/round checks: **384 tests,
+  4 deselected in 51.14s**. Shared native state/human-input/policy/discovery
+  completion/publication regressions passed **486 tests, 148 deselected in
+  297.09s**. A fresh Claude/Banzai full-prefix acceptance is still running;
+  record its result below before claiming this checkpoint verified.
+  All tests use the isolated TMPDIR and
+  retention count 200/policy all; no retained acceptance fixtures were deleted.
+- Current-code released Codex and Claude proofs passed the expanded decoder,
+  native role/receipt and actual COMMANDER-hash negatives. Public resume after
+  completed release is inert; submitting a different second human answer is
+  rejected for both providers, with unchanged state/history and zero calls.
+- The next bounded increment is the existing retained-round association from
+  this released v41 answer into alignment (or native reconciliation-to-WHAT),
+  followed by repair-round questions and structural recheck. Do not dispatch an
+  author from the old question's `last_dispatch`, infer resolution from Markdown,
+  reset the original question/attempts, or reinterpret v40 as an applied answer.
+- Further review found a real native transaction/decoder type mismatch: Python
+  dict equality accepts integer/float or boolean/integer substitutions that the
+  v41 JSON proof rejects. Two isolated CAS tests reproduced this by intercepting
+  persistence (no retained fixture writes); v41 now compares canonical JSON
+  effects before saving. Both negatives pass, while correctly typed effects
+  still reach the intercepted persistence boundary. Existing policy-resolution
+  equality behavior is unchanged.
+- Fresh Claude/Banzai full-prefix acceptance (`pytest-31/test_alignment_answer_applicat0`)
+  failed after **815.57s**, before feasibility publication, at the existing
+  historical-checkpoint tamper test. The first fallback was too permissive for
+  a damaged *current* receipt. Added missing/digest/decision-ID negatives and
+  pending-new-question/mismatched-resolved-ID negatives; all five reproduced
+  the gap without changing saved state. The final fallback requires a different
+  latest receipt matching the current resolved decision, then the exact native
+  feasibility association. A pending question alone is not a newer answer.
+- Latest focused effect-type/current-receipt/history checks passed **8 tests,
+  35 deselected in 11.27s**, including positive typed effects and legitimate
+  supersession. Read-only review confirmed the narrowed fallback and typed CAS
+  fixes; no remaining actionable finding for this bounded increment.
+- The fresh prefix is being continued from its actual accepted feasibility
+  operation, without resetting state, config, source history or provider receipts.
+  Historical-checkpoint tamper refusals and native feasibility publication have
+  passed under current code. This is retained continuation, not an uninterrupted
+  green fresh pytest run. Record its final initial-COMMANDER/recovery outcome
+  below before committing.
+- Expanded focused regressions passed **389 tests, 4 deselected in 51.92s**
+  after typed-CAS and initial current-receipt fixes. The final two receipt
+  narrowing negatives are covered by the 8-test run above. Shared regressions
+  passed again: **486 tests, 148 deselected in 300.36s**. Resumed authoring/second
+  questions remain closed: when those
+  are admitted, older checkpoint membership must use their authenticated native
+  answer-round association, not relax the latest-receipt check by ID alone.
+- Final-code released Codex and Claude answer ancestries authenticate through
+  the narrowed historical receipt rule. Native selection of another alignment
+  round from their answer is still refused, with unchanged state/history and
+  no Phase 3 dispatch. This explicitly tests the next-increment boundary.
+- The preserved `pytest-31` Claude/Banzai continuation completed feasibility,
+  its warn-exhausted structural gate, strategy and alignment question, then
+  passed the **public initial COMMANDER dispatch** and answer transaction. One
+  judgment selected WASD over the recommended arrow keys; exactly 7 scripted
+  tokens were charged once. Pre-publication, first-file, post-identity-apply and
+  post-state-save/pre-release interruptions recovered, with no second judgment.
+  Native CAS/decoder/evidence forgeries and duplicate-answer refusal passed.
+- Final state of that continuation is running at alignment, answer resolved by
+  COMMANDER, attempt 1, **245 scripted tokens**, iteration 0 and feasibility
+  attempts 1 with warning exhaustion preserved. No pending identity publication
+  or Phase 3 dispatch remains. Preserve the fixture; this is a successful
+  current-work retained continuation of the recorded red fresh prefix, not an
+  uninterrupted green full-prefix pytest result or a live-model run.
+- The final eight type/receipt checks passed again in **11.23s**, with native
+  decision-schema validation of the pending/resolved shape fixtures. Their
+  temporary decision-ID prefix was corrected in the tests; no production change
+  or retained-state reset was involved.
+- Final current-worktree audit of the released `pytest-31` answer passed the
+  actual historical checkpoint-receipt forgery, decoder/counter/role/COMMANDER
+  receipt negatives, full retained ancestry and inert public replay. State and
+  identity history remained unchanged: 245 scripted tokens, one COMMANDER
+  attempt, no pending publication and no Phase 3 dispatch. The standalone audit
+  was explicitly pinned to this worktree's `src`; an initial invocation without
+  that import path loaded the older editable installation and refused the new
+  proof before any mutation. Pytest already selects the worktree through its
+  configured `pythonpath`.
+- This checkpoint completes initial answer application/recovery only. Resumed
+  alignment/WHAT authoring, repair-round questions and remaining Phase 2
+  acceptance remain the next planned work; no install, activation or live-model
+  acceptance is claimed here.
