@@ -119,9 +119,9 @@ def _capture(root, state_store, store, selected, input_tree, artifact_paths, *, 
         state = state_store.load()
         if producer in {"strategy", "alignment"} and not clarification:
             from harness.discovery_assessment import require_strategy_parent, require_alignment_parent
-            from harness.discovery_producer import SOURCE_FIELDS
+            from harness.discovery_spec import current_spec_source
             try:
-                parent = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+                parent = current_spec_source(root, state, producer)
                 require_parent = require_alignment_parent if producer == "alignment" else require_strategy_parent
                 require_parent(root, state_store.squad_dir, state, parent)
                 if source_completion is not None and source_completion != parent:

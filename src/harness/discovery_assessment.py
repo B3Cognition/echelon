@@ -143,7 +143,7 @@ def require_alignment_repair(root, run, state, source, predecessor):
 
 
 def require_alignment_parent(root, run, state, source):
-    """Require released strategy or the exact failed gate; preserve native budgets."""
+    """Require released strategy, failed gate or answer; preserve native budgets."""
     from types import SimpleNamespace
     from harness.discovery_completion import _require, _retained_input_projection, _document, authenticate
     from harness.discovery_producer import SOURCE_FIELDS, tracker_rounds
@@ -160,15 +160,36 @@ def require_alignment_parent(root, run, state, source):
     operation_id = "alignment-" + source.get("dispatch_id", "")
     selected = None if rounds is None else rounds["rounds"].get(operation_id)
     if selected is not None:
-        _require(rounds["active"] == operation_id and selected["source"] == source
-            and selected["resolution"] is None)
+        _require(rounds["active"] == operation_id and selected["source"] == source)
     predecessor = None if rounds is None else (selected["predecessor"] if selected is not None else rounds["active"])
-    _require(dispatch.get("phase_id") == ("phase2-strategic-overview" if predecessor is None
-            else "phase2-intent-alignment-structural")
-        and dispatch.get("post_dispatch_complete") is True
-        and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})
+    answering = dispatch.get("phase_id") == "phase2-tracker-alignment"
+    if answering:
+        from harness.discovery_spec import clarification_source
+        decision, receipt = state.get("blocked_decision") or {}, state.get("last_human_input_completion")
+        _require(predecessor is not None and decision.get("status") == "resolved"
+            and decision.get("source_phase") == "phase2-tracker-alignment"
+            and decision.get("resolution_handler") == "clarification_resume"
+            and type(receipt) is dict and receipt.get("decision_id") == decision.get("id")
+            and source == clarification_source(receipt) and dispatch.get("post_dispatch_complete") is True)
+        if selected is not None:
+            _require(selected["resolution"] == dict(decision=decision, completion=receipt))
+    else:
+        _require((selected is None or selected["resolution"] is None)
+            and dispatch.get("phase_id") == ("phase2-strategic-overview" if predecessor is None
+                else "phase2-intent-alignment-structural")
+            and dispatch.get("post_dispatch_complete") is True
+            and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})
     store = IdentityStore.open(root)
-    if predecessor is None:
+    if answering:
+        binding, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+            require_checkpoint=False, required_origin="resolution",
+            required_route=("phase2-tracker-alignment", "phase2-tracker-alignment"))
+        _require(binding.producer == "alignment" and binding.recovery["version"] == 41
+            and binding.candidate["route"] == "phase2-tracker-alignment"
+            and binding.recovery["resolution"] == decision
+            and binding.recovery["operation"]["binding"]["operation_id"] == predecessor)
+    elif predecessor is None:
         binding, _, _ = _retained_input_projection(root, run, state, store,
             operation_id="discovery-completion-" + source["dispatch_id"], source=source,
             require_checkpoint=False,

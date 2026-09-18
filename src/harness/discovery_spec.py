@@ -84,6 +84,14 @@ def current_spec_source(root, state, producer):
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     decision, receipt = state.get("blocked_decision") or {}, state.get("last_human_input_completion")
     authorization = state.get("spec_quality_debt_authorization") or {}
+    if (producer == "alignment" and state["last_dispatch"]["phase_id"] == "phase2-tracker-alignment"
+            and decision.get("status") == "resolved" and decision.get("source_phase") == "phase2-tracker-alignment"
+            and decision.get("resolution_handler") == "clarification_resume" and receipt is not None
+            and receipt.get("decision_id") == decision.get("id")):
+        observed = IdentityStore.open(root).check_managed_context(spec_id=state["managed_identity"]["spec_id"],
+            run_id=state["run_id"], record=state["managed_identity"])
+        if observed["source_context"]["operation_id"] == "discovery-completion-" + receipt["completion_id"]:
+            return clarification_source(receipt)
     if (producer in {"lexicon", "checkpoint"} and receipt is not None
             and (authorization.get("resolution_completion") or {}).get("completion_id") == receipt.get("completion_id")
             and (authorization.get("resolved_decision") or {}).get("id") == receipt.get("decision_id")):

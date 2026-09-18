@@ -206,6 +206,13 @@ Produces native alignment/structural outcome or sealed clarification resolution.
     - [ ] Admit authoring from the released answer association, including
       native reconciliation-to-WHAT and repair-round questions; retain the
       original question/answer and close at Phase 3 entry only.
+      - [x] Select and execute/replay one alignment successor from the initial
+        released v41 answer, preserving its native decision, ancestry and budgets.
+        Keep resumed publication closed in this execution checkpoint.
+      - [ ] Bind resumed alignment publication and structural continuation, then
+        reconciliation-to-WHAT and repair-round questions through their exact
+        native associations; do not reinterpret a v38 structural repair as an
+        answer-derived author result.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -1630,3 +1637,83 @@ Phase 2 acceptance is claimed by creating this plan.
   alignment/WHAT authoring, repair-round questions and remaining Phase 2
   acceptance remain the next planned work; no install, activation or live-model
   acceptance is claimed here.
+
+### Task 4 — initial answer-to-alignment author continuation
+
+- Continue from `9db7edda`, inline in the same worktree. This bounded increment
+  authenticates the actual released v41 answer, selects one native alignment
+  successor and executes/replays its neutral proposal/author/reviewer turns.
+  Resumed result publication, reconciliation-to-WHAT, repair-round questions,
+  structural recheck and public activation remain closed until their own
+  continuation proofs are verified. No new publication format or policy owner.
+- Preserve the original accepted question round and exact native decision and
+  receipt in the successor. Project only that single native selection and its
+  one outer-dispatch increment when checking the answer's entry state. All
+  unrelated state, historical rounds, budgets, accounting and source authority
+  remain exact; selection does not authorize forged proof or a new source head.
+- Baseline alignment round suite passed **12 tests in 11.23s**. The new real
+  retained Claude continuation failed at the expected strategy/gate-only
+  parent guard before any mutation. After adding the answer association, native
+  selection and capture passed; a test expected only ValueError for tamper
+  refusal, but the completion owner correctly returned CompletionError. The
+  assertion now accepts both fail-closed forms; no retained state was reset.
+- The small state-only fixture originally constructed a choice decision for a
+  free-text answer. It now uses the native policy registry and decision builder,
+  not hand-written resolver metadata. Alignment round suite passed **13 tests
+  in 11.53s**. These shape tests do not replace actual released-answer ancestry.
+- Focused clarification/round/completion regressions passed **362 tests,
+  4 deselected in 33.13s**. Read-only review found no actionable correctness
+  issues and confirmed that old v36/v38 publication decoding still excludes
+  resolution-derived rounds. Its test-helper note is intentional: use this
+  helper from answer entry or selected-but-not-started state, not an already
+  completed operation.
+- Preserved Claude/Banzai `pytest-31/test_alignment_answer_applicat0` completed
+  this actual continuation: exact saved answer in captured evidence and all
+  three proposal/author/reviewer prompts, one accepted resumed round, retained
+  replay with no additional calls, tamper refusals and closed publication.
+  Original question, COMMANDER resolution, 245 committed scripted tokens,
+  iteration/feasibility budgets, requirement history and canonical documents
+  remained unchanged. The new operation reports 21 retained scripted tokens;
+  its cumulative charge belongs to the future native publication/completion,
+  not selection. This is retained continuation, not a fresh or live-model run.
+- Preserved Codex/guided `pytest-10/test_alignment_question_reache0` passed the
+  same continuation plus interruption immediately after native accepted-result
+  persistence. Restart and replay used the same three retained provider turns,
+  without another call or dispatch increment. Original question/answer,
+  canonical artifacts and history remained unchanged; resumed publication was
+  refused. No fixture was reset or removed.
+- Shared native state/human-input/policy/discovery completion/publication
+  regressions passed **486 tests, 148 deselected in 308.12s**. A current-code
+  audit of the accepted Claude successor validated the actual v41 proof and
+  rejected seven counter/type/budget/charge/resolution/predecessor mutations
+  without changing saved state. Read-only review had no actionable findings.
+- Fresh Codex full-prefix acceptance is running in isolated-root
+  `pytest-49/test_released_answer_drives_on0`; record its outcome before commit.
+- After both retained successors reached accepted status, current-code public
+  answer replay remained inert and replacing the resolved answer was refused
+  for both providers. Native state and identity history were unchanged and
+  neither executor was called. This additionally verifies COMMANDER/user answer
+  recovery remains safe after the new round exists.
+- Fresh Codex/guided full-prefix command passed **1 test, 1 deselected in
+  1933.16s (32:13)**: repository interpreter `python -m pytest
+  tests/unit/test_managed_alignment_answer_round.py -k codex -q --tb=short`
+  with `PYTHONDONTWRITEBYTECODE=1`, the isolated TMPDIR and retention flags above.
+  Actual Phase 1 approval, feasibility, strategy, initial alignment question,
+  answer application/interrupted recovery and the new answer-derived author
+  plus no-call replay all passed in one fresh pytest invocation. This is
+  scripted acceptance, not live-provider or full-Phase-2 acceptance.
+- The fresh process loaded the test before the additional accepted-result
+  interruption, typed-counter and post-author public-answer replay assertions
+  were added. Those additions passed separately on current-code retained runs
+  as recorded above; do not describe them as part of that fresh pytest result.
+- Final current-code audit of that fresh accepted successor passed the typed
+  iteration/dispatch-count refusals, inert public-answer replay and second-answer
+  refusal. Its saved state/history stayed unchanged: exactly two alignment
+  author dispatches, 210 committed scripted tokens, no pending publication and
+  no Phase 3 dispatch. Final working/staged diff checks passed.
+- Next checkpoint: publication/native handoff of this exact answer-derived
+  candidate, retaining the answer association and original native budget, then
+  structural continuation, WHAT reconciliation and subsequent questions. Do not
+  reset the accepted round, invoke its three provider turns again, promote its
+  draft directly, or reuse v38's structural-repair proof. Global installation,
+  activation, Phase 3, merge/push and live-model exclusions remain unchanged.

@@ -128,6 +128,8 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     store = IdentityStore.open(root)
     state, selected, operation = _selected(root, state_store, store, producer, repair_unit=repair_unit)
     binding, selection = operation["binding"], selected["selection"]
+    if producer == "alignment" and tracker_round(state, producer="alignment")["resolution"] is not None:
+        raise ValueError("resumed alignment publication requires its native continuation association")
     candidate = _replay(root, state_store, executor, binding, producer, repair_unit=repair_unit)
     if (producer == "alignment" and json.loads(candidate.candidate_inputs)["routing"]["verdict"] == "STOP_AND_ASK"
             and tracker_round(state, producer="alignment")["predecessor"] is not None):

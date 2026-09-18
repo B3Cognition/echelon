@@ -114,8 +114,8 @@ def tracker_rounds(state, producer="tracker"):
             raise ValueError("feasibility requires initial approval or a retained structural predecessor")
         if producer == "strategy" and (resolution is not None or predecessor is not None or len(value["rounds"]) != 1):
             raise ValueError("first-entry assessment requires one exact parent, without repair or resolution")
-        if producer == "alignment" and resolution is not None:
-            raise ValueError("alignment structural repair cannot borrow a clarification resolution")
+        if producer == "alignment" and resolution is not None and predecessor is None:
+            raise ValueError("alignment answer requires its accepted question predecessor")
         association = row.get("review_resolution", resolution)
         if association is not None:
             from harness.blocked_decision import validate_blocked_decision
@@ -124,7 +124,7 @@ def tracker_rounds(state, producer="tracker"):
             decision = validate_blocked_decision(association["decision"])
             receipt = association["completion"]
             owner = "why2" if "review_resolution" in row or producer == "lexicon" else producer
-            phase = "checkpoint-assess" if producer == "feasibility" else "phase1-" + owner
+            phase = "checkpoint-assess" if producer == "feasibility" else "phase2-tracker-alignment" if producer == "alignment" else "phase1-" + owner
             if (decision != association["decision"] or decision["status"] != "resolved"
                     or decision["source_phase"] != phase or type(receipt) is not dict
                     or receipt.get("decision_id") != decision["id"]):
@@ -148,6 +148,12 @@ def tracker_rounds(state, producer="tracker"):
                 from harness.discovery_spec import clarification_source
                 if state_effects(decision)["route"] != "phase2-decide" or source != clarification_source(receipt):
                     raise ValueError("feasibility requires exact native approval resolution")
+            if producer == "alignment":
+                from harness.discovery_spec import clarification_source
+                from harness.tracker_clarification import _record
+                _record(decision, "alignment")
+                if source != clarification_source(receipt):
+                    raise ValueError("alignment answer source differs from its native receipt")
             if "review_resolution" in row:
                 from harness.discovery_spec import clarification_source
                 if row["source"] != clarification_source(receipt):

@@ -359,6 +359,7 @@ def _require_alignment_effects(recovery, prepared, run_path, publication, state)
         state_updates=effects.state_updates, state_removals=sorted(effects.state_removals))))
     if state is None or _json(state) == _json(before):
         return
+    state = _alignment_answer_entry_state(state, recovery)
     _require(_json(state["blocked_decision"]) == _json(recovery["resolution"]))
     _require_resolved_effects(state, recovery, publication)
     _require(_json({key: state.get(key) for key in effects.state_updates if key != "status"})
@@ -374,6 +375,37 @@ def _require_alignment_effects(recovery, prepared, run_path, publication, state)
         "external_publication_failure", "controller_completion_failure", "last_human_input_completion"}
     _require(_json({key: value for key, value in state.items() if key not in changing})
         == _json({key: value for key, value in before.items() if key not in changing}))
+
+
+def _alignment_answer_entry_state(state, recovery):
+    """Project only one native author selection, never new effects or budgets.
+
+    The released answer remains current until that author's publication is
+    admitted separately. Historical rounds and all unrelated fields stay exact.
+    """
+    from harness.discovery_completion import _require, _json
+    from harness.discovery_spec import clarification_source
+    before = recovery["before"]
+    prior = tracker_rounds(before, "alignment")
+    rounds = tracker_rounds(state, "alignment")
+    if _json(rounds) == _json(prior):
+        return state
+    receipt = state.get("last_human_input_completion")
+    source = clarification_source(receipt)
+    operation_id = "alignment-" + recovery["completion_id"]
+    _require(rounds is not None and prior is not None and operation_id not in prior["rounds"]
+        and rounds["active"] == operation_id and set(rounds["rounds"]) == {*prior["rounds"], operation_id}
+        and _json({key: rounds["rounds"][key] for key in prior["rounds"]}) == _json(prior["rounds"]))
+    row = rounds["rounds"][operation_id]
+    _require(row["source"] == source and source["dispatch_id"] == recovery["completion_id"]
+        and row["resolution"] == dict(decision=recovery["resolution"], completion=receipt)
+        and row["predecessor"] == prior["active"] == recovery["operation"]["binding"]["operation_id"])
+    operation = operation_from_state(state, "alignment")
+    counts = dict(before["phase_dispatch_counts"])
+    if operation is not None:
+        counts["phase2-tracker-alignment"] = counts.get("phase2-tracker-alignment", 0) + 1
+    _require(_json(state["phase_dispatch_counts"]) == _json(counts))
+    return {**state, "managed_alignment_rounds": prior, "phase_dispatch_counts": before["phase_dispatch_counts"]}
 
 
 def decode_clarification_binding(publication, request, recovery, completion_id, state):
@@ -492,7 +524,7 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
             from harness.discovery_spec import clarification_source
             _require(successor.get("review_parent", successor["predecessor"]) == selected["operation_id"]
                 and successor["source"] == (clarification_source(association["completion"])
-                    if producer == "why2" else recovery["source_completion"])
+                    if producer in {"why2", "alignment"} else recovery["source_completion"])
                 and association["completion"]["completion_id"] == recovery["completion_id"])
         else:
             dispatch = state.get("last_dispatch") or {}

@@ -356,11 +356,6 @@ def assert_answer_application(case, provider, *, commander=False):
             assert ctrl.resume_pending_human_input() is False
             with pytest.raises(HumanInputPolicyError, match="not awaiting a human answer"):
                 ctrl.resume_with_human_input("Use a different answer")
-    from harness.discovery_spec import clarification_source
-    from harness.squad_state import StateAdvanceError
-    with pytest.raises(StateAdvanceError):
-        store.prepare_spec_round("alignment", clarification_source(after["last_human_input_completion"]),
-            expected_state=after)
     assert store.load() == after and len(executor.calls) == expected_calls
 
 

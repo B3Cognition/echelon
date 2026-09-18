@@ -2834,8 +2834,16 @@ class SquadStateStore:
                 selected = None if retained is None else retained["rounds"].get("alignment-" + source.get("dispatch_id", ""))
                 initial = retained is None or (selected is not None and selected["predecessor"] is None)
                 parents = {"phase2-strategic-overview"} if initial else {"phase2-intent-alignment-structural"}
+                if (not initial and dispatch.get("phase_id") == "phase2-tracker-alignment"
+                        and decision.get("status") == "resolved"
+                        and decision.get("source_phase") == "phase2-tracker-alignment"
+                        and decision.get("resolution_handler") == "clarification_resume"
+                        and receipt is not None and receipt.get("decision_id") == decision.get("id")):
+                    from harness.discovery_spec import clarification_source
+                    if source == clarification_source(receipt):
+                        resolution = dict(decision=validate_blocked_decision(decision), completion=deepcopy(receipt))
             if resolution is not None:
-                parents = {"phase1-why2"}
+                parents = {"phase2-tracker-alignment"} if producer == "alignment" else {"phase1-why2"}
             if producer == "feasibility":
                 retained = _tracker_from_state(current, producer)
                 selected = None if retained is None else retained["rounds"].get("feasibility-" + source.get("dispatch_id", ""))

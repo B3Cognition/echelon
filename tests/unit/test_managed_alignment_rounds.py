@@ -126,3 +126,46 @@ def test_alignment_repair_retains_accepted_predecessor_and_native_budget(gate, m
     with pytest.raises(ValueError):
         require_alignment_parent(root, store.squad_dir, selected, source("a"))
     assert store.load() == selected
+
+
+def test_answer_round_retains_native_resolution_and_accepted_question(gate):
+    """State shape/CAS only; released-answer authority is tested separately."""
+    from pathlib import Path
+    from harness.blocked_decision import build_blocked_decision_v3
+    from harness.phase_graph import PhaseGraph
+    from harness.human_input import AppliedHumanInputResolution
+    from harness.squad_state import build_human_input_resolution_postimage
+    from harness.discovery_spec import clarification_source
+    _, store, _, _ = gate
+    store.prepare_spec_round("alignment", source("a"), expected_state=store.load())
+    for event in ("prepare", "begin", "finish"):
+        store.advance_discovery_operation(binding(), event, producer="alignment", **(dict(
+            result=dict(status="accepted", candidate_sha256="c" * 64, findings_sha256="d" * 64)) if event == "finish" else {}))
+    registry = PhaseGraph(Path(__file__).resolve().parents[2] / "runtime/workflow/definition.yaml").human_input_policy_registry()
+    request = registry.prepare(source_kind="provider_escalation", producer_id="phase2-tracker-alignment",
+        phase_id="phase2-tracker-alignment", reason_code="human_clarification_required",
+        question="Which movement controls?", recommended_answer="Use arrows", risk_level="low", source_state_revision=1)
+    question = build_blocked_decision_v3(prepared=request, decision_id="dec-answer-round",
+        status="awaiting_human", autonomy_mode="guided", created_at="2026-09-18T10:00:00+00:00")
+    decision = build_human_input_resolution_postimage(question, AppliedHumanInputResolution(None, "Use WASD", "user"),
+        resolved_at="2026-09-18T12:00:00+00:00")
+    receipt = dict(schema_version=1, decision_id=decision["id"], completion_id="b" * 32,
+        intent_sha256="1" * 64, receipts_sha256="2" * 64, publication_binding_sha256="3" * 64)
+    state = store.load()
+    state.update(blocked_decision=decision, last_human_input_completion=receipt,
+        last_dispatch={**source("c"), "phase_id": "phase2-tracker-alignment", "post_dispatch_complete": True})
+    store._path.write_text(json.dumps(state))
+    selected = store.prepare_spec_round("alignment", clarification_source(receipt), expected_state=state)
+    row = tracker_round(selected, producer="alignment")
+    assert row == dict(source=source("b"), resolution=dict(decision=decision, completion=receipt),
+        predecessor=binding()["operation_id"], operation=None, turns=None)
+    assert store.prepare_spec_round("alignment", source("b"), expected_state=selected) == selected
+    for damage in ("answer", "receipt", "source", "predecessor"):
+        changed = deepcopy(selected)
+        current = changed["managed_alignment_rounds"]["rounds"]["alignment-" + "b" * 32]
+        if damage == "answer": current["resolution"]["decision"]["answer_text"] = "Changed answer"
+        elif damage == "receipt": current["resolution"]["completion"]["intent_sha256"] = "0" * 64
+        elif damage == "source": current["source"] = source("d")
+        else: current["predecessor"] = None
+        with pytest.raises(StateAdvanceError): store.save(changed)
+    assert store.load() == selected
