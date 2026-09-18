@@ -16,7 +16,6 @@ def assert_answer_round(case, provider):
     from harness.discovery_operation import run_discovery_operation
     from harness.discovery_producer import SOURCE_FIELDS, tracker_round
     from harness.discovery_spec import clarification_source, current_spec_source
-    from harness.discovery_publication import prepare_discovery_publication
     from harness.squad_state import StateAdvanceError
     from harness.squad_completion import CompletionError
     from tests.unit.test_managed_alignment import capture
@@ -95,9 +94,6 @@ def assert_answer_round(case, provider):
             ctrl = controller(case, executor)
             assert ctrl.resume_pending_human_input() is False
             with pytest.raises(HumanInputPolicyError): ctrl.resume_with_human_input("Replace the saved answer")
-            # This increment admits execution, not resumed publication or another question.
-            with pytest.raises(ValueError):
-                prepare_discovery_publication(root, store, executor, completion_id="f" * 32, producer="alignment")
             assert store.load() == accepted and len(executor.calls) == 3
     assert accepted["managed_alignment_rounds"]["rounds"][predecessor] == before["managed_alignment_rounds"]["rounds"][predecessor]
     assert accepted["phase_dispatch_counts"]["phase2-tracker-alignment"] == before["phase_dispatch_counts"]["phase2-tracker-alignment"] + 1

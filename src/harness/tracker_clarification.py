@@ -152,7 +152,7 @@ def retained_clarification_records(store, *, spec_id, source):
             "why1": {6, 7, 11, 18}, "constitution": {12, 16}, "what": {13, 17, 20, 22, 26},
             "understanding": {14}, "why2": {15, 18, 19, 24}, "why2-policy": {21, 23, 25, 27},
             "lexicon": {28}, "lexicon_gate": {29}, "checkpoint": {30}, "feasibility": {31, 33},
-            "feasibility_gate": {32, 34}, "strategy": {35}, "alignment": {36, 38, 40, 41}, "alignment_gate": {37, 39}}
+            "feasibility_gate": {32, 34}, "strategy": {35}, "alignment": {36, 38, 40, 41, 42}, "alignment_gate": {37, 39}}
         _require(type(version) is int and version in versions.get(producer, set()))
         if version in {5, 7, 18, 40, 41}:
             _require(intent.origin == "resolution" and intent.route["decision_id"] == recovery["resolution"]["id"])
@@ -406,6 +406,83 @@ def _alignment_answer_entry_state(state, recovery):
         counts["phase2-tracker-alignment"] = counts.get("phase2-tracker-alignment", 0) + 1
     _require(_json(state["phase_dispatch_counts"]) == _json(counts))
     return {**state, "managed_alignment_rounds": prior, "phase_dispatch_counts": before["phase_dispatch_counts"]}
+
+
+def require_released_alignment_membership(state, binding, marker):
+    """Historical v41 membership, called only after authenticating release proof.
+
+    Do not replay historical lifecycle effects against a descendant. Keep the
+    native operation, genesis, answer and full completion receipt association.
+    """
+    from harness.discovery_completion import _require, _json
+    from harness.discovery_spec import clarification_source
+    recovery = binding.recovery
+    _require(binding.producer == "alignment" and recovery["version"] == 41
+        and bootstrap_from_state(state) == bootstrap_from_state(recovery["before"])
+        and state.get("managed_identity") == binding.source["authority"]["managed_identity"]
+        and _json(operation_from_state(state, "alignment",
+            operation_id=recovery["operation"]["binding"]["operation_id"])) == _json(recovery["operation"]))
+    successors = [(row, association) for row, association in _resolution_rows(state, "alignment")
+        if association["decision"]["id"] == recovery["resolution"]["id"]]
+    if successors:
+        (row, association), = successors
+        _require(_json(association["decision"]) == _json(recovery["resolution"])
+            and row["predecessor"] == recovery["operation"]["binding"]["operation_id"]
+            and row["source"] == clarification_source(association["completion"])
+            and association["completion"] == dict(schema_version=1, completion_id=marker.completion_id,
+                intent_sha256=marker.intent_sha256, receipts_sha256=marker.receipts_sha256,
+                publication_binding_sha256=marker.publication_binding_sha256, decision_id=recovery["resolution"]["id"]))
+    else:
+        _require(_json(state.get("blocked_decision")) == _json(recovery["resolution"]))
+    require_resolution_receipt(state, binding, marker)
+
+
+def require_alignment_author_effects(state, binding, answer, completion, run):
+    """One native author handoff after v41; no reset of evidence or budgets."""
+    from harness.discovery_completion import _require, _json, _read_receipt
+    from harness.discovery_turns import _validate, _usage
+    from harness.squad_state import SquadStateStore
+    recovery, parent = binding.recovery, answer.recovery
+    _require(recovery["version"] == 42 and parent["version"] == 41
+        and _json(recovery["resolution"]["decision"]) == _json(parent["resolution"])
+        and recovery["predecessor"] == parent["operation"]["binding"]["operation_id"])
+    observed = dict(_alignment_answer_entry_state(state, parent))
+    for key in ("external_publication_failure", "controller_completion_failure"):
+        if key in observed:
+            _require((state.get("pending_controller_completion") or {}).get("completion_id") == recovery["completion_id"])
+            SquadStateStore._restore_failure_lifecycle(observed, diagnostic_key=key)
+    expected = {**parent["before"], **parent["effects"]["state_updates"],
+        "blocked_decision": parent["resolution"], "last_human_input_completion": recovery["resolution"]["completion"],
+        "phase": "phase2-intent-alignment-structural", "intent_alignment_verdict": binding.candidate["routing"]["verdict"]}
+    for key in (*parent["effects"]["state_removals"], "blocked_reason", "escalation_question", "escalation_options",
+            "recovery_instruction", "escalation_resolved", "autonomous_default_candidate", "intent_alignment_check_structural_pass",
+            "intent_alignment_check_structural_findings", "intent_alignment_check_structural_report", "governance_gate_exhausted"):
+        expected.pop(key, None)
+    operation_id = recovery["operation"]["binding"]["operation_id"]
+    turns = _read_receipt(run, "discovery-turns", "alignment", operation_id=operation_id)
+    _validate(turns)
+    usage = _usage(turns)
+    _require(usage["known"])
+    expected["token_usage"] = parent["before"]["token_usage"] + (parent["commander_receipt"] or {}).get("token_usage", 0) + usage["tokens"]
+    if "phase2-tracker-alignment" in expected.get("phase_output_retry_counts", {}):
+        expected["phase_output_retry_counts"] = {key: value for key, value in expected["phase_output_retry_counts"].items()
+            if key != "phase2-tracker-alignment"}
+    if expected.get("checkpoint_policy_version") == 2:
+        expected["phase_completion_outcomes"] = [*expected["phase_completion_outcomes"],
+            dict(completion_id=recovery["completion_id"], phase="phase2-tracker-alignment",
+                next_phase="phase2-intent-alignment-structural", outcome="executed",
+                checkpoint=completion.intent.route["checkpoint_policy"])]
+    dispatch = state["last_dispatch"]
+    _require(dispatch["dispatch_id"] == recovery["completion_id"]
+        and dispatch["phase_id"] == "phase2-tracker-alignment"
+        and dispatch["next_phase"] == "phase2-intent-alignment-structural"
+        and dispatch["verdict"] == binding.candidate["routing"]["verdict"])
+    # Native completion owns its durable lifecycle, not the inherited author
+    # rounds, resolution, budgets, policy or accounting compared here.
+    lifecycle = {"state_revision", "updated_at", "last_dispatch", "pending_controller_completion",
+        "pending_external_publication", "external_publication_failure", "controller_completion_failure"}
+    _require(_json({key: value for key, value in observed.items() if key not in lifecycle})
+        == _json({key: value for key, value in expected.items() if key not in lifecycle}))
 
 
 def decode_clarification_binding(publication, request, recovery, completion_id, state):

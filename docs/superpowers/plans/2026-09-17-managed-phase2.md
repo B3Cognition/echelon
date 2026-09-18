@@ -213,6 +213,11 @@ Produces native alignment/structural outcome or sealed clarification resolution.
         reconciliation-to-WHAT and repair-round questions through their exact
         native associations; do not reinterpret a v38 structural repair as an
         answer-derived author result.
+        - [x] Publish the accepted answer-derived result with a distinct v42
+          association and recover native handoff to structural entry. Preserve
+          the exact v41 answer, old rounds, budgets and one cumulative charge.
+        - [ ] Admit structural continuation from that v42 result; retain native
+          gate attempts and then handle WHAT reconciliation/subsequent questions.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -1717,3 +1722,85 @@ Phase 2 acceptance is claimed by creating this plan.
   reset the accepted round, invoke its three provider turns again, promote its
   draft directly, or reuse v38's structural-repair proof. Global installation,
   activation, Phase 3, merge/push and live-model exclusions remain unchanged.
+
+### Task 4 checkpoint: answer-derived publication and native handoff
+
+- Added closed v42 publication for the accepted author following the initial
+  released v41 alignment answer. It binds the native decision/full receipt,
+  answer source and accepted question predecessor; v36 initial author and v38
+  structural repair remain distinct. Only ALIGNED/DRIFT may publish through
+  this association. Subsequent questions retain their explicit guard.
+- Historical v41 reads require an actual released native proof, matching
+  genesis/operation and exact successor decision/full completion receipt.
+  Live v41 decoding still checks the original native answer effects. A current
+  descendant is not accepted as a live answer-entry state.
+- Native v42 completion authenticates the answer ancestry, original rounds,
+  one outer-dispatch increment, unchanged budgets and policy, exact native
+  cleanup/outcomes, and cumulative usage from retained provider receipts. The
+  existing publication/completion owners still own promotion and recovery;
+  no extra state journal, role or policy owner was added.
+- Red evidence: the new helper on retained Claude/Banzai
+  `pytest-31/test_alignment_answer_applicat0` reached the deliberate
+  `resumed alignment publication requires its native continuation association`
+  guard before publication changes. The first attempt used an incorrect extra
+  `/root` fixture path; that diagnostic was corrected, and only the empty
+  directories it created were removed. No retained fixture/evidence was deleted.
+- Read-only review identified that native answer application removes
+  `escalation_resolved`; the matcher now preserves its absence rather than
+  inventing a true flag. It also prompted a direct full-marker comparison so
+  an intact latest receipt cannot mask a damaged successor receipt. Review of
+  the corrected production diff found no remaining actionable issues.
+- Retained Codex/guided `pytest-10/test_alignment_question_reache0` and
+  Claude/Banzai `pytest-31/test_alignment_answer_applicat0` both prepared v42
+  without provider calls, refused altered version/source/answer/receipt/parent
+  associations, and completed native handoff. Recovery exercised partial
+  first-file promotion, applied identity publication and persisted native
+  completion failure. Replay made no new provider calls or cumulative charges.
+- The first Claude process had loaded the pre-correction escalation matcher;
+  it safely retained a blocked pending completion. Current-code recovery used
+  that actual pending state without resetting it, replaying author calls or
+  editing proof/history. Both handoff helpers subsequently exposed a test-only
+  missing `source` argument in the final ancestry check; the helper now supplies
+  the actual completed dispatch source. These failed process exits are not
+  counted as passing whole-test invocations.
+- Current-code final audits passed for both released v42 results: complete
+  authentication and historical ancestry, live-v41 refusal against structural
+  entry, paired successor receipt/source forgery refusal with latest receipt
+  intact, and inert native replay with unchanged state/history. Final scripted
+  cumulative tokens are **231 Codex** and **266 Claude**, exactly +21 once per
+  accepted resumed author; each retains **2 alignment outer dispatches**.
+  No pending publication/failure remains, and neither structural gate nor
+  Phase 3 was dispatched. Accounting/count type changes, missing/extra charge,
+  old-round mutation, altered answer/receipt/policy/outcomes and stale escalation
+  state were refused without mutating saved state.
+- Focused regression command: repository interpreter `python -m pytest`
+  with `tests/unit/test_managed_alignment_rounds.py`,
+  `test_managed_alignment_question.py`, `test_managed_alignment_resolution.py`,
+  `test_managed_feasibility_rounds.py`, `test_managed_clarification_policy.py`,
+  `test_clarification_history.py`, `test_clarification_candidate.py` and
+  `test_squad_completion.py`, filtered by
+  `-k 'not application_recovers and not question_reaches'`: **362 passed,
+  4 deselected in 32.29s**.
+- Shared regression command: repository interpreter `python -m pytest`
+  with `tests/kernel/test_squad_state.py`,
+  `tests/integration/test_human_input_routing.py`,
+  `tests/unit/test_human_input_resolution_contract.py`,
+  `test_managed_policy_resolution.py`, `test_discovery_completion.py` and
+  `test_discovery_publication.py`, filtered by
+  `-k 'human_input or clarification or resolution or completion or publication'`:
+  **486 passed, 148 deselected in 301.26s**. Both commands used
+  `PYTHONDONTWRITEBYTECODE=1`, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short` and the mandatory
+  retention flags. Later narrow receipt-guard/test-helper corrections were
+  checked in the current-code retained audits above.
+- New full-prefix parametrized publication test collects exactly Codex/guided
+  and Claude/Banzai cases. This checkpoint executed its publication/recovery
+  helpers against the retained accepted predecessors, not another fresh
+  full-prefix run and not live-provider acceptance. The separate fresh Codex
+  author-prefix result remains recorded in the previous checkpoint.
+- Next: admit captured structural continuation from the actual released v42
+  parent while retaining native gate budgets, then native WHAT reconciliation
+  and subsequent questions. Do not use v38 repair provenance for v42, rerun the
+  accepted authors, reset fixtures or infer that public Phase 2 is activated.
+  Installation/migration, live models, Phase 3 execution, merge/push, legacy
+  build and AGENTS/CLAUDE changes remain out of scope.

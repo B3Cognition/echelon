@@ -157,7 +157,10 @@ def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"
             changed[key] = value
             with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
     assert store.load() == pending
-    if json.loads(package.request.recovery_payload)["version"] == 38 and "controller_completion_failure" not in pending:
+    if json.loads(package.request.recovery_payload)["version"] == 42:
+        from tests.unit.test_managed_alignment_answer_publication import assert_answer_handoff_refusals
+        assert_answer_handoff_refusals(case, completion)
+    if json.loads(package.request.recovery_payload)["version"] in {38, 42} and "controller_completion_failure" not in pending:
         store.record_controller_completion_failure(pending["pending_controller_completion"], "intent_mismatch")
         assert store.load()["blocked_reason"] == "controller_completion_pending"
     interruptions = []
