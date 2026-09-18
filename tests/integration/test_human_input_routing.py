@@ -4629,8 +4629,10 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
 
 
+@pytest.mark.parametrize("eligibility", ["yes", "yes — measured correction"])
 def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corridor(
     tmp_path: Path,
+    eligibility: str,
 ) -> None:
     policy = replace(
         _safeguard_policy(
@@ -4660,9 +4662,13 @@ def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corrid
 - **Suggested option:** Align coverage evidence with T-009, T-012, and T-013.
 - **Evidence basis:** Current tasks.md and dependencies.md.
 - **Banzai eligible:** yes
-""",
+""".replace("Banzai eligible:** yes", f"Banzai eligible:** {eligibility}"),
         encoding="utf-8",
     )
+    with (spec_dir / "issues.md").open("a", encoding="utf-8") as report:
+        report.write("\n### ISS-002: Stakeholder decision\n### Resolution Guidance\n"
+            "- **Decision required:** ask user\n- **Suggested option:** defer\n"
+            "- **Evidence basis:** unavailable preference\n- **Banzai eligible:** no — user-only decision\n")
     state = store.load()
     state["phase"] = "phase3-tasks-lexicon"
     state["phase_dispatch_counts"] = {
@@ -4678,6 +4684,7 @@ def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corrid
     store.save(state)
 
     candidates = controller._banzai_issue_resolution_candidates(store.load())
+    assert [candidate["issue_id"] for candidate in candidates] == ["ISS-001"]
     assert candidates[0]["repair_phase"] == "phase3-sentinel"
     options = controller._dispatch_cap_options(candidates)
     assert options[0].next_phase == "phase3-sentinel"

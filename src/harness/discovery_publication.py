@@ -129,6 +129,9 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     state, selected, operation = _selected(root, state_store, store, producer, repair_unit=repair_unit)
     binding, selection = operation["binding"], selected["selection"]
     candidate = _replay(root, state_store, executor, binding, producer, repair_unit=repair_unit)
+    if (producer == "alignment" and json.loads(candidate.candidate_inputs)["routing"]["verdict"] == "STOP_AND_ASK"
+            and tracker_round(state, producer="alignment")["predecessor"] is not None):
+        raise ValueError("subsequent alignment clarification requires its native decision association")
     fingerprint, *_, original, source_inputs = _capture(root, state_store, store, selected,
         binding["input_tree"], tuple(binding["artifact_paths"]), producer=producer, repair_unit=repair_unit)
     if fingerprint != candidate.source_fingerprint:
@@ -171,10 +174,14 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
         if binding["operation_id"].startswith("constitution-refresh-"):
             row = tracker_round(state, binding["operation_id"], producer=producer)
             recovery_fields.update(version=16, predecessor=row["predecessor"])
-    if producer in {"what", "why2", "lexicon", "feasibility"}:
+    if producer in {"what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
         row = tracker_round(state, producer=producer)
-        recovery_fields.update(version=31 if producer == "feasibility" else 28 if producer == "lexicon" else 13 if producer == "what" else 15, producer=producer, source_completion=row["source"],
+        recovery_fields.update(version=36 if producer == "alignment" else 35 if producer == "strategy" else 31 if producer == "feasibility" else 28 if producer == "lexicon" else 13 if producer == "what" else 15, producer=producer, source_completion=row["source"],
             resolution=row["resolution"], predecessor=row["predecessor"])
+        if producer == "feasibility" and row["predecessor"] is not None:
+            recovery_fields.update(version=33)
+        if producer == "alignment" and row["predecessor"] is not None:
+            recovery_fields.update(version=42 if row["resolution"] is not None else 38)
         if producer == "what" and "constitution_parent" in row:
             recovery_fields.update(version=17, constitution_parent=row["constitution_parent"])
         if producer == "why2" and row["resolution"] is not None:

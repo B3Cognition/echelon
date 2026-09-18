@@ -1740,3 +1740,67 @@ managed producers/input domains, whole-run identity acceptance and public,
 installed and live activation remain outstanding. Performance optimization is
 still deferred; non-default Lexicon paths remain fail-closed. No installed
 workspace, legacy build flow or provider-specific prose changed.
+
+### Managed strategy continuation (2026-09-17)
+
+The internal Phase 2 path now includes reviewed feasibility, native structural
+repair/recheck/bypass/warning/block policy, and reviewed strategy. Strategy uses
+the existing protected rounds, neutral Prosaic turns, receipt-backed replay,
+identity preview and guarded publication/completion owners. Its closed v35
+association authenticates the actual released feasibility gate and preserves
+native counters and identity history. It publishes only strategic overview and
+graph, then stops at alignment entry without dispatching alignment.
+
+The [Phase 2 plan and verification record](superpowers/plans/2026-09-17-managed-phase2.md)
+distinguishes fresh and retained scripted runs, refusal checks and interrupted
+publication recovery. Alignment, its structural/clarification/COMMANDER routes,
+KILL/DEFER and remaining timing parity, and whole-Phase-2 acceptance are still
+unfinished. Public and installed activation remain closed. This does not change
+Banzai's COMMANDER judgment owner or authorize installation, migration, a live
+provider run, push or merge.
+
+### Managed ordinary alignment continuation (2026-09-17)
+
+First-entry alignment now authenticates actual released strategy and feasibility
+ancestry, captures its inputs, and uses the existing protected rounds, neutral
+Prosaic author/reviewer turns and receipt-backed replay. The closed v36 ordinary
+result association publishes only the reviewed alignment report and graph, then
+hands off to native alignment structural-gate entry without executing the gate.
+ALIGNED/DRIFT are admitted; STOP_AND_ASK requires its separate native decision
+association and cannot be smuggled through this ordinary-result route.
+
+Retained scripted Codex ALIGNED and Claude DRIFT continuations passed exact
+publication, refusal and interrupted-recovery checks with unchanged IDs/history,
+preserved feasibility budgets, one completion charge and zero repeated provider
+calls. The [verification record](superpowers/plans/2026-09-17-managed-phase2.md)
+distinguishes these retained continuations from new full-prefix and live runs.
+
+Alignment structural evaluation/publication, repair/retry/exhaustion and native
+clarification/COMMANDER routes remain within Task 4. KILL/DEFER, remaining timing
+parity and whole-Phase-2 acceptance are also unfinished. Public and installed
+activation remain closed; COMMANDER ownership, provider abstraction and legacy
+build flow are unchanged. No installation, migration, live call, merge or push
+was performed.
+
+### First managed alignment structural gate (2026-09-17)
+
+The ordinary internal Phase 2 path now reaches Phase 3 entry through the first
+alignment structural gate. Its closed v37 association requires the actual
+released alignment/strategy/feasibility ancestry, captures exact evidence and
+publishes only the native structural report and graph. The existing governance
+policy, native routing, budgets and guarded publication/recovery remain owners.
+
+Fresh scripted Codex/guided bypass and Claude/Banzai warning runs both passed
+from their Phase 1 prefixes through settled Phase 3 entry, without dispatching
+Phase 3. Partial publication and post-identity-application recovery, refused
+forged routes/counters, unchanged IDs/history and zero repeated gate calls or
+charges passed. Focused regressions passed 336 tests, shared completion and
+publication regressions 352, and selected native controller checks 16. Exact
+commands, failed test-fixture attempts and retained/fresh distinctions are in
+the [Phase 2 verification record](superpowers/plans/2026-09-17-managed-phase2.md).
+
+This is not full Phase 2 acceptance or public activation. Managed repair/block
+handoffs, alignment repair/recheck/no-progress/exhaustion, clarification through
+existing native decisions and COMMANDER, KILL/DEFER and remaining timing/acceptance
+work remain. No provider-specific prose, additional COMMANDER role, installation,
+migration, live provider run, merge or push was introduced.

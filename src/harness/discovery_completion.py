@@ -71,7 +71,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def clarification(self):
-        return self.recovery["version"] in {5, 7, 18}
+        return self.recovery["version"] in {5, 7, 18, 40, 41}
 
     @property
     def policy_resolution(self):
@@ -83,7 +83,7 @@ class DiscoveryCompletionBinding:
 
     @property
     def spec_id(self):
-        if self.producer in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate"}:
+        if self.producer in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate", "alignment_gate"}:
             return self.recovery["spec_id"]
         return self.recovery["operation"]["binding"]["spec_id"]
 
@@ -156,20 +156,20 @@ def _decode(publication, completion_id, state):
     if recovery.get("version") == 30:
         from harness.discovery_checkpoint_resolution import decode_binding as decode_checkpoint
         return decode_checkpoint(publication, request, recovery, completion_id, state)
-    if recovery.get("version") == 32:
-        from harness.discovery_assessment_gate import decode_feasibility_gate_binding
-        return decode_feasibility_gate_binding(publication, request, recovery, completion_id, state)
+    if recovery.get("version") in {32, 34, 37, 39}:
+        from harness.discovery_assessment_gate import decode_assessment_gate_binding
+        return decode_assessment_gate_binding(publication, request, recovery, completion_id, state)
     if recovery.get("version") in {21, 23, 25, 27}:
         from harness.discovery_policy_resolution import decode_policy_binding
         return decode_policy_binding(publication, request, recovery, completion_id, state)
-    if recovery.get("version") in {5, 7, 18}:
+    if recovery.get("version") in {5, 7, 18, 40, 41}:
         from harness.tracker_clarification import decode_clarification_binding
         return decode_clarification_binding(publication, request, recovery, completion_id, state)
     _closed(recovery, ("version", "completion_id", "operation", "candidate_sha256", "source_fingerprint",
         "candidate_inputs", "source_inputs", "review", "provider", "sources", "graph_sha256",
-        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31} else ()),
-        *(("resolution",) if recovery.get("version") in {4, 6, 10, 11, 13, 15, 17, 19, 20, 22, 24, 26, 28, 31} else ()),
-        *(("predecessor",) if recovery.get("version") in {13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31} else ()),
+        *(("producer", "source_completion") if recovery.get("version") in {3, 4, 6, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31, 33, 35, 36, 38, 42} else ()),
+        *(("resolution",) if recovery.get("version") in {4, 6, 10, 11, 13, 15, 17, 19, 20, 22, 24, 26, 28, 31, 33, 35, 36, 38, 42} else ()),
+        *(("predecessor",) if recovery.get("version") in {13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31, 33, 35, 36, 38, 42} else ()),
         *(("review_resolution", "review_parent") if recovery.get("version") in {20, 22, 26} else ()),
         *(("constitution_parent",) if recovery.get("version") == 17 else ()),
         *(("repair_unit",) if recovery.get("version") == 8 else ()),
@@ -177,7 +177,7 @@ def _decode(publication, completion_id, state):
         *(("tracker_parent",) if recovery.get("version") == 11 else ())))
     producer = recovery.get("producer", "discovery")
     repair_unit = recovery.get("repair_unit")
-    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31}
+    _require(type(recovery["version"]) is int and recovery["version"] in {2, 3, 4, 6, 8, 9, 10, 11, 12, 13, 15, 16, 17, 19, 20, 22, 24, 26, 28, 31, 33, 35, 36, 38, 42}
         and (recovery["version"] != 3 or producer == "synthesizer")
         and (recovery["version"] != 4 or producer == "tracker")
         and (recovery["version"] != 6 or producer == "why1")
@@ -189,15 +189,17 @@ def _decode(publication, completion_id, state):
         and ((recovery["version"] in {13, 17, 20, 22, 26}) == (producer == "what"))
         and ((recovery["version"] in {15, 19, 24}) == (producer == "why2"))
         and ((recovery["version"] == 28) == (producer == "lexicon"))
-        and ((recovery["version"] == 31) == (producer == "feasibility"))
+        and ((recovery["version"] in {31, 33}) == (producer == "feasibility"))
+        and ((recovery["version"] == 35) == (producer == "strategy"))
+        and ((recovery["version"] in {36, 38, 42}) == (producer == "alignment"))
         and _json(recovery) == request.recovery_payload)
     if completion_id is not None:
         _require(recovery["completion_id"] == completion_id)
     candidate = _document(recovery["candidate_inputs"])
     source = _document(recovery["source_inputs"])
     _closed(candidate, ("artifacts", "proposal", "reservations", "operations", "history",
-        *(("routing",) if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"} else ())))
-    if producer == "feasibility":
+        *(("routing",) if producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"} else ())))
+    if producer in {"feasibility", "strategy", "alignment"}:
         from harness.discovery_assessment import validate_assessment_routing, validate_assessment_artifacts
         validate_assessment_routing(candidate["routing"], producer)
         validate_assessment_artifacts(candidate["artifacts"], candidate["routing"], producer)
@@ -205,6 +207,9 @@ def _decode(publication, completion_id, state):
             and candidate["operations"] == [] and candidate["reservations"] == []
             and candidate["history"] == source["history"]
             and candidate["proposal"]["new_subjects"] == [] and candidate["proposal"]["revisions"] == [])
+    if producer == "alignment":
+        _require(candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"}
+            or (recovery["version"] == 36 and candidate["routing"]["verdict"] == "STOP_AND_ASK"))
     if producer == "lexicon":
         from harness.discovery_lexicon import validate_lexicon_routing, validate_lexicon_artifacts
         validate_lexicon_routing(candidate["routing"])
@@ -232,25 +237,43 @@ def _decode(publication, completion_id, state):
         and _json(source) == recovery["source_inputs"] and _hash(source) == recovery["source_fingerprint"])
     operation = recovery["operation"]
     selected = operation["binding"]
-    if producer in {"what", "why2", "lexicon", "feasibility"}:
+    if producer in {"what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
         parent = recovery["source_completion"]
         _closed(parent, SOURCE_FIELDS)
         _require(all(type(value) is str and re.fullmatch(r"[0-9a-f]{%d}" % (32 if key == "dispatch_id" else 64), value)
             for key, value in parent.items()))
         _require(selected["operation_id"] == producer + "-" + parent["dispatch_id"]
-            and selected["intent"]["kind"] == ("assess" if producer == "feasibility" else "derive" if producer == "lexicon" else "specify" if producer == "what" else "validate")
-            and ((producer in {"lexicon", "feasibility"}) or ((recovery["resolution"] is not None) == (recovery["version"] in {19, 24})))
+            and selected["intent"]["kind"] == ("align" if producer == "alignment" else "strategize" if producer == "strategy" else "assess" if producer == "feasibility" else "derive" if producer == "lexicon" else "specify" if producer == "what" else "validate")
+            and ((producer in {"lexicon", "feasibility"}) or ((recovery["resolution"] is not None) == (recovery["version"] in {19, 24, 42})))
             and (recovery["predecessor"] is None or (type(recovery["predecessor"]) is str
                 and re.fullmatch(producer + r"-[0-9a-f]{32}", recovery["predecessor"]) is not None)))
+        if producer in {"strategy", "alignment"}:
+            _require((recovery["resolution"] is not None) == (recovery["version"] == 42)
+                and ((recovery["predecessor"] is not None) == (recovery["version"] in {38, 42}))
+                and recovery["predecessor"] != selected["operation_id"]
+                and selected["editable_revisions"] == [])
+            if recovery["version"] == 42:
+                from harness.discovery_spec import clarification_source
+                from harness.tracker_clarification import _record
+                association = recovery["resolution"]
+                _closed(association, ("decision", "completion"))
+                _record(association["decision"], "alignment")
+                _require(parent == clarification_source(association["completion"])
+                    and association["completion"]["decision_id"] == association["decision"]["id"])
         if producer == "feasibility":
             from harness.discovery_spec import clarification_source
             from harness.discovery_checkpoint_resolution import state_effects
             association = recovery["resolution"]
-            _closed(association, ("decision", "completion"))
-            _require(recovery["predecessor"] is None and selected["editable_revisions"] == []
-                and state_effects(association["decision"])["route"] == "phase2-decide"
-                and parent == clarification_source(association["completion"])
-                and association["completion"]["decision_id"] == association["decision"]["id"])
+            _require(selected["editable_revisions"] == [])
+            if recovery["version"] == 33:
+                _require(association is None and recovery["predecessor"] is not None
+                    and recovery["predecessor"] != selected["operation_id"])
+            else:
+                _closed(association, ("decision", "completion"))
+                _require(recovery["predecessor"] is None
+                    and state_effects(association["decision"])["route"] == "phase2-decide"
+                    and parent == clarification_source(association["completion"])
+                    and association["completion"]["decision_id"] == association["decision"]["id"])
         if producer == "lexicon" and recovery["resolution"] is not None:
             from harness.discovery_spec import clarification_source
             from harness.discovery_policy_resolution import require_resolved
@@ -409,7 +432,7 @@ def _decode(publication, completion_id, state):
             if recovery["version"] == 16:
                 row = tracker_round(state, selected["operation_id"], producer=producer)
                 _require(row["predecessor"] == recovery["predecessor"])
-        if producer in {"what", "why2", "lexicon", "feasibility"}:
+        if producer in {"what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
             row = tracker_round(state, selected["operation_id"], producer=producer)
             _require(row["source"] == recovery["source_completion"]
                 and row["resolution"] == recovery["resolution"] and row["predecessor"] == recovery["predecessor"])
@@ -482,7 +505,7 @@ def authenticate(root, run, state, completion):
                 refresh_child=binding if binding.recovery["version"] in {9, 10, 11} else None,
                 why1_child=binding if binding.producer == "why1" else None,
                 constitution_child=binding if binding.producer == "constitution" else None,
-                spec_child=binding if binding.producer in {"what", "why2", "lexicon", "lexicon_gate", "feasibility", "feasibility_gate"} and not binding.clarification else None,
+                spec_child=binding if binding.producer in {"what", "why2", "lexicon", "lexicon_gate", "feasibility", "feasibility_gate", "alignment_gate", "strategy", "alignment"} and not binding.clarification else None,
                 clarification_child=binding if binding.clarification else None)
             spec_tree, = (tree for tree in binding.sources.trees if tree.path == selection["spec_path"])
             _require(spec_view(spec_tree) == binding.baseline.trees[0])
@@ -499,9 +522,52 @@ def authenticate(root, run, state, completion):
         if binding.producer == "feasibility_gate":
             from harness.discovery_assessment_gate import authenticate_feasibility_gate
             authenticate_feasibility_gate(root, run, state, completion, binding)
+        if binding.producer == "alignment_gate":
+            from harness.discovery_assessment_gate import authenticate_alignment_gate
+            authenticate_alignment_gate(root, run, state, completion, binding)
+        if binding.producer in {"strategy", "alignment"} and binding.recovery["version"] not in {38, 42} and not binding.clarification:
+            require_assessment_entry_state(root, run, state, binding, store)
+        if binding.recovery["version"] == 42:
+            from harness.tracker_clarification import require_alignment_author_effects
+            source = binding.recovery["source_completion"]
+            answer, _, _ = _retained_input_projection(root, run, state, store,
+                operation_id="discovery-completion-" + source["dispatch_id"], source=source,
+                require_checkpoint=False, required_origin="resolution",
+                required_route=("phase2-tracker-alignment", "phase2-tracker-alignment"))
+            require_alignment_author_effects(state, binding, answer, completion, run)
+        if binding.producer == "alignment" and binding.recovery["version"] == 38:
+            from harness.config import get_full_resolved_config
+            from harness.discovery_assessment import require_alignment_repair
+            from harness.discovery_assessment_gate import require_alignment_gate_parent, require_alignment_gate_budget
+            gate = require_alignment_repair(root, run, state,
+                binding.recovery["source_completion"], binding.recovery["predecessor"])
+            author = require_alignment_gate_parent(root, run, state, gate.recovery["source_completion"])
+            require_alignment_gate_budget(root, run, state, author,
+                gate.recovery["routing_state"], gate.recovery["config"])
+            expected = {**gate.recovery["routing_state"], **gate.recovery["result"]["state_updates"],
+                "iteration": gate.recovery["routing_state"]["iteration"] + 1,
+                "intent_alignment_verdict": binding.candidate["routing"]["verdict"]}
+            for key in ("intent_alignment_check_structural_pass", "intent_alignment_check_structural_findings",
+                    "intent_alignment_check_structural_report", "governance_gate_exhausted"):
+                expected.pop(key, None)
+                _require(key not in state)
+            # Native author routing invalidates the prior certification, not its
+            # attempts or retained report artifact. Status/reason recovery stays
+            # with the completion owner, including a persisted failure diagnostic.
+            expected.pop("blocked_reason", None)
+            _require(_json({key: state.get(key) for key in expected}) == _json(expected)
+                and _json(get_full_resolved_config(root)) == _json(gate.recovery["config"]))
+        if binding.producer == "feasibility" and binding.recovery["version"] == 33:
+            from harness.discovery_assessment import require_feasibility_repair
+            gate = require_feasibility_repair(root, run, state,
+                binding.recovery["source_completion"], binding.recovery["predecessor"])
+            expected = dict(iteration=gate.recovery["routing_state"]["iteration"] + 1,
+                max_iterations=gate.recovery["routing_state"]["max_iterations"],
+                feasibility_structural_attempts=gate.recovery["result"]["state_updates"]["feasibility_structural_attempts"])
+            _require(_json({key: state.get(key) for key in expected}) == _json(expected))
         if binding.clarification:
             from harness.tracker_clarification import require_parent
-            require_parent(state, binding, store)
+            require_parent(state, binding, store, root=root, run=run)
         if binding.policy_resolution:
             from harness.discovery_policy_resolution import require_parent
             require_parent(root, run, state, binding, store)
@@ -524,12 +590,43 @@ def authenticate(root, run, state, completion):
         _require(observed["source_context"]["manifest"] == asdict(expected)
             and observed["source_context"]["operation_id"] == (binding.result_operation_id if applied else binding.request.sources.expected_operation_id)
             and asdict(store.identity_history(spec_id=binding.spec_id)) == (asdict(binding.result_history) if applied else binding.source["history"]))
-        if binding.producer not in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate"}:
+        if binding.producer not in {"understanding", "lexicon_gate", "checkpoint", "feasibility_gate", "alignment_gate"}:
             _receipts(root, run, state, binding, store)
         return binding
     except Exception:
         pass
     raise CompletionError("intent_mismatch")
+
+
+def require_assessment_entry_state(root, run, state, binding, store):
+    """Native entry effects, also checked for a retained question's prestate."""
+    from harness.config import get_full_resolved_config
+    gate_source = binding.recovery["source_completion"]
+    if binding.producer == "alignment":
+        strategy, _, _ = _retained_input_projection(root, run, state, store,
+            operation_id="discovery-completion-" + gate_source["dispatch_id"],
+            source=gate_source, require_checkpoint=False,
+            required_route=("phase2-strategic-overview", "phase2-tracker-alignment"))
+        gate_source = strategy.recovery["source_completion"]
+    gate, _, _ = _retained_input_projection(root, run, state, store,
+        operation_id="discovery-completion-" + gate_source["dispatch_id"],
+        source=gate_source, require_checkpoint=False,
+        required_route=("phase2-feasibility-structural", "phase2-strategic-overview"))
+    expected = {**gate.recovery["routing_state"], **gate.recovery["result"]["state_updates"]}
+    if binding.producer == "alignment":
+        if binding.candidate["routing"]["verdict"] == "STOP_AND_ASK":
+            from harness.discovery_assessment import require_alignment_question
+            require_alignment_question(root, state, binding.candidate["routing"])
+            # Native STOP retains the failed gate's evidence and budgets.
+            # Human-input/completion recovery owns the blocked reason.
+            expected.pop("blocked_reason", None)
+        else:
+            for key in ("governance_gate_exhausted", "blocked_reason"):
+                expected.pop(key, None)
+                _require(key not in state)
+            expected["intent_alignment_verdict"] = binding.candidate["routing"]["verdict"]
+    _require(_json({key: state.get(key) for key in expected}) == _json(expected)
+        and get_full_resolved_config(root) == gate.recovery["config"])
 
 
 def require_unpublished_orphan(root, run, state, intent):
@@ -608,7 +705,7 @@ def _receipts(root, run, state, binding, store):
     _require(replies["propose"] == binding.candidate["proposal"]
         and replies["author"]["artifacts"] == binding.candidate["artifacts"]
         and replies["review"] == binding.recovery["review"] and replies["review"]["verdict"] == "accept")
-    if binding.producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility"}:
+    if binding.producer in {"tracker", "why1", "what", "why2", "lexicon", "feasibility", "strategy", "alignment"}:
         _require(replies["author"]["routing"] == binding.candidate["routing"] == replies["review"]["routing"])
     reservations = _read_receipt(run, "discovery-reservations", binding.producer, operation_id=round_id, repair_unit=binding.repair_unit)
     _require(reservations["binding"]["context"] == binding.source["authority"])
@@ -802,7 +899,7 @@ def context_generator(root, run, state, completion):
     binding = require_applied(root, run, state, completion)
     _require(binding is not None)
     spec = binding.source["authority"]["managed_identity"]["spec_path"]
-    if binding.resolution_publication or binding.producer in {"understanding", "lexicon_gate", "feasibility_gate"} or binding._restoration_applied:
+    if binding.resolution_publication or binding.producer in {"understanding", "lexicon_gate", "feasibility_gate", "alignment_gate"} or binding._restoration_applied:
         projected = project_publication_source_images(binding.result_sources)
         artifacts = {item.path: item.content for tree in projected.trees for item in tree.files
             if tree.path == spec and item.path.endswith(".md")}
@@ -1017,7 +1114,13 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             reviewing = specification is not None and specification.producer == "why2" and not specification.clarification
             deriving = specification is not None and specification.producer == "lexicon"
             assessing = specification is not None and specification.producer == "feasibility"
+            strategizing = specification is not None and specification.producer == "strategy"
+            aligning = specification is not None and specification.producer == "alignment" and not specification.clarification
+            aligning_retry = aligning and specification.recovery["version"] == 38
+            aligning_answer = aligning and specification.recovery["version"] == 42
+            assessing_retry = assessing and specification.recovery["version"] == 33
             assessment_gate = specification is not None and specification.producer == "feasibility_gate"
+            alignment_gate = specification is not None and specification.producer == "alignment_gate"
             deriving_debt = deriving and specification.recovery["resolution"] is not None
             gating = specification is not None and specification.producer == "lexicon_gate"
             reviewing_answer = reviewing and specification.recovery["version"] in {19, 24}
@@ -1026,15 +1129,21 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
             specifying_policy = specifying_answer and specification.recovery["version"] in {22, 26}
             specification_parent = "why2" if (specifying and specification.recovery["predecessor"] is not None
                 and specification.recovery["version"] != 17) else "constitution"
-            if (specification is not None and specification.producer in {"what", "why2", "lexicon"} and not specification.clarification
+            if (specification is not None and specification.producer in {"what", "why2", "lexicon", "feasibility", "alignment"} and not specification.clarification
                     and specification.recovery["predecessor"] is not None):
                 pending_spec_predecessors.append(specification)
             binding, project, context = _retained_input_projection(root, run, state, store,
                 operation_id=operation_id, source=source, require_checkpoint=require_checkpoint,
-                required_origin="resolution" if reviewing_answer or specifying_answer or deriving_debt or assessing else "routed",
+                required_origin="resolution" if aligning_answer or reviewing_answer or specifying_answer or deriving_debt or (assessing and not assessing_retry) else "routed",
                 required_route=(None if specifying_policy or reviewing_policy or deriving_debt else
+                    ("phase2-tracker-alignment", "phase2-tracker-alignment") if aligning_answer else
+                    ("phase2-intent-alignment-structural", "phase2-tracker-alignment") if aligning_retry else
+                    ("phase2-strategic-overview", "phase2-tracker-alignment") if aligning else
+                    ("phase2-feasibility-structural", "phase2-strategic-overview") if strategizing else
+                    ("phase2-feasibility-structural", "phase2-decide") if assessing_retry else
                     ("checkpoint-assess", "phase2-decide") if assessing else
                     ("phase2-decide", "phase2-feasibility-structural") if assessment_gate else
+                    ("phase2-tracker-alignment", "phase2-intent-alignment-structural") if alignment_gate else
                     ("phase1-lexicon-derive", "phase1-lexicon") if gating else
                     ("phase1-lexicon" if specification.recovery["predecessor"] is not None else "phase1-why2", "phase1-lexicon-derive") if deriving else
                     ("phase1-why2", "phase1-what") if specifying_answer else
@@ -1043,16 +1152,43 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
                     ("phase1-" + specification_parent, "phase1-what") if specifying else
                     ("phase1-why1", "phase1-constitution") if constituting else
                     (repair.recovery["operation"]["binding"]["intent"]["origin"]["return_phase"], "phase1-discover") if repairing else None))
-            if assessing:
+            if aligning_answer:
+                _require(binding.producer == "alignment" and binding.recovery["version"] == 41
+                    and binding.candidate["route"] == "phase2-tracker-alignment"
+                    and _json(binding.recovery["resolution"]) == _json(specification.recovery["resolution"]["decision"])
+                    and binding.recovery["operation"]["binding"]["operation_id"] == specification.recovery["predecessor"])
+            elif aligning_retry:
+                _require(binding.producer == "alignment_gate" and binding.recovery["version"] in {37, 39}
+                    and binding.recovery["result"]["state_updates"]["structural_action"] == "repair")
+            elif aligning:
+                _require(binding.producer == "strategy" and binding.recovery["version"] == 35
+                    and binding.candidate["routing"] == dict(verdict="DONE", state_updates={}))
+            if strategizing:
+                _require(binding.producer == "feasibility_gate" and binding.recovery["version"] in {32, 34}
+                    and binding.recovery["routing_state"]["feasibility_verdict"] == "PASS"
+                    and binding.recovery["result"]["state_updates"]["structural_action"] in {"proceed", "proceed_with_warning"})
+            if assessing_retry:
+                _require(binding.producer == "feasibility_gate" and binding.recovery["version"] in {32, 34}
+                    and binding.recovery["result"]["state_updates"]["structural_action"] == "repair")
+            elif assessing:
                 _require(binding.producer == "checkpoint" and binding.recovery["version"] == 30
                     and binding.candidate["route"] == "phase2-decide"
                     and binding.recovery["resolution"] == specification.recovery["resolution"]["decision"]
                     and binding.recovery["resolution"]["selected_option_id"] == "approve")
+            if alignment_gate:
+                from harness.discovery_assessment_gate import require_alignment_gate_budget
+                _require(binding.producer == "alignment" and binding.recovery["version"] in {36, 38}
+                    and specification.recovery["version"] == (37 if binding.recovery["version"] == 36 else 39)
+                    and binding.candidate["routing"]["verdict"] in {"ALIGNED", "DRIFT"})
+                _require(specification.recovery["previous_attempts"] == require_alignment_gate_budget(root, run, state, binding,
+                    specification.recovery["routing_state"], specification.recovery["config"]))
             if assessment_gate:
-                _require(binding.producer == "feasibility" and binding.recovery["version"] == 31
-                    and binding.recovery["predecessor"] is None
+                from harness.discovery_assessment_gate import prior_feasibility_attempts
+                _require(binding.producer == "feasibility" and binding.recovery["version"] in {31, 33}
                     and binding.candidate["routing"] == dict(verdict="PASS", state_updates={})
-                    and specification.recovery["previous_attempts"] == 0)
+                    and specification.recovery["version"] == (32 if binding.recovery["version"] == 31 else 34)
+                    and specification.recovery["previous_attempts"] == prior_feasibility_attempts(root, run, state,
+                        binding, specification.recovery["routing_state"], specification.recovery["config"]))
             if gating:
                 from harness.discovery_lexicon import prior_gate_attempts
                 _require(binding.producer == "lexicon" and specification.recovery["previous_attempts"]
@@ -1187,6 +1323,12 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
         _require(binding is not None and binding.producer == "checkpoint"
             and state.get("managed_identity") == binding.source["authority"]["managed_identity"]
             and bootstrap_from_state(state) == bootstrap_from_state(binding.recovery["before"]))
+    elif intent.origin == "resolution" and intent.route["from_phase"] == "phase2-tracker-alignment":
+        # A released answer is historical once its exact native successor has
+        # been selected. Live v41 decoding still enforces its original effects.
+        from harness.tracker_clarification import require_released_alignment_membership
+        binding = decode_binding(intent.publication, completion_id=marker.completion_id)
+        require_released_alignment_membership(state, binding, marker)
     else:
         binding = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
     _require(binding is not None and row["request"] == encode_publication_request(binding.request)
@@ -1201,7 +1343,7 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
         _require(binding.restoration is not None and binding.restoration.state == "released")
     if binding.clarification:
         from harness.tracker_clarification import require_parent, require_resolution_receipt
-        require_parent(state, binding, store)
+        require_parent(state, binding, store, root=root, run=run)
         require_resolution_receipt(state, binding, marker)
     elif binding.policy_resolution:
         from harness.discovery_policy_resolution import require_parent, require_resolution_receipt

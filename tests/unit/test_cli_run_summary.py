@@ -63,6 +63,7 @@ def test_squad_summary_builds_typed_semantic_facts(tmp_path: Path) -> None:
     squad_dir.mkdir(parents=True)
     spec_dir = tmp_path / "specs" / "123-greeting"
     spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Authored specification\n", encoding="utf-8")
     (squad_dir / "state.json").write_text(
         json.dumps(
             {
@@ -206,6 +207,30 @@ def test_squad_summary_keeps_invoked_command_distinct_from_recovery_command(
     context = captured["context"]
     assert context.command == "echelon spec resume"
     assert context.next_step == "echelon spec continue"
+
+
+def test_summary_does_not_publish_configured_or_missing_spec_directory(tmp_path):
+    run_dir = tmp_path / "runs" / "spec-current"
+    run_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "missing"
+    state = {"published_spec_dir": str(spec_dir), "completed_phases": ["phase1-discover"],
+        "status": "blocked", "blocked_reason": "phase_dispatch_limit_evidence_malformed"}
+    for create_discovery_directory in (False, True):
+        if create_discovery_directory:
+            spec_dir.mkdir()
+            (spec_dir / "issues.md").write_text("# Discovery issues\n", encoding="utf-8")
+        (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        with patch("harness.run_summary.summarize_run_for_cli", return_value="Retained discovery evidence.") as summary:
+            _print_squad_summary(tmp_path, run_dir, SimpleNamespace(status="blocked", phase="phase1-why1"),
+                mode="semi", message="Author a specification.")
+        assert not any("Published" in fact.text for fact in summary.call_args.args[0].facts)
+
+
+def test_summary_separates_distinct_phases_and_execution_count():
+    from echelon.cli import _phase_a_summary_facts
+    facts = _phase_a_summary_facts({"completed_phases": ["phase1-discover", "phase1-why1"],
+        "phase_dispatch_counts": {"phase1-discover": 14, "phase1-why1": 13}}, spec_dir="", stopped="blocked")
+    assert any("27 phase executions" in fact.text for fact in facts)
 
 
 def test_spec_continue_preserves_top_level_command_through_internal_run(

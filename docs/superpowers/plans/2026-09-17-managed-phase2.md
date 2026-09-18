@@ -88,8 +88,9 @@ new `tests/unit/test_managed_feasibility.py`.
 Consumes released v30 Phase 1 approval, captured context and Task 1 evaluator.
 Produces protected feasibility rounds and native structural completion proof.
 
-First-entry sub-slice completed; the execution/publication milestone below is
-still open:
+The PASS-feasibility authoring/publication and structural-gate milestone is
+verified below. Public managed admission remains closed; KILL/DEFER and timing
+parity belong to Task 5, and whole-Phase-2 acceptance remains Task 6.
 
 - [x] Authenticate an actual released v30 approval, exact native decision and
   receipt, current identity source head and current quality/debt authorization.
@@ -115,22 +116,33 @@ still open:
   resolved configuration, exact report bytes and native route. This is a
   report/handoff increment only: it does not authorize retry authoring or open
   public Phase 2 admission.
+- [x] Authenticate retry selection/execution from the actual released v32 repair
+  gate and its accepted author predecessor, retaining the native counters and
+  exact failed report. Publish the reviewed repair with a distinct closed v33
+  association through the existing completion owner, returning to structural
+  gate entry.
+- [x] Add the distinct v34 structural recheck association from the released v33
+  repair author. Recover cumulative attempts, configuration and routing from
+  its exact authorizing gate; verify PASS and repeated warn/block exhaustion
+  through existing publication and interruption recovery.
 
-- [ ] Add real-parent tests refusing rejection, stale evidence and forged phase
+- [x] Add real-parent tests refusing rejection, stale evidence and forged phase
   markers before any dispatch. Positive PASS must stop at
   `phase2-strategic-overview`, not execute strategy implicitly.
-- [ ] Extend existing retained selection/component ownership and exact receipt
+- [x] Extend existing retained selection/component ownership and exact receipt
   decoding for this producer. Capture all declared templates/calibration/journal
   inputs; explicit absence is evidence, not authority to search the host.
-- [ ] Publish only reviewed outputs plus graph, then exact captured gate report
+- [x] Publish only reviewed outputs plus graph, then exact captured gate report
   plus graph. Bind counters/configuration/native route into sealed completion.
   ```python
   assert state["phase"] == "phase2-strategic-overview"
   assert identity.identity_history(spec_id="game") == history_before
   assert not state["phase_dispatch_counts"].get("phase3-specialists")
   ```
-- [ ] Test scripted Codex/Claude calls, structural retry, changed-input refusal,
+- [x] Test scripted Codex/Claude calls, structural retry, changed-input refusal,
   before/after publication interruption and zero-call restart; commit verified work.
+- [x] Verify managed disabled/non-structural bypass and cap-one warn/block
+  exhaustion from fresh approval ancestry, without changing native policy.
 
 ## Task 4: Strategy and alignment continuation
 
@@ -139,6 +151,36 @@ resolution association; new `tests/unit/test_managed_phase2_alignment.py`.
 Consumes actual released feasibility PASS and then actual strategy completion.
 Produces native alignment/structural outcome or sealed clarification resolution.
 
+- [x] Authenticate strategy entry from the exact released feasibility-gate
+  successor and capture its required source/template/context through existing
+  input owners. This first slice must not open strategy execution/publication.
+- [x] Extend existing protected round/receipt/operation owners for strategy and
+  bind its reviewed derived document through a closed v35 publication to the
+  actual released feasibility gate. Recover native completion without another
+  provider call, stopping at alignment entry; alignment execution stays closed.
+- [x] Authenticate first-entry alignment from the actual released v35 strategy,
+  capture its exact inputs, and extend existing protected rounds and provider
+  composition. Publish reviewed ALIGNED/DRIFT through a closed v36 association
+  and recover the native handoff to `phase2-intent-alignment-structural`, without
+  executing that gate. STOP_AND_ASK cannot use this ordinary-result association.
+- [x] Add closed first-entry v37 alignment structural publication through the
+  existing captured evaluator and report/graph completion owner. Verify fresh
+  Codex bypass and Claude warning handoffs/recovery to Phase 3 entry without
+  executing Phase 3. Full repair/block handoffs, repair authoring and structural
+  rechecks remain below; unit routing coverage is not their acceptance evidence.
+- [x] Admit the first structural repair only from its released v37 failure,
+  retain the accepted alignment predecessor and exact diagnostic evidence,
+  publish reviewed repair through v38, and recover to structural recheck entry.
+  Recheck publication stays closed until its retained-budget association is
+  verified; this checkpoint does not claim a complete alignment repair loop.
+- [x] Bind the first repaired alignment structural recheck through a distinct
+  v39 association, retaining the released v38/v37 ancestry and native budgets.
+  Verify successful recheck, tamper refusal and interrupted completion without
+  dispatching Phase 3. Repeated v39-to-author repair remains a later increment.
+- [x] Admit subsequent alignment repairs only from an actual released v39
+  repair result; retain the entire accepted author/gate chain and original
+  limits. Verify unchanged-output retries, warning/block exhaustion, refusal
+  of another author after exhaustion, and interrupted publication/recovery.
 - [ ] Add tests proving strategy cannot run from KILL/DEFER, alignment cannot
   skip strategy, and only assigned derived documents are published.
 - [ ] Bind both producers through the same retained rounds, source capture and
@@ -150,6 +192,32 @@ Produces native alignment/structural outcome or sealed clarification resolution.
   assert state["phase"] == "phase3-specialists"  # entry only
   assert not state["phase_dispatch_counts"].get("phase3-specialists")
   ```
+  - [x] Seal and recover the initial reviewed alignment question as a native
+    pending decision; authenticate the exact question and preserve budgets,
+    history and usage. Keep answer application/COMMANDER execution closed until
+    its resolution association is verified separately.
+  - [ ] Bind alignment answers to the released question and native resolver,
+    using existing clarification publication and retained COMMANDER receipts.
+    Verify detached preparation before admitting native answer application;
+    preserve ancestry, budgets and identity history through recovery.
+    - [x] Verify detached answer preparation and closed native entry points.
+    - [x] Bind native post-resolution effects and reauthenticate retained
+      COMMANDER receipts during completion/recovery before opening application.
+    - [ ] Admit authoring from the released answer association, including
+      native reconciliation-to-WHAT and repair-round questions; retain the
+      original question/answer and close at Phase 3 entry only.
+      - [x] Select and execute/replay one alignment successor from the initial
+        released v41 answer, preserving its native decision, ancestry and budgets.
+        Keep resumed publication closed in this execution checkpoint.
+      - [ ] Bind resumed alignment publication and structural continuation, then
+        reconciliation-to-WHAT and repair-round questions through their exact
+        native associations; do not reinterpret a v38 structural repair as an
+        answer-derived author result.
+        - [x] Publish the accepted answer-derived result with a distinct v42
+          association and recover native handoff to structural entry. Preserve
+          the exact v41 answer, old rounds, budgets and one cumulative charge.
+        - [ ] Admit structural continuation from that v42 result; retain native
+          gate attempts and then handle WHAT reconciliation/subsequent questions.
 - [ ] Test ALIGNED/DRIFT and guided/semi/Banzai clarification, repair, stale
   intent/report refusal, interrupted resolution and exact replay; commit.
 
@@ -531,3 +599,1245 @@ Phase 2 acceptance is claimed by creating this plan.
   remaining policy-branch managed handoff coverage, and public Phase 2 admission
   only after the complete approved corridor is ready. Strategy/alignment,
   terminal/defer paths and activation tasks remain open. Task 3 is not complete.
+
+### Task 3 released repair authority and reviewed retry publication
+
+- The existing feasibility parent check now distinguishes initial approval from
+  an actual released v32 structural repair. Repair admission verifies the exact
+  gate receipt, accepted predecessor, current identity source head, quality/debt
+  authority, resolved configuration, complete native result and strict integer
+  iteration/attempt/cap values. An old checkpoint approval cannot restart a
+  repair or reset its budget. Protected round selection remains the same owner.
+- Capture supplies the exact failed structural report as read-only model
+  evidence, alongside the existing document/template/runtime inputs. The report
+  is neither an identity-definition source nor a provider-writable output.
+  Reviewed repairs retain empty identity operations and unchanged history.
+- A distinct v33 association retains the gate source and accepted predecessor;
+  v31 initial approval and v32 first-gate contracts remain unchanged. Existing
+  ancestry validation walks through the actual repair gate and prior author.
+  Native completion returns only to `phase2-feasibility-structural`, preserves
+  cumulative attempts/iteration and authenticates their exact values on recovery.
+- Red checks first refused the released repair as a non-checkpoint source, then
+  refused its captured structural report, and finally refused publication under
+  the original first-entry decoder. A separate red completion check accepted an
+  altered iteration; the new v33 live authentication rejects changed values and
+  boolean/float/string counter substitutions through canonical JSON comparison.
+- The shared publication fault helper now records the actual per-operation
+  promotion hook. Counting unequal bytes is not a valid interruption assertion
+  when a repair legitimately preserves most published documents byte-for-byte.
+- Implementation stays inline. Read-only review of the bounded increment and
+  final counter/fault-test delta found no critical or important findings. No
+  provider prose, Banzai decision route, allocator, policy owner, installation,
+  migration, public admission, live calls, merge or push changed in this increment.
+- Retained real Codex repair (`pytest-337/test_reviewed_feasibility_gate0`) and
+  Claude/Banzai/Lexicon repair (`pytest-331/test_real_review_seals_only_fe0`) both
+  passed exact parent/negative checks, three scripted repair turns, no-call
+  reviewed replay, closed v33 publication, native handoff and interrupted
+  recovery. Both now retain released completion `dddddddddddddddddddddddddddddddd`
+  at structural-gate entry, attempts=1 and iteration=1. No state/history reset
+  or live provider call was used. The Codex completion additionally supplied
+  the red/green live-counter test; both pass all final typed-counter negatives.
+- Retained user rejection (`pytest-268/test_managed_checkpoint_uses_n1`) and
+  COMMANDER rejection (`pytest-234/test_managed_gate_pass_reaches0`) remain
+  inadmissible. The passing v32 gate at
+  `pytest-339/test_valid_claude_banzai_feasi0` cannot authorize a repair even with
+  a forged `phase2-decide` label. Those checks left all three fixtures unchanged.
+- Focused regression command, repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_inputs.py`, `test_discovery_operation.py`,
+  `test_discovery_turns.py`, `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_prosaic_prompt_loader.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py`,
+  `test_managed_assessment_contract.py`, `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`:
+  **767 passed in 93.11s**. This process preceded the final live v33 counter guard;
+  the final completion group and actual retained corridors verify that guard.
+  Native `tests/integration/test_squad_controller.py -k 'structural or feasibility
+  or alignment'`: **16 passed, 501 deselected in 5.65s**.
+- Shared completion/publication/restoration group after the live counter guard,
+  before the subsequent active-source guard: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 373.05s**. The last file overlaps the 767-test group; these
+  counts must not be added as unique tests. Same interpreter/options as above.
+- The first fresh retry test failed after **504.72s** at the existing detached
+  retry negative, before publication. Looking up a round by the supplied source
+  could retrieve the now-inactive initial approval; when the identity head was
+  still checkpoint, the source-head guard alone did not refuse it. The exact
+  failure reproduced on `pytest-349/test_released_structural_gate_0`. Requiring
+  an existing source round to be active before either admission branch fixes
+  it; the same negative passes and the genuinely active approval still works.
+  No fixture state was rewritten. Added a fast round regression that verifies
+  refusal before identity lookup, and obtained follow-up read-only review of
+  that fix. The failed fresh run is not counted as a passing corridor.
+- After the active-source fix and added fast regression, feasibility rounds,
+  assessment contracts and structural associations passed **154 tests in 4.02s**.
+  Same interpreter/options as above; this overlaps the earlier 767-test group.
+- The complete shared completion/publication/restoration group was rerun after
+  that fix: **352 passed in 371.51s**. Same selection/options; this replaces,
+  rather than adds to, the earlier 352-test result.
+- The complete final helpers also passed against the unused retained Codex
+  repair at `pytest-330/test_real_review_seals_only_fe0`: real authority,
+  reviewed repair, exact failed-report feedback, zero-call replay, changed
+  spec/report/context refusal without state changes, v33 publication, native
+  handoff, all interruption boundaries and strict live budgets. This fixture
+  now has released v33 completion `dddddddddddddddddddddddddddddddd`, at
+  structural-gate entry with attempts=1 and iteration=1.
+- Read-only captured evaluation of the repaired documents in retained
+  `pytest-337` and `pytest-331` reports PASS under their existing configuration,
+  using previous_attempts=1. This preview did not publish a second report or
+  perform a structural transition, and is not claimed as managed second-gate
+  acceptance.
+- Corrected fresh Codex/guided, Lexicon-disabled full prefix and repair:
+  `tests/unit/test_managed_feasibility_retry.py -k codex -q --tb=short` with the
+  repository virtualenv and global retention flags: **1 passed, 1 deselected
+  in 1005.65s**. Fixture `pytest-352/test_released_structural_gate_0` includes
+  real approved Phase 1 ancestry, first reviewed author and failed structural
+  gate, exact retry authorization, reviewed repair, changed-input refusal,
+  both publication generations, interruption/recovery, no-call replay and
+  altered-counter refusal. It ends with released v33 completion
+  `dddddddddddddddddddddddddddddddd`, two outer feasibility dispatches,
+  attempts=1 and iteration=1, without executing the next gate or Phase 3.
+  No fresh Claude prefix or full repository suite was rerun for this increment;
+  the retained Claude continuation is reported separately above. Final diff
+  checks passed. No live acceptance or public activation is claimed.
+- Remaining Task 3: evaluate/publish the next structural gate from the released
+  v33 author while retaining the prior budget, plus remaining managed bypass and
+  exhaustion policy branches. Strategy/alignment, terminal/defer routes and
+  activation remain open; this is not completion of Task 3 or Phase 2.
+
+### Structural rechecks and cumulative exhaustion (v34)
+
+- Extend the existing captured feasibility gate to consume a released v33
+  reviewed repair. The distinct v34 association recovers prior attempts from
+  that author's exact released repair gate, retaining its configuration and
+  routing counters. V32 remains first-entry-only. Repeated v33/v34 ancestry
+  uses the existing authority, completion and guarded publication owners.
+- Native governance still decides PASS, repair, warning or block. A passing
+  recheck resets attempts through native policy; a failed recheck consumes the
+  original budget. No workflow, provider prose, Banzai decision route or public
+  admission changes are part of this increment.
+- An actual retained gate exposed the live authentication typed-counter gap:
+  with Python equality restored, the negative test failed with `DID NOT RAISE`
+  for a boolean/numeric substitution. Canonical JSON comparison plus a strict
+  integer iteration guard makes the same actual gate reject boolean, float,
+  string and changed counter values. The final retained Codex PASS completion
+  passes all of those negatives without state changes.
+- Retained Codex `pytest-337/test_reviewed_feasibility_gate0` and
+  Claude/Banzai/Lexicon `pytest-331/test_real_review_seals_only_fe0` both passed
+  v34 PASS publication, exact report/graph checks, partial promotion and
+  post-identity-apply recovery, release and zero-call replay. Both reach
+  `phase2-strategic-overview` with attempts=0 and iteration=1, without executing
+  strategy. These are retained continuations, not fresh prefixes.
+- Final preparation-refusal helper also passed against the unused released
+  v33 author at `pytest-352/test_released_structural_gate_0`. Cloned reset,
+  inflated and typed attempts, changed/typed iteration, changed cap, forged
+  receipt and injected policy override all refuse before publication. Actual
+  durable state, requirement history and pending publication remain unchanged.
+- Final focused command uses the repository virtualenv, `-q --tb=short` and
+  the global retention flags, with `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py` and
+  `test_managed_assessment_contract.py`: **421 passed in 7.70s**. The previous
+  invalid-state fixture now uses -1 rather than 1: positive retained attempts
+  are valid only when authenticated by the released repair ancestry.
+- Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'`, same interpreter/options: **16 passed,
+  501 deselected in 5.68s**. Bounded read-only review found no critical or
+  important findings; the reviewer did not run tests or mutate files.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py` and `test_squad_completion.py`,
+  same interpreter/options: **352 passed in 372.48s**. The completion file
+  overlaps the focused group; these counts are not a unique-test total.
+- Fresh Codex/guided, Lexicon-disabled blocking corridor:
+  `tests/unit/test_managed_feasibility_recheck.py -k 'exhaust and codex'`,
+  same interpreter/options: **1 passed, 3 deselected in 1150.12s**. Fixture
+  `pytest-357/test_rechecks_exhaust_original0` set cap=2/block before managed
+  bootstrap, then executed actual Phase 1 approval, first author/gate, reviewed
+  repair and v34 recheck with publication interruptions, recovery and no-call
+  replay. Final state is `terminal-blocked`, status=blocked, attempts=2 and
+  iteration=1. Exhausted proof cannot authorize another repair even with forged
+  phase/status labels. No strategy or Phase 3 dispatch occurred. This run was
+  started before the additional preparation-refusal helper was added; that
+  helper's independent retained verification is recorded above.
+- Retained Claude/Banzai/Lexicon warning corridor continued from the unused
+  released v31 author at `pytest-320/test_feasibility_parent_is_rea0`, without
+  changing its existing cap=3/warn configuration. The first v32 failed gate
+  and two successive reviewed v33 repair/v34 recheck cycles passed the same
+  publication, exact ancestry, cumulative accounting, changed-input refusal,
+  interruption/recovery and live typed-counter helpers. Final state is
+  `phase2-strategic-overview`, status=running, attempts=3, iteration=2 and
+  `structural_action=proceed_with_warning`; strategy and Phase 3 were not
+  dispatched. Exhausted proof cannot authorize another repair. The standalone
+  continuation used the exact fixture-bound Prosaic inspector and scripted
+  provider, not a weakened production check or live call. This process also
+  preceded the additional preparation-refusal helper, verified separately above.
+- No identity/history reset, new policy owner, live model spending, installation,
+  migration, merge, push or public activation occurred. Remaining Task 3 checks
+  include managed bypass and first-attempt exhaustion branches. Strategy and
+  alignment, KILL/DEFER/timing parity and final acceptance remain open. This
+  increment does not complete Task 3 or the full Phase 2 milestone.
+
+### First-check bypass and exhaustion coverage
+
+- Added `test_managed_feasibility_policy.py` with fresh approval-to-gate
+  corridors for globally disabled governance, a non-structural feasibility
+  tier, cap=1/block and cap=1/warn. Configuration is set before managed
+  bootstrap, not rewritten underneath retained authority. Codex/guided uses
+  Lexicon disabled; Claude/Banzai uses Lexicon enabled and COMMANDER approval.
+- Extended only the shared test helpers for graph-only publication. Bypass
+  expectations require no report, no attempt charge and no exhausted marker;
+  cap-one expectations require native warning/block after exactly one author
+  dispatch. Every case checks unchanged requirement history, no implicit
+  strategy/Phase 3 dispatch, strict live counters and no repair authority.
+- A graph-only transaction interrupts after its sole operation, before
+  identity application. Report-producing transactions retain their existing
+  partial-promotion test. Both use the existing post-identity-apply recovery,
+  actual release and zero-call replay assertions. No production code or policy
+  changes were made for this coverage slice.
+- Read-only review found no actionable findings, including review of the
+  graph-only interruption boundary. The reviewer ran no tests or mutations.
+- Focused command with the repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_feasibility_rounds.py` and
+  `test_managed_assessment_contract.py`: **421 passed in 8.08s**.
+- Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'`, same interpreter/options: **16 passed,
+  501 deselected in 5.79s**.
+- Fresh policy commands use `tests/unit/test_managed_feasibility_policy.py`
+  with one `-k` selector each, the repository virtualenv and the same options:
+  - `disabled`: **1 passed, 3 deselected in 793.54s**;
+    `pytest-362/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=0 and no structural report or strategy execution.
+  - `block`: **1 passed, 3 deselected in 791.08s**;
+    `pytest-364/test_first_gate_preserves_nati0` reaches `terminal-blocked`,
+    status=blocked, attempts=1, iteration=0 and the native exhausted reason.
+  - `nonstructural`: **1 passed, 3 deselected in 1037.68s**;
+    `pytest-363/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=0 and no structural report or strategy execution.
+  - `warn`: **1 passed, 3 deselected in 1035.28s**;
+    `pytest-365/test_first_gate_preserves_nati0` reaches strategy entry with
+    attempts=1, iteration=0 and `proceed_with_warning`, without strategy
+    execution. Both Claude cases retain actual COMMANDER approval provenance.
+- All four fresh cases completed publication/recovery, strict live counter
+  checks and refusal of forged repair authority. These tests exercise existing
+  behavior and passed without a production change; no fix or red/green defect
+  reproduction is claimed. No additional full repository suite was run for
+  this test-only slice. Final diff checks passed.
+- Task 3's PASS-feasibility/structural milestone is now verified across the
+  recorded increments. This is not public activation or full Phase 2 acceptance.
+  Next is Task 4's strategy/alignment continuation from actual released gate
+  proofs, followed by Task 5 branch/timing parity and Task 6 acceptance. No live
+  calls, installation, migration, merge or push occurred in this increment.
+
+### Task 4 — strategy admission and captured inputs
+
+- Added current strategy-parent authentication to the existing assessment
+  owner. It requires an actually released v32/v34 gate routed to strategy with
+  a PASS author verdict, exact current dispatch and source head, no pending
+  transaction, and current quality/debt authority. The existing completion
+  authenticator receives the actual saved proof and checks native counters,
+  configuration and full ancestry. There is no parallel gate policy.
+- Extended the existing captured-input reader for strategy's sole output slot,
+  `strategic-overview.md`, its template and authenticated source/context. Exact
+  structural/Lexicon/debt diagnostics remain read-only evidence, not identity
+  definitions. Journal absence is explicit; no host search is authorized.
+- Red tests first exposed the missing strategy-parent admission; both a minimal
+  forged phase and an actual released Codex gate failed at that missing entry.
+  After admission was implemented, the actual capture failed with
+  `discovery_runtime_identity_context_not_admitted` because strategy lacked
+  authenticated released-input projection. The same retained capture and its
+  changed-input checks passed after connecting the existing projectors.
+- Strategy retained rounds, provider execution, publication and all alignment
+  continuation remain closed. This is only the first Task 4 sub-slice; no
+  provider prose, COMMANDER behavior, policy owner or activation changed.
+- Bounded read-only review found no actionable findings and ran no tests or
+  mutations. It noted that repaired/PASS gate coverage relies on the retained
+  matrix; the new fresh parametrization covers bypass/warning ancestry.
+- Focused command with the repository virtualenv, `-q --tb=short` and global
+  retention flags: `test_discovery_inputs.py`, `test_discovery_operation.py`,
+  `test_discovery_turns.py`, `test_discovery_semantics.py`,
+  `test_discovery_candidate.py`, `test_discovery_reservations.py`,
+  `test_prosaic_prompt_loader.py`, `test_managed_assessment_contract.py`,
+  `test_managed_feasibility_rounds.py`, `test_discovery_assessment_gate.py`:
+  **501 passed in 90.18s**. Minimal forged-phase negative:
+  `tests/unit/test_managed_strategy.py -k phase_label`, same options:
+  **1 passed, 2 deselected in 0.44s** after the observed red failure.
+- The final retained strategy helpers passed admission, altered-state refusals,
+  exact capture and changed feasibility/report/context refusal for six actual
+  released gate successors: Codex bypass `pytest-362`, Claude non-structural
+  bypass `pytest-363`, Claude warning `pytest-365`, Claude first PASS
+  `pytest-339`, Codex repaired PASS `pytest-337` and Claude repaired PASS
+  `pytest-331`. The policy fixtures use `test_first_gate_preserves_nati0`;
+  other fixture names are recorded in the preceding gate verification sections.
+  Thus both v32 and v34 predecessors are exercised. The exact fixture-bound
+  Prosaic inspector was used; no production authentication was replaced.
+- Actual one-attempt block `pytest-364`, repeated-exhaustion block `pytest-357`
+  and not-yet-rechecked author `pytest-352` all refused strategy admission even
+  with forged strategy/running/PASS labels. No fixture state, history, identity
+  head or proof was rewritten. Changed-input fault checks restored exact bytes
+  and timestamps. These are retained checks, not new full prefixes.
+- Shared completion/publication/restoration command with the same interpreter
+  and options: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 368.40s**. No full repository or live-provider suite was run.
+- Fresh Codex/guided, Lexicon-disabled run:
+  `tests/unit/test_managed_strategy.py -k codex`, same interpreter/options:
+  **1 passed, 2 deselected in 808.26s**. The actual Phase 1 approval, reviewed
+  feasibility author, bypass publication/recovery and released gate precede
+  strategy admission/capture in `pytest-370/test_strategy_captures_release0`.
+  Altered receipt/verdict/counter/phase and changed input checks all passed.
+  No strategy dispatch occurred. The fresh Claude parametrization was not run
+  this increment; its actual retained warning/PASS/repaired cases passed above.
+- Final diff checks passed. Commit only this admission/capture increment; no
+  installation, migration, activation, merge or push. Next is protected strategy
+  round selection, reviewed provider execution and publication/native handoff
+  through the existing owners. Alignment and whole Task 4 remain unfinished.
+
+### Strategy execution and guarded handoff (2026-09-17)
+
+- Added strategy to the existing retained round, operation, turn and receipt
+  owners. Selection requires an exact settled feasibility-gate source and full
+  state CAS; ordinary saves cannot replace protected components. This first
+  strategy round has no resolution or repair predecessor. Provider contracts
+  stay neutral Prosaic, with no identity allocation/revision scope.
+- Shared composition retains the exact DONE routing in author/reviewer receipts,
+  candidate and progress digests. Feasibility/Lexicon/debt diagnostics remain
+  captured evidence, not duplicate identity definitions. Existing issue
+  provenance is retained without identity operations or history changes.
+- The existing publisher/completion owner now accepts a closed v35 strategy
+  association. It authenticates the actual released v32/v34 proceeding PASS gate,
+  source chain, native state/counters and configuration. Only reviewed
+  `strategic-overview.md` plus the recomputed graph may publish. Native completion
+  permits only `phase2-tracker-alignment`; alignment and Phase 3 do not execute.
+- RED strategy selection failed with `invalid specification producer` before
+  wiring. Round-owner verification then passed **41 tests in 4.34s**. The first
+  retained execution attempt on `pytest-362/test_first_gate_preserves_nati0`
+  retained rejected attempt receipts before composition was connected; those
+  receipts were not reset or rewritten. A separate actual released parent was
+  used for the successful final execution.
+- Retained Codex/guided bypass parent
+  `pytest-370/test_strategy_captures_release0` passed exact three-call/21-token
+  author/review and zero-call replay. Publication RED failed at the absent v35
+  association before implementation. Final publication, forged-binding refusal,
+  wrong-route refusal, strict counter/type checks, interruptions before promotion,
+  after partial promotion and after identity application, and zero-call/idempotent
+  recovery all passed. Identity history and accumulated counters stayed unchanged;
+  canonical strategy/graph postimages matched and alignment was not dispatched.
+- With the repository virtualenv, `-q --tb=short` and the global retention flags,
+  `test_discovery_operation.py`, `test_discovery_turns.py`,
+  `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_managed_assessment_contract.py`,
+  `test_managed_strategy_rounds.py`, `test_managed_feasibility_rounds.py` passed
+  **404 tests in 64.28s**. Shared `test_discovery_completion.py`,
+  `test_discovery_publication.py`, `test_discovery_restoration_completion.py`,
+  `test_squad_completion.py` passed **352 tests in 374.22s**.
+- Bounded read-only reviews of execution and publication found no actionable
+  findings. No tests, writes or additional agents were delegated by the reviewer.
+  These results do not claim whole-Phase-2 acceptance or live/public activation.
+- Retained Codex repaired-PASS parent
+  `pytest-337/test_reviewed_feasibility_gate0` also passed the complete strategy
+  execution, publication, tamper/refused-route checks and interrupted handoff
+  helpers, preserving iteration 1 and the actual v34 gate ancestry. The retained
+  checks used the exact fixture-bound Prosaic inspector, not replacements for
+  production authentication or source authority.
+- Fresh Claude/Banzai with Lexicon enabled and cap-one warning policy:
+  `tests/unit/test_managed_strategy_execution.py -k claude`, same interpreter
+  and options: **1 passed, 1 deselected in 1247.40s**. Actual Phase 1 approval,
+  reviewed feasibility, structural publication/recovery and released warning
+  gate precede strategy's three-call author/review and zero-call replay in
+  `pytest-376/test_released_gate_authorizes_0`. Strategy preserved the original
+  requirement history and warning gate's one attempt. The fresh Codex
+  parametrization was not rerun; its retained bypass/repaired checks are above.
+- The same fresh Claude run was then continued in place with the publication,
+  closed-binding and interrupted-handoff helpers in
+  `test_managed_strategy_publication.py`. All passed, including the warning
+  counter's exact type/value, zero additional provider calls and settled
+  idempotent recovery at alignment entry. This was a continuation of the fresh
+  prefix, not a second fresh full-prefix pytest invocation.
+- Final diff checks passed. Commit this verified strategy increment only; no
+  installation, migration, activation, live model calls, merge or push. Next is
+  alignment entry/producer/publication and its native structural/clarification
+  routes within Task 4; Task 4 and the Phase 2 milestone remain unfinished.
+
+### Ordinary alignment execution and guarded handoff (2026-09-17)
+
+- Added first-entry alignment admission to the existing assessment owner. It
+  authenticates the actual released v35 strategy, exact settled dispatch and
+  identity head, underlying v32/v34 feasibility ancestry, current counters and
+  configuration, and current Phase 1 quality/debt authority. A phase label or
+  an earlier released gate alone cannot authorize alignment.
+- Extended the existing capture, protected round, operation, turn and receipt
+  owners. Alignment has one first-entry round, no resolution or repair
+  predecessor, and no identity allocation/revision scope. Its exact source,
+  context and template are captured; diagnostics remain read-only evidence.
+  Neutral Prosaic contracts serve both providers without provider-specific prose.
+- The existing publisher/completion owner now admits a closed v36 association
+  for ALIGNED/DRIFT only. Reviewed alignment report and recomputed graph are the
+  sole writes. Exact strategy/gate ancestry, native counters/configuration and
+  author/reviewer routing are authenticated. Native completion clears its usual
+  transient warning/reason fields and stops at alignment structural-gate entry.
+  STOP_AND_ASK remains closed until its native decision association is connected.
+- RED admission failed at the missing parent entry; the first actual capture
+  then failed at the missing released-input wiring. RED round selection failed
+  with `invalid specification producer`. After wiring, focused alignment/strategy
+  owner and minimal-parent checks passed **23 tests, 2 deselected in 2.14s**.
+- Parent admission, changed-state/source refusals, exact capture and changed-input
+  checks passed on actual retained Codex bypass strategy
+  `pytest-370/test_strategy_captures_release0` and Claude warning strategy
+  `pytest-376/test_released_gate_authorizes_0`. Repaired-PASS strategy
+  `pytest-337/test_reviewed_feasibility_gate0` also passed parent/capture checks;
+  its subsequent RED execution retained rejected attempt receipts before shared
+  composition was connected. Those receipts were not reset or rewritten.
+- Actual retained released-gate-only `pytest-339`, blocked-gate `pytest-364`,
+  and not-yet-rechecked repair `pytest-352` refused alignment despite forged
+  alignment/running/PASS labels. No state or identity authority was rewritten.
+- Final retained Codex ALIGNED and Claude DRIFT author/review helpers passed
+  three scripted calls/21 tokens apiece, unchanged canonical inputs/history,
+  and exact zero-call replay. Publication RED exposed the missing v36 binding.
+  After implementation, both passed publication, forged-binding and wrong-route
+  refusals, strict live counter/type checks, interruption before promotion,
+  after partial promotion and after identity application, and idempotent recovery.
+  Canonical postimages matched, identities/history and prior dispatch/budget
+  counters were preserved, and the 21-token completion charge was applied once.
+  Neither alignment structural evaluation nor Phase 3 was dispatched.
+- These are continuations of previously recorded real scripted prefixes, not new
+  full-prefix pytest runs. The exact fixture-bound Prosaic inspector was used;
+  production authentication was not replaced. New parametrized full-prefix tests
+  are included, but their complete prefixes were not rerun in this increment.
+- With the repository virtualenv, `-q --tb=short` and global retention flags,
+  `test_discovery_operation.py`, `test_discovery_turns.py`,
+  `test_discovery_semantics.py`, `test_discovery_candidate.py`,
+  `test_discovery_reservations.py`, `test_managed_assessment_contract.py`,
+  `test_managed_alignment_rounds.py`, `test_managed_strategy_rounds.py`,
+  `test_managed_feasibility_rounds.py`: **415 passed in 62.73s**.
+- Shared completion/publication/restoration regression with the same interpreter
+  and options: `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`:
+  **352 passed in 340.01s**. Final diff checks passed. These selected regressions
+  are not a full repository or live-provider acceptance claim.
+- Bounded read-only execution and publication reviews found no actionable
+  findings and ran no tests or mutations. The optional cleanup-assertion coverage
+  note concerns alignment structural fields not produced by this first-entry
+  slice; existing native cleanup remains unchanged.
+- This increment does not complete Task 4 or whole Phase 2. Alignment structural
+  publication, repair/retry/exhaustion, native clarification and existing COMMANDER
+  routing, remaining branch/timing parity and full acceptance remain. No installed
+  workspace, public activation, live provider, merge or push changed.
+
+### First alignment structural publication (2026-09-17)
+
+- Extended the existing assessment-gate adapter, sealed report/graph publisher
+  and completion decoder for closed v37 `alignment_gate`. The native governance
+  evaluator remains the only structural policy owner. Source selection confines
+  the alignment artifact, template, cross-references and report; it grants no
+  live-input fallback or identity edit authority.
+- First-entry admission requires the actual released v36 ordinary alignment,
+  its v35 strategy and v32/v34 feasibility ancestry, unchanged feasibility
+  budgets/configuration, and zero prior alignment attempts. Completion admits
+  only the native repair, terminal-blocked or Phase 3 entry destination; it does
+  not execute any successor. Repaired alignment and STOP_AND_ASK remain closed.
+- RED adapter/routing tests exposed the missing alignment entries. An initial
+  test-only I/O guard also blocked the permitted bundled grammar load; it was
+  narrowed to allow only that resource, retaining the live-input prohibition.
+  Alignment/feasibility adapter and captured-policy checks then passed
+  **79 tests in 0.57s**. Publication RED against the actual retained v36 Codex
+  parent exposed the missing alignment publication entry before implementation.
+- Initial retained publication helpers exposed two test-only mistakes: a wrong
+  artifact key for template tampering, and a bypass action tamper that did not
+  change the original value. Both were corrected. Publication/refusal then
+  passed on retained Codex `pytest-370` and Claude `pytest-376`, but native
+  handoff correctly rejected the test's completion ID because strategy had
+  already used it. Both blocked records, receipts and sealed evidence remain
+  untouched. The gate helper now creates a unique completion ID. These failed
+  handoffs are not represented as successful recovery or reset for retesting.
+- New verification uses a separate fresh temporary root,
+  `/tmp/echelon-alignment-checks.CnKAq8`, with the same retention flags. This
+  avoids automatic retirement of older acceptance evidence from the original
+  pytest root; no retained fixture was moved, reset, rewritten or deleted.
+- With the repository virtualenv, `-q --tb=short` and global retention flags,
+  `test_discovery_alignment_gate.py`, `test_discovery_assessment_gate.py`,
+  `test_captured_governance_gate.py`, `test_governance_structural_gate.py`,
+  `test_squad_completion.py`, `test_managed_alignment_rounds.py` passed
+  **329 tests in 4.40s** before the final additional reference/template/state
+  cases. Native `tests/integration/test_squad_controller.py -k 'structural or
+  feasibility or alignment'` passed **16 tests, 501 deselected in 5.43s**.
+- The added cross-reference test initially supplied an unparseable Markdown
+  heading as its specification; native Lexicon deliberately cannot resolve IDs
+  without a parsed specification. Replacing that test input with the existing
+  valid controlled-language fixture made the unresolved-reference assertion
+  meaningful. Final focused command above, including all added cases:
+  **336 passed in 4.74s**. Production structural policy was not changed.
+- Read-only admission checks on actual retained gate-only `pytest-339` and
+  strategy-only `pytest-337` refused both as alignment-gate parents without
+  changing their state. A released alignment author is required.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, `test_squad_completion.py`, same
+  interpreter/options and isolated temporary root: **352 passed in 351.26s**.
+  The prior combined run had **382 passed, 1 failed in 341.40s**; its only
+  failure was the invalid cross-reference test fixture described above.
+- The actual released repaired-feasibility v34 proof under
+  `pytest-337/test_reviewed_feasibility_gate0` also passed retained proof
+  validation and shared decoding with its original `proceed` result. This
+  read-only regression changed no state and is not a new repaired full prefix.
+- Read-only review found no remaining actionable production defects after the
+  helper correction. Full managed repair/block handoff coverage remains distinct
+  from the bypass/warning corridors and must not be claimed from routing tests.
+- Fresh scripted Codex/guided, Lexicon-disabled full prefix:
+  `tests/unit/test_managed_alignment_gate.py -k codex`, repository virtualenv,
+  `-q --tb=short`, global retention flags and the fresh temporary root:
+  **1 passed, 1 deselected in 1637.11s**. The fixture is
+  `pytest-of-michalbachorik/pytest-2/test_alignment_gate_reaches_ph0` under that
+  root. Actual released Phase 1 approval, feasibility, strategy and ALIGNED
+  publication precede the new v37 bypass. The graph-only handoff, tamper and
+  wrong-route refusals, strict counter/type checks, interruption after promotion
+  and identity application, and exact recovery all passed. It stops settled at
+  `phase3-specialists` entry, with zero Phase 3 dispatches, 210 cumulative scripted
+  tokens, unchanged IDs/history and no extra gate provider calls or charges.
+- Fresh scripted Claude/Banzai, Lexicon-enabled cap-one warning full prefix:
+  `tests/unit/test_managed_alignment_gate.py -k claude`, same interpreter/options
+  and temporary root: **1 passed, 1 deselected in 2042.69s**. The fixture is
+  `pytest-of-michalbachorik/pytest-3/test_alignment_gate_reaches_ph0` under that
+  root. Existing COMMANDER Phase 1 approval, reviewed feasibility, strategy and
+  DRIFT publication precede the v37 warning gate. Exact report/graph writes,
+  binding/route/counter refusals, partial publication and post-identity-apply
+  interruptions, recovery and zero-call replay passed. It stops settled at
+  `phase3-specialists` entry, `proceed_with_warning`, alignment attempts=1,
+  preserved feasibility attempts=1 and 238 cumulative scripted tokens. No
+  Phase 3 dispatch, additional gate usage or identity/history change occurred.
+- Final diff checks passed. Commit this verified first-entry gate increment,
+  not whole Task 4 or Phase 2 acceptance. Next: full repair/block gate handoffs,
+  protected alignment repair/recheck/no-progress/exhaustion, native clarification
+  and existing COMMANDER routes; then remaining branch/timing parity and full
+  acceptance. No installation, migration, public activation, live model call,
+  merge or push. Disk remains nearly full; no retained evidence was cleaned up.
+
+### Task 4 — first protected alignment repair publication
+
+- Continuing the existing worktree from `f030705e`; no installation, migration,
+  public activation, live provider call, Phase 3 execution, merge or push.
+- Test-first round selection reproduced the missing structural-repair parent
+  transition (**1 failed, 11 passed**). The protected owner now retains the
+  accepted predecessor and separate receipt round without changing native
+  counters or earlier rounds; **12 passed** after the change. A separate RED
+  test confirmed the missing released repair authority helper before adding it.
+- First repair admits only the actual released v37 `repair` result and its
+  accepted v36 author. It authenticates current native state/configuration and
+  managed identity authority, captures the failed report as exact read-only
+  evidence, and publishes only alignment/graph through a closed v38 binding.
+  Historical projection validates the predecessor chain; live recovery retains
+  alignment and feasibility budgets. No question resolution can be substituted.
+- Full repair-gate and repaired-author continuation was verified against
+  the retained Claude/Banzai run at original temporary root
+  `pytest-331/test_real_review_seals_only_fe0`. Its existing released repaired
+  feasibility v34 prefix is reused as-is, not reconstructed, reset or rewritten.
+  Fresh dual-provider test composition is present but has not been run in this
+  increment. It must not be represented as fresh dual-provider acceptance.
+- With repository virtualenv, `-q --tb=short`, isolated temporary root
+  `/tmp/echelon-alignment-checks.CnKAq8` and retention count 200/policy all,
+  alignment round/repair-boundary, captured structural policy, assessment gate
+  and shared completion-shape tests passed **338 tests, 2 deselected in 5.42s**.
+  Native controller structural/feasibility/alignment routing passed
+  **16 tests, 501 deselected in 5.55s**.
+- Shared protected strategy/feasibility rounds and discovery turns passed
+  **109 tests in 21.92s**, with the same interpreter and retention settings.
+- Shared discovery completion, publication and restoration regressions passed
+  **127 tests in 360.12s**, with the same interpreter and retention settings.
+- After adding an inactive-round refusal assertion before identity lookup, the
+  focused suite passed again: **338 tests, 2 deselected in 5.22s**.
+- Read-only authentication of the actual previously released first v37 gates
+  passed on fresh-prefix Codex `pytest-2` and Claude `pytest-3` in the isolated
+  temporary root. State/history remained unchanged. The first invocation used
+  the macOS `/tmp` symlink and was refused before reading identity state; the
+  retry used its resolved `/private/tmp` path, without modifying any evidence.
+- Independent read-only review found no actionable production defects. Its
+  optional explicit boundary assertion was added: actual released v38 cannot
+  enter the still-unadmitted recheck publisher. Acceptance findings and final
+  recovery are recorded below.
+- The actual retained Claude continuation completed reviewed strategy v35,
+  ordinary alignment v36 and failed first structural gate v37. The repair
+  handoff passed wrong-route and typed-counter refusal, partial report/graph
+  promotion, interruption after identity application, exact recovery and
+  zero-call/zero-charge replay. It is settled at alignment repair entry with
+  iteration 2, alignment attempts 1, feasibility attempts 0 and 259 cumulative
+  scripted tokens. Identity history is unchanged and Phase 3 was not dispatched.
+  Repaired v38 author/publication recovery continued against that release.
+- Retained Claude repair authority and its altered-source/counter/iteration/
+  configuration/verdict refusals passed. Reviewed repair and exact zero-call
+  replay also passed: three scripted turns, 21 pending tokens, exact failed
+  report evidence, no identity operations/history changes, unchanged canonical
+  documents, preserved first round, and a separate second accepted round.
+- The v38 package passed closed-binding/tamper and exact write-scope checks,
+  but native handoff exposed a defect before promotion: v38 live authentication
+  incorrectly expected the previous alignment pass/findings/report state fields
+  to survive authoring. Native routing deliberately clears those certification
+  fields, retaining attempts and the report artifact. The failed pending
+  completion and its `intent_mismatch` diagnostic were retained, not reset.
+- Corrected only v38 expectation to match native semantic cleanup; lifecycle
+  status/reason restoration remains owned by existing completion recovery.
+  Added explicit stale-certification refusal and byte-identical retained report
+  assertions. The pending-recovery test helper now also admits an actual stored
+  failed completion without re-preparing or rewriting its proof. Recovery of
+  that same retained pending v38 passed through the native owner: stale-field
+  and counter/type refusal, partial promotion, interruption after identity
+  application, finalization and exact zero-call replay. The original diagnostic
+  was restored/cleared only by normal completion; no fixture or sealed evidence
+  was reset or rewritten to repair the test.
+- Final retained state: running `phase2-intent-alignment-structural`, iteration
+  2/max 5, alignment attempts 1, feasibility attempts 0, 280 cumulative scripted
+  tokens, two alignment author dispatches, no Phase 3 dispatch, no pending
+  publication/completion or failure diagnostic. The original v38 completion
+  `00475663f2c3499eb303cbd58146e579` is released. Identity history and all
+  non-target documents (including the old failed report) remain unchanged.
+  Structural pass/findings/report state fields are absent per native policy;
+  the next gate must evaluate the repaired document using the retained budget.
+- The actual released v38 was refused by the still-closed recheck parent guard.
+  This is verified repair authoring/publication/recovery, not a passing repaired
+  structural recheck or complete Task 4. Follow-up read-only review confirmed
+  the cleanup fix and test factoring; its pre-routing dispatch-count assertion
+  was restored. Post-fix focused checks: **338 passed, 2 deselected in 5.29s**.
+- Post-fix protected rounds/turns plus native structural/feasibility/alignment
+  routing checks: **125 passed, 501 deselected in 16.98s** (same interpreter,
+  isolated temporary root and retention settings).
+- Final read-only released-v38 authentication passed with the original fixture
+  Prosaic metadata inspector and unchanged state/history. An initial standalone
+  check omitted that fixture inspector and was refused; no production authority
+  or retained proof was changed to make the check pass.
+- The post-fix shared completion/publication/restoration rerun was interrupted
+  by disk exhaustion: **120 passed, 2 failed, 5 setup errors in 355.78s**.
+  Failures were inability to write fixture Git/config/context files or create
+  fixture directories (`ENOSPC`), so this run is not a green regression result.
+- Following explicit cleanup approval, removed only disposable `pytest-5`
+  through `pytest-19` under the isolated temporary root above (permanently,
+  about 400 MiB). Retained Codex `pytest-2`, Claude `pytest-3`, and the entire
+  original macOS pytest root including the released-v38 `pytest-331` evidence
+  were preserved. No repository, environment or other user data was removed.
+- Post-cleanup focused checks passed again: **338 passed, 2 deselected in
+  5.20s**; protected rounds/turns and native routing: **125 passed, 501
+  deselected in 16.61s**. Read-only authentication again confirmed the actual
+  released v38 with unchanged retained state/history and zero Phase 3 dispatches.
+- The post-cleanup shared completion/publication/restoration rerun completed
+  cleanly: **127 passed in 324.85s**, with the same interpreter, isolated root
+  and retention settings. Final diff checks passed. This closes verification
+  for the first protected alignment repair checkpoint, not full Task 4 or
+  fresh dual-provider repair acceptance; installation/activation remains out
+  of scope for this checkpoint.
+- Next after this checkpoint: v39 structural recheck with retained native
+  attempts/configuration, successful repair and repeated-failure exhaustion/
+  no-progress evidence; then native clarification/COMMANDER and remaining
+  branch/timing parity. No controller approval policy or identity semantics
+  are being changed.
+
+### Task 4 — first repaired alignment structural recheck
+
+- Continuing from `2642737c` in the same isolated worktree, inline under the
+  approved Phase 2 design. No installation, activation, provider spending,
+  migration, merge/push, prose change or Phase 3 dispatch is authorized here.
+- Test-first against the actual released v38 in retained Claude/Banzai
+  `pytest-331/test_real_review_seals_only_fe0`: the new parent assertion failed
+  at the existing v36-only admission guard, before canonical writes. The new
+  v39 association admits that released repair and retains its authorizing v37
+  gate, exact failed report, configuration, iteration and feasibility budget.
+  It recovers alignment attempts from the released failure, not live defaults.
+- Extended only the existing gate decoder/publisher/authentication and retained
+  projection owner. v37 remains first-entry; v39 requires nonzero prior attempts
+  and the retained failed report. Both use native captured evaluation and exact
+  report/graph publication. A second author after v39 is still deliberately
+  closed pending repeated-failure/exhaustion acceptance.
+- Retained parent admission and recheck preparation refusals passed: reset,
+  inflated/typed attempts, iteration/type, cap, source, configuration override,
+  feasibility budget and verdict changes were refused without canonical writes
+  or identity-history changes. Focused gate/round/completion tests passed
+  **295 tests in 14.29s**, with repository virtualenv, `-q --tb=short`, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8` and retention count 200/policy all.
+- Read-only review found no actionable defect. Its coverage boundary remains
+  explicit: successful v39 acceptance does not establish repeated repair,
+  warn/block exhaustion or fresh dual-provider full-prefix acceptance.
+- Actual retained Claude v38 continued through successful v39 recheck using
+  the production publisher/controller: exact gate/report/graph binding and
+  tamper refusals, partial promotion interruption, interruption after identity
+  application, native recovery, settled replay with no provider call or charge,
+  and typed-budget authentication passed. Identity history stayed unchanged;
+  the run reached `phase3-specialists` entry without dispatching Phase 3.
+  This is a retained continuation, not a new full-prefix run. The fresh
+  Codex/Claude test compositions are present but not run in this increment.
+- A separate final read-only check authenticated the existing isolated-root
+  v37 Codex bypass and Claude warning releases, plus this actual v39 release
+  `476c322bc86742d6a08a9d60b1c0c374`. All retained states/history remained unchanged.
+  v39 is settled at Phase 3 entry, iteration 2, alignment attempts 0 (native
+  successful-check semantics), 280 cumulative scripted tokens and zero Phase 3
+  dispatches. Its sealed input still records the preceding failed attempt.
+  The new explicit forged-phase assertion also refused another author from
+  v39; typed iteration/alignment/feasibility counter mutations were refused.
+- Shared `test_discovery_completion.py`, `test_discovery_publication.py`,
+  `test_discovery_restoration_completion.py`, captured/native governance gates
+  and native controller structural/feasibility/alignment routing passed
+  **185 tests, 501 deselected in 336.92s**, with the same interpreter, isolated
+  root and retention settings. Final diff checks passed. No further temporary
+  data was deleted. Disk is critically low (~210 MiB free).
+- Checkpoint closes the successful first repaired recheck only. Next: actual
+  no-progress repair/warn/block v39 handoffs and repeated-author admission with
+  preserved original limits; then native clarification/COMMANDER and remaining
+  branch/timing parity. Full activation and whole-Phase-2 acceptance stay open.
+
+### Task 4 — repeated alignment repair and exhaustion
+
+- Continuing inline from `9aacd96d`, with no installation, activation, live
+  provider spend, merge/push or Phase 3 execution. User-approved disk cleanup
+  removed the disposable recent regression fixtures and 14 abandoned pytest
+  `garbage-*` directories; all older numbered runs and retained evidence were
+  preserved. Free space recovered to about 115 GiB. Read-only snapshot directory
+  permissions had prevented deletion of the abandoned garbage; only directories
+  within the validated garbage roots had permissions restored, without following
+  symlinks. No repository or test-retention configuration changed.
+- New tests deliberately reuse byte-identical invalid alignment output. Codex
+  guided/cap-two/block runs from a fresh Phase 1 prefix; Claude Banzai/cap-three/
+  warn continues the actual released feasibility gate in original-root
+  `pytest-339/test_valid_claude_banzai_feasi0`, without changing its configuration,
+  state or proof to manufacture a parent. Both use the existing scripted provider
+  and fixture Prosaic inspector, leaving production authority/routing intact.
+- Existing focused gate/round/repair-boundary baseline passed: **71 passed,
+  2 deselected in 11.71s**, using repository virtualenv, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short`, retention count
+  200/policy all. Full corridor outcomes are recorded separately below.
+- The actual retained Claude continuation published strategy and initial
+  alignment, released the first repair gate, authored byte-identical invalid
+  output and released the v39 second failure with attempts=2. Native partial
+  publication/post-identity-application interruption, recovery, exact replay and
+  typed-budget refusal passed. The next-author test then failed exactly at
+  `require_alignment_repair`'s v37-only version guard, before a third round.
+- Minimal production change: both live repair admission and historical
+  repaired-author projection now admit v37 or v39, still requiring the exact
+  released `repair` route/action and accepted predecessor. Existing recursive
+  configuration/iteration/attempt checks own the budget; no allocator, version,
+  schema, provider prose or approval policy was added. The same saved released
+  second failure resumed at attempt three; no state/proof/configuration reset.
+- Post-change focused gate/round/repair, squad completion and captured/native
+  governance regressions passed **338 tests, 2 deselected in 14.98s**, with the
+  same interpreter and isolated retention settings. Read-only review of the
+  actual two-line production change and generalized acceptance tests found no
+  actionable defect; complete corridor acceptance remained pending at review.
+- Shared discovery completion/publication/restoration and native controller
+  structural/feasibility/alignment routing regressions passed **143 tests,
+  501 deselected in 356.42s**, using the same interpreter and retention settings.
+- Retained Claude continuation passed from the saved second failure through
+  third unchanged author, v38 publication and v39 warning exhaustion. The helper
+  verified native interruptions/recovery, zero-call replay, typed-budget and
+  exhausted-author refusals, exact cumulative accounting, unchanged identity
+  history and preservation of older rounds. Final state: settled Phase 3 entry,
+  iteration 2, alignment attempts 3, three alignment author dispatches and 280
+  scripted tokens; no Phase 3 dispatch. This is retained acceptance, not a fresh
+  Claude full-prefix run.
+- Fresh Codex guided/cap-two/block acceptance passed **1 test, 1 deselected in
+  3201.10s** (`test_managed_alignment_exhaustion.py -k codex`, same interpreter,
+  isolated root and retention flags). It traversed the real Phase 1 approval,
+  feasibility repair/recheck, strategy and unchanged alignment repair before
+  exhaustion. Final state: settled `terminal-blocked`, iteration 2, attempts 2,
+  two alignment author dispatches, 252 scripted tokens and no Phase 3 dispatch.
+  Preserve its new isolated-root `pytest-4/test_no_progress_alignment_exh0`
+  evidence; this is not the disposable older pytest-4 removed during cleanup.
+- The fresh Codex process started before the two-line admission patch; its
+  cap-two path never needs v39-to-author admission. The retained Claude third
+  author supplies that post-change acceptance; the final read-only checks below
+  authenticate both exhausted releases and refuse further repair on current code.
+- Final read-only current-code verification passed for Codex released v39
+  `be60bfb44b22418b818b72ba464dd396` and Claude released v39
+  `a6c4a7673b484c01aa60ef98cd5cdb14`: exact actions, previous/current attempts,
+  iteration, dispatch counts and usage matched; forged return-to-author phases
+  were refused, and saved state/history stayed unchanged. Final diff check passed.
+- This checkpoint closes repeated alignment repair/no-progress and warn/block
+  exhaustion only. Native clarification/COMMANDER transport, remaining
+  branch/timing parity and whole-Phase-2 acceptance remain open. No installation,
+  public/live activation, Phase 3 execution, merge or push occurred.
+
+### Task 4 — initial alignment question publication and native pending decision
+
+- Continuing inline from `165d9150` in the existing clean isolated worktree.
+  This checkpoint addresses the initial question and interrupted recovery only,
+  not answer publication or COMMANDER dispatch. No native policy, provider prose,
+  installation, activation, Phase 3 execution, merge or push changes.
+- Existing clarification, COMMANDER and assessment-contract baseline passed
+  **151 tests in 28.91s**, with repository virtualenv, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short`, retention count
+  200/policy all. The new question-claim test failed at the unsupported alignment
+  producer; it extends the existing native claim reader, not a decision owner.
+- Fresh Codex/guided prefix and retained Claude/Banzai continuation from actual
+  released feasibility warning (`pytest-365/test_first_gate_preserves_nati0`)
+  exercise reviewed questions. Retained configuration/state/proofs are not reset.
+- New native pending-decision tests first needed their actual fixture runtime
+  installed, then failed at the absent alignment association helper. The helper
+  rebuilds the exact initial decision through the existing workspace policy
+  registry and native decision builder; it grants no answer or dispatch authority.
+  Guided/semi wait and eligible Banzai pending, plus altered question/risk/
+  recommendation/eligibility/attempt/answer refusals, passed **4 tests,
+  2 deselected in 15.42s**. Existing clarification policy plus question-claim
+  checks separately passed **25 tests, 2 deselected in 10.44s**.
+- Read-only early review found no actionable helper defect. Its optional
+  no-recommendation case was added along with high risk: both preserve native
+  Banzai human waiting, while recommended low risk remains eligible/pending.
+  The expanded focused suite passed **6 tests, 2 deselected in 18.91s**.
+- The real retained Claude author/reviewer accepted the question; publication
+  then failed. A replay-only diagnostic confirmed the exact old refusal:
+  `alignment clarification requires its native decision association`. No
+  canonical state or proof was reset. The same accepted candidate now resumes
+  through the first-entry v36 envelope and same-phase native decision route.
+  Repaired-author v38 questions and all alignment answer/COMMANDER dispatch
+  paths remain closed. Existing native policy derives the sealed question;
+  completion authentication preserves gate counters/exhaustion and refuses
+  provider-supplied answer authority or a fabricated alignment verdict.
+- Integrated focused question/policy/assessment/completion/round regressions
+  passed **364 tests, 2 deselected in 23.40s**. Final read-only review found no
+  production authority issue, but identified an obsolete stateless negative
+  expecting every v36 question to be invalid. Its failure was reproduced against
+  the real retained ordinary v36 at isolated-root `pytest-3`; the question
+  mutation now supplies protected state, proving it cannot replace the accepted
+  ordinary operation. All closed-binding negatives then passed with unchanged
+  state/history, and the original ordinary binding still decodes.
+- Shared discovery completion/publication/restoration and native human-input
+  plus structural/feasibility/alignment routing regressions passed **377 tests,
+  501 deselected in 399.67s**. Latest focused question/policy/assessment/
+  completion/round/retry checks passed **365 tests, 4 deselected in 23.06s**.
+  Both used the repository interpreter and isolated retention settings above.
+- Retained Claude/Banzai continuation passed question publication, exact native
+  pending decision, interruption before promotion, after the first file and
+  after identity application, recovery and zero-call replay. State/history,
+  usage and closed direct-answer/pending-resume entry points were checked.
+  Final state remains blocked at alignment with an unanswered pending decision,
+  238 scripted tokens, iteration 0, feasibility attempts 1 and its prior warning
+  exhaustion intact; no Phase 3 dispatch. This is retained acceptance, not a
+  fresh full-prefix Claude run or a live model invocation.
+- Fresh Codex/guided prefix reached its reviewed question and failed at the old
+  publication guard after **1354.38s** (the process started before the patch).
+  Preserve isolated-root `pytest-10/test_alignment_question_reache0`; its
+  accepted candidate is continued under current code without a state reset.
+- Added a repair-envelope question forgery to the existing v38 closed-binding
+  negatives. All passed against the actual retained repaired-author proof at
+  original-root `pytest-331`, without modifying saved state/history. Final
+  read-only review of the test extraction and new negative found no actionable
+  issue; production was unchanged since the preceding completed review.
+- An additional standalone audit initially compared nested controller checkpoint
+  metadata against its pre-completion image and failed. Inspection isolated the
+  difference to `.echelon/checkpoints.json`, which the existing native checkpoint
+  effect deliberately updates and completion authentication projects. No
+  production fix or fixture rewrite was needed; document preservation is checked
+  separately from the authenticated checkpoint ledger.
+- Corrected final read-only Claude audit passed on current code: released
+  question authentication, typed iteration/cap/feasibility-attempt refusals,
+  prior warning exhaustion and 22 unchanged non-output spec documents, with
+  saved state/history unchanged.
+- The fresh Codex prefix's post-fix retained continuation passed the updated
+  publication/handoff/recovery helper, including wrong-route and question
+  tampering refusals, typed budgets, non-output document preservation, exact
+  native pending decision, single usage charge, zero-call replay and both closed
+  answer entry points. This is not an uninterrupted green fresh pytest run.
+  No fixture state, accepted operation, proof or configuration was reset.
+- This checkpoint completes only initial alignment question publication and
+  native pending-decision recovery. Answer publication, COMMANDER transport,
+  repair-round questions, remaining branch/timing parity and whole-Phase-2
+  acceptance remain open. Final diff checks passed; no installation, activation,
+  live model calls, Phase 3 execution, merge or push occurred.
+
+### Task 4 — detached alignment answer association
+
+- Continuing inline from `24dee015` in the existing isolated worktree. Existing
+  design/plan approval covers answer publication and COMMANDER transport; no
+  new decision owner, provider prose, activation or Phase 3 execution is added.
+- Baseline clarification/COMMANDER/initial-question checks passed **60 tests,
+  2 deselected in 36.08s**, with repository interpreter and isolated retention.
+- The real retained Codex pending question at isolated-root `pytest-10` rejects
+  detached answer preparation at `alignment_parent_requires_reconciliation`:
+  capture currently expects strategy/structural-repair entry, not the released
+  question. The fixture was not reset or rewritten.
+- Native answer tests initially failed at the absent association helper. The
+  Banzai fixture first needed a reachable native claim (pending before resolving,
+  with attempt 1); after correcting that setup all three modes failed at the
+  missing helper. Minimal resolver/answer validation then passed together with
+  prior initial-question checks: **9 tests, 4 deselected in 23.37s**.
+- The existing assessment owner now authenticates the released initial v36
+  question and its actual ancestry/budgets. Native mutable claim fields are
+  projected only for historical initial-question authentication; immutable
+  question metadata is checked against the workspace policy registry. The
+  existing capture/publisher builds a v40 clarification draft, pins its exact
+  pre-resolution state, and binds a COMMANDER answer to the existing accepted
+  transport receipt. No canonical publication or answer application is admitted.
+- Retained Codex detached preparation passed without changing state/history.
+  Retained Claude/Banzai used the existing constrained COMMANDER transport to
+  choose WASD instead of the recommended arrow keys, then replayed that exact
+  response without another call. It passed draft preparation and initial
+  tamper/closed-entry checks. The actual fixture retains a native resolving claim
+  with attempt 1 and its accepted 7-token response; the answer remains unapplied
+  and its charge belongs to the later native application/failure transaction.
+- Expanded focused answer/question/policy/COMMANDER/assessment/completion/round
+  checks passed **397 tests, 4 deselected in 47.87s** using the same isolated
+  retention settings. Fresh Codex full-prefix and shared regressions are pending.
+- Read-only review found no actionable defect for this inactive checkpoint.
+  Preserve the activation constraint: v40 decoding checks receipt shape, while
+  detached preparation authenticates the actual COMMANDER receipt. Before
+  opening application, completion/recovery must reauthenticate that receipt and
+  bind exact native post-resolution state/usage effects (following existing
+  checkpoint v30 ownership). Do not relax the exact-before-state decoder guard
+  or public managed exclusion in isolation. Repair-round questions and resumed
+  authoring still need their own retained-round association.
+- Both retained provider cases passed expanded source/phase/unfinished/pending/
+  cancellation/question/typed-budget refusals and closed envelope mutations.
+  Replacing the COMMANDER answer with its original recommendation is rejected
+  by the actual retained judgment receipt; no canonical state/history changes.
+- Shared discovery completion/publication/restoration and native human-input/
+  structural/feasibility/alignment regressions passed **377 tests,
+  501 deselected in 399.21s**. Existing clarification history/candidate tests
+  passed **53 tests in 10.34s**. The native resolver test with the canonical
+  decision builder's attempt parameter passed **3 tests, 2 deselected in 15.86s**.
+- Final current-code retained checks passed for both user and COMMANDER drafts,
+  including byte-for-byte unchanged spec/staging files, refusal of a forged
+  already-resolved state, exact answer/receipt binding and closed public entry
+  points. Only the test-owned unpublished drafts were discarded; retained
+  question/COMMANDER evidence, native claim state and identity history remain.
+- Fresh acceptance command: repository virtualenv `python -m pytest
+  tests/unit/test_managed_alignment_resolution.py -k 'prepares_without and codex'
+  -q --tb=short -o tmp_path_retention_count=200 -o tmp_path_retention_policy=all`,
+  with `PYTHONDONTWRITEBYTECODE=1` and the isolated TMPDIR above. Preserve its
+  `pytest-23/test_alignment_answer_prepares0` evidence. The process loaded the
+  tests before the final source-refusal/document-byte assertions were added;
+  the current-code retained checks above cover those additions separately.
+- Fresh Codex/guided acceptance passed **1 test, 4 deselected in 1508.49s**
+  (25:08): actual Phase 1 approval, feasibility/strategy/alignment, reviewed
+  initial question, interrupted native question recovery and detached answer
+  preparation/refusal checks. This is an uninterrupted green scripted prefix,
+  not a live model run. Final question remains unanswered/awaiting human at
+  alignment, settled, with 210 scripted tokens, iteration 0 and no Phase 3
+  dispatch. The retained Claude case remains resolving attempt 1, unanswered,
+  with 238 charged scripted tokens and its separate retained 7-token judgment.
+- This checkpoint completes detached preparation only. Native answer
+  application, completion-time COMMANDER receipt authentication/accounting,
+  recovery and public automatic dispatch remain next. No provider prose,
+  installation, activation, Phase 3 execution, merge or push changes. Final
+  diff checks passed; preserve both fresh and retained evidence for continuation.
+
+### Task 4 — native initial alignment answer application and recovery
+
+- Continuing inline from `3b7489c7` under the existing Phase 2 approval. This
+  increment opens native application of the initial reviewed alignment answer,
+  not resumed alignment authoring, repair-round questions or Phase 3 execution.
+- Public Codex/guided application first failed at the managed legacy-execution
+  guard on the actual retained question (`pytest-23` in the isolated root).
+  No question, native state, identity history or accepted proof was reset.
+- v40 remains a detached-only draft. v41 binds the same guarded clarification
+  publication to native answer effects, the exact before/resolved decision,
+  retained COMMANDER receipt and one exact token charge. Native Squad remains
+  the effects/CAS owner; the existing completion performs publication/context
+  work and releases the immutable proof. No new publisher, policy, allocator,
+  provider-specific prose or decision log was introduced.
+- The existing constrained COMMANDER transport also serves the exact eligible
+  alignment question. Admission checks live captured inputs before a provider
+  call and before accepting its response. A resolving claim replays its retained
+  answer before legacy interrupted-claim recovery can allocate another attempt.
+- First real application passed native state save, first-file interruption and
+  post-identity-apply interruption, then exposed a final-release failure: the
+  historical checkpoint validator looked only at the latest answer receipt,
+  which the alignment answer had legitimately replaced. Its exact checkpoint
+  decision/receipt was already retained by the first feasibility round. The
+  validator now checks that existing native association as a historical fallback;
+  the new regression failed before this change and passed afterward (**1 test,
+  30 deselected in 10.40s**). No history was reconstructed or overwritten.
+- Public resume recovered that Codex post-state-save release with unchanged
+  state/history, no new provider call and no additional charge. The retained
+  Claude/Banzai case at original-root `pytest-365` then passed answer application,
+  first-file/post-identity/late-release interruptions and public resume: retained
+  WASD judgment, zero new calls, exactly 7 tokens charged once, prior warning
+  exhaustion/counters preserved and no Phase 3 dispatch.
+- Read-only review found two gaps, both addressed: v40 must be explicitly
+  rejected by native completion validation (not merely fail after state save),
+  and historical question validation must retain the original native
+  turn/reservation/Prosaic-role receipt checks after separating live-head checks.
+  Final production review reported no remaining actionable finding.
+- Added native CAS wrong-charge/wrong-effects/wrong-removal refusals with exact
+  state preservation; v41 decoder negatives for changed charge, counters, typed
+  iteration, route, effects, ancestry, answer and policy; and actual receipt
+  refusal for a forged COMMANDER hash. Changed neutral role text and missing
+  native alignment evidence are rejected without altering canonical fixtures.
+- Retained Codex at isolated-root `pytest-10` passed the updated v40 closure,
+  native CAS negatives, decoder negatives, answer publication and all recovery
+  boundaries. The first v40 closure assertion initially expected the internal
+  completion exception; the controller correctly wraps it in StateAdvanceError.
+  The test expectation was corrected, without a production change or state reset.
+- Focused checks passed **116 tests, 4 deselected in 41.97s**, followed by broader
+  native completion/COMMANDER/clarification/round checks: **384 tests,
+  4 deselected in 51.14s**. Shared native state/human-input/policy/discovery
+  completion/publication regressions passed **486 tests, 148 deselected in
+  297.09s**. A fresh Claude/Banzai full-prefix acceptance is still running;
+  record its result below before claiming this checkpoint verified.
+  All tests use the isolated TMPDIR and
+  retention count 200/policy all; no retained acceptance fixtures were deleted.
+- Current-code released Codex and Claude proofs passed the expanded decoder,
+  native role/receipt and actual COMMANDER-hash negatives. Public resume after
+  completed release is inert; submitting a different second human answer is
+  rejected for both providers, with unchanged state/history and zero calls.
+- The next bounded increment is the existing retained-round association from
+  this released v41 answer into alignment (or native reconciliation-to-WHAT),
+  followed by repair-round questions and structural recheck. Do not dispatch an
+  author from the old question's `last_dispatch`, infer resolution from Markdown,
+  reset the original question/attempts, or reinterpret v40 as an applied answer.
+- Further review found a real native transaction/decoder type mismatch: Python
+  dict equality accepts integer/float or boolean/integer substitutions that the
+  v41 JSON proof rejects. Two isolated CAS tests reproduced this by intercepting
+  persistence (no retained fixture writes); v41 now compares canonical JSON
+  effects before saving. Both negatives pass, while correctly typed effects
+  still reach the intercepted persistence boundary. Existing policy-resolution
+  equality behavior is unchanged.
+- Fresh Claude/Banzai full-prefix acceptance (`pytest-31/test_alignment_answer_applicat0`)
+  failed after **815.57s**, before feasibility publication, at the existing
+  historical-checkpoint tamper test. The first fallback was too permissive for
+  a damaged *current* receipt. Added missing/digest/decision-ID negatives and
+  pending-new-question/mismatched-resolved-ID negatives; all five reproduced
+  the gap without changing saved state. The final fallback requires a different
+  latest receipt matching the current resolved decision, then the exact native
+  feasibility association. A pending question alone is not a newer answer.
+- Latest focused effect-type/current-receipt/history checks passed **8 tests,
+  35 deselected in 11.27s**, including positive typed effects and legitimate
+  supersession. Read-only review confirmed the narrowed fallback and typed CAS
+  fixes; no remaining actionable finding for this bounded increment.
+- The fresh prefix is being continued from its actual accepted feasibility
+  operation, without resetting state, config, source history or provider receipts.
+  Historical-checkpoint tamper refusals and native feasibility publication have
+  passed under current code. This is retained continuation, not an uninterrupted
+  green fresh pytest run. Record its final initial-COMMANDER/recovery outcome
+  below before committing.
+- Expanded focused regressions passed **389 tests, 4 deselected in 51.92s**
+  after typed-CAS and initial current-receipt fixes. The final two receipt
+  narrowing negatives are covered by the 8-test run above. Shared regressions
+  passed again: **486 tests, 148 deselected in 300.36s**. Resumed authoring/second
+  questions remain closed: when those
+  are admitted, older checkpoint membership must use their authenticated native
+  answer-round association, not relax the latest-receipt check by ID alone.
+- Final-code released Codex and Claude answer ancestries authenticate through
+  the narrowed historical receipt rule. Native selection of another alignment
+  round from their answer is still refused, with unchanged state/history and
+  no Phase 3 dispatch. This explicitly tests the next-increment boundary.
+- The preserved `pytest-31` Claude/Banzai continuation completed feasibility,
+  its warn-exhausted structural gate, strategy and alignment question, then
+  passed the **public initial COMMANDER dispatch** and answer transaction. One
+  judgment selected WASD over the recommended arrow keys; exactly 7 scripted
+  tokens were charged once. Pre-publication, first-file, post-identity-apply and
+  post-state-save/pre-release interruptions recovered, with no second judgment.
+  Native CAS/decoder/evidence forgeries and duplicate-answer refusal passed.
+- Final state of that continuation is running at alignment, answer resolved by
+  COMMANDER, attempt 1, **245 scripted tokens**, iteration 0 and feasibility
+  attempts 1 with warning exhaustion preserved. No pending identity publication
+  or Phase 3 dispatch remains. Preserve the fixture; this is a successful
+  current-work retained continuation of the recorded red fresh prefix, not an
+  uninterrupted green full-prefix pytest result or a live-model run.
+- The final eight type/receipt checks passed again in **11.23s**, with native
+  decision-schema validation of the pending/resolved shape fixtures. Their
+  temporary decision-ID prefix was corrected in the tests; no production change
+  or retained-state reset was involved.
+- Final current-worktree audit of the released `pytest-31` answer passed the
+  actual historical checkpoint-receipt forgery, decoder/counter/role/COMMANDER
+  receipt negatives, full retained ancestry and inert public replay. State and
+  identity history remained unchanged: 245 scripted tokens, one COMMANDER
+  attempt, no pending publication and no Phase 3 dispatch. The standalone audit
+  was explicitly pinned to this worktree's `src`; an initial invocation without
+  that import path loaded the older editable installation and refused the new
+  proof before any mutation. Pytest already selects the worktree through its
+  configured `pythonpath`.
+- This checkpoint completes initial answer application/recovery only. Resumed
+  alignment/WHAT authoring, repair-round questions and remaining Phase 2
+  acceptance remain the next planned work; no install, activation or live-model
+  acceptance is claimed here.
+
+### Task 4 — initial answer-to-alignment author continuation
+
+- Continue from `9db7edda`, inline in the same worktree. This bounded increment
+  authenticates the actual released v41 answer, selects one native alignment
+  successor and executes/replays its neutral proposal/author/reviewer turns.
+  Resumed result publication, reconciliation-to-WHAT, repair-round questions,
+  structural recheck and public activation remain closed until their own
+  continuation proofs are verified. No new publication format or policy owner.
+- Preserve the original accepted question round and exact native decision and
+  receipt in the successor. Project only that single native selection and its
+  one outer-dispatch increment when checking the answer's entry state. All
+  unrelated state, historical rounds, budgets, accounting and source authority
+  remain exact; selection does not authorize forged proof or a new source head.
+- Baseline alignment round suite passed **12 tests in 11.23s**. The new real
+  retained Claude continuation failed at the expected strategy/gate-only
+  parent guard before any mutation. After adding the answer association, native
+  selection and capture passed; a test expected only ValueError for tamper
+  refusal, but the completion owner correctly returned CompletionError. The
+  assertion now accepts both fail-closed forms; no retained state was reset.
+- The small state-only fixture originally constructed a choice decision for a
+  free-text answer. It now uses the native policy registry and decision builder,
+  not hand-written resolver metadata. Alignment round suite passed **13 tests
+  in 11.53s**. These shape tests do not replace actual released-answer ancestry.
+- Focused clarification/round/completion regressions passed **362 tests,
+  4 deselected in 33.13s**. Read-only review found no actionable correctness
+  issues and confirmed that old v36/v38 publication decoding still excludes
+  resolution-derived rounds. Its test-helper note is intentional: use this
+  helper from answer entry or selected-but-not-started state, not an already
+  completed operation.
+- Preserved Claude/Banzai `pytest-31/test_alignment_answer_applicat0` completed
+  this actual continuation: exact saved answer in captured evidence and all
+  three proposal/author/reviewer prompts, one accepted resumed round, retained
+  replay with no additional calls, tamper refusals and closed publication.
+  Original question, COMMANDER resolution, 245 committed scripted tokens,
+  iteration/feasibility budgets, requirement history and canonical documents
+  remained unchanged. The new operation reports 21 retained scripted tokens;
+  its cumulative charge belongs to the future native publication/completion,
+  not selection. This is retained continuation, not a fresh or live-model run.
+- Preserved Codex/guided `pytest-10/test_alignment_question_reache0` passed the
+  same continuation plus interruption immediately after native accepted-result
+  persistence. Restart and replay used the same three retained provider turns,
+  without another call or dispatch increment. Original question/answer,
+  canonical artifacts and history remained unchanged; resumed publication was
+  refused. No fixture was reset or removed.
+- Shared native state/human-input/policy/discovery completion/publication
+  regressions passed **486 tests, 148 deselected in 308.12s**. A current-code
+  audit of the accepted Claude successor validated the actual v41 proof and
+  rejected seven counter/type/budget/charge/resolution/predecessor mutations
+  without changing saved state. Read-only review had no actionable findings.
+- Fresh Codex full-prefix acceptance is running in isolated-root
+  `pytest-49/test_released_answer_drives_on0`; record its outcome before commit.
+- After both retained successors reached accepted status, current-code public
+  answer replay remained inert and replacing the resolved answer was refused
+  for both providers. Native state and identity history were unchanged and
+  neither executor was called. This additionally verifies COMMANDER/user answer
+  recovery remains safe after the new round exists.
+- Fresh Codex/guided full-prefix command passed **1 test, 1 deselected in
+  1933.16s (32:13)**: repository interpreter `python -m pytest
+  tests/unit/test_managed_alignment_answer_round.py -k codex -q --tb=short`
+  with `PYTHONDONTWRITEBYTECODE=1`, the isolated TMPDIR and retention flags above.
+  Actual Phase 1 approval, feasibility, strategy, initial alignment question,
+  answer application/interrupted recovery and the new answer-derived author
+  plus no-call replay all passed in one fresh pytest invocation. This is
+  scripted acceptance, not live-provider or full-Phase-2 acceptance.
+- The fresh process loaded the test before the additional accepted-result
+  interruption, typed-counter and post-author public-answer replay assertions
+  were added. Those additions passed separately on current-code retained runs
+  as recorded above; do not describe them as part of that fresh pytest result.
+- Final current-code audit of that fresh accepted successor passed the typed
+  iteration/dispatch-count refusals, inert public-answer replay and second-answer
+  refusal. Its saved state/history stayed unchanged: exactly two alignment
+  author dispatches, 210 committed scripted tokens, no pending publication and
+  no Phase 3 dispatch. Final working/staged diff checks passed.
+- Next checkpoint: publication/native handoff of this exact answer-derived
+  candidate, retaining the answer association and original native budget, then
+  structural continuation, WHAT reconciliation and subsequent questions. Do not
+  reset the accepted round, invoke its three provider turns again, promote its
+  draft directly, or reuse v38's structural-repair proof. Global installation,
+  activation, Phase 3, merge/push and live-model exclusions remain unchanged.
+
+### Task 4 checkpoint: answer-derived publication and native handoff
+
+- Added closed v42 publication for the accepted author following the initial
+  released v41 alignment answer. It binds the native decision/full receipt,
+  answer source and accepted question predecessor; v36 initial author and v38
+  structural repair remain distinct. Only ALIGNED/DRIFT may publish through
+  this association. Subsequent questions retain their explicit guard.
+- Historical v41 reads require an actual released native proof, matching
+  genesis/operation and exact successor decision/full completion receipt.
+  Live v41 decoding still checks the original native answer effects. A current
+  descendant is not accepted as a live answer-entry state.
+- Native v42 completion authenticates the answer ancestry, original rounds,
+  one outer-dispatch increment, unchanged budgets and policy, exact native
+  cleanup/outcomes, and cumulative usage from retained provider receipts. The
+  existing publication/completion owners still own promotion and recovery;
+  no extra state journal, role or policy owner was added.
+- Red evidence: the new helper on retained Claude/Banzai
+  `pytest-31/test_alignment_answer_applicat0` reached the deliberate
+  `resumed alignment publication requires its native continuation association`
+  guard before publication changes. The first attempt used an incorrect extra
+  `/root` fixture path; that diagnostic was corrected, and only the empty
+  directories it created were removed. No retained fixture/evidence was deleted.
+- Read-only review identified that native answer application removes
+  `escalation_resolved`; the matcher now preserves its absence rather than
+  inventing a true flag. It also prompted a direct full-marker comparison so
+  an intact latest receipt cannot mask a damaged successor receipt. Review of
+  the corrected production diff found no remaining actionable issues.
+- Retained Codex/guided `pytest-10/test_alignment_question_reache0` and
+  Claude/Banzai `pytest-31/test_alignment_answer_applicat0` both prepared v42
+  without provider calls, refused altered version/source/answer/receipt/parent
+  associations, and completed native handoff. Recovery exercised partial
+  first-file promotion, applied identity publication and persisted native
+  completion failure. Replay made no new provider calls or cumulative charges.
+- The first Claude process had loaded the pre-correction escalation matcher;
+  it safely retained a blocked pending completion. Current-code recovery used
+  that actual pending state without resetting it, replaying author calls or
+  editing proof/history. Both handoff helpers subsequently exposed a test-only
+  missing `source` argument in the final ancestry check; the helper now supplies
+  the actual completed dispatch source. These failed process exits are not
+  counted as passing whole-test invocations.
+- Current-code final audits passed for both released v42 results: complete
+  authentication and historical ancestry, live-v41 refusal against structural
+  entry, paired successor receipt/source forgery refusal with latest receipt
+  intact, and inert native replay with unchanged state/history. Final scripted
+  cumulative tokens are **231 Codex** and **266 Claude**, exactly +21 once per
+  accepted resumed author; each retains **2 alignment outer dispatches**.
+  No pending publication/failure remains, and neither structural gate nor
+  Phase 3 was dispatched. Accounting/count type changes, missing/extra charge,
+  old-round mutation, altered answer/receipt/policy/outcomes and stale escalation
+  state were refused without mutating saved state.
+- Focused regression command: repository interpreter `python -m pytest`
+  with `tests/unit/test_managed_alignment_rounds.py`,
+  `test_managed_alignment_question.py`, `test_managed_alignment_resolution.py`,
+  `test_managed_feasibility_rounds.py`, `test_managed_clarification_policy.py`,
+  `test_clarification_history.py`, `test_clarification_candidate.py` and
+  `test_squad_completion.py`, filtered by
+  `-k 'not application_recovers and not question_reaches'`: **362 passed,
+  4 deselected in 32.29s**.
+- Shared regression command: repository interpreter `python -m pytest`
+  with `tests/kernel/test_squad_state.py`,
+  `tests/integration/test_human_input_routing.py`,
+  `tests/unit/test_human_input_resolution_contract.py`,
+  `test_managed_policy_resolution.py`, `test_discovery_completion.py` and
+  `test_discovery_publication.py`, filtered by
+  `-k 'human_input or clarification or resolution or completion or publication'`:
+  **486 passed, 148 deselected in 301.26s**. Both commands used
+  `PYTHONDONTWRITEBYTECODE=1`, isolated
+  `TMPDIR=/tmp/echelon-alignment-checks.CnKAq8`, `-q --tb=short` and the mandatory
+  retention flags. Later narrow receipt-guard/test-helper corrections were
+  checked in the current-code retained audits above.
+- New full-prefix parametrized publication test collects exactly Codex/guided
+  and Claude/Banzai cases. This checkpoint executed its publication/recovery
+  helpers against the retained accepted predecessors, not another fresh
+  full-prefix run and not live-provider acceptance. The separate fresh Codex
+  author-prefix result remains recorded in the previous checkpoint.
+- Next: admit captured structural continuation from the actual released v42
+  parent while retaining native gate budgets, then native WHAT reconciliation
+  and subsequent questions. Do not use v38 repair provenance for v42, rerun the
+  accepted authors, reset fixtures or infer that public Phase 2 is activated.
+  Installation/migration, live models, Phase 3 execution, merge/push, legacy
+  build and AGENTS/CLAUDE changes remain out of scope.
+
+### Bounded interruption: retained SAGE eligibility / misleading summaries
+
+- User approved fixing the older run's immediate recovery defect before resuming
+  the next Phase 2 checkpoint. The original run directory is absent on this host;
+  no run evidence was edited or restarted.
+- Recovery now decodes explicit `yes`/`no`, including retained `yes/no — rationale`
+  rows, without rewriting evidence or fingerprints. Duplicate/ambiguous values
+  and duplicate guidance remain errors. An explicit `no` is never authority.
+- New managed WHY1/WHY2 author replies validate supplied Resolution Guidance
+  immediately: standalone eligibility, separate optional rationale, and complete
+  decision/option/evidence fields. Bare issue references remain allowed at
+  authoring, but are not recovery options; recovery still requires complete
+  guidance for every issue. Legacy unmanaged review production is not migrated
+  by this checkpoint. Neutral SAGE prose/template documents the grammar.
+- Publication summary facts require recorded `published_spec_dir` plus an actual
+  `spec.md`. Current dispatch counters are reported separately from distinct
+  completed phases, not presented as lifetime totals (repair can reset counters).
+  Malformed, ineligible and over-count evidence have distinct recovery notes.
+- Regression run: **494 passed in 84.10s**, covering eligibility, WHY1 candidates,
+  CLI summary/continue, proportional/projected quality and human-input routing.
+  Subsequent focused run: **111 passed, 233 deselected in 11.83s**, including
+  managed WHY2 early rejection and retained mixed eligible/ineligible recovery.
+  Both used the repository interpreter, isolated retained TMPDIR, and mandatory
+  pytest retention settings. One redundant full-prefix WHY1 sweep was interrupted
+  and is not acceptance evidence; its fixtures were retained. No live provider
+  acceptance or installation is claimed.
+- Independent read-only review found no critical/important issues; its minor
+  ineligible-evidence wording finding was corrected and tested.
+- Final current-code focused check: **25 passed, 238 deselected in 11.16s**;
+  `git diff --check` also passed.
+- Still deferred: direct bounded owner repair routing, consolidated genuine user
+  questions, artifact/history compaction, and universal review-schema enforcement.
+  These must reuse existing repair/decision/publication owners, preserve identity
+  and accepted decisions, and must not add authority or raise iteration limits.
+  Resume the recorded released-v42 structural continuation checkpoint next;
+  this interruption does not finish or activate Phase 2.

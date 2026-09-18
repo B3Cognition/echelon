@@ -1,6 +1,8 @@
-"""A real reviewed feasibility publication supplies the deterministic gate."""
+"""A real reviewed alignment publication supplies the deterministic gate."""
 from dataclasses import replace
+from copy import deepcopy
 import json
+from uuid import uuid4
 
 import pytest
 
@@ -8,53 +10,56 @@ from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 from harness.discovery_completion import decode_binding
 from harness.element_identity_publication import encode_publication_request
 from harness.squad_completion import CompletionError
-from tests.unit.test_managed_feasibility_publication import (
+from tests.unit.test_managed_alignment_publication import (
     case, enrolled, turn_prepared, prepared, checkpoint_case, envelope,
-    test_real_review_seals_only_feasibility_outputs as publish_review,
+    test_alignment_publishes_and_hands_off_without_running_structural_gate as publish_review,
 )
-from tests.unit.test_managed_feasibility_rounds import FeasibilityExecutor
+from tests.unit.test_managed_alignment_execution import AlignmentExecutor
 
 
 def assert_gate_publication(case, *, passed=False, previous_attempts=0, action=None,
-        attempts=None, completion_id="c" * 32, has_report=True):
-    from harness.discovery_assessment_gate import prepare_feasibility_gate_publication
+        attempts=None, completion_id=None, has_report=True):
+    from harness import discovery_assessment_gate as module
+    prepare_alignment_gate_publication = getattr(module, "prepare_alignment_gate_publication", None)
+    assert callable(prepare_alignment_gate_publication), "Alignment structural publication is not connected"
+    completion_id = completion_id or uuid4().hex
     root, store, identity, _ = case
     before = store.load()
     history = identity.identity_history(spec_id="game")
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
-    with PhaseAExecutionLock.acquire(root, "test-feasibility-gate"):
-        with SpecRunExecutionLock.acquire(store.squad_dir, "test-feasibility-gate"):
-            package = prepare_feasibility_gate_publication(root, store, completion_id=completion_id,
+    with PhaseAExecutionLock.acquire(root, "test-alignment-gate"):
+        with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-gate"):
+            package = prepare_alignment_gate_publication(root, store, completion_id=completion_id,
                 max_iterations=before["max_iterations"])
     binding = decode_binding(envelope(package), state=before)
-    assert binding.producer == "feasibility_gate" and binding.recovery["version"] == (34 if previous_attempts else 32)
+    assert binding.producer == "alignment_gate" and binding.recovery["version"] == (39 if previous_attempts else 37)
     assert binding.request.operations == () and binding.source["history"] == binding.candidate["history"]
     assert binding.recovery["previous_attempts"] == previous_attempts
     updates = binding.recovery["result"]["state_updates"]
     assert updates["structural_action"] == (action or ("proceed" if passed else "repair"))
-    assert updates["feasibility_structural_attempts"] == (int(not passed) if attempts is None else attempts)
+    assert updates["intent_alignment_check_structural_attempts"] == (int(not passed) if attempts is None else attempts)
     writes = {op.target: op.postimage_bytes for op in package.sources.publication.operations}
     expected_writes = {"specs/game/spec-artifact-graph.json"}
     if has_report:
-        expected_writes.add("specs/game/feasibility-structural-report.json")
-        report = json.loads(writes["specs/game/feasibility-structural-report.json"])
+        expected_writes.add("specs/game/intent-alignment-check-structural-report.json")
+        report = json.loads(writes["specs/game/intent-alignment-check-structural-report.json"])
         assert report["ok"] is passed and bool(report["findings"]) is not passed
     else:
-        assert "feasibility_structural_report" not in updates
-        assert updates["feasibility_structural_findings"] == 0
+        assert "intent_alignment_check_structural_report" not in updates
+        assert updates["intent_alignment_check_structural_findings"] == 0
     assert set(writes) == expected_writes
     assert store.load() == before and identity.identity_history(spec_id="game") == history
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     for damage in ("counter", "result", "typed_result", "verdict", "source", "extra", "report", "template"):
         recovery = json.loads(package.request.recovery_payload)
         if damage == "counter": recovery["previous_attempts"] = 0 if previous_attempts else 1
-        elif damage == "result": recovery["result"]["state_updates"]["structural_action"] = "repair" if passed else "proceed"
-        elif damage == "typed_result": recovery["result"]["state_updates"]["feasibility_structural_attempts"] = not passed
-        elif damage == "verdict": recovery["routing_state"]["feasibility_verdict"] = "KILL"
+        elif damage == "result": recovery["result"]["state_updates"]["structural_action"] = "repair" if updates["structural_action"] == "proceed" else "proceed"
+        elif damage == "typed_result": recovery["result"]["state_updates"]["intent_alignment_check_structural_attempts"] = not passed
+        elif damage == "verdict": recovery["routing_state"]["intent_alignment_verdict"] = "KILL"
         elif damage == "source": recovery["source_completion"]["dispatch_id"] = "0" * 32
         elif damage == "extra": recovery["retry_authorized"] = True
-        elif damage == "report": recovery["config"]["governance"]["artifacts"]["feasibility"]["report"] = "spec.md"
-        else: recovery["config"]["governance"]["artifacts"]["feasibility"]["template"] = "other.md"
+        elif damage == "report": recovery["config"]["governance"]["artifacts"]["intent-alignment-check"]["report"] = "spec.md"
+        else: recovery["config"]["governance"]["artifacts"]["intent-alignment-check"]["template"] = "other.md"
         request = replace(package.request, recovery_payload=json.dumps(recovery,
             sort_keys=True, separators=(",", ":"), ensure_ascii=True))
         with pytest.raises(CompletionError):
@@ -71,17 +76,17 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
-    executor = FeasibilityExecutor(provider)
+    executor = AlignmentExecutor(provider)
     ctrl = controller(case, executor)
-    node = ctrl._graph.get("phase2-feasibility-structural")
+    node = ctrl._graph.get("phase2-intent-alignment-structural")
     completion_id = json.loads(package.request.recovery_payload)["completion_id"]
     action = action or ("proceed" if passed else "repair")
-    destination = {"repair": "phase2-decide", "proceed": "phase2-strategic-overview",
-        "proceed_with_warning": "phase2-strategic-overview", "block": "terminal-blocked"}[action]
-    with PhaseAExecutionLock.acquire(root, "test-feasibility-gate"):
-        with SpecRunExecutionLock.acquire(store.squad_dir, "test-feasibility-gate"):
+    destination = {"repair": "phase2-tracker-alignment", "proceed": "phase3-specialists",
+        "proceed_with_warning": "phase3-specialists", "block": "terminal-blocked"}[action]
+    with PhaseAExecutionLock.acquire(root, "test-alignment-gate"):
+        with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-gate"):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
-            for route in ({"phase2-decide", "phase2-strategic-overview", "phase3-specialists", "done"} - {destination}):
+            for route in ({"phase2-tracker-alignment", "phase3-specialists", "terminal-blocked", "done"} - {destination}):
                 with pytest.raises(StateAdvanceError):
                     ctrl._prepare_controller_completion(from_phase=node.id, to_phase=route, snapshot=snapshot,
                         manual_phase_run=False, conditional_skip=False, record_completion=True,
@@ -109,6 +114,21 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     # Gate publication may leave graph bytes unchanged. The real hook proves
     # partial report/graph promotion, or completion of the sole bypass write.
     assert interruptions == [1] and len(writes) == (2 if has_report else 1)
+    from harness.discovery_completion import authenticate
+    from harness.squad_completion import load_prepared_controller_completion
+    pending = store.load()
+    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    for key in ("iteration", "max_iterations", "feasibility_structural_attempts",
+            "intent_alignment_check_structural_attempts", "intent_alignment_verdict", "structural_action"):
+        changed = deepcopy(pending)
+        changed[key] = changed[key] + 1 if type(changed[key]) is int else "forged"
+        with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
+    for key in ("iteration", "max_iterations", "feasibility_structural_attempts",
+            "intent_alignment_check_structural_attempts"):
+        changed = deepcopy(pending)
+        changed[key] = float(changed[key])
+        with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
+    assert store.load() == pending
     apply = IdentityStore.apply_identity_publication
     def after_apply(*args, **kwargs):
         apply(*args, **kwargs)
@@ -122,8 +142,11 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     after = store.load()
     assert after["phase"] == destination and after["status"] == ("blocked" if action == "block" else "running")
     assert after["iteration"] == before["iteration"] + int(action == "repair")
-    assert after["feasibility_structural_attempts"] == (int(not passed) if attempts is None else attempts)
+    assert after["intent_alignment_check_structural_attempts"] == (int(not passed) if attempts is None else attempts)
     assert after["structural_action"] == action
+    assert not after["phase_dispatch_counts"].get("phase3-specialists")
+    for key in ("feasibility_verdict", "feasibility_structural_attempts", "intent_alignment_verdict"):
+        assert after[key] == before[key]
     assert after["token_usage"] == before["token_usage"] and not executor.calls
     assert after["phase_dispatch_counts"] == before["phase_dispatch_counts"]
     assert identity.identity_history(spec_id="game") == history
@@ -132,28 +155,18 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     drain(controller(case, executor))
     assert store.load() == after and not executor.calls
     if not passed:
-        from tests.unit.test_managed_feasibility import parent
+        from tests.unit.test_managed_alignment import parent
+        from harness.discovery_producer import tracker_round
         # The old approval cannot be reused as authority for a structural retry.
         with pytest.raises((ValueError, CompletionError)):
-            parent(case)
+            parent(case, source=tracker_round(before, producer="alignment")["source"])
         assert store.load() == after and not executor.calls
 
 
-@pytest.mark.parametrize("provider,mode,enabled", [("codex", "guided", False), ("claude", "banzai", True)])
-def test_reviewed_feasibility_gate_uses_guarded_report_handoff(checkpoint_case, provider, mode, enabled):
-    publish_review(checkpoint_case, provider, mode, enabled)
-    package = assert_gate_publication(checkpoint_case)
-    assert_gate_handoff(checkpoint_case, package, provider)
 
-
-def test_valid_claude_banzai_feasibility_reaches_strategy_without_dispatch(checkpoint_case):
-    from tests.unit.test_managed_checkpoint_assess import test_managed_checkpoint_uses_native_policy_and_stops_before_phase2 as checkpoint
-    from tests.unit.test_managed_feasibility import assert_reviewed_feasibility
-    from tests.unit.test_managed_feasibility_publication import assert_feasibility_publication, assert_feasibility_handoff
-    from tests.unit.test_captured_governance_gate import FEASIBILITY
-    checkpoint(checkpoint_case, "claude", "banzai", True, "approve")
-    assert_reviewed_feasibility(checkpoint_case, "claude", feasibility_text=FEASIBILITY)
-    author = assert_feasibility_publication(checkpoint_case, "claude")
-    assert_feasibility_handoff(checkpoint_case, author, "claude")
-    gate = assert_gate_publication(checkpoint_case, passed=True)
-    assert_gate_handoff(checkpoint_case, gate, "claude", passed=True)
+@pytest.mark.parametrize("provider,mode,enabled,policy", [("codex", "guided", False, "disabled"), ("claude", "banzai", True, "warn")])
+def test_alignment_gate_reaches_phase3_entry_without_dispatch(checkpoint_case, provider, mode, enabled, policy):
+    publish_review(checkpoint_case, provider, mode, enabled, policy)
+    action = "proceed_with_warning" if enabled else "proceed"
+    package = assert_gate_publication(checkpoint_case, action=action, attempts=int(enabled), has_report=enabled)
+    assert_gate_handoff(checkpoint_case, package, provider, action=action, attempts=int(enabled), has_report=enabled)

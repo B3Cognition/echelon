@@ -245,7 +245,21 @@ def require_parent(root, run, state, binding):
 
 def require_receipt(state, binding, marker):
     from harness.discovery_completion import _require
-    _require(state.get("last_human_input_completion") == dict(schema_version=1,
+    from harness.discovery_producer import tracker_rounds
+    expected = dict(schema_version=1,
         decision_id=binding.recovery["resolution"]["id"], completion_id=marker.completion_id,
         intent_sha256=marker.intent_sha256, receipts_sha256=marker.receipts_sha256,
-        publication_binding_sha256=marker.publication_binding_sha256))
+        publication_binding_sha256=marker.publication_binding_sha256)
+    if state.get("last_human_input_completion") == expected:
+        return
+    # A later clarification replaces the last receipt, not the checkpoint's
+    # retained native association in the first feasibility round.
+    latest = state.get("last_human_input_completion")
+    current = state.get("blocked_decision") or {}
+    _require(type(latest) is dict and type(latest.get("decision_id")) is str
+        and latest["decision_id"] not in {"", expected["decision_id"]}
+        and current.get("status") == "resolved" and current.get("id") == latest["decision_id"])
+    rounds = tracker_rounds(state, "feasibility")
+    matches = [row["resolution"] for row in (() if rounds is None else rounds["rounds"].values())
+        if row["resolution"] is not None and row["resolution"]["completion"] == expected]
+    _require(matches == [dict(decision=binding.recovery["resolution"], completion=expected)])
