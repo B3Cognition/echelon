@@ -44,6 +44,19 @@ starting another.
 | 2026-09-21 | S1 | Completed. Compared with control baseline `51dbfdc0`: 172 files changed, 692 additions, 24,911 deletions (net -24,219). `src/codegen` now contains exactly five memory modules plus their initializer and three security files. Active-surface search found no retired execution command, installer, strategy, overlay, prompt, or runtime reference. |
 | 2026-09-21 | S1 | Focused S1 suite: 535 passed in 31.22s. Repository merge verification: 10,003 passed, 11,468 deselected in 32m44s; receipt `tests/reports/merge-verification/receipt-937065b02b85-cb24a9c75e4b46b6be160e5ba83fd45e.json`. |
 | 2026-09-21 | S2 | Activated after all S1 exit checks passed. Next action: inventory the controlled-delivery feature switch and feature-off call graph before changing behavior. |
+| 2026-09-21 | S2 | Inventory found the switch in config parsing/templates, coordinator prompt selection/token accounting, Ralph build/feedback/recovery branches, raw CLI dispatch, current guidance, and 11 focused test files. Hard-cutover design approved: `docs/superpowers/specs/2026-09-21-controlled-delivery-hard-cutover-design.md`. |
+
+## S2 Work Queue
+
+- [x] Inventory the feature switch and feature-off call graph.
+- [x] Approve the hard-cutover design and preserved recovery boundary.
+- [ ] Write and review the implementation plan.
+- [ ] Remove configuration, CLI, and coordinator branching.
+- [ ] Remove Ralph's legacy build, feedback, and recovery paths.
+- [ ] Delete legacy delivery runner and prompt-resolution implementation.
+- [ ] Update current documentation and focused tests.
+- [ ] Run focused delivery verification.
+- [ ] Run the repository verification gate and record its result.
 
 ## Drift Guard
 
