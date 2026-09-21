@@ -86,7 +86,6 @@ SUBAGENT_POLICY = {
 
 COMMAND_POLICY = {
     "echelon.bugfix.md": ("strong", "medium"),
-    "echelon.build.md": ("strong", "high"),
     "echelon.change.md": ("strong", "high"),
     "echelon.cicd.md": ("fast", "low"),
     "echelon.deploy.md": ("balanced", "medium"),

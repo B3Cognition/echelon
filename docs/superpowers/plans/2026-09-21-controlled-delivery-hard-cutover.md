@@ -340,7 +340,7 @@ git commit -m "refactor: make Ralph delivery controller only"
 - Produces: a static boundary proving the legacy modules, raw prompt, and command-driven build phase graph are absent.
 - Preserves: the six `echelon.delivery-*` role bodies and every Python-controlled delivery contract.
 
-- [ ] **Step 1: Add the static deletion test**
+- [x] **Step 1: Add the static deletion test**
 
 Create:
 
@@ -367,23 +367,23 @@ def test_legacy_delivery_execution_is_absent():
     assert "resolve_delivery_build_prompt" not in production
 ```
 
-- [ ] **Step 2: Run the boundary test and verify it fails**
+- [x] **Step 2: Run the boundary test and verify it fails**
 
 Run: `.venv/bin/python -m pytest -q tests/unit/test_controlled_delivery_boundary.py`
 
 Expected: the retired files and identifiers are reported.
 
-- [ ] **Step 3: Delete the legacy modules, raw command, and build graph**
+- [x] **Step 3: Delete the legacy modules, raw command, and build graph**
 
 Delete every file listed above. Remove the legacy build phase nodes from `runtime/workflow/definition.yaml`, but retain the Python-owned delivery-role registration comments and rewrite them as the sole delivery sequence. Remove build-command skill mapping helpers from `src/harness/skill_loader.py` once no production caller remains.
 
-- [ ] **Step 4: Remove tests that exclusively validate the deleted graph**
+- [x] **Step 4: Remove tests that exclusively validate the deleted graph**
 
 Delete `test_llm_build_runner.py`, `test_delivery_prompt.py`, `test_build_prompt.py`, `test_build_quality_gate_sequence.py`, and the build-only Echelon-validation modules. In mixed suites such as `test_prompt_references.py`, `test_prompt_tool_contracts.py`, `test_phase_graph.py`, `test_cli_polyrepo_runtime_extension.py`, `test_gitops_worktree.py`, and `test_squad_controller.py`, remove only cases and fixtures whose subject is the retired `echelon.build` command or `build-*` phase graph. Keep tests for active spec, RE, controlled delivery, and workspace-copy behavior.
 
 Update `tests/contract/static_contracts.py` so the active contract inventory no longer opens the deleted build prompt or phases.
 
-- [ ] **Step 5: Run structural and controlled-delivery tests**
+- [x] **Step 5: Run structural and controlled-delivery tests**
 
 Run:
 
@@ -401,7 +401,12 @@ Run:
 
 Expected: all pass; repository search finds no active import or runtime reference to the retired modules or feature flag.
 
-- [ ] **Step 6: Commit the legacy deletion**
+Result: 809 passed. Two existing prompt-governance checks failed only on
+unchanged producer/reviewer and WHY1 prompt files; no deleted-build or
+controlled-delivery case failed. Active production search found no import or
+runtime reference to the retired modules or feature flag.
+
+- [x] **Step 6: Commit the legacy deletion**
 
 ```bash
 git add -A src/harness runtime/workflow prosaic/commands tests

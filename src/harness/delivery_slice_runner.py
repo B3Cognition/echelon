@@ -17,7 +17,7 @@ from harness.delivery_slice import (
 from harness.durable_json import write_json_atomic
 from harness.delivery_slice_journal import DeliverySliceJournal
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
-from harness.llm_build_runner import _containment_policy_env
+from harness.delivery_containment import containment_policy_env
 from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.task_progress import update_task_progress_markdown
@@ -86,7 +86,7 @@ class DeliverySliceRunner:
             evidence_root = evidence_root.resolve()
             extra_env = {"PROJECT_ROOT": str(worktree), "HARNESS_WORKTREE": str(worktree)}
             if containment_policy_file:
-                policy_env, error = _containment_policy_env(
+                policy_env, error = containment_policy_env(
                     containment_policy_file, worktree_path=str(worktree))
                 if error:
                     raise DeliverySliceError(f"containment_policy_invalid: {error}")

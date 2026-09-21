@@ -3295,7 +3295,7 @@ class RalphController:
 
     def _controlled_fulfillment_options(self, worktree_path, refresh_kwargs):
         """Bind the exact refresh before dispatch; reuse delivery's root policy."""
-        from harness.llm_build_runner import _containment_policy_env
+        from harness.delivery_containment import containment_policy_env
         from harness.fulfillment_runner import _spec_input_hash, _implementation_input_hash
         from harness.controlled_fulfillment import _digest
         state = self._state_store.read()
@@ -3310,7 +3310,7 @@ class RalphController:
                         source_id=source_id, source_root=source_root)
         if any(policy.get(key) != value for key, value in expected.items()):
             raise ValueError("fulfillment containment policy binding changed")
-        env, error = _containment_policy_env(str(policy_path), worktree_path=worktree_path)
+        env, error = containment_policy_env(str(policy_path), worktree_path=worktree_path)
         if error:
             raise ValueError(error)
         forbidden = tuple(Path(path) for key in ("ECHELON_FORBIDDEN_ROOTS_JSON", "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON")

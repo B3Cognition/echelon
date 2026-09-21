@@ -115,13 +115,6 @@ def test_prompt_verdict_contracts_match_canonical_sources():
     )
 
 
-def test_build_finalize_uses_appendices_for_large_reference_sections():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "build-8-finalize.md"
-    text = prompt.read_text()
-
-    assert "workflow/phases/appendices/build-8-verify-gates.md" in text
-    assert "workflow/phases/appendices/build-8-summary-reference.md" in text
-    assert "workflow/phases/appendices/build-8-feedback-reference.md" in text
 
 
 def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
@@ -201,14 +194,6 @@ def test_verify_spec_judge_documents_scoped_report_contract():
     assert "base_full_verify_commit" in text
 
 
-def test_build_command_forbids_hand_editing_verify_spec_reports():
-    prompt = PROSAIC_ROOT / "commands" / "echelon.build.md"
-    text = prompt.read_text()
-
-    assert "fulfillment-report.md" in text
-    assert "fulfillment-gaps.md" in text
-    assert "NEVER hand-edit" in text
-    assert "verify-spec-owned" in text
 
 
 def test_implementation_mapper_respects_deterministic_codegraph_boundary():
@@ -666,46 +651,10 @@ def test_phase2_decide_routes_kill_status_through_echelon_result():
     assert "status: killed" in text
 
 
-def test_build_1_init_routes_build_state_through_echelon_result():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "build-1-init.md"
-    text = prompt.read_text()
-
-    assert "Set `state.json.spec_status`" not in text
-    assert "set result as `state.json.build.total_tasks`" not in text
-    assert "Set `state.json.build.completed_tasks`" not in text
-    assert "Update `${SQUAD_DIR}/state.json`" not in text
-    assert "echelon_result.state_updates" in text
-    assert "tasks_completed_pct: 0" in text
-    assert "`spec_dir` — authoritative spec artifact directory" in text
-    assert "Do not search for `state.json`, `${SQUAD_DIR}`, or `runs/`" in text
-    assert "Do not use `find`, `ls`,\nglobbing, or parent-directory scans to discover spec artifacts" in text
-    assert "Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}`" not in text
 
 
-def test_build_6_progress_routes_build_state_through_echelon_result():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "build-6-progress.md"
-    text = prompt.read_text()
-
-    assert "update `state.json.build.completed_tasks`" not in text
-    assert "Record the task result in `state.json.build.task_results`" not in text
-    assert "Recompute `state.json.build.tasks_completed_pct`" not in text
-    assert "Write the new value to `state.json.build.tasks_completed_pct`" not in text
-    assert "echelon_result.state_updates" in text
-    assert "previous completed_tasks + 1" in text
 
 
-def test_build_8_finalize_routes_completion_state_through_echelon_result():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "build-8-finalize.md"
-    text = prompt.read_text()
-
-    assert "Set `state.json.spec_status`" not in text
-    assert "Log journal entry:" not in text
-    assert "### 8.3 Update State" not in text
-    assert "Set `state.json.requires_human_review`" not in text
-    assert "Set `state.json.constitution_amendments_pending`" not in text
-    assert "echelon_result.state_updates" in text
-    assert "echelon_result.journal_entries" in text
-    assert "status: build_done" in text
 
 
 def test_manual_specialist_commands_route_state_and_journal_through_echelon_result():
@@ -813,14 +762,6 @@ def test_phase1_modeler_routes_last_dispatch_through_echelon_result():
     assert 'agent: "echelon.modeler (MODELER)"' in text
 
 
-def test_build_7_integration_routes_checkpoint_through_echelon_result():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "build-7-integration.md"
-    text = prompt.read_text()
-
-    assert "Append to `state.json.build.phase_checkpoints`" not in text
-    assert "echelon_result.state_updates" in text
-    assert "build:" in text
-    assert "phase_checkpoints:" in text
 
 
 def test_phase3_specialists_routes_active_specialists_through_echelon_result():

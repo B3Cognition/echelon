@@ -180,7 +180,7 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
     (prose / "commands").mkdir(parents=True)
     (prose / "subagents").mkdir()
     (runtime / "workflow").mkdir(parents=True)
-    (prose / "commands" / "echelon.build.md").write_text("build\n", encoding="utf-8")
+    (prose / "commands" / "echelon.run.md").write_text("run\n", encoding="utf-8")
     (prose / "subagents" / "echelon.implementer.md").write_text(
         "implementer\n", encoding="utf-8"
     )
@@ -197,9 +197,9 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    assert (worktree / ".echelon/prosaic/commands/echelon.build.md").read_text(
+    assert (worktree / ".echelon/prosaic/commands/echelon.run.md").read_text(
         encoding="utf-8"
-    ) == "build\n"
+    ) == "run\n"
     assert (worktree / ".echelon/prosaic/subagents/echelon.implementer.md").exists()
     assert (worktree / ".echelon/runtime/workflow/definition.yaml").read_text(
         encoding="utf-8"
@@ -838,7 +838,6 @@ def test_sync_runtime_extension_excludes_all_runtime_command_docs(tmp_path):
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     for name in [
-        "echelon.build.md",
         "echelon.verify-spec.md",
         "echelon.run.md",
         "echelon.re-extract.md",
@@ -869,7 +868,6 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     for name in [
-        "build-1-init.md",
         "verify-spec-1-init.md",
         "bugfix-1-init.md",
         "phase1-what.md",
@@ -883,9 +881,6 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         (source / "workflow" / "phases" / name).write_text(
             f"# {name}\n", encoding="utf-8"
         )
-    (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
-        "# appendix\n", encoding="utf-8"
-    )
     (source / "workflow" / "phases" / "appendices" / "phase1-what-reference.md").write_text(
         "# phase-a appendix\n", encoding="utf-8"
     )
@@ -900,9 +895,7 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         gitops.sync_runtime_extension(worktree)
 
     phases = worktree / ".echelon" / "runtime" / "workflow" / "phases"
-    assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
-    assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "bugfix-1-init.md").exists()
     assert not (phases / "phase1-what.md").exists()
@@ -930,13 +923,11 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
                 "phases": [
                     {"id": "init", "spec_file": "workflow/phases/init.md"},
                     {"id": "phase1-what", "spec_file": "workflow/phases/phase1-what.md"},
-                    {"id": "build-1-init", "spec_file": "workflow/phases/build-1-init.md"},
                     {
                         "id": "verify-spec-1-init",
                         "spec_file": "workflow/phases/verify-spec-1-init.md",
                     },
                 ],
-                "build": {"task_loop": {}},
                 "verify_spec": {"phases": []},
                 "re_extraction": {"phases": []},
                 "re_planning": {"phases": []},
@@ -965,10 +956,9 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
         ).read_text(encoding="utf-8")
     )
     assert [phase["id"] for phase in definition["phases"]] == [
-        "build-1-init",
         "verify-spec-1-init",
     ]
-    assert "build" in definition
+    assert "build" not in definition
     assert "verify_spec" in definition
     assert "re_extraction" not in definition
     assert "re_planning" not in definition
@@ -999,7 +989,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
 
     assert not (runtime / "commands").exists()
     assert not (runtime / "agents").exists()
-    assert (prose / "commands" / "echelon.build.md").is_file()
+    assert not (prose / "commands" / "echelon.build.md").exists()
     assert (prose / "commands" / "echelon.verify-spec.md").is_file()
     assert (prose / "subagents" / "echelon.implementer.md").is_file()
 

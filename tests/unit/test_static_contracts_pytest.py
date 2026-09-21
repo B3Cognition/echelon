@@ -4,7 +4,7 @@ from tests.contract.static_contracts import (
     validate_auditor_calibration_dashboard_contract,
     validate_auditor_internalization_contract,
     validate_auditor_internalizer_split_contract,
-    validate_build_phase_constitution_preflight_contract,
+    validate_delivery_constitution_preflight_contract,
     validate_cartographer_tool_usage_contract,
     validate_code_reviewer_confidence_filter_contract,
     validate_guardian_mode_config_naming_contract,
@@ -35,7 +35,7 @@ VALIDATORS = (
     validate_guardian_always_on_contract,
     validate_guardian_mode_config_naming_contract,
     validate_lexicon_derived_spec_contract,
-    validate_build_phase_constitution_preflight_contract,
+    validate_delivery_constitution_preflight_contract,
     validate_constitution_source_of_truth_contract,
     validate_constitution_context_pack_contract,
     validate_cartographer_tool_usage_contract,
@@ -90,8 +90,8 @@ def test_lexicon_derived_spec_contract() -> None:
     assert validate_lexicon_derived_spec_contract(ROOT) == []
 
 
-def test_build_phase_constitution_preflight_contract() -> None:
-    assert validate_build_phase_constitution_preflight_contract(ROOT) == []
+def test_delivery_constitution_preflight_contract() -> None:
+    assert validate_delivery_constitution_preflight_contract(ROOT) == []
 
 
 def test_constitution_source_of_truth_contract() -> None:

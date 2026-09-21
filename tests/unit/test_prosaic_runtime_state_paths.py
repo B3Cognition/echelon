@@ -332,7 +332,6 @@ def test_build_runtime_does_not_inject_or_ignore_speckit_state() -> None:
     from harness.ralph import _has_target_delivery_changes
 
     modules = (
-        ROOT / "src" / "harness" / "llm_build_runner.py",
         ROOT / "src" / "harness" / "ralph.py",
     )
     combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)

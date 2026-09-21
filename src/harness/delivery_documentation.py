@@ -17,7 +17,7 @@ from harness.delivery_slice_runner import _candidate_fingerprint, _digest, _prot
 from harness.documentation_gate import evaluate_documentation_gate, validate_documentation_coverage
 from harness.docs_verifier import _report_markdown, verify_docs
 from harness.durable_json import write_text_atomic
-from harness.llm_build_runner import _containment_policy_env
+from harness.delivery_containment import containment_policy_env
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.provider_workspace_scope import _CONTROL_PLANE_PATHS
 from harness.runnability_contract import load_runnability_contract, runnability_contract_sha256
@@ -168,7 +168,7 @@ class DeliveryDocumentationRunner:
             env = {"PROJECT_ROOT": str(worktree), "HARNESS_WORKTREE": str(worktree)}
             policy_content = None
             if containment_policy_file:
-                policy_env, error = _containment_policy_env(containment_policy_file, worktree_path=str(worktree))
+                policy_env, error = containment_policy_env(containment_policy_file, worktree_path=str(worktree))
                 if error: raise DeliverySliceError(f"containment_policy_invalid: {error}")
                 env.update(policy_env)
                 env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file

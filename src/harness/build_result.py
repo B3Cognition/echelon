@@ -1,4 +1,4 @@
-"""BuildResult — structured outcome of a claude -p build invocation."""
+"""BuildResult — normalized outcome at the controlled-delivery adapter boundary."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from typing import Iterable, Optional
 
 from kernel.task_contract import TASK_ID_PATTERN
 
-# Filename written by build-8-finalize (and codegen-7-deliver) to signal build outcome.
+# Compatibility filenames consumed while normalizing provider and recovery output.
 BUILD_STATUS_FILENAME = ".harness-build-status.json"
 ECHELON_RESULT_FILENAME = "echelon_result.json"
 
@@ -47,10 +47,10 @@ def _normalize_status(status: object) -> str:
 
 @dataclass
 class BuildResult:
-    """Outcome of one LLM build or feedback invocation.
+    """Outcome of one controlled delivery or feedback slice.
 
     status values:
-      "done"     — build completed, files written to worktree
+      "done"     — slice completed, files written to worktree
       "impasse"  — build hit an unresolvable conflict (codegen only)
       "timeout"  — claude -p process exceeded timeout_ms
       "unknown"  — status file missing or unreadable

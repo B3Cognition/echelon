@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from harness.build_prompt import BuildPromptBuilder
 from harness.config import HarnessConfig, StacksConfig
 from harness.coordinator import StrategyCoordinator
 from harness.delivery_results import ImplementationResult
@@ -49,19 +48,6 @@ def _coordinator_with_stacks(
     )
 
 
-@pytest.mark.unit
-def test_build_prompt_includes_dedicated_stack_context_section() -> None:
-    prompt = BuildPromptBuilder().build_prompt(
-        worktree_path="/wt/001",
-        spec_content="spec",
-        tasks_content="tasks",
-        build_skill="echelon.build",
-        stack_context="# Resolved Echelon Stacks\n\n- statsperform-playbook\n",
-    )
-
-    assert "## Echelon Stack Context" in prompt
-    assert "# Resolved Echelon Stacks" in prompt
-    assert "statsperform-playbook" in prompt
 
 
 @pytest.mark.unit

@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
 from harness.prompt_framing import COMMANDER_PREAMBLE
-
-# Maps echelon subcommand → skill base name (mirrors SKILL_MAP in echelon/cli.py)
-ECHELON_SKILL_MAP = {
-    "run":     "echelon.run",
-    "bugfix":  "echelon.bugfix",
-    "build":   "echelon.build",
-    "review":  "echelon.review",
-    "change":  "echelon.change",
-}
 
 def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
     """Locate canonical command prose for any configured provider.
@@ -63,42 +53,6 @@ def _is_prosaic_command_path(path: Path) -> bool:
         and path.parent.parent.name == "prosaic"
         and path.parent.parent.parent.name == ".echelon"
     )
-
-
-def build_command_to_skill_base(build_command: str) -> Optional[str]:
-    """Derive skill base name from a strategy build command.
-
-    "echelon build"   -> "echelon.build"
-    Returns None if the command doesn't map to a known skill.
-    """
-    parts = build_command.strip().split()
-    if len(parts) >= 2 and parts[0] == "echelon":
-        return ECHELON_SKILL_MAP.get(parts[1])
-    return None
-
-
-def resolve_llm_prompt(
-    build_command: str,
-    arguments: str,
-    project_dir: Path,
-    cli: Optional[str] = None,
-) -> str:
-    """Return the full COMMANDER prompt for the LLM provider path.
-
-    Loads the skill file that corresponds to build_command and substitutes
-    arguments. Falls back to a bare prompt if no skill file is found.
-    """
-    if cli is None:
-        cli = os.environ.get("ECHELON_LLM", "claude")
-
-    skill_base = build_command_to_skill_base(build_command)
-    if skill_base:
-        skill_path = find_skill(skill_base, project_dir, cli)
-        if skill_path:
-            return build_skill_prompt(skill_path, arguments)
-
-    # Fallback: no skill file found — return bare COMMANDER prompt
-    return COMMANDER_PREAMBLE + arguments
 
 
 class StreamEventPrinter:
