@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.config import HarnessConfig
+from harness.config import HarnessConfig, LlmConfig
 from harness.coordinator import StrategyCoordinator
 from harness.exec_result import ExecResult
 from harness.delivery_results import DeliveryResult, ImplementationResult, VisualResult
@@ -107,6 +107,7 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
     )
     gitops = MagicMock()
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
@@ -123,6 +124,19 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
         gitops=gitops,
         config=config,
         base_dir=str(tmp_path),
+    )
+
+
+def _controlled_implementation(*, verified: bool = True) -> ImplementationResult:
+    """Return an explicit controller result for coordinator-only tests."""
+    return ImplementationResult(
+        status="verified" if verified else "blocked",
+        termination_reason="converged" if verified else "verification_failed",
+        outer_iterations=1,
+        inner_iterations=1,
+        pr_url=None,
+        tokens_used=0,
+        final_verify=VerifyResult(passed=True) if verified else None,
     )
 
 
@@ -157,7 +171,13 @@ class TestSingleStrategy:
         )
         coord._config.resolved_stacks = resolved
 
-        result = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(),
+        ):
+            result = coord.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
 
         assert result.status == "converged"
         state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
@@ -218,14 +238,22 @@ class TestSingleStrategy:
     def test_single_strategy_converges(self, tmp_path: Path) -> None:
         coord = _make_coordinator(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1)
-        results = coord.start(intent)
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(),
+        ):
+            results = coord.start(intent)
         assert len(results) == 1
         assert results[0].status == "converged"
 
     def test_single_strategy_fails(self, tmp_path: Path) -> None:
         coord = _make_coordinator(tmp_path, should_pass=False)
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-        results = coord.start(intent)
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(verified=False),
+        ):
+            results = coord.start(intent)
         assert len(results) == 1
         assert results[0].status == "blocked"
         assert results[0].blocked_phase == "implementation"
@@ -1341,6 +1369,7 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
     )
     config.visual_tests = VisualTestsConfig(
         enabled=True,
@@ -1419,6 +1448,7 @@ def test_required_browser_stack_enables_visual_phase_even_when_config_omits_it(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
     )
     config.resolved_runnability = ResolvedRunnability(
         classification="user_facing",
@@ -1451,6 +1481,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
         visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
     )
     gitops = MagicMock()
@@ -1483,6 +1514,7 @@ def test_visual_fix_reentry_stops_at_configured_visual_cap(tmp_path):
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
         visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
     )
     gitops = MagicMock()
@@ -1569,6 +1601,7 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
     )
     config.visual_tests = VisualTestsConfig(
         enabled=True,
@@ -1734,7 +1767,11 @@ class TestStickyEscalationBlock:
         coord = _make_coordinator(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=True)
 
-        results = coord.start(intent)
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(),
+        ):
+            results = coord.start(intent)
         assert results[0].status == "converged"
 
     def test_sticky_escalation_block_passes_when_answered(self, tmp_path: Path) -> None:
@@ -1755,7 +1792,11 @@ class TestStickyEscalationBlock:
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=False)
 
         # Should NOT raise — the answer is present
-        results = coord.start(intent)
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(),
+        ):
+            results = coord.start(intent)
         assert results[0].status == "converged"
 
     def test_sticky_escalation_block_allows_explicit_continue_intent(
@@ -1776,7 +1817,11 @@ class TestStickyEscalationBlock:
             resume=True,
         )
 
-        results = coord.start(intent)
+        with patch(
+            "harness.coordinator.RalphController.run_loop",
+            return_value=_controlled_implementation(),
+        ):
+            results = coord.start(intent)
 
         assert results[0].status == "converged"
 
@@ -2145,6 +2190,7 @@ class TestSmartResumeDetection:
             target_repo="git@example.com:example/api.git",
             target_default_branch="main",
             provider="docker",
+            llm=LlmConfig(enabled=True),
         )
         coordinator = StrategyCoordinator(
             provider=MockProvider(should_pass=True),
@@ -2257,6 +2303,7 @@ class TestSmartResumeDetection:
             target_repo="git@example.com:example/api.git",
             target_default_branch="main",
             provider="docker",
+            llm=LlmConfig(enabled=True),
         )
         coordinator = StrategyCoordinator(
             provider=MockProvider(should_pass=True),

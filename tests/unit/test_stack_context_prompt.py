@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from harness.config import HarnessConfig, StacksConfig
+from harness.config import HarnessConfig, LlmConfig, StacksConfig
 from harness.coordinator import StrategyCoordinator
 from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
@@ -35,6 +35,7 @@ def _coordinator_with_stacks(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
         stacks=StacksConfig(
             selected=selected,
             target_archetypes=target_archetypes or [],
@@ -224,7 +225,7 @@ def test_strategy_context_is_preserved_before_generated_stack_context() -> None:
 
 
 @pytest.mark.unit
-def test_coordinator_passes_combined_stack_context_to_ralph_and_build_prompt(
+def test_coordinator_passes_combined_stack_context_to_controlled_delivery(
     tmp_path: Path,
 ) -> None:
     strategy_dir = tmp_path / "runs" / "strategies" / "spec-001"
