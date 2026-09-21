@@ -51,6 +51,7 @@ starting another.
 | 2026-09-21 | S3 | Activated after all S2 exit checks passed. Next action: inventory every public Typer command's delegation into `cli.py` and classify typed-service, compatibility, and dead paths before changing behavior. |
 | 2026-09-21 | S3 | Route inventory completed: 107 public commands, with 52 modular and 55 delegated into `cli.py`; 22 hidden commands include compatibility aliases, two retired error-only routes, and active internal RE entry points. Inventory: `docs/findings/2026-09-21-typer-route-inventory.md`. |
 | 2026-09-21 | S3 | Benchmark slice implemented: `benchmark list/show/run` call typed functions in `echelon.benchmark`, `_cmd_benchmark` is deleted from `cli.py`, 37 benchmark tests pass, and the 1,054-test CLI-focused gate passes. |
+| 2026-09-21 | S3 | Benchmark slice repository gate: 9,804 passed and 11,398 deselected in 32m13s. S3 remains active; `stack` is the next cutover slice. |
 
 ## S2 Work Queue
 
