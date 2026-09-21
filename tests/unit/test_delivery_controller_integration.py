@@ -87,14 +87,12 @@ def test_feedback_without_accepted_task_never_selects_next_open_task(slice_proje
     assert not result["passed"] and not executor.calls
 
 
-@pytest.mark.parametrize("flag", ["true", "false", 1, 0, None, [], {}])
-def test_feature_flag_is_boolean_not_a_silent_fallback(flag):
-    with pytest.raises(ValidationError, match="delivery_gate_controller"):
-        _parse_config({"provider": "docker", "llm": {"features": {"delivery_gate_controller": flag}}})
-
-
-def test_feature_default_does_not_enable_controller():
-    assert _parse_config({"provider": "docker"}).llm.features.get("delivery_gate_controller", False) is False
+def test_retired_feature_key_has_only_generic_scalar_parsing():
+    config = _parse_config({
+        "provider": "docker",
+        "llm": {"features": {"delivery_gate_controller": "retired"}},
+    })
+    assert config.llm.features["delivery_gate_controller"] == "retired"
 
 
 def test_coordinator_trial_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):

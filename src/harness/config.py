@@ -686,11 +686,6 @@ def _parse_llm_features(raw: Dict[str, Any]) -> Dict[str, object]:
         return {}
     parsed: Dict[str, object] = {}
     for key, value in features.items():
-        if key == "delivery_gate_controller" and type(value) is not bool:
-            raise ValidationError(
-                "delivery_gate_controller must be a boolean",
-                field_path="llm.features.delivery_gate_controller",
-            )
         if isinstance(value, (bool, int, float, str)) or value is None:
             parsed[str(key)] = value
         else:

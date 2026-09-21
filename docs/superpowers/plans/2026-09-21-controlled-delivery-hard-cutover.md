@@ -41,7 +41,7 @@
 - Consumes: generic `llm.features: dict[str, object]` parsing and the hidden Typer `build` compatibility command.
 - Produces: unconditional exit code `2` for raw `echelon build`; no special configuration semantics for `delivery_gate_controller`.
 
-- [ ] **Step 1: Change the raw-build test from conditional to unconditional**
+- [x] **Step 1: Change the raw-build test from conditional to unconditional**
 
 Replace `test_public_build_cannot_bypass_enabled_delivery_controller` with a parameterized test covering absent, `true`, and `false` legacy configuration values:
 
@@ -62,7 +62,7 @@ def test_public_build_always_routes_to_delivery_run(monkeypatch, tmp_path, legac
 
 Delete the test that expects raw Prosaic build dispatch. Change the config-specific validation test to prove arbitrary scalar feature values retain generic parsing without naming the removed key.
 
-- [ ] **Step 2: Run the focused tests and verify the new expectation fails**
+- [x] **Step 2: Run the focused tests and verify the new expectation fails**
 
 Run:
 
@@ -76,7 +76,7 @@ Run:
 
 Expected: the raw command still dispatches when the flag is absent or false, and the old flag still has special validation.
 
-- [ ] **Step 3: Make rejection unconditional and remove flag parsing**
+- [x] **Step 3: Make rejection unconditional and remove flag parsing**
 
 In `_dispatch_skill_command`, reject `command == "build"` before looking up
 `SKILL_MAP`. Include the concrete replacement `echelon delivery run <spec_id>`
@@ -86,13 +86,13 @@ compatibility command is the only caller allowed to pass that retired name.
 
 Remove the `delivery_gate_controller` special case from `_parse_llm_features`. Remove the opt-in setting from `runtime/config-template.yml`. Keep the hidden Typer command only as a migration error surface; update its docstring to say it always redirects to controlled delivery.
 
-- [ ] **Step 4: Run the Task 1 focused tests**
+- [x] **Step 4: Run the Task 1 focused tests**
 
 Run the Step 2 command.
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit the closed public boundary**
+- [x] **Step 5: Commit the closed public boundary**
 
 ```bash
 git add src/harness/config.py src/echelon/cli.py src/echelon/cli_app.py \

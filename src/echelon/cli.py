@@ -71,7 +71,6 @@ except ImportError:
 # echelon.run.md → "echelon spec run" → skill → ... (155 nested processes).
 SKILL_MAP = {
     "bugfix":  "echelon.bugfix",
-    "build":   "echelon.build",
     "review":  "echelon.review",
     "change":  "echelon.change",
     "verify-spec": "echelon.verify-spec",
@@ -13259,7 +13258,7 @@ def _require_provider_capability(
 
 
 def _skill_required_capability(command: str) -> ProviderCapability:
-    if command in {"build", "review"}:
+    if command == "review":
         return ProviderCapability.BUILD
     return ProviderCapability.ARTIFACT
 
@@ -13275,13 +13274,25 @@ def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
 
 
 def _dispatch_skill_command(command: str, args: list[str]) -> None:
-    skill_base = SKILL_MAP[command]
     arguments = " ".join(args)
 
     if not arguments:
         print(f"echelon {command}: missing arguments\n", file=sys.stderr)
         print(USAGE)
         sys.exit(1)
+
+    if command == "build":
+        spec_id = args[0]
+        print(
+            "echelon build: delivery is controller-owned.\n"
+            f"Use echelon delivery run {spec_id} for task selection, reviews, "
+            "verification and recovery. Raw --fix/--failures invocations are "
+            "not accepted; the delivery controller owns repair scope and evidence.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    skill_base = SKILL_MAP[command]
 
     project_dir = Path.cwd()
     _require_provider_capability(
@@ -13294,15 +13305,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
-    if command == "build" and config.llm.features.get("delivery_gate_controller") is True:
-        print(
-            "echelon build: controlled delivery cannot run through the raw build command.\n"
-            "Use echelon delivery run <spec_id> for controller-owned task selection, "
-            "reviews and recovery. Raw --fix/--failures invocations are not accepted; "
-            "the delivery controller owns repair scope and evidence.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
     cli = config.llm.cli
 
     prosaic_command = _load_prosaic_command(skill_base, arguments, project_dir)
@@ -13326,8 +13328,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     metadata = None
     if prosaic_command is not None:
         metadata = {"prompt_metadata": prosaic_command.frontmatter}
-    elif command == "build":
-        metadata = {"canonical_task_execution": True}
     result = AICodingCliProvider(config).run_prompt_result(
         str(project_dir), prompt, request_metadata=metadata
     )

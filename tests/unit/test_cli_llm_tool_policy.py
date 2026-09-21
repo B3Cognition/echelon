@@ -72,52 +72,8 @@ def test_dispatch_skill_command_routes_prosaic_review_through_claude_provider(
 
 
 @pytest.mark.unit
-def test_dispatch_skill_command_routes_prosaic_build_with_execution_metadata(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    _install_prosaic_command(
-        monkeypatch,
-        tmp_path,
-        body="build {{args}}",
-        frontmatter={"tools": "full"},
-    )
-    config = HarnessConfig(
-        target_repo=".",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(cli="claude"),
-    )
-    calls: list[tuple[str, str, dict[str, object] | None]] = []
-
-    class FakeProvider:
-        def __init__(self, loaded_config):
-            assert loaded_config is config
-            self.capabilities = CLI_PROVIDER_CAPABILITIES
-
-        def run_prompt_result(self, worktree_path, prompt, *, request_metadata=None):
-            calls.append((worktree_path, prompt, request_metadata))
-            return SimpleNamespace(exit_code=0)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ECHELON_LLM", "claude")
-    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
-    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
-
-    with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("build", ["001-demo"])
-
-    assert exc.value.code == 0
-    assert (tmp_path / ".echelon" / "prosaic" / "commands").is_dir()
-    assert calls
-    assert calls[0][0] == str(tmp_path)
-    assert "build 001-demo" in calls[0][1]
-    assert calls[0][2] == {"prompt_metadata": {"tools": "full"}}
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize("extra_args", [[], ["--fix", "--failures", "gate failed"]])
-def test_public_build_cannot_bypass_enabled_delivery_controller(
+def test_public_build_always_routes_to_controlled_delivery(
     monkeypatch, tmp_path: Path, extra_args,
 ) -> None:
     from typer.testing import CliRunner
@@ -125,7 +81,6 @@ def test_public_build_cannot_bypass_enabled_delivery_controller(
 
     _install_prosaic_command(monkeypatch, tmp_path, body="build {{args}}")
     config = HarnessConfig(llm=LlmConfig(cli="codex"))
-    config.llm.features["delivery_gate_controller"] = True
     calls = []
 
     class FakeProvider:
@@ -146,7 +101,7 @@ def test_public_build_cannot_bypass_enabled_delivery_controller(
     result = CliRunner().invoke(app, ["build", "001-demo", *extra_args])
 
     assert result.exit_code == 2, result.output
-    assert "echelon delivery run" in result.output
+    assert "echelon delivery run 001-demo" in result.output
     assert "controller" in result.output
     assert not calls
 
@@ -243,37 +198,6 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
     assert calls[0][0] == str(tmp_path)
     assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
     assert calls[0][2] == {"prompt_metadata": {}}
-
-
-@pytest.mark.unit
-def test_dispatch_build_skill_rejects_artifact_only_provider(
-    monkeypatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config = HarnessConfig(
-        target_repo=".",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(
-            cli="openai-compatible",
-            base_url="http://127.0.0.1:8000/v1",
-            model="local-model",
-        ),
-    )
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ECHELON_LLM", "openai-compatible")
-    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
-
-    with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("build", ["001-demo"])
-
-    assert exc.value.code == 2
-    captured = capsys.readouterr()
-    assert 'Provider "openai-compatible" supports artifact work only.' in captured.err
-    assert 'Command "echelon build" requires build capability.' in captured.err
-    assert "Choose a build-capable provider." in captured.err
 
 
 @pytest.mark.unit

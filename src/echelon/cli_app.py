@@ -1718,7 +1718,7 @@ def root_build(
     failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
     context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
 ) -> None:
-    """Compatibility alias for the build skill command."""
+    """Retired compatibility alias that directs callers to controlled delivery."""
     args = ([spec_id] if spec_id else [])
     if fix:
         args.append("--fix")
