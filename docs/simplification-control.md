@@ -15,7 +15,7 @@ starting another.
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | ACTIVE | Complete the Typer CLI cutover. | `cli_app.py` is the front door but still delegates many commands to private functions in the 22,237-line `cli.py`. Next: inventory every public Typer command's private `cli.py` delegation and classify service, compatibility, and dead paths. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
+| S3 | ACTIVE | Complete the Typer CLI cutover. | Inventory found 107 public commands: 52 already modular and 55 delegated into `cli.py`. The first approved slice moved all three benchmark commands to typed services and deleted the 228-line private handler. Next: cut over the eight-command `stack` family. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
 | S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
@@ -49,6 +49,8 @@ starting another.
 | 2026-09-21 | S2 | Current guidance now names `echelon delivery run <id>` as the sole Phase B entry point. Active-surface search found no feature flag or retired runner/prompt identifier; remaining `echelon build` references are the validated internal strategy identifier or the explicit CLI migration error. Focused S2 gate: 357 passed in 115.13s. |
 | 2026-09-21 | S2 | Completed. Repository merge verification against `42497d25`: 9,804 passed, 11,394 deselected in 29m19s; receipt `tests/reports/merge-verification/receipt-84c904c47e9a-c8590de8e92846b68497e6bdc72eb549.json`. |
 | 2026-09-21 | S3 | Activated after all S2 exit checks passed. Next action: inventory every public Typer command's delegation into `cli.py` and classify typed-service, compatibility, and dead paths before changing behavior. |
+| 2026-09-21 | S3 | Route inventory completed: 107 public commands, with 52 modular and 55 delegated into `cli.py`; 22 hidden commands include compatibility aliases, two retired error-only routes, and active internal RE entry points. Inventory: `docs/findings/2026-09-21-typer-route-inventory.md`. |
+| 2026-09-21 | S3 | Benchmark slice implemented: `benchmark list/show/run` call typed functions in `echelon.benchmark`, `_cmd_benchmark` is deleted from `cli.py`, 37 benchmark tests pass, and the 1,054-test CLI-focused gate passes. |
 
 ## S2 Work Queue
 
@@ -64,13 +66,24 @@ starting another.
 
 ## S3 Work Queue
 
-- [ ] Inventory every public Typer command and its delegated `cli.py` entry point.
-- [ ] Classify each route as typed service, compatibility alias, or dead path.
-- [ ] Define and approve the minimum cutover boundary before editing behavior.
+- [x] Inventory every public Typer command and its delegated `cli.py` entry point.
+- [x] Classify each route as typed service, compatibility alias, or dead path.
+- [x] Define and approve the minimum cutover boundary before editing behavior.
 - [ ] Move active command workflows behind typed application services.
 - [ ] Isolate compatibility aliases from active routing.
 - [ ] Run focused CLI verification.
 - [ ] Run the repository verification gate and record its result.
+
+### S3 Cutover Order
+
+- [x] Cut over `benchmark list/show/run` and delete `_cmd_benchmark`.
+- [ ] Cut over `stack list/detect/preflight/provision/enable/disable/select/selected`.
+- [ ] Cut over `workspace` initialization, doctor, migration, and source sync.
+- [ ] Cut over `phase` and `version`.
+- [ ] Delete retired routes and isolate root/`harness` compatibility aliases.
+- [ ] Cut over active `spec` workflows.
+- [ ] Cut over active `delivery` workflows without changing the state contract.
+- [ ] Put active `re` workflows behind a typed facade; leave protocol consolidation to S6.
 
 ## Drift Guard
 

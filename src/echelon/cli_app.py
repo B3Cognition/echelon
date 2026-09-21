@@ -1913,9 +1913,29 @@ def phase_run(
 @benchmark_app.command("list")
 def benchmark_list() -> None:
     """List experimental benchmark fixtures and variants."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import list_fixtures, list_variants
+    from echelon.ui import banner
 
-    legacy_cli._cmd_benchmark(["list"], project_root=Path.cwd())
+    fixtures = list_fixtures()
+    variants = list_variants()
+    banner(
+        "BENCHMARKS",
+        [("Fixtures", "benchmark prompts"), ("Variants", "pass with --variant <id>")],
+        subtitle="Experimental artifact-quality benchmark fixtures and variants",
+    )
+    typer.echo("Fixtures:")
+    for fixture in fixtures:
+        typer.echo(f"  {fixture.id:<30} {fixture.name}")
+    typer.echo("\nVariants (--variant <id>):")
+    for variant in variants:
+        typer.echo(f"  {variant.id:<30} {variant.label}")
+    typer.echo("\nExample:")
+    typer.echo("  echelon benchmark run tiny-notes --variant baseline")
+    typer.echo("\nBaseline snapshot:")
+    typer.echo("  --baseline-ref is optional; omitted runs commit the current workspace first.")
+    typer.echo("\nPrint saved scores:")
+    typer.echo("  echelon benchmark show")
+    typer.echo("\nFor an existing spec, use: echelon delivery run <spec-id>")
 
 
 @benchmark_app.command("show", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1928,13 +1948,56 @@ def benchmark_show(
     ),
 ) -> None:
     """Print saved benchmark scores."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import latest_summary_path, load_saved_scorecard, load_summary
+    from echelon.ui import banner
 
-    args = ["show"]
-    if target is not None:
-        args.append(target)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_benchmark(args, project_root=Path.cwd())
+    if ctx.args:
+        typer.echo("✗ Usage: echelon benchmark show [latest|<summary-path-or-run-dir>]", err=True)
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+    selected = target or "latest"
+    latest_path = latest_summary_path(project_root)
+    summary_path = latest_path if selected == "latest" else Path(selected)
+    if summary_path is None:
+        typer.echo("✗ No benchmark summaries found under runs/benchmarks/.", err=True)
+        raise typer.Exit(code=1)
+    summary = (
+        load_saved_scorecard(project_root)
+        if selected == "latest"
+        else load_summary(summary_path)
+    )
+    if not summary:
+        typer.echo(f"✗ Could not read benchmark summary: {summary_path}", err=True)
+        raise typer.Exit(code=1)
+
+    banner(
+        "BENCHMARK SUMMARY",
+        [("summary", str(summary_path)), ("best_variant", str(summary.get("best_variant")))],
+        subtitle="Saved benchmark scores",
+    )
+    typer.echo(
+        "| Variant | Render | Status | Spec | Delivery | Gaps | Verify Failures | "
+        "Blocks | Retries | Dispatches | Context Bytes | Context Tokens | "
+        "Context Reduction | Seconds |"
+    )
+    typer.echo("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    records = summary.get("variants")
+    if isinstance(records, dict):
+        for variant_id, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            typer.echo(
+                f"| {variant_id} | {record.get('context_render') or '-'} | "
+                f"{record.get('status', '')} | {record.get('spec_id') or '-'} | "
+                f"{record.get('delivery_run_id') or '-'} | {record.get('fulfillment_gaps', 0)} | "
+                f"{record.get('verification_failures', 0)} | {record.get('blocked_states', 0)} | "
+                f"{record.get('retries', 0)} | {record.get('build_dispatches', 0)} | "
+                f"{record.get('context_prompt_bytes', 0)} | "
+                f"{record.get('context_prompt_tokens_estimate', 0)} | "
+                f"{record.get('context_reduction_pct', 0)} | "
+                f"{float(record.get('elapsed_seconds') or 0.0):.1f} |"
+            )
 
 
 @benchmark_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1960,18 +2023,93 @@ def benchmark_run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print planned commands without running them."),
 ) -> None:
     """Run or print an artifact-quality benchmark variant."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import (
+        CONTEXT_RENDER_MODES,
+        baseline_snapshot_commands,
+        format_variant_execution_commands,
+        list_fixtures,
+        list_variants,
+        plan_variant_commands,
+        run_benchmark_variant,
+    )
+    from echelon.ui import banner
 
-    args = ["run", fixture_id]
-    _extend_option(args, "--variant", variant)
-    _extend_option(args, "--baseline-ref", baseline_ref)
-    _extend_option(args, "--context-render", context_render)
-    if artifact_only:
-        args.append("--artifact-only")
+    if ctx.args:
+        typer.echo(f"✗ Unknown benchmark argument: {ctx.args[0]}", err=True)
+        raise typer.Exit(code=1)
+    if context_render not in CONTEXT_RENDER_MODES:
+        typer.echo(f"✗ Unknown context render mode: {context_render}", err=True)
+        raise typer.Exit(code=1)
+
+    variant_id = variant or "baseline"
+    fixture_ids = {fixture.id for fixture in list_fixtures()}
+    variant_ids = {item.id for item in list_variants()}
+    try:
+        plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
+    except ValueError as exc:
+        if variant_id in fixture_ids and variant_id not in variant_ids:
+            typer.echo(
+                f"✗ {variant_id} is a fixture id, not a variant id.\n"
+                "  Use --variant baseline, constitution, constitution-tasks, "
+                "or constitution-tasks-adrs.",
+                err=True,
+            )
+        elif variant_id.startswith("variant:"):
+            typer.echo(
+                f"✗ Use --variant {variant_id.removeprefix('variant:')}, "
+                f"not --variant {variant_id}.",
+                err=True,
+            )
+        else:
+            typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
     if dry_run:
-        args.append("--dry-run")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_benchmark(args, project_root=Path.cwd())
+        baseline_marker = baseline_ref or "BENCHMARK_BASELINE_SNAPSHOT"
+        render_modes = (
+            ("legacy", "bounded") if context_render == "both" else (context_render,)
+        )
+        commands = (() if baseline_ref else baseline_snapshot_commands()) + tuple(
+            formatted_command
+            for render_mode in render_modes
+            for formatted_command in format_variant_execution_commands(
+                plan,
+                baseline_marker,
+                context_render=render_mode,
+            )
+        )
+        banner(
+            "BENCHMARK DRY RUN",
+            [
+                ("fixture", plan.fixture_id),
+                ("variant", plan.variant_id),
+                ("context_render", context_render),
+                ("mode", "artifact-only" if artifact_only else "full"),
+            ],
+            subtitle="Commands that would run",
+        )
+        for command in commands:
+            typer.echo(command if isinstance(command, str) else " ".join(command))
+        return
+
+    output_dir = run_benchmark_variant(
+        Path.cwd(),
+        fixture_id,
+        variant_id,
+        baseline_ref=baseline_ref,
+        artifact_only=artifact_only,
+        context_render=context_render,
+    )
+    banner(
+        "BENCHMARK COMPLETE",
+        [
+            ("fixture", fixture_id),
+            ("variant", variant_id),
+            ("context_render", context_render),
+            ("mode", "artifact-only" if artifact_only else "full"),
+            ("output", str(output_dir)),
+        ],
+    )
 
 
 @stack_app.command("list", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

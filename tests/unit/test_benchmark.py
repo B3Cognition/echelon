@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import chdir
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from echelon.benchmark import (
     BenchmarkRunRecord,
@@ -20,7 +22,12 @@ from echelon.benchmark import (
     summarize_records,
     write_summary,
 )
-from echelon.cli import _cmd_benchmark
+from echelon.cli_app import app
+
+
+def _invoke_benchmark(project_root: Path, args: list[str]):
+    with chdir(project_root):
+        return CliRunner().invoke(app, ["benchmark", *args])
 
 
 def test_lists_tiny_notes_fixture() -> None:
@@ -288,10 +295,11 @@ def test_collect_benchmark_record_reads_squad_and_delivery_state(tmp_path: Path)
     assert record.cost_usd == 12.5
 
 
-def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> None:
-    _cmd_benchmark(["list"], project_root=tmp_path)
+def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path) -> None:
+    result = _invoke_benchmark(tmp_path, ["list"])
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "Fixtures:" in out
     assert "Variants (--variant <id>):" in out
     assert "tiny-notes" in out
@@ -300,8 +308,28 @@ def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> 
     assert "echelon benchmark run tiny-notes --variant baseline" in out
 
 
-def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
-    _cmd_benchmark(
+def test_benchmark_list_bypasses_legacy_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_legacy_cli():
+        raise AssertionError("benchmark list must not load echelon.cli")
+
+    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+
+    result = CliRunner().invoke(app, ["benchmark", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "Fixtures:" in result.output
+    assert "Variants (--variant <id>):" in result.output
+
+
+def test_benchmark_workflow_is_absent_from_legacy_cli() -> None:
+    from echelon import cli as legacy_cli
+
+    assert not hasattr(legacy_cli, "_cmd_benchmark")
+
+
+def test_benchmark_dry_run_prints_commands(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
         [
             "run",
             "tiny-notes",
@@ -311,10 +339,10 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
             "baseline-artifacts",
             "--dry-run",
         ],
-        project_root=tmp_path,
     )
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "git reset --hard baseline-artifacts" in out
     assert "git clean -fd -e runs/benchmarks/" in out
     assert "echelon spec run --mode banzai" in out
@@ -323,8 +351,9 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     assert "echelon delivery run RESOLVE_SPEC_ID_FROM_CURRENT_RUN mode=banzai" in out
 
 
-def test_benchmark_dry_run_includes_context_render_env(tmp_path: Path, capsys) -> None:
-    _cmd_benchmark(
+def test_benchmark_dry_run_includes_context_render_env(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
         [
             "run",
             "tiny-notes",
@@ -336,15 +365,16 @@ def test_benchmark_dry_run_includes_context_render_env(tmp_path: Path, capsys) -
             "bounded",
             "--dry-run",
         ],
-        project_root=tmp_path,
     )
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "ECHELON_CONTEXT_RENDER_MODE=bounded echelon spec run --mode banzai" in out
 
 
-def test_benchmark_artifact_only_dry_run_skips_delivery(tmp_path: Path, capsys) -> None:
-    _cmd_benchmark(
+def test_benchmark_artifact_only_dry_run_skips_delivery(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
         [
             "run",
             "tiny-notes",
@@ -355,17 +385,18 @@ def test_benchmark_artifact_only_dry_run_skips_delivery(tmp_path: Path, capsys) 
             "--artifact-only",
             "--dry-run",
         ],
-        project_root=tmp_path,
     )
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "git reset --hard baseline-artifacts" in out
     assert "echelon spec run --mode banzai" in out
     assert "echelon delivery run" not in out
 
 
-def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path: Path, capsys) -> None:
-    _cmd_benchmark(
+def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
         [
             "run",
             "tiny-notes",
@@ -373,64 +404,56 @@ def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path
             "baseline",
             "--dry-run",
         ],
-        project_root=tmp_path,
     )
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "git add -u -- . :(exclude)runs :(exclude).harness-build-status.json" in out
     assert "git ls-files --others --exclude-standard -z | git add --pathspec-from-file=-" in out
     assert "git commit -m chore: snapshot workspace before benchmark" in out
     assert "git reset --hard BENCHMARK_BASELINE_SNAPSHOT" in out
 
 
-def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(["run", "tiny-notes", "--variant", "missing"], project_root=tmp_path)
+def test_benchmark_rejects_unknown_variant(tmp_path: Path) -> None:
+    result = _invoke_benchmark(tmp_path, ["run", "tiny-notes", "--variant", "missing"])
 
-    assert exc.value.code == 1
-    assert "Unknown benchmark variant" in capsys.readouterr().err
-
-
-def test_benchmark_rejects_unknown_context_render(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(
-            ["run", "tiny-notes", "--variant", "baseline", "--context-render", "bad"],
-            project_root=tmp_path,
-        )
-
-    assert exc.value.code == 1
-    assert "Unknown context render mode" in capsys.readouterr().err
+    assert result.exit_code == 1
+    assert "Unknown benchmark variant" in result.output
 
 
-def test_benchmark_suggests_run_subcommand_for_fixture_argument(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(["tiny-notes"], project_root=tmp_path)
+def test_benchmark_rejects_unknown_context_render(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
+        ["run", "tiny-notes", "--variant", "baseline", "--context-render", "bad"],
+    )
 
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "Missing benchmark subcommand: run" in err
-    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in err
-
-
-def test_benchmark_requires_fixture_before_options(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(["run", "--variant", "baseline"], project_root=tmp_path)
-
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "Missing benchmark fixture id" in err
-    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in err
-    assert "Unknown benchmark argument" not in err
+    assert result.exit_code == 1
+    assert "Unknown context render mode" in result.output
 
 
-def test_benchmark_explains_fixture_used_as_variant(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(["run", "tiny-notes", "--variant", "tiny-notes"], project_root=tmp_path)
+def test_benchmark_rejects_fixture_as_subcommand(tmp_path: Path) -> None:
+    result = _invoke_benchmark(tmp_path, ["tiny-notes"])
 
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "tiny-notes is a fixture id, not a variant id" in err
-    assert "Use --variant baseline" in err
+    assert result.exit_code == 2
+    assert "No such command 'tiny-notes'" in result.output
+
+
+def test_benchmark_requires_fixture_before_options(tmp_path: Path) -> None:
+    result = _invoke_benchmark(tmp_path, ["run", "--variant", "baseline"])
+
+    assert result.exit_code == 2
+    assert "Missing argument 'FIXTURE_ID'" in result.output
+
+
+def test_benchmark_explains_fixture_used_as_variant(tmp_path: Path) -> None:
+    result = _invoke_benchmark(
+        tmp_path,
+        ["run", "tiny-notes", "--variant", "tiny-notes"],
+    )
+
+    assert result.exit_code == 1
+    assert "tiny-notes is a fixture id, not a variant id" in result.output
+    assert "Use --variant baseline" in result.output
 
 
 def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -461,8 +484,9 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
 
-    _cmd_benchmark(["run", "tiny-notes", "--variant", "baseline"], project_root=tmp_path)
+    result = _invoke_benchmark(tmp_path, ["run", "tiny-notes", "--variant", "baseline"])
 
+    assert result.exit_code == 0, result.output
     assert calls == [
         {
             "project_root": tmp_path,
@@ -473,6 +497,68 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
             "context_render": "bounded",
         }
     ]
+
+
+def test_benchmark_run_bypasses_legacy_cli_and_calls_typed_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run_benchmark_variant(
+        project_root: Path,
+        fixture_id: str,
+        variant_id: str,
+        *,
+        baseline_ref: str | None = None,
+        artifact_only: bool = False,
+        context_render: str = "bounded",
+    ) -> Path:
+        calls.append(
+            {
+                "project_root": project_root,
+                "fixture_id": fixture_id,
+                "variant_id": variant_id,
+                "baseline_ref": baseline_ref,
+                "artifact_only": artifact_only,
+                "context_render": context_render,
+            }
+        )
+        return tmp_path / "runs" / "benchmarks" / "fake" / variant_id
+
+    def fail_legacy_cli():
+        raise AssertionError("benchmark run must not load echelon.cli")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
+    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmark",
+            "run",
+            "tiny-notes",
+            "--variant",
+            "baseline",
+            "--artifact-only",
+            "--context-render",
+            "legacy",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "project_root": tmp_path,
+            "fixture_id": "tiny-notes",
+            "variant_id": "baseline",
+            "baseline_ref": None,
+            "artifact_only": True,
+            "context_render": "legacy",
+        }
+    ]
+    assert "BENCHMARK COMPLETE" in result.output
 
 
 def test_benchmark_run_passes_context_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -494,11 +580,12 @@ def test_benchmark_run_passes_context_render(monkeypatch: pytest.MonkeyPatch, tm
 
     monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
 
-    _cmd_benchmark(
+    result = _invoke_benchmark(
+        tmp_path,
         ["run", "tiny-notes", "--variant", "baseline", "--context-render", "legacy"],
-        project_root=tmp_path,
     )
 
+    assert result.exit_code == 0, result.output
     assert calls == [{"context_render": "legacy", "variant_id": "baseline"}]
 
 
@@ -931,7 +1018,7 @@ def test_load_saved_scorecard_uses_latest_record_per_variant(tmp_path: Path) -> 
     assert scorecard["variants"]["constitution"]["fulfillment_gaps"] == 0
 
 
-def test_benchmark_show_prints_saved_summary(tmp_path: Path, capsys) -> None:
+def test_benchmark_show_prints_saved_summary(tmp_path: Path) -> None:
     summary_dir = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"
     summary_dir.mkdir(parents=True)
     (summary_dir / "summary.json").write_text(
@@ -956,10 +1043,45 @@ def test_benchmark_show_prints_saved_summary(tmp_path: Path, capsys) -> None:
         encoding="utf-8",
     )
 
-    _cmd_benchmark(["show"], project_root=tmp_path)
+    result = _invoke_benchmark(tmp_path, ["show"])
 
-    out = capsys.readouterr().out
+    assert result.exit_code == 0, result.output
+    out = result.output
     assert "BENCHMARK SUMMARY" in out
     assert "best_variant" in out
     assert "baseline" in out
     assert "build-1" in out
+
+
+def test_benchmark_show_bypasses_legacy_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    summary_dir = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "best_variant": "baseline",
+                "variants": {
+                    "baseline": {
+                        "status": "complete",
+                        "delivery_run_id": "build-1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_legacy_cli():
+        raise AssertionError("benchmark show must not load echelon.cli")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+
+    result = CliRunner().invoke(app, ["benchmark", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert "BENCHMARK SUMMARY" in result.output
+    assert "build-1" in result.output
