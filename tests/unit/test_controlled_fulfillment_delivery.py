@@ -13,9 +13,8 @@ from tests.unit.test_controlled_fulfillment_runner import (
 from tests.unit.test_delivery_controller_integration import _controller, _reconstruct
 
 
-def setup_delivery(context, tmp_path, executor, mode="semi", *, enabled=True):
+def setup_delivery(context, tmp_path, executor, mode="semi"):
     controller, store = _controller((context.project_root, context.spec_dir, None), tmp_path, executor, mode)
-    controller._config.llm.features["delivery_gate_controller"] = enabled
     controller._config.fulfillment.refresh_policy = "every_slice"
     state = store.read()
     state.update(workspace_root=str(context.workspace_root), source_id=context.source_id,
@@ -45,14 +44,14 @@ def test_existing_opt_in_runs_full_fulfillment_and_accounts_once(runner_context,
     assert executor.dispatch_count == 1
 
 
-def test_feature_off_keeps_legacy_runner(runner_context, tmp_path):
+def test_retired_feature_value_cannot_restore_legacy_runner(runner_context, tmp_path):
     from harness.fulfillment_runner import FulfillmentRunner
     controller, _ = setup_delivery(runner_context, tmp_path, SemanticExecutor())
     controller._config.llm.features["delivery_gate_controller"] = False
     # Constructor selection, not a mid-run mode switch.
     controller = _reconstruct(controller, controller._state_store, controller._llm_provider)
     assert isinstance(controller._fulfillment_runner, FulfillmentRunner)
-    assert controller._fulfillment_runner._controlled is False
+    assert controller._fulfillment_runner._controlled is True
 
 
 @pytest.mark.parametrize("point", ["before_accounting", "after_accounting"])

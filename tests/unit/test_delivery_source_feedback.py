@@ -175,16 +175,3 @@ def test_old_pending_source_repair_blocks_without_rewriting_records(slice_projec
     assert store.read()["delivery_slice_operation"] == saved["delivery_slice_operation"]
     assert store.read()["tokens_used"] == saved["tokens_used"]
     assert all(path.read_bytes() == before for path, before in journals.items())
-
-
-def test_feature_off_keeps_legacy_feedback_contract(slice_project, tmp_path, monkeypatch):
-    controller, store, _ = _accepted(slice_project, tmp_path, monkeypatch)
-    controller._config.llm.features["delivery_gate_controller"] = False
-    state = store.read()
-    state.pop("delivery_slice_operation")
-    store.write(state)
-    prompt = controller._make_feedback_prompt("Legacy build assignment", _failure(), 2)
-    assert prompt.startswith("Legacy build assignment")
-    assert "stop after writing the harness status marker" in prompt
-    assert "diagnose before editing" in prompt
-    assert "Wrong greeting" in prompt

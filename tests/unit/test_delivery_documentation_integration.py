@@ -62,9 +62,6 @@ def test_controlled_no_impact_requires_independent_pass(documentation_project, t
     assert result.passed is (review is True)
     if review is None:
         assert result.failures[0].id == "docs-verification-report-missing"
-    controller._config.llm.features["delivery_gate_controller"] = False
-    if review is None:
-        assert controller._apply_documentation_gate(VerifyResult(True), str(root)).passed
 
 
 def test_docs_after_accepted_task_retains_source_repair_target_and_empty_id_exemption(documentation_project, tmp_path):

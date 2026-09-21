@@ -1,4 +1,4 @@
-"""The opt-in must reach real Ralph consumers without legacy gate shortcuts."""
+"""Controlled delivery must reach real Ralph consumers without legacy shortcuts."""
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,7 +20,6 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
     project, spec, _ = fixture
     config = HarnessConfig()
     config.llm.enabled = True
-    config.llm.features["delivery_gate_controller"] = True
     gitops = MagicMock()
     gitops.base_dir = str(project)
     gitops.create_worktree.return_value = str(project)
@@ -318,7 +317,7 @@ def test_full_loop_reuses_pending_worktree_without_creation_or_sync(slice_projec
         assert "hello 1" in (slice_project[0] / "app.py").read_text()
 
 
-def test_disabling_feature_with_pending_operation_cannot_fall_back(slice_project, tmp_path, monkeypatch):
+def test_retired_feature_value_cannot_interrupt_pending_operation(slice_project, tmp_path, monkeypatch):
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     with monkeypatch.context() as patch:
         _crash_after_receipt(patch, 2)
@@ -327,8 +326,8 @@ def test_disabling_feature_with_pending_operation_cannot_fall_back(slice_project
     controller._config.llm.features["delivery_gate_controller"] = False
     resumed = ScriptedExecutor()
     result = _build(_reconstruct(controller, store, resumed), slice_project)
-    assert not result["passed"] and not resumed.calls
-    assert "pending" in result["build_reason"]
+    assert result["passed"]
+    assert _steps(resumed) == ["code_reviewer", "test_guardian"]
 
 
 @pytest.mark.parametrize("after_progress", [False, True])

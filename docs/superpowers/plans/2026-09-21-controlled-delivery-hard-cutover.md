@@ -222,7 +222,7 @@ git commit -m "refactor: make delivery setup controller only"
 - Produces: `_exec_build(...)` and `_exec_feedback(...)` that always return controlled slice results.
 - Removes: constructor injection and state for `LlmBuildRunner`, metadata-only task recovery, shell build/fix fallback, and feature-off gate behavior.
 
-- [ ] **Step 1: Replace feature-off assertions with sole-path assertions**
+- [x] **Step 1: Replace feature-off assertions with sole-path assertions**
 
 Delete `test_feature_off_keeps_legacy_feedback_contract` and tests whose only subject is marker-based `LlmBuildRunner` behavior. Add this assertion through the existing slice fixture:
 
@@ -243,7 +243,7 @@ def test_build_and_feedback_never_execute_strategy_shell(slice_project, tmp_path
 
 Use the existing fixture/helper names in each test module. Remove assignments that enable or disable `delivery_gate_controller`; controlled behavior is now the fixture default.
 
-- [ ] **Step 2: Run the focused Ralph tests and verify they fail**
+- [x] **Step 2: Run the focused Ralph tests and verify they fail**
 
 Run:
 
@@ -257,7 +257,7 @@ Run:
 
 Expected: flag-free fixtures still enter legacy branches or fail to create controlled fulfillment.
 
-- [ ] **Step 3: Make every Ralph gate controlled**
+- [x] **Step 3: Make every Ralph gate controlled**
 
 In `RalphController`:
 
@@ -274,11 +274,11 @@ In `RalphController`:
 
 Do not remove shared `BuildResult` constants or recovery cleanup while controlled delivery still imports them.
 
-- [ ] **Step 4: Convert or delete legacy-only Ralph tests**
+- [x] **Step 4: Convert or delete legacy-only Ralph tests**
 
 In `test_ralph_outer.py` and `test_ralph_inner.py`, delete cases that inject `LlmBuildRunner`, synthesize `.harness-build-status.json`, recover `echelon_result.json`, or expect sandbox execution of `echelon build --fix`. Preserve tests for loop limits, dirty-worktree adjudication, verification, progress, recovery, and finalization by routing their build result through the controlled slice seam.
 
-- [ ] **Step 5: Run the full Ralph and controlled-delivery group**
+- [x] **Step 5: Run the full Ralph and controlled-delivery group**
 
 Run:
 
@@ -296,7 +296,7 @@ Run:
 
 Expected: all pass without `LlmBuildRunner` imports or flag mutation.
 
-- [ ] **Step 6: Commit the sole Ralph path**
+- [x] **Step 6: Commit the sole Ralph path**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py \

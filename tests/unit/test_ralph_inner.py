@@ -73,6 +73,23 @@ def _make_controller(tmp_path, verify_results, mode="semi"):
         mode_controller=mode_ctrl, escalation_handler=escalation,
         spec_id="spec-001", strategy_id="default", config=config,
     )
+    ctrl._exec_controlled_slice = MagicMock(
+        return_value={
+            "exit_code": 0,
+            "passed": True,
+            "build_status": "done",
+            "completion_marker_explicit": True,
+            "build_reason": "controlled slice completed",
+            "duration_s": 0,
+            "tokens": 0,
+            "task_ids": [],
+            "stdout": "",
+            "stderr": "",
+        }
+    )
+    ctrl._candidate_evidence_runner.run_standard = MagicMock(
+        side_effect=[VerifyResult.from_dict(result) for result in verify_results]
+    )
     return ctrl
 
 
@@ -250,71 +267,6 @@ class TestInnerLoopConvergence:
         assert result["inner_count"] == 1
         assert ctrl._state_store.read().get("escalation_file") is None
 
-    def test_not_applicable_documentation_schema_repairs_in_one_cycle(
-        self, tmp_path: Path
-    ) -> None:
-        worktree = tmp_path / "worktree"
-        spec_dir = worktree / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
-        report = spec_dir / "documentation-impact-report.md"
-        report.write_text(
-            "---\n"
-            "docs_required: false\n"
-            'reason: "README already covers the behavior."\n'
-            "---\n",
-            encoding="utf-8",
-        )
-        ctrl = _make_controller(tmp_path, [])
-        state = ctrl._state_store.read()
-        state["spec_dir"] = str(spec_dir)
-        ctrl._state_store.write(state)
-        initial = ctrl._apply_documentation_gate(
-            VerifyResult(passed=True), str(worktree)
-        )
-        assert initial.failures[0].id == "documentation-not-applicable-without-reason"
-
-        def repair(*_args: object, **_kwargs: object) -> dict[str, object]:
-            report.write_text(
-                "---\n"
-                "docs_required: false\n"
-                'not_applicable_reason: "README already covers the behavior."\n'
-                "---\n",
-                encoding="utf-8",
-            )
-            return {
-                "exit_code": 0,
-                "passed": True,
-                "build_status": "done",
-                "build_reason": "wrote exact report field",
-                "duration_s": 0.0,
-                "tokens": 0,
-                "task_ids": [],
-            }
-
-        ctrl._exec_feedback = MagicMock(side_effect=repair)
-        ctrl._try_checkpoint_progress_commit = MagicMock(return_value=None)
-        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
-        ctrl._refresh_fulfillment_report = MagicMock(
-            side_effect=lambda verify, *_args, **_kwargs: verify
-        )
-
-        result = ctrl._run_inner_loop(
-            handle=ctrl._provider.create(None),
-            verify_result=initial,
-            outer_iter=0,
-            max_inner=3,
-            tokens_used=0,
-            token_budget=None,
-            state=ctrl._state_store.read(),
-            build_command="echelon build",
-            strategy_context="",
-            worktree_path=str(worktree),
-            build_prompt="repair documentation schema",
-        )
-
-        assert result["converged"] is True
-        assert result["inner_count"] == 1
-        assert ctrl._exec_feedback.call_count == 1
 
 
 @pytest.mark.unit
@@ -487,42 +439,6 @@ class TestInnerLoopDeferredFulfillment:
 class TestInnerLoopTaskProgress:
     """Inner-loop task completion must be reconciled before fulfillment gating."""
 
-    def test_llm_feedback_preserves_completed_task_ids(self, tmp_path: Path) -> None:
-        class Runner:
-            def exec_feedback(
-                self,
-                worktree_path: str,
-                prompt: str,
-                *,
-                containment_policy_file: str | None = None,
-                prompt_metadata: dict[str, object] | None = None,
-            ) -> BuildResult:
-                return BuildResult(
-                    exit_code=0,
-                    status="done",
-                    impasse_file=None,
-                    reason="implemented T-002",
-                    stdout="",
-                    stderr="",
-                    duration_ms=100,
-                    task_ids=["T-002"],
-                )
-
-        ctrl = _make_controller(tmp_path, [])
-        ctrl._llm_build_runner = Runner()
-
-        result = ctrl._exec_feedback(
-            handle=ctrl._provider.create(None),
-            verify_result=VerifyResult(passed=False),
-            build_command="echelon build",
-            strategy_context="",
-            worktree_path="/tmp/wt",
-            prompt="fix it",
-        )
-
-        assert result["build_status"] == "done"
-        assert result["build_reason"] == "implemented T-002"
-        assert result["task_ids"] == ["T-002"]
 
     def test_completed_inner_task_exits_fulfillment_gap_loop(
         self, tmp_path: Path

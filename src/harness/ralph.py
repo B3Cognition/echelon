@@ -45,7 +45,6 @@ from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
     DocumentationGateResult,
     evaluate_documentation_gate,
-    write_not_applicable_documentation_impact_report,
 )
 from harness.coverage_evidence import (
     active_unmapped_coverage_requirement_ids,
@@ -62,14 +61,12 @@ from harness.coverage_observation import (
     write_coverage_observation,
 )
 from harness.coverage_observer_runner import run_coverage_observers
-from harness.docs_verifier import write_docs_verification_report
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.errors import NotSupportedError, SandboxError
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
 from harness.fulfillment_runner import FulfillmentRunner
-from harness.llm_build_runner import LlmBuildRunner
 from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -340,7 +337,6 @@ class RalphController:
         strategy_id: str,
         config: HarnessConfig,
         llm_provider: Optional[AICodingCliProvider] = None,
-        llm_build_runner: Optional[LlmBuildRunner] = None,
         fulfillment_runner: Optional[FulfillmentRunner] = None,
         build_id: str = "",
         fresh_delivery: bool = False,
@@ -358,16 +354,10 @@ class RalphController:
         self._config = config
         self._llm_provider = llm_provider
         self._controlled_slice_budget: float | None = None
-        self._llm_build_runner = (
-            llm_build_runner
-            if llm_build_runner is not None
-            else LlmBuildRunner(llm_provider) if llm_provider is not None else None
-        )
         self._fulfillment_runner = (
             fulfillment_runner
             if fulfillment_runner is not None
-            else FulfillmentRunner(llm_provider,
-                controlled=config.llm.features.get("delivery_gate_controller") is True)
+            else FulfillmentRunner(llm_provider, controlled=True)
             if llm_provider is not None else None
         )
         self._build_id = build_id
@@ -531,14 +521,13 @@ class RalphController:
             recovering_slice = pending_slice is not None
             if recovering_slice:
                 preserved = pending_slice.get("worktree_path") if isinstance(pending_slice, dict) else None
-                if (self._config.llm.features.get("delivery_gate_controller") is not True
-                        or not isinstance(preserved, str) or not Path(preserved).is_absolute()
+                if (not isinstance(preserved, str) or not Path(preserved).is_absolute()
                         or Path(preserved).is_symlink() or not Path(preserved).is_dir()):
                     return self._finalize(
                         status="blocked", reason="delivery_reconciliation_required",
                         outer_iterations=outer_iter, inner_iterations=total_inner_iterations,
                         pr_url=pr_url, tokens_used=tokens_used, final_verify=None,
-                        extra_state={"build_reason": "pending delivery candidate is missing, unsafe, or controller disabled"},
+                        extra_state={"build_reason": "pending delivery candidate is missing or unsafe"},
                     )
                 self._resume_worktree_path = None
                 worktree_path = preserved
@@ -610,9 +599,6 @@ class RalphController:
                 # fail when Docker is unavailable despite no sandbox operation
                 # being required.
                 handle: Optional[SandboxHandle] = None
-                if not (self._llm_build_runner and build_prompt):
-                    sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
-                    handle = self._provider.create(sandbox_spec)
 
                 try:
                     # Clear stale build status before each iteration so a
@@ -711,29 +697,6 @@ class RalphController:
                     self._enforce_completed_task_ids(build_result, worktree_path)
 
                     build_log_phase = "build"
-                    if build_result.get("build_status") == "missing_task_ids":
-                        recovered_result = self._recover_missing_task_ids(
-                            worktree_path
-                        )
-                        if recovered_result is not None:
-                            self._append_iteration_log(
-                                state, outer_iter, 0, "build",
-                                build_result.get("exit_code", 0),
-                                build_result.get("passed", True),
-                                build_result.get("duration_s", 0.0),
-                                build_result.get("tokens"),
-                                provider_invocation=build_result.get(
-                                    "provider_invocation"
-                                ),
-                            )
-                            build_result = recovered_result
-                            tokens_used += _known_token_count(
-                                build_result.get("tokens")
-                            )
-                            self._enforce_completed_task_ids(
-                                build_result, worktree_path
-                            )
-                            build_log_phase = "build_metadata_recovery"
 
                     # Log build iteration
                     self._append_iteration_log(
@@ -849,24 +812,6 @@ class RalphController:
                                         ],
                                     ),
                                 )
-                        elif self._should_continue_after_missing_marker(
-                            build_result,
-                            worktree_path=worktree_path,
-                            checkpoint=build_checkpoint,
-                            head_advanced=self._head_advanced(
-                                before_build_head,
-                                after_build_head,
-                            ),
-                        ):
-                            self._record_missing_marker_recovery(
-                                build_result,
-                                worktree_path=worktree_path,
-                                checkpoint=build_checkpoint,
-                                head_advanced=self._head_advanced(
-                                    before_build_head,
-                                    after_build_head,
-                                ),
-                            )
                         else:
                             preserve_worktree = True
                             salvage = _salvage_build_worktree(
@@ -881,88 +826,22 @@ class RalphController:
                             )
                             build_reason = build_result.get("build_reason")
                             build_exit_code = build_result.get("exit_code")
-                            provider_reset_hint = ""
-                            provider_limit_message = ""
-                            if build_status == "unknown" and _is_host_tool_permission_denied(build_result):
-                                why = "host LLM tool permissions blocked the build"
-                                meaning = (
-                                    "The selected AI CLI refused writes or local command "
-                                    "execution in the harness worktree before COMMANDER "
-                                    "could write the build completion marker"
-                                )
-                                build_status = "host_tool_permission_denied"
-                                build_reason = (
-                                    "Host LLM tool permissions blocked writes or local "
-                                    "commands in the harness worktree. For isolated target "
-                                    "delivery, do not enable unsafe host execution; use a "
-                                    "CLI/runtime that can write inside its sandboxed cwd or "
-                                    "move execution behind a containerized/brokered runner."
-                                )
-                            elif build_status == "unknown" and _is_provider_session_limit(build_result):
-                                provider_reset_hint = _provider_session_limit_reset_hint(build_result)
-                                provider_limit_message = _provider_session_limit_message(build_result)
-                                why = "LLM provider session limit reached before COMMANDER finalized"
-                                meaning = (
-                                    "The provider stopped the build because its session budget "
-                                    "was exhausted; wait for the reset window, then resume the "
-                                    "preserved worktree"
-                                )
-                                build_status = "provider_session_limit"
-                            elif build_status == "unknown":
-                                try:
-                                    exit_code = int(build_exit_code)
-                                except (TypeError, ValueError):
-                                    exit_code = None
-                                if exit_code == 0:
-                                    why = "missing build status marker: .harness-build-status.json"
-                                    meaning = (
-                                        "COMMANDER may have changed files, but did not write "
-                                        "the harness completion marker"
-                                    )
-                                else:
-                                    code_text = (
-                                        f"code {exit_code}"
-                                        if exit_code is not None
-                                        else "a nonzero code"
-                                    )
-                                    why = (
-                                        "build process exited with "
-                                        f"{code_text} before writing the completion marker"
-                                    )
-                                    meaning = (
-                                        "The LLM/provider process stopped before COMMANDER "
-                                        "could finalize the harness build status"
-                                    )
-                            elif build_status == "timeout":
+                            if build_status == "timeout":
                                 why = "build invocation timed out before COMMANDER finalized"
                                 meaning = (
-                                    "COMMANDER may have made useful progress, but the LLM "
-                                    "process exceeded the build timeout before verification "
-                                    "and final status could be trusted"
-                                )
-                            elif build_status == "missing_task_ids":
-                                why = "build completion marker omitted completed_task_ids"
-                                meaning = (
-                                    "COMMANDER reported the build slice done, but did not "
-                                    "identify the canonical tasks Ralph must mark DONE"
-                                )
-                            elif build_status == "task_progress_update_failed":
-                                why = "completed_task_ids could not be reconciled with tasks.md"
-                                meaning = (
-                                    "COMMANDER reported completed task IDs, but Ralph could "
-                                    "not update the canonical task ledger before verification"
+                                    "The controlled delivery slice exceeded its timeout before "
+                                    "verification and final status could be trusted"
                                 )
                             elif build_status == "blocked":
-                                why = "build agent reported a blocker"
+                                why = "controlled delivery reported a blocker"
                                 meaning = (
-                                    "The build agent completed all safely resolvable work and "
+                                    "The delivery controller completed all safely resolvable work and "
                                     "requires an owner decision before it can proceed"
                                 )
                             else:
                                 why = f"build reported status '{build_status}'"
                                 meaning = (
-                                    "COMMANDER wrote the harness completion marker, "
-                                    "but did not report BUILD_DONE"
+                                    "The controlled delivery slice did not complete successfully"
                                 )
                             fields = [
                                 ("spec", self._spec_id),
@@ -979,16 +858,8 @@ class RalphController:
                                         ("salvage verified", salvage.get("salvage_verified", "not_run")),
                                     ]
                                 )
-                            if build_status == "provider_session_limit":
-                                if provider_limit_message:
-                                    fields.append(("provider", provider_limit_message))
-                                if provider_reset_hint:
-                                    fields.append(("reset", provider_reset_hint))
-                                fields.append(("retry after", "provider reset window"))
                             next_action = (
-                                "resume after provider reset"
-                                if build_status == "provider_session_limit"
-                                else "resolve the reported blocker, then start a new delivery run"
+                                "resolve the reported blocker, then start a new delivery run"
                                 if build_status == "blocked"
                                 else "recover and finalize this build"
                             )
@@ -1002,9 +873,7 @@ class RalphController:
                                 ]
                             )
                             title = (
-                                "HARNESS — PROVIDER SESSION LIMIT"
-                                if build_status == "provider_session_limit"
-                                else "HARNESS — BUILD BLOCKED"
+                                "HARNESS — BUILD BLOCKED"
                                 if build_status == "blocked"
                                 else "HARNESS — BUILD DID NOT COMPLETE"
                             )
@@ -1015,16 +884,10 @@ class RalphController:
                                 "build_reason": build_reason,
                                 "build_exit_code": build_exit_code,
                             }
-                            if provider_reset_hint:
-                                blocked_state["provider_reset_hint"] = provider_reset_hint
-                            if provider_limit_message:
-                                blocked_state["provider_limit_message"] = provider_limit_message
                             return self._finalize(
                                 status="blocked",
                                 reason=(
-                                    "provider_session_limit"
-                                    if build_status == "provider_session_limit"
-                                    else "build_blocked"
+                                    "build_blocked"
                                     if build_status == "blocked"
                                     else "build_incomplete"
                                 ),
@@ -1714,21 +1577,6 @@ class RalphController:
             tokens_used += _known_token_count(fix_result.get("tokens"))
             self._enforce_completed_task_ids(fix_result, worktree_path)
             fix_log_phase = "fix"
-            if fix_result.get("build_status") == "missing_task_ids":
-                recovered_result = self._recover_missing_task_ids(worktree_path)
-                if recovered_result is not None:
-                    self._append_iteration_log(
-                        state, outer_iter, inner_iter, "fix",
-                        fix_result.get("exit_code", 0),
-                        fix_result.get("passed", True),
-                        fix_result.get("duration_s", 0.0),
-                        fix_result.get("tokens"),
-                        provider_invocation=fix_result.get("provider_invocation"),
-                    )
-                    fix_result = recovered_result
-                    tokens_used += _known_token_count(fix_result.get("tokens"))
-                    self._enforce_completed_task_ids(fix_result, worktree_path)
-                    fix_log_phase = "fix_metadata_recovery"
             scoped_completed_task_ids = _clean_task_ids(fix_result.get("task_ids"))
             applied_task_ids = self._apply_build_task_progress(
                 worktree_path=worktree_path,
@@ -2040,15 +1888,13 @@ class RalphController:
         self, worktree_path: str, prompt: str, *, repair: bool,
         documentation: bool = False,
     ) -> Dict[str, Any]:
-        """Adapt the opt-in controller to Ralph's existing build result boundary."""
+        """Adapt the delivery controller to Ralph's existing result boundary."""
         from harness.delivery_slice_runner import DeliverySliceRunner
         from harness.delivery_slice_runner import _digest, _spec_inputs
         from harness.delivery_slice import DeliverySliceError
         from harness.delivery_documentation import DeliveryDocumentationRunner
 
         try:
-            if self._config.llm.features.get("delivery_gate_controller") is not True:
-                raise DeliverySliceError("pending controlled delivery cannot fall back to legacy execution")
             worktree = Path(worktree_path)
             spec_dir = self._find_existing_spec_dir(worktree)
             if spec_dir is None:
@@ -2124,9 +1970,7 @@ class RalphController:
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)
 
-            # Reuse path/containment preparation, but never send the legacy
-            # MANAGER/context routing recipe to a controlled role.
-            self._with_harness_context("", worktree_path)
+            self._prepare_delivery_context(worktree_path)
             runner = DeliveryDocumentationRunner if documentation else DeliverySliceRunner
             runner_options = {}
             if documentation:
@@ -2210,106 +2054,9 @@ class RalphController:
         worktree_path: str = "",
         prompt: str = "",
     ) -> Dict[str, Any]:
-        """Execute the strategy's build command in sandbox or via LLM build runner.
-
-        When an LLM build runner is set and both ``worktree_path`` and ``prompt``
-        are non-empty, delegates to it. Otherwise
-        falls back to the sandbox provider path.
-
-        Args:
-            handle: Active sandbox handle.
-            build_command: Command to run (for example, ``echelon build``).
-                Declared via strategy file frontmatter.
-            strategy_context: Additional context injected via STRATEGY_CONTEXT
-                env var. Empty string = no injection.
-            worktree_path: Path to the git worktree (LLM build runner path only).
-            prompt: Prompt text for the LLM (LLM build runner path only).
-
-        Returns:
-            Dict with exit_code, passed, duration_s, tokens, impasse,
-            impasse_file.
-        """
-        if (self._config.llm.features.get("delivery_gate_controller") is True
-                or self._state_store.read().get("delivery_slice_operation") is not None):
-            return self._exec_controlled_slice(worktree_path, prompt, repair=False)
-        if self._llm_build_runner and worktree_path and prompt:
-            prompt = self._with_harness_context(prompt, worktree_path)
-            result = self._llm_build_runner.exec_build(
-                worktree_path,
-                prompt,
-                containment_policy_file=str(
-                    self._state_store.state_dir / "delivery-containment-policy.json"
-                ),
-                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
-            )
-            return {
-                "exit_code": result.exit_code,
-                "passed": result.succeeded,
-                "build_status": result.status,
-                "completion_marker_explicit": True,
-                "build_reason": result.reason,
-                "blocker_kind": result.blocker_kind,
-                "duration_s": result.duration_ms / 1000.0,
-                "tokens": result.token_usage,
-                "provider_invocation": result.provider_invocation,
-                "impasse": result.is_impasse,
-                "impasse_file": result.impasse_file,
-                "task_ids": result.task_ids or [],
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        # Fallback: original sandbox path
-        cmd = build_command
-        if strategy_context:
-            cmd = f"STRATEGY_CONTEXT='{strategy_context}' {cmd}"
-
-        result = self._provider.exec(handle, cmd, timeout_ms=1_200_000)
-        return {
-            "exit_code": result.exit_code,
-            "passed": result.exit_code == 0,
-            "build_status": "done" if result.exit_code == 0 else "unknown",
-            "completion_marker_explicit": False,
-            "build_reason": None,
-            "duration_s": result.duration_ms / 1000.0,
-            "tokens": _estimate_tokens(result),
-            "impasse": False,
-            "impasse_file": None,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-        }
-
-    def _recover_missing_task_ids(
-        self,
-        worktree_path: str,
-    ) -> Dict[str, Any] | None:
-        """Run one metadata-only recovery without consuming an outer/inner attempt."""
-        if not isinstance(self._llm_build_runner, LlmBuildRunner):
-            return None
-        result = self._llm_build_runner.recover_completion_metadata(
-            worktree_path,
-            containment_policy_file=str(
-                self._state_store.state_dir / "delivery-containment-policy.json"
-            ),
-            prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
-        )
-        return {
-            "exit_code": result.exit_code,
-            "passed": result.succeeded,
-            "build_status": result.status,
-            "completion_marker_explicit": True,
-            "build_reason": result.reason,
-            "blocker_kind": result.blocker_kind,
-            "duration_s": result.duration_ms / 1000.0,
-            "tokens": result.token_usage,
-            "provider_invocation": result.provider_invocation,
-            "impasse": result.is_impasse,
-            "impasse_file": result.impasse_file,
-            "task_ids": result.task_ids or [],
-            "completion_metadata_recovery": True,
-            "partial_progress": result.partial_progress,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-        }
+        """Execute one controller-selected delivery slice."""
+        del handle, build_command, strategy_context
+        return self._exec_controlled_slice(worktree_path, prompt, repair=False)
 
     def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
@@ -2320,16 +2067,12 @@ class RalphController:
 
         Returns parsed VerifyResult.
         """
-        if (
-            self._llm_build_runner
-            and worktree_path
-            and self._config.verification.execution == "host"
-        ):
+        if self._llm_provider is not None and worktree_path and self._config.verification.execution == "host":
             return self._exec_verify_locally(worktree_path)
         return self._candidate_evidence_runner.run_standard(
             handle=handle,
             worktree=Path(worktree_path),
-            allow_legacy_structured=self._llm_build_runner is None,
+            allow_legacy_structured=False,
         )
 
     def _apply_fulfillment_gate(
@@ -2817,8 +2560,8 @@ class RalphController:
     ) -> VerifyResult:
         """Require a fresh composed journey when resolved stacks demand it."""
         operation = self._state_store.read().get("delivery_slice_operation")
-        if (verify_result.passed and self._config.llm.features.get("delivery_gate_controller") is True
-                and isinstance(operation, dict) and operation.get("kind") == "documentation"
+        if (verify_result.passed and isinstance(operation, dict)
+                and operation.get("kind") == "documentation"
                 and operation.get("progress_applied") is True and operation.get("runnability_reviewed") is True):
             from harness.delivery_documentation import reviewed_runnability_checkpoint
             try:
@@ -2943,37 +2686,19 @@ class RalphController:
             documentation_changes,
         )
 
-        state = self._state_store.read()
-        controlled = self._config.llm.features.get("delivery_gate_controller") is True
-        raw_runnability = state.get("user_runnability")
-        runnability_ref: RunnabilityEvidenceRef | None = None
-        if isinstance(raw_runnability, dict) and raw_runnability.get("status") == "runnable":
-            try:
-                runnability_ref = load_runnability_evidence_ref(
-                    str(raw_runnability.get("report") or "")
+        from harness.delivery_slice import DeliverySliceError
+        try:
+            runnability_ref, runnability_required = (
+                self._controlled_documentation_runnability(
+                    Path(worktree_path), validate_candidate=True
                 )
-            except ValueError:
-                runnability_ref = None
-        resolved_policy = getattr(self._config, "resolved_runnability", None)
-        runnability_required = (
-            str(getattr(resolved_policy, "policy", "not_applicable")) == "required"
-            or runnability_ref is not None
-        )
-        if controlled:
-            from harness.delivery_slice import DeliverySliceError
-            try:
-                runnability_ref, runnability_required = self._controlled_documentation_runnability(Path(worktree_path), validate_candidate=True)
-            except (DeliverySliceError, OSError) as exc:
-                return self._runnability_failure(
-                    verify_result, failure_id="docs-runnability-evidence-stale",
-                    error=str(exc), details={},
-                )
-        if runnability_ref is not None and not controlled:
-            write_docs_verification_report(
-                Path(worktree_path),
-                spec_dir,
-                runnability_report=runnability_ref,
-                preserve_independent_findings=True,
+            )
+        except (DeliverySliceError, OSError) as exc:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="docs-runnability-evidence-stale",
+                error=str(exc),
+                details={},
             )
 
         gate = evaluate_documentation_gate(
@@ -2982,29 +2707,8 @@ class RalphController:
             changed_files=documentation_changes,
             runnability_report=runnability_ref,
             runnability_required=runnability_required,
-            require_independent_review=controlled,
+            require_independent_review=True,
         )
-        if not controlled and self._can_write_noop_documentation_report(
-            gate,
-            changed_files,
-            Path(worktree_path),
-        ):
-            write_not_applicable_documentation_impact_report(
-                spec_dir,
-                reason=(
-                    "No target source, README, CHANGELOG, API, setup, config, "
-                    "operations, or significant performance changes were made in "
-                    "this delivery slice; Ralph refreshed harness-owned "
-                    "verification evidence only."
-                ),
-            )
-            gate = evaluate_documentation_gate(
-                Path(worktree_path),
-                spec_dir,
-                changed_files=documentation_changes,
-                runnability_report=runnability_ref,
-                runnability_required=runnability_required,
-            )
         if gate.passed:
             return verify_result
 
@@ -3115,23 +2819,6 @@ class RalphController:
         }
         self._state_store.write(state)
 
-    def _can_write_noop_documentation_report(
-        self,
-        gate: DocumentationGateResult,
-        changed_files: Optional[List[str]],
-        worktree_path: Path,
-    ) -> bool:
-        """Allow Ralph to repair a missing docs impact report for no-op slices."""
-        if gate.failure is None or gate.failure.id != "documentation-impact-report-missing":
-            return False
-        if changed_files is None:
-            return False
-        if _has_target_delivery_changes(changed_files):
-            return False
-        cumulative_changes = self._cumulative_target_delivery_changes(worktree_path)
-        if cumulative_changes is None:
-            return False
-        return not cumulative_changes
 
     def _cumulative_target_delivery_changes(self, worktree_path: Path) -> Optional[List[str]]:
         """Return target changes on this branch relative to the default branch."""
@@ -3347,10 +3034,9 @@ class RalphController:
             task_results[task_id] = result
         build["task_results"] = task_results
         state["build"] = build
-        if self._config.llm.features.get("delivery_gate_controller") is True:
-            operation = state.get("delivery_slice_operation")
-            if isinstance(operation, dict) and operation.get("accepted_task_id") in applied:
-                operation["progress_applied"] = True
+        operation = state.get("delivery_slice_operation")
+        if isinstance(operation, dict) and operation.get("accepted_task_id") in applied:
+            operation["progress_applied"] = True
         self._state_store.write(state)
         return applied
 
@@ -3510,23 +3196,24 @@ class RalphController:
                     "changed_files": changed_files or [],
                 }
             )
-        controlled = self._config.llm.features.get("delivery_gate_controller") is True
-        if controlled:
-            try:
-                refresh_kwargs.update(self._controlled_fulfillment_options(worktree_path, refresh_kwargs))
-            except (ValueError, OSError, TypeError, KeyError) as exc:
-                return VerifyResult(False, [FailureEntry(FailureCategory.OTHER,
-                    "fulfillment-containment-invalid", str(exc))], verify_result.duration_s,
-                    verify_result.token_usage, dict(verify_result.verification_evidence))
+        try:
+            refresh_kwargs.update(
+                self._controlled_fulfillment_options(worktree_path, refresh_kwargs)
+            )
+        except (ValueError, OSError, TypeError, KeyError) as exc:
+            return VerifyResult(False, [FailureEntry(FailureCategory.OTHER,
+                "fulfillment-containment-invalid", str(exc))], verify_result.duration_s,
+                verify_result.token_usage, dict(verify_result.verification_evidence))
         refresh_result = self._fulfillment_runner.refresh(
             worktree_path,
             self._spec_id,
             **refresh_kwargs,
         )
-        if controlled:
-            from dataclasses import replace
-            newly_used = self._account_fulfillment_usage(refresh_result)
-            verify_result = replace(verify_result, token_usage=verify_result.token_usage + newly_used)
+        from dataclasses import replace
+        newly_used = self._account_fulfillment_usage(refresh_result)
+        verify_result = replace(
+            verify_result, token_usage=verify_result.token_usage + newly_used
+        )
         exit_code = getattr(refresh_result, "exit_code", refresh_result)
         self._record_fulfillment_refresh(
             {
@@ -3617,8 +3304,10 @@ class RalphController:
         if policy_path.is_symlink():
             raise ValueError("unsafe fulfillment containment policy")
         policy = json.loads(policy_path.read_text())
+        source_root = state.get("source_root") or str(worktree_path)
+        source_id = state.get("source_id") or Path(str(source_root)).name
         expected = dict(schema_version=1, worktree=str(worktree_path), workspace_root=str(workspace),
-                        source_id=state.get("source_id"), source_root=state.get("source_root"))
+                        source_id=source_id, source_root=source_root)
         if any(policy.get(key) != value for key, value in expected.items()):
             raise ValueError("fulfillment containment policy binding changed")
         env, error = _containment_policy_env(str(policy_path), worktree_path=worktree_path)
@@ -4642,99 +4331,40 @@ class RalphController:
         prompt: str = "",
         repair_context: Mapping[str, object] | None = None,
     ) -> Dict[str, Any]:
-        """Execute feedback (fix) step in sandbox or via LLM build runner.
-
-        When an LLM build runner is set and both ``worktree_path`` and ``prompt``
-        are non-empty, delegates to it. Otherwise
-        falls back to the sandbox provider path.
-
-        Returns dict with exit_code, passed, duration_s, tokens.
-        """
-        if (self._config.llm.features.get("delivery_gate_controller") is True
-                or self._state_store.read().get("delivery_slice_operation") is not None):
-            documentation = bool(verify_result.failures) and all(
-                failure.id.startswith(("documentation-", "docs-", "readme-", "changelog-"))
+        """Execute one controller-owned repair or documentation slice."""
+        del handle, build_command
+        documentation = bool(verify_result.failures) and all(
+            failure.id.startswith(("documentation-", "docs-", "readme-", "changelog-"))
+            for failure in verify_result.failures
+        )
+        if documentation:
+            prompt = json.dumps({"failures": [
+                {"category": failure.category.value, "id": failure.id,
+                 "error": failure.error, "details": failure.details}
                 for failure in verify_result.failures
-            )
-            if documentation:
-                prompt = json.dumps({"failures": [
+            ], "verification_evidence": verify_result.verification_evidence}, sort_keys=True)
+        else:
+            context = dict(repair_context) if repair_context is not None else {
+                "base_prompt": prompt, "phase": "inner",
+                "inner_iteration": 0, "evidence_paths": [],
+            }
+            context["strategy_context"] = strategy_context
+            prompt = json.dumps({
+                "feedback_kind": "controlled_source_repair_v1",
+                "context": context,
+                "failures": [
                     {"category": failure.category.value, "id": failure.id,
                      "error": failure.error, "details": failure.details}
                     for failure in verify_result.failures
-                ], "verification_evidence": verify_result.verification_evidence}, sort_keys=True)
-            else:
-                # Use original context, not the legacy formatter's completion
-                # recipe. Keep the same immutable operation/journal boundary.
-                context = dict(repair_context) if repair_context is not None else {
-                    "base_prompt": prompt, "phase": "inner",
-                    "inner_iteration": 0, "evidence_paths": [],
-                }
-                context["strategy_context"] = strategy_context
-                prompt = json.dumps({
-                    "feedback_kind": "controlled_source_repair_v1",
-                    "context": context,
-                    "failures": [
-                        {"category": failure.category.value, "id": failure.id,
-                         "error": failure.error, "details": failure.details}
-                        for failure in verify_result.failures
-                    ],
-                    "verification_evidence": verify_result.verification_evidence,
-                }, sort_keys=True)
-            return self._exec_controlled_slice(worktree_path, prompt, repair=True, documentation=documentation)
-        if self._llm_build_runner and worktree_path and prompt:
-            prompt = self._with_harness_context(prompt, worktree_path)
-            result = self._llm_build_runner.exec_feedback(
-                worktree_path,
-                prompt,
-                containment_policy_file=str(
-                    self._state_store.state_dir / "delivery-containment-policy.json"
-                ),
-                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
-            )
-            return {
-                "exit_code": result.exit_code,
-                "passed": result.succeeded,
-                "build_status": result.status,
-                "completion_marker_explicit": True,
-                "build_reason": result.reason,
-                "blocker_kind": result.blocker_kind,
-                "duration_s": result.duration_ms / 1000.0,
-                "tokens": result.token_usage,
-                "provider_invocation": result.provider_invocation,
-                "impasse": result.is_impasse,
-                "impasse_file": result.impasse_file,
-                "task_ids": result.task_ids or [],
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        # Fallback: original sandbox path
-        failures_json = json.dumps([
-            {"category": f.category.value, "id": f.id, "error": f.error}
-            for f in verify_result.failures
-        ])
+                ],
+                "verification_evidence": verify_result.verification_evidence,
+            }, sort_keys=True)
+        return self._exec_controlled_slice(
+            worktree_path, prompt, repair=True, documentation=documentation
+        )
 
-        # Derive feedback command: use build_command base + --fix flag
-        base = build_command.split()[0] if build_command else "echelon"
-        subcommand = build_command.split()[1] if len(build_command.split()) > 1 else "build"
-        cmd = f"{base} {subcommand} --fix --failures '{failures_json}'"
-        if strategy_context:
-            cmd = f"STRATEGY_CONTEXT='{strategy_context}' {cmd}"
-
-        result = self._provider.exec(handle, cmd, timeout_ms=1_200_000)
-        return {
-            "exit_code": result.exit_code,
-            "passed": result.exit_code == 0,
-            "completion_marker_explicit": False,
-            "duration_s": result.duration_ms / 1000.0,
-            "tokens": _estimate_tokens(result),
-            "impasse": False,
-            "impasse_file": None,
-        }
-
-    def _with_harness_context(self, prompt: str, worktree_path: str) -> str:
-        """Attach deterministic harness paths for LLM build/fix prompts."""
-        if "## Harness Context\n" in prompt:
-            return prompt
+    def _prepare_delivery_context(self, worktree_path: str) -> None:
+        """Write deterministic context and containment inputs for a slice."""
         project_root = Path(worktree_path)
         orchestration_root = self._orchestration_root(project_root)
         spec_dir = self._find_spec_dir(worktree_path)
@@ -4754,7 +4384,7 @@ class RalphController:
             source_root=source_root,
             allowed_context_roots=allowed_context_roots,
         )
-        containment_policy_file = self._write_delivery_containment_policy(
+        self._write_delivery_containment_policy(
             worktree_path=worktree_path,
             workspace_root=workspace_root,
             workspace_git_role=workspace_git_role,
@@ -4765,30 +4395,6 @@ class RalphController:
             allowed_context_roots=allowed_context_roots,
             forbidden_source_roots=forbidden_source_roots,
         )
-        allowed_context_roots_block = ""
-        allowed_context_roots_instruction = ""
-        if allowed_context_roots:
-            allowed_context_roots_block = (
-                "allowed_context_roots:\n"
-                + "".join(f"- {path}\n" for path in allowed_context_roots)
-            )
-            allowed_context_roots_instruction = (
-                "Allowed context roots are read-only inputs for understanding; "
-                "do not edit them during targeted delivery.\n"
-            )
-        forbidden_source_roots_block = ""
-        forbidden_source_roots_instruction = ""
-        if forbidden_source_roots:
-            forbidden_source_roots_block = (
-                "forbidden_source_roots:\n"
-                + "".join(f"- {path}\n" for path in forbidden_source_roots)
-            )
-            forbidden_source_roots_instruction = (
-                "Do not inspect, read, list, grep, search, check, or look at sibling source roots "
-                "listed under `forbidden_source_roots`; they are "
-                "reverse-engineering context only and not part of the targeted "
-                "build slice. Do not delegate forbidden source-root inspection to subagents.\n"
-            )
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
         tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
@@ -4799,11 +4405,10 @@ class RalphController:
             dirty_verify_block = (
                 "dirty_verify_artifacts:\n"
                 + "".join(f"- {path}\n" for path in dirty_verify_artifacts)
-                + "Treat these as inherited verify-spec outputs. Do not hand-edit them in build slices; Ralph owns regeneration and commit/salvage.\n"
+                + "Treat these as inherited verify-spec outputs. Do not hand-edit "
+                "them in build slices; Ralph owns regeneration and commit/salvage.\n"
             )
-        progress_ledger_block = self._delivery_progress_ledger_block(state)
-        implementation_target_contract = self._implementation_target_contract_block(state)
-        build_slice_context_file = self._write_build_slice_context(
+        self._write_build_slice_context(
             worktree_path=worktree_path,
             workspace_root=workspace_root,
             workspace_git_role=workspace_git_role,
@@ -4817,80 +4422,9 @@ class RalphController:
             spec_dir=spec_dir,
             tasks_path=(spec_dir / "tasks.md" if spec_dir is not None else None),
             dirty_verify_block=dirty_verify_block,
-            progress_ledger_block=progress_ledger_block,
-            implementation_target_contract=implementation_target_contract,
+            progress_ledger_block=self._delivery_progress_ledger_block(state),
+            implementation_target_contract=self._implementation_target_contract_block(state),
         )
-        build_slice_context_index_file = build_slice_context_file.with_suffix(".json")
-        build_implementer_context_file = (
-            build_slice_context_file.parent
-            / f"{self._strategy_id}-implementer-context.md"
-        )
-        delivery_output_contract = (
-            "## Delivery Output Contract\n"
-            "When `HARNESS_BUILD_STATUS_FILE` is set, `$HARNESS_BUILD_STATUS_FILE` is the only build return channel.\n"
-            "Before stopping, write one JSON object to that path: use `status: done` with exact `completed_task_ids` for verified progress, or `status: blocked`/`error` with a concrete reason.\n"
-            "Do not read, inspect, recreate, or write `echelon_result.json`; Ralph deliberately removes that legacy fallback at the start of every slice so stale results cannot cross specs.\n"
-            "Ignore any generic workflow or agent instruction to return `echelon_result` or `state_updates`; those apply to standalone squad execution, not this delivery build slice.\n"
-        )
-        verification_execution_boundary = (
-            "## Verification Execution Boundary\n"
-            "Ralph owns the configured full verifier and its provisioned execution environment.\n"
-            "Do not run the configured full verifier from the coding CLI.\n"
-            "Do not launch or provision database, Docker, browser, Playwright, or external service dependencies from the coding CLI.\n"
-            "Do not report unavailable service credentials or an unavailable browser as a product blocker.\n"
-            "Run focused, service-free checks that help validate your change, such as targeted unit tests, lint, typecheck, or a production build.\n"
-            "Ralph runs the configured full verifier after your build slice and treats that result as authoritative.\n"
-        )
-        coverage_observation_contract = self._coverage_observation_contract_block()
-        block = (
-            "## Harness Context\n"
-            f"worktree: {worktree_path}\n"
-            f"target_repo_worktree: {worktree_path}\n"
-            f"orchestration_root: {orchestration_root}\n"
-            f"workspace_root: {workspace_root}\n"
-            f"workspace_git_role: {workspace_git_role}\n"
-            f"source_root: {source_root}\n"
-            f"source_id: {source_id}\n"
-            f"source_git_role: {source_git_role}\n"
-            f"containment_policy_file: {containment_policy_file}\n"
-            f"build_slice_context_file: {build_slice_context_file}\n"
-            f"build_slice_context_index_file: {build_slice_context_index_file}\n"
-            f"build_implementer_context_file: {build_implementer_context_file}\n"
-            f"{allowed_context_roots_block}"
-            f"{forbidden_source_roots_block}"
-            f"spec_artifacts_mode: {spec_artifacts_mode}\n"
-            f"spec_dir: {spec_dir_text}\n"
-            f"spec_file: {spec_file_text}\n"
-            f"tasks_file: {tasks_file_text}\n"
-            f"{dirty_verify_block}"
-            f"{implementation_target_contract}"
-            "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
-            "Read `build_implementer_context_file` before implementation; it is the Python-owned context pack for IMPLEMENTER work.\n"
-            "Read `build_slice_context_file` before implementation; it is the Python-owned bounded context for this build slice.\n"
-            "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
-            f"{allowed_context_roots_instruction}"
-            f"{forbidden_source_roots_instruction}"
-            "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
-            "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"
-            "Use `spec_file` and `tasks_file` as read-only inputs for understanding the requested work.\n"
-            "Use `spec_dir` as read-only context except for the documentation phase outputs named below.\n"
-            "Do not edit `tasks_file`, `spec_file`, or any file under `spec_dir` for progress tracking during a build slice.\n"
-            "TECH WRITER may write `documentation-impact-report.md` under `spec_dir`; DOCS VERIFIER may write `docs-verification-report.md` under `spec_dir`.\n"
-            "If the impact report requires documentation updates, IMPLEMENTER may update only `README.md` and `CHANGELOG.md` as specified by that report, then DOCS VERIFIER must re-validate the reports.\n"
-            "When all canonical task IDs are already complete but either documentation report is missing or invalid, run TECH WRITER and DOCS VERIFIER before writing a done marker.\n"
-            "Report completed progress only by writing `completed_task_ids` to the harness build status marker; Ralph owns task progress writes.\n"
-            "Do not inspect, read, or search for harness source, Ralph code, ralph.py, fulfillment_runner.py, or Echelon implementation internals. Ralph owns harness decisions and provides the only build-slice contract through this prompt, the named spec inputs, and the harness build status marker.\n"
-            "When `spec_artifacts_mode` is `worktree`, inherited spec artifacts still remain Ralph-owned for progress writes.\n"
-            "When `spec_artifacts_mode` is `external`, external spec artifacts are read-only inputs except for TECH WRITER/DOCS VERIFIER documentation reports.\n"
-            "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
-            "Ralph state is not a build input; do not read, search for, or infer from state.json/state directories.\n"
-            "Do not search for state.json; Ralph provides bounded progress context in this prompt.\n"
-            f"{verification_execution_boundary}"
-            f"{coverage_observation_contract}"
-            f"{delivery_output_contract}"
-            f"{progress_ledger_block}"
-        )
-        return f"{block}\n{prompt}\n\n{delivery_output_contract}"
 
     def _coverage_observation_contract_block(self) -> str:
         """Tell build providers how required structured coverage is bound."""
@@ -6005,27 +5539,6 @@ class RalphController:
             return "external"
         return "worktree"
 
-    def _llm_build_prompt_metadata(self, worktree_path: str) -> dict[str, object]:
-        """Authorize candidate contract and narrow external documentation outputs."""
-        write_paths = [
-            str(Path(worktree_path) / ".echelon" / "runnability.yml")
-        ]
-        if self._spec_artifacts_mode() != "external":
-            return {"tool_write_paths": write_paths}
-        spec_dir = self._find_spec_dir(worktree_path)
-        if spec_dir is None:
-            return {"tool_write_paths": write_paths}
-        write_paths.extend(
-            (
-                str(spec_dir / "documentation-impact-report.md"),
-                str(spec_dir / "docs-verification-report.md"),
-            )
-        )
-        return {
-            "tool_read_roots": [str(spec_dir)],
-            "tool_write_paths": write_paths,
-        }
-
     def _target_task_ids(self) -> set[str] | None:
         """Return the orchestrator-owned task scope for this source repo."""
         persisted = self._state_store.read().get("target_task_ids")
@@ -6434,43 +5947,6 @@ class RalphController:
         except Exception:
             return True  # Assume progress on error to avoid false escalation
 
-    def _should_continue_after_missing_marker(
-        self,
-        build_result: Dict[str, Any],
-        *,
-        worktree_path: str,
-        checkpoint: Optional[Dict[str, Any]],
-        head_advanced: bool = False,
-    ) -> bool:
-        """Treat clean markerless builds with evidence of work as verifiable.
-
-        COMMANDER sometimes exits 0 after producing valid code and test output
-        but forgets `.harness-build-status.json`. That marker is still required
-        for explicit failure/timeout/impasse handling; this recovery path only
-        applies when Ralph has deterministic progress metadata. A dirty worktree
-        alone is not enough because agents can write non-authoritative report
-        files such as echelon_result.json.
-        """
-        build_status = str(build_result.get("build_status") or "unknown")
-        if build_status != "unknown":
-            return False
-        if _is_host_tool_permission_denied(build_result):
-            return False
-
-        try:
-            exit_code = int(build_result.get("exit_code", 1))
-        except (TypeError, ValueError):
-            return False
-        if exit_code != 0:
-            return False
-
-        if checkpoint is not None:
-            return True
-        if head_advanced:
-            return True
-        if self._all_canonical_tasks_complete(worktree_path):
-            return True
-        return self._has_confirmed_file_changes(worktree_path)
 
     def _all_canonical_tasks_complete(self, worktree_path: str) -> bool:
         spec_dir = self._find_spec_dir(worktree_path)
@@ -6489,41 +5965,6 @@ class RalphController:
             and summary.terminal_tasks >= summary.total_tasks
         )
 
-    def _record_missing_marker_recovery(
-        self,
-        build_result: Dict[str, Any],
-        *,
-        worktree_path: str,
-        checkpoint: Optional[Dict[str, Any]],
-        head_advanced: bool = False,
-    ) -> None:
-        all_tasks_complete = self._all_canonical_tasks_complete(worktree_path)
-        state = self._state_store.read()
-        recoveries = state.get("missing_marker_recoveries")
-        if not isinstance(recoveries, list):
-            recoveries = []
-        recoveries.append(
-            {
-                "build_status": str(build_result.get("build_status") or "unknown"),
-                "exit_code": build_result.get("exit_code"),
-                "checkpoint_commit": checkpoint.get("commit") if checkpoint else None,
-                "head_advanced": head_advanced,
-                "all_tasks_complete": all_tasks_complete,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        state["missing_marker_recoveries"] = recoveries
-        self._state_store.write(state)
-        reason = (
-            "all canonical tasks are already complete"
-            if all_tasks_complete
-            else "harness worktree progress was detected"
-        )
-        logger.warning(
-            "Build status marker missing after clean exit; continuing to verify "
-            "because %s",
-            reason,
-        )
 
     def _record_cleanup_warning(self, operation: str, exc: Exception) -> None:
         """Persist non-fatal cleanup failures without replacing the run blocker."""
@@ -6544,28 +5985,6 @@ class RalphController:
         except Exception as state_exc:
             logger.warning("Could not persist cleanup warning: %s", state_exc)
 
-    def _has_confirmed_file_changes(self, worktree_path: str) -> bool:
-        """Return True only when git confirms authoritative worktree changes."""
-        try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                cwd=worktree_path,
-                timeout=10,
-            )
-        except Exception:
-            return False
-        if result.returncode != 0:
-            return False
-        for line in result.stdout.splitlines():
-            if len(line) < 4:
-                continue
-            path = line[3:].strip()
-            if _is_markerless_recovery_ignored_artifact(path):
-                continue
-            return True
-        return False
 
     @staticmethod
     def _current_head(worktree_path: str) -> Optional[str]:
@@ -8712,19 +8131,6 @@ def _salvage_build_worktree(
         return None
 
 
-def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
-    text = _provider_limit_text(build_result).lower()
-    if not text:
-        return False
-    needles = (
-        "session limit",
-        "usage limit",
-        "rate limit",
-        "quota exceeded",
-        "resets ",
-        "reset window",
-    )
-    return any(needle in text for needle in needles)
 
 
 def _provider_limit_text(build_result: dict[str, object]) -> str:
@@ -8734,68 +8140,10 @@ def _provider_limit_text(build_result: dict[str, object]) -> str:
     )
 
 
-def _provider_session_limit_message(build_result: dict[str, object]) -> str:
-    text = _provider_limit_text(build_result)
-    for line in text.splitlines():
-        cleaned = line.strip()
-        if not cleaned:
-            continue
-        lower = cleaned.lower()
-        if any(
-            needle in lower
-            for needle in ("session limit", "usage limit", "rate limit", "quota exceeded")
-        ):
-            return cleaned
-    return ""
 
 
-def _provider_session_limit_reset_hint(build_result: dict[str, object]) -> str:
-    text = _provider_limit_text(build_result)
-    patterns = (
-        r"resets?\s+(?:at\s+|in\s+)?([^\n.;]+)",
-        r"reset window[:\s]+([^\n.;]+)",
-        r"try again\s+(?:at\s+|in\s+)?([^\n.;]+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
-    return ""
 
 
-def _is_host_tool_permission_denied(build_result: dict[str, object]) -> bool:
-    text = "\n".join(
-        str(build_result.get(key) or "")
-        for key in ("stdout", "stderr", "build_reason", "reason")
-    ).lower()
-    if not text:
-        return False
-    permission_needles = (
-        "requires approval",
-        "require approval",
-        "requested permissions",
-        "permission not granted",
-        "permissions gate",
-        "permission mode is denying",
-        "requires permission",
-        "command requires approval",
-        "this command requires approval",
-        "write access",
-        "execute access",
-    )
-    action_needles = (
-        "write",
-        "bash",
-        "python",
-        "pytest",
-        "command",
-        "execution",
-        "tool",
-        "worktree",
-    )
-    return any(needle in text for needle in permission_needles) and any(
-        needle in text for needle in action_needles
-    )
 
 
 def _newly_completed_task_ids(

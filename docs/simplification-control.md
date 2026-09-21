@@ -52,7 +52,7 @@ starting another.
 - [x] Approve the hard-cutover design and preserved recovery boundary.
 - [x] Write and review the implementation plan.
 - [x] Remove configuration, CLI, and coordinator branching.
-- [ ] Remove Ralph's legacy build, feedback, and recovery paths.
+- [x] Remove Ralph's legacy build, feedback, and recovery paths.
 - [ ] Delete legacy delivery runner and prompt-resolution implementation.
 - [ ] Update current documentation and focused tests.
 - [ ] Run focused delivery verification.
