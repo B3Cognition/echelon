@@ -11,17 +11,17 @@ The README is unusually load-bearing for orientation — when you need the big p
 ## Build, test, and dev commands
 
 ```bash
-# Run all Python tests (configured in pyproject.toml; src on pythonpath)
-pytest
+# Run all Python tests in the project environment
+.venv/bin/python -m pytest
 
 # Run one Python test file or test
-pytest tests/unit/test_config.py
-pytest tests/unit/test_config.py::test_load_defaults
+.venv/bin/python -m pytest tests/unit/test_config.py
+.venv/bin/python -m pytest tests/unit/test_config.py::test_load_defaults
 
 # Filter by marker (see pyproject.toml [tool.pytest.ini_options] markers)
-pytest -m unit
-pytest -m "integration and not docker"
-pytest -m e2e
+.venv/bin/python -m pytest -m unit
+.venv/bin/python -m pytest -m "integration and not docker"
+.venv/bin/python -m pytest -m e2e
 
 # Bash tests (legacy; not collected by pytest)
 bash tests/unit/test-some-thing.sh
@@ -56,10 +56,10 @@ When debugging, first determine whether the failure is bundle installation, Pros
 
 ## Controlled delivery ownership
 
-With `llm.features.delivery_gate_controller: true`, `echelon delivery run`
-bypasses the legacy build prompt. Ralph and its Python helpers own task
-selection, gate sequencing, bounded repairs, durable operation journals,
-progress, authoritative verification and documentation report publication.
+`echelon delivery run <id>` is the only supported Phase B entry point. Ralph
+and its Python helpers own task selection, gate sequencing, bounded repairs,
+durable operation journals, progress, authoritative verification, and
+documentation report publication.
 Prosaic supplies the six neutral `echelon.delivery-*` role bodies and metadata;
 provider-specific permissions remain in the provider adapters.
 
@@ -72,16 +72,16 @@ reconciliation, not rewriting the journal or resetting attempts.
 
 PR triage separately uses neutral Prosaic diagnostic/composer roles, with Python
 owning sequencing and canonical publication. Fulfillment verify-spec retains its
-separate command-driven contract; do not claim every delivery model call has
-migrated. Legacy `echelon build` and feature-off behavior remain outside this
-migration; do not alias, remove or rewrite them as part of convergence.
+separate command-driven contract. The strategy field still stores `echelon
+build` as an internal identifier; production code must validate it, never
+execute it or resolve it as Prosaic command prose.
 
 ## Thin command wrappers + externalized workflow
 
-The following wrapper and journal conventions apply to command-driven legacy
-workflows, not the controlled delivery roles described above.
+The following wrapper and journal conventions apply to command-driven spec and
+standalone verification workflows, not the controlled delivery roles above.
 
-The big squad commands (`echelon.run.md`, `echelon.bugfix.md`, and `echelon.build.md`) are **thin wrappers — typically 35–75 lines**. They set the COMMANDER role, load `agents/control/commander.md`, then delegate to:
+The big squad commands (`echelon.run.md` and `echelon.bugfix.md`) are **thin wrappers — typically 35–75 lines**. They set the COMMANDER role, load `agents/control/commander.md`, then delegate to:
 
 - `runtime/workflow/definition.yaml` — phase graph: routing conditions, transitions, agent assignments, convergence thresholds, and controller contracts.
 - `runtime/workflow/phases/*.md` — per-phase dispatch contracts with context-pack assembly, prompts, and expected outputs.
@@ -103,7 +103,7 @@ src/
   echelon/           CLI entrypoint (cli.py main → SKILL_MAP, harness, spec, land subcommands)
   harness/           Delivery harness library — invoked via `echelon delivery`
     coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
-    ralph.py           RalphController — Phase 1 build outer/inner loop
+    ralph.py           RalphController — controlled delivery outer/inner loop
     visual_ralph.py    VisualRalphController — Phase 2 (Playwright, off by default)
     review_loop.py     ReviewLoopController — Phase 3 PR review cycle
     docker_provider.py DockerWorktreeProvider — sandbox lifecycle

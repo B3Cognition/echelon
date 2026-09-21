@@ -23,7 +23,7 @@ This command has two modes:
 1. **Manual override mode** (default when called explicitly) — Human provides ground truth corrections on top of auto-feedback
 2. **Standalone mode** (fallback when auto-feedback didn't run) — Full human questionnaire (legacy behavior)
 
-Auto-feedback runs automatically after every build (see `echelon.build.md` Section 8.5). This manual command adds human ground truth that agents cannot self-assess: quality perception, business outcomes, team friction.
+Auto-feedback runs during controlled-delivery finalization. This manual command adds human ground truth that agents cannot self-assess: quality perception, business outcomes, team friction.
 
 ---
 
@@ -108,7 +108,7 @@ If the human corrected any values that differ from auto-assessment:
 ## Step 4b: Standalone Mode (Legacy — no auto-feedback exists)
 
 Full human questionnaire. This is the original behavior, used when:
-- Build was done manually (not via `echelon.build`)
+- Build was done outside `echelon delivery run`
 - `feedback.auto_feedback` was disabled in config
 
 Read the original artifacts:

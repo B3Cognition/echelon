@@ -46,6 +46,7 @@ starting another.
 | 2026-09-21 | S2 | Activated after all S1 exit checks passed. Next action: inventory the controlled-delivery feature switch and feature-off call graph before changing behavior. |
 | 2026-09-21 | S2 | Inventory found the switch in config parsing/templates, coordinator prompt selection/token accounting, Ralph build/feedback/recovery branches, raw CLI dispatch, current guidance, and 11 focused test files. Hard-cutover design approved: `docs/superpowers/specs/2026-09-21-controlled-delivery-hard-cutover-design.md`. |
 | 2026-09-21 | S2 | Legacy execution deletion complete: removed the runner/prompt modules, raw Prosaic build command, and `build-*` phase graph. Task 4 acceptance ran 811 cases: 809 passed; the two failures are prompt-governance drift in unchanged producer/reviewer and WHY1 prompt files, not controlled-delivery regressions. Active production search found no retired delivery import or runtime reference. |
+| 2026-09-21 | S2 | Current guidance now names `echelon delivery run <id>` as the sole Phase B entry point. Active-surface search found no feature flag or retired runner/prompt identifier; remaining `echelon build` references are the validated internal strategy identifier or the explicit CLI migration error. Focused S2 gate: 357 passed in 115.13s. |
 
 ## S2 Work Queue
 
@@ -55,8 +56,8 @@ starting another.
 - [x] Remove configuration, CLI, and coordinator branching.
 - [x] Remove Ralph's legacy build, feedback, and recovery paths.
 - [x] Delete legacy delivery runner and prompt-resolution implementation.
-- [ ] Update current documentation and focused tests.
-- [ ] Run focused delivery verification.
+- [x] Update current documentation and focused tests.
+- [x] Run focused delivery verification.
 - [ ] Run the repository verification gate and record its result.
 
 ## Drift Guard

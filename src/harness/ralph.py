@@ -404,9 +404,9 @@ class RalphController:
             max_outer: Maximum outer iterations.
             max_inner: Maximum inner iterations per outer.
             token_budget: Total token budget (None = unlimited).
-            build_command: Shell command to invoke for the build phase.
-                Defaults to ``echelon build``. Override via strategy file
-                frontmatter.
+            build_command: Validated strategy identifier. The controller never
+                executes it; controlled delivery currently requires
+                ``echelon build``.
             strategy_context: Additional context from strategy file body.
 
         Returns:

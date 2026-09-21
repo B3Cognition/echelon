@@ -2133,7 +2133,7 @@ class StrategyCoordinator:
         spec_dir: Path | None = None,
         published_artifacts: tuple[Path, ...] = (),
     ) -> str:
-        """Augment a build prompt from this batch's canonical review artifacts."""
+        """Augment controller context with this batch's canonical review artifacts."""
         canonical_spec_dir = (
             Path(spec_dir).resolve()
             if spec_dir is not None

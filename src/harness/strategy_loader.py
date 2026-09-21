@@ -5,14 +5,16 @@ Per T038 / FR-STRATEGY-002:
   Default strategy with no file returns StrategySpec with defaults.
   Missing non-default strategy raises with available file list.
 
-Strategy files may declare a build command override via YAML frontmatter:
+Strategy files may carry the canonical delivery identifier in YAML frontmatter:
 
   ---
-  command: ./scripts/custom-build
+  command: echelon build
   ---
   # rest of file is strategy context
 
-If no frontmatter is present, build_command defaults to "echelon build".
+If no frontmatter is present, build_command defaults to "echelon build". The
+delivery coordinator validates this field as an identifier and never executes
+it as a shell command; noncanonical values fail delivery setup.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ class StrategySpec:
 
 
 # Built-in strategies that don't require a file on disk.
-# A per-spec file always wins if present (allows context/override).
+# A per-spec file always wins if present (allows context and explicit identity).
 BUILTIN_STRATEGIES: Dict[str, StrategySpec] = {
     "default": StrategySpec(build_command="echelon build"),
 }

@@ -432,11 +432,11 @@ git commit -m "refactor: delete legacy delivery execution"
 - Produces: current user and maintainer guidance naming `echelon delivery run` as the only delivery entry point.
 - Produces: S2 completion evidence and activates S3 only after verification passes.
 
-- [ ] **Step 1: Rewrite current guidance**
+- [x] **Step 1: Rewrite current guidance**
 
 Describe controlled delivery without a feature flag. Replace raw `echelon build` instructions with `echelon delivery run <id>`, remove the command-driven build phase description, and distinguish the retained internal strategy identifier from a CLI invocation. Leave dated findings/specs/plans and changelog history unchanged.
 
-- [ ] **Step 2: Run active-surface searches**
+- [x] **Step 2: Run active-surface searches**
 
 Run:
 
@@ -448,7 +448,7 @@ rg -n 'echelon build' AGENTS.md CLAUDE.md README.md prosaic src runtime
 
 Expected: first command has no matches. The second contains only the documented internal strategy identifier or explicit migration error, never an executable instruction.
 
-- [ ] **Step 3: Run the focused S2 suite**
+- [x] **Step 3: Run the focused S2 suite**
 
 Run:
 

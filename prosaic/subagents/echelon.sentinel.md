@@ -88,7 +88,7 @@ Before designing any test strategy, detect the application type by reading `plan
 
 1. **Playwright E2E test suite** — at minimum one E2E test per critical user journey (spec FR requirements that involve user interaction or visible output). These must be listed as explicit tasks in `coverage-map.md` with `coverage_type: automated`.
 2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
-3. **echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) dispatch** — echelon-commander (COMMANDER) must dispatch echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) after each echelon-integrator (INTEGRATOR) pass (enforced in echelon.build.md Step 7.2.1, but echelon-sentinel (SENTINEL) must create a task for this if no visual validation task exists in tasks.md).
+3. **echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) coverage** — the Python delivery controller owns visual validation dispatch after integration. echelon-sentinel (SENTINEL) must create a task when no visual validation task exists in `tasks.md`.
 
 **E2E setup detection** — before recording, check whether Playwright infrastructure already exists:
 

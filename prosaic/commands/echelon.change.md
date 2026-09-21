@@ -101,7 +101,7 @@ If ACCEPTED:
 6. Notify echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) of the re-baseline
 
 7. Resolve re-entry dispatch target:
-   - `BUILD_RESTART` -> resume via `echelon.build {feature}`
+   - `BUILD_RESTART` -> resume via `echelon delivery run {feature}`
    - `QA_RESTART` -> resume via `echelon.verify {feature}`
 
 If DEFERRED:

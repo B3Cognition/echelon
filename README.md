@@ -994,13 +994,15 @@ Phase 1:
 
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
-| `default` (omit) | `echelon.build` — multi-agent squad | General use |
+| `default` (omit) | Python-controlled delivery roles | General use |
 
 ```bash
 echelon delivery run 001                    # default — echelon squad build
 ```
 
-The default strategy uses the build → verification → feedback → commit/PR loop.
+The default strategy uses the controlled slice → verification → feedback →
+commit/PR loop. Its persisted `echelon build` value is an internal strategy
+identifier, not a CLI command.
 See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
 spec-format/build-strategy combinations.
 
@@ -1018,7 +1020,7 @@ review_loop:
   max_fix_iterations: 3
 ```
 
-The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER → SENTINEL → SPEC GUARD per comment group), writes `review-fix-{n}.md` tasks to the branch, then re-enters Phase 1 with the review content injected into the build prompt.
+The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER → SENTINEL → SPEC GUARD per comment group), writes `review-fix-{n}.md` tasks to the branch, then re-enters Phase 1 with the review content injected into controller context.
 
 ### Harness Architecture
 
@@ -1043,7 +1045,7 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 
 | Step | Executor |
 | ---- | -------- |
-| Build (Phase 1) | Configured AI provider on host via `echelon build` |
+| Controlled delivery (Phase 1) | Configured AI provider on host via six assignment-bound delivery roles |
 | Verify | Docker sandbox — always |
 | Visual tests (Phase 2) | Docker sandbox — Playwright; disabled by default |
 | Review skill (Phase 3) | `claude -p` on host via `echelon.review` |
@@ -1215,11 +1217,11 @@ Commands use the Echelon terminal CLI; Prosaic supplies provider-neutral prose b
 
 ### Command architecture
 
-The major command files (`echelon.run.md`, `echelon.bugfix.md`, and `echelon.build.md`) are **thin wrappers** (~35–75 lines). They set the role, load `agents/control/commander.md` (the shared behavioral framework for COMMANDER-driven commands), then delegate to `workflow/definition.yaml` and `workflow/phases/` for the full workflow logic.
+The major spec command files (`echelon.run.md` and `echelon.bugfix.md`) are **thin wrappers** (~35–75 lines). They set the role, load `agents/control/commander.md` (the shared behavioral framework for COMMANDER-driven commands), then delegate to `workflow/definition.yaml` and `workflow/phases/` for the full workflow logic. Phase B delivery is Python-controlled and does not load a build command wrapper.
 
 The workflow is split into two layers:
 
-- **`workflow/definition.yaml`** — phase graph with routing conditions, transitions, agent assignments, convergence thresholds, and the build task-loop state machine. COMMANDER reads this before every routing decision.
+- **`workflow/definition.yaml`** — phase graph with routing conditions, transitions, agent assignments, and convergence thresholds for command-driven workflows. COMMANDER reads this before every routing decision.
 - **`workflow/phases/*.md`** — per-phase spec files with context pack assembly, exact dispatch prompts, and expected outputs. Each phase node in `definition.yaml` points to its spec file via `spec_file:`.
 
 This keeps commands readable and makes individual phases independently editable without touching the command files.
@@ -1235,7 +1237,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
 | `echelon re deepen`, `continue`, `resume`, `synthesize`, `publish` | Advanced historical compatibility and recovery tools; not required by the normal run/refresh path |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
-| `echelon build <id>` | Build phase (agent-driven) |
+| `echelon delivery run <id>` | Run the Python-controlled Phase B lifecycle: implementation, verification, recovery, review, and PR publication |
 | `echelon review <id> [--pr-url <url>]` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon spec verify <id> [--reconcile] [--dry-run]` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
@@ -1387,7 +1389,7 @@ echelon.review skill (claude -p)
         │
         ▼
 harness re-enters Phase 1
-  review-fix-{n}.md content injected into build prompt
+  review-fix-{n}.md content injected into controller context
   Claude addresses reviewer feedback
         │
         ▼
