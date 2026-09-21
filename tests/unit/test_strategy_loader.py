@@ -106,28 +106,34 @@ class TestStrategyLoader:
         strat_dir = tmp_path / "spec-001"
         strat_dir.mkdir(parents=True)
         (strat_dir / "broken.md").write_text(
-            "---\ncommand: echelon codegen\nno closing delimiter",
+            "---\ncommand: alternate-build\nno closing delimiter",
             encoding="utf-8",
         )
 
         result = load_strategies("spec-001", ["broken"], base_dir=str(tmp_path))
         spec = result["broken"]
         assert spec.build_command == "echelon build"
-        assert "command: echelon codegen" in spec.context
+        assert "command: alternate-build" in spec.context
 
-    def test_codegen_builtin_no_file(self, tmp_path: Path) -> None:
-        """codegen is a built-in strategy — no file required."""
-        with pytest.raises(RuntimeError, match="disabled"):
-            load_strategies("spec-001", ["codegen"], base_dir=str(tmp_path))
+    def test_named_strategy_still_requires_a_file(self, tmp_path: Path) -> None:
+        """Arbitrary strategy names remain file-backed rather than built in."""
+        with pytest.raises(StrategyNotFoundError):
+            load_strategies("spec-001", ["alternate"], base_dir=str(tmp_path))
 
-    def test_codegen_file_overrides_builtin(self, tmp_path: Path) -> None:
-        """Per-spec codegen.md wins over the built-in when present."""
+    def test_named_strategy_can_supply_an_opaque_command(self, tmp_path: Path) -> None:
+        """A user-owned strategy command remains opaque to Echelon."""
         strat_dir = tmp_path / "spec-001"
         strat_dir.mkdir(parents=True)
-        (strat_dir / "codegen.md").write_text("Extra context for this spec.", encoding="utf-8")
+        (strat_dir / "alternate.md").write_text(
+            "---\ncommand: ./scripts/alternate-build\n---\nExtra context.",
+            encoding="utf-8",
+        )
 
-        with pytest.raises(RuntimeError, match="disabled"):
-            load_strategies("spec-001", ["codegen"], base_dir=str(tmp_path))
+        result = load_strategies("spec-001", ["alternate"], base_dir=str(tmp_path))
+        assert result["alternate"] == StrategySpec(
+            build_command="./scripts/alternate-build",
+            context="Extra context.",
+        )
 
     def test_unknown_strategy_error_lists_builtins(self, tmp_path: Path) -> None:
         """Error for unknown strategy names built-in strategies as alternatives."""
@@ -138,4 +144,3 @@ class TestStrategyLoader:
         """BUILTIN_STRATEGIES contains the expected entries."""
         assert "default" in BUILTIN_STRATEGIES
         assert BUILTIN_STRATEGIES["default"].build_command == "echelon build"
-        assert "codegen" not in BUILTIN_STRATEGIES

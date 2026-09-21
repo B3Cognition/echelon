@@ -634,7 +634,7 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "--mode",
         "banzai",
         "--strategy",
-        "codegen",
+        "alternate",
         "--max-outer",
         "3",
         "--max-inner",
@@ -649,7 +649,7 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     assert calls == [[
         "001",
         "mode=banzai",
-        "strategy=codegen",
+        "strategy=alternate",
         "max_outer=3",
         "max_inner=2",
         "token_budget=1000",
@@ -669,9 +669,9 @@ def test_delivery_run_legacy_key_value_args_still_route(monkeypatch):
         lambda args, **_kwargs: calls.append(args),
     )
 
-    run(["delivery", "run", "001", "mode=banzai", "strategy=codegen", "max_outer=3"])
+    run(["delivery", "run", "001", "mode=banzai", "strategy=alternate", "max_outer=3"])
 
-    assert calls == [["001", "mode=banzai", "strategy=codegen", "max_outer=3"]]
+    assert calls == [["001", "mode=banzai", "strategy=alternate", "max_outer=3"]]
 
 
 @pytest.mark.unit
@@ -704,10 +704,10 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
         "--mode",
         "banzai",
         "--strategy",
-        "codegen",
+        "alternate",
     ])
 
-    assert calls == [["001", "Use the direct mapping", "mode=banzai", "strategy=codegen"]]
+    assert calls == [["001", "Use the direct mapping", "mode=banzai", "strategy=alternate"]]
 
 
 @pytest.mark.unit
@@ -728,9 +728,9 @@ def test_delivery_continue_canonical_flags_route_to_harness_continue(monkeypatch
     calls: list[list[str]] = []
     monkeypatch.setattr("echelon.cli._cmd_harness_continue", lambda args: calls.append(args))
 
-    run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "codegen"])
+    run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "alternate"])
 
-    assert calls == [["001", "mode=banzai", "strategy=codegen"]]
+    assert calls == [["001", "mode=banzai", "strategy=alternate"]]
 
 
 @pytest.mark.unit
@@ -833,7 +833,6 @@ def test_typer_front_door_declares_all_top_level_commands():
         "build",
         "change",
         "cicd",
-        "codegen",
         "continue",
         "delivery",
         "harness",
@@ -930,7 +929,6 @@ def test_root_help_hides_compatibility_aliases():
         "run",
         "build",
         "review",
-        "codegen",
         "verify-spec",
         "reopen",
         "bugfix",
@@ -1070,12 +1068,12 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
 
     monkeypatch.setattr("echelon.delivery_status.command", record_status_command)
 
-    run(["delivery", "status", "001", "--strategy", "codegen", "--json"])
+    run(["delivery", "status", "001", "--strategy", "alternate", "--json"])
 
     assert calls == [
         {
             "spec_id": "001",
-            "strategy": "codegen",
+            "strategy": "alternate",
             "json_output": True,
         }
     ]
@@ -1536,7 +1534,6 @@ def test_spec_verify_rejects_dry_run_without_reconcile(
 def test_top_level_skill_aliases_declare_common_arguments():
     build_help = invoke_help("build")
     review_help = invoke_help("review")
-    codegen_help = invoke_help("codegen")
     verify_help = invoke_help("verify-spec")
     reopen_help = invoke_help("reopen")
     bugfix_help = invoke_help("bugfix")
@@ -1550,8 +1547,6 @@ def test_top_level_skill_aliases_declare_common_arguments():
     assert review_help.exit_code == 0
     assert "SPEC_ID" in review_help.output
     assert "--pr-url" in review_help.output
-    assert codegen_help.exit_code == 0
-    assert "SPEC_ID" in codegen_help.output
     assert verify_help.exit_code == 0
     assert "SPEC_ID" in verify_help.output
     assert "--reconcile" in verify_help.output
@@ -1564,6 +1559,16 @@ def test_top_level_skill_aliases_declare_common_arguments():
     assert change_help.exit_code == 0
     assert "SPEC_ID" in change_help.output
     assert "DESCRIPTION" in change_help.output
+
+
+@pytest.mark.unit
+def test_retired_codegen_command_is_absent() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["codegen", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 @pytest.mark.unit

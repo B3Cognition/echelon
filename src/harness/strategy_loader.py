@@ -8,7 +8,7 @@ Per T038 / FR-STRATEGY-002:
 Strategy files may declare a build command override via YAML frontmatter:
 
   ---
-  command: echelon codegen
+  command: ./scripts/custom-build
   ---
   # rest of file is strategy context
 
@@ -21,7 +21,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List
-from codegen.retirement import require_soar, reject_soar_command
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,6 @@ def load_strategies(
     result: Dict[str, StrategySpec] = {}
 
     for sid in strategy_ids:
-        if sid.lower() in {"codegen", "codegenlight", "soar"}:
-            require_soar()
         filepath = strategies_dir / f"{sid}.md"
 
         if filepath.exists():
@@ -96,8 +93,6 @@ def load_strategies(
                 f"Built-in strategies (no file needed): {builtin_names}"
             )
 
-    for spec in result.values():
-        reject_soar_command(spec.build_command)
     return result
 
 
@@ -107,7 +102,7 @@ def _parse_strategy(content: str) -> StrategySpec:
     Frontmatter format::
 
         ---
-        command: echelon codegen
+        command: ./scripts/custom-build
         ---
         rest of file is context
 

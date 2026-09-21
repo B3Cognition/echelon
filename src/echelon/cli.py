@@ -74,7 +74,6 @@ SKILL_MAP = {
     "build":   "echelon.build",
     "review":  "echelon.review",
     "change":  "echelon.change",
-    "codegen": "echelon.codegen",
     "verify-spec": "echelon.verify-spec",
     "reopen":  "echelon.reopen",
 }
@@ -13260,7 +13259,7 @@ def _require_provider_capability(
 
 
 def _skill_required_capability(command: str) -> ProviderCapability:
-    if command in {"build", "review", "codegen"}:
+    if command in {"build", "review"}:
         return ProviderCapability.BUILD
     return ProviderCapability.ARTIFACT
 
@@ -13283,9 +13282,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         print(f"echelon {command}: missing arguments\n", file=sys.stderr)
         print(USAGE)
         sys.exit(1)
-
-    if command == "codegen":
-        _require_codegen_installation()
 
     project_dir = Path.cwd()
     _require_provider_capability(
@@ -13336,13 +13332,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         str(project_dir), prompt, request_metadata=metadata
     )
     sys.exit(result.exit_code)
-
-
-def _require_codegen_installation() -> None:
-    """Retain the compatibility entry point but never dispatch retired SOAR."""
-    from codegen.retirement import MESSAGE
-    print(MESSAGE, file=sys.stderr)
-    sys.exit(2)
 
 
 # ── RE lifecycle and publication subcommands ────────────────────────────────

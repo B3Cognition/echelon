@@ -161,12 +161,12 @@ class TestParseIntent:
 
     def test_task_description_extracted(self) -> None:
         """task: prefix is parsed into task_description."""
-        intent = parse_intent("spec 013 semi mode strategies=codegen task: fix the bug in bugfix-1.md")
+        intent = parse_intent("spec 013 semi mode strategies=alternate task: fix the bug in bugfix-1.md")
         assert intent.task_description == "fix the bug in bugfix-1.md"
 
     def test_task_description_absent(self) -> None:
         """No task: prefix → task_description is empty string."""
-        intent = parse_intent("spec 013 semi mode strategies=codegen")
+        intent = parse_intent("spec 013 semi mode strategies=alternate")
         assert intent.task_description == ""
 
     def test_task_description_multiword(self) -> None:

@@ -416,7 +416,7 @@ class RalphController:
             token_budget: Total token budget (None = unlimited).
             build_command: Shell command to invoke for the build phase.
                 Defaults to ``echelon build``. Override via strategy file
-                frontmatter (``command: echelon codegen``).
+                frontmatter.
             strategy_context: Additional context from strategy file body.
 
         Returns:
@@ -446,8 +446,6 @@ class RalphController:
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Inner implementation of run_loop (signal handlers installed)."""
-        from codegen.retirement import reject_soar_command
-        reject_soar_command(build_command)
         state = self._state_store.read()
         if not state:
             raise RuntimeError("State not initialized. Call state_store.initialize() first.")
@@ -2220,8 +2218,8 @@ class RalphController:
 
         Args:
             handle: Active sandbox handle.
-            build_command: Command to run (e.g. ``echelon build`` or
-                ``echelon codegen``). Declared via strategy file frontmatter.
+            build_command: Command to run (for example, ``echelon build``).
+                Declared via strategy file frontmatter.
             strategy_context: Additional context injected via STRATEGY_CONTEXT
                 env var. Empty string = no injection.
             worktree_path: Path to the git worktree (LLM build runner path only).

@@ -1739,15 +1739,6 @@ def root_review(
     _dispatch_compatibility_skill("review", args + _ctx_args(ctx))
 
 
-@app.command("codegen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_codegen(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Legacy spec id; SOAR execution is disabled."),
-) -> None:
-    """Retired compatibility command; SOAR execution is disabled."""
-    _dispatch_compatibility_skill("codegen", ([spec_id] if spec_id else []) + _ctx_args(ctx))
-
-
 @app.command("verify-spec", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_verify_spec(
     ctx: typer.Context,
@@ -4170,7 +4161,7 @@ def delivery_run(
     strategy: Optional[str] = typer.Option(
         None,
         "--strategy",
-        help="Build strategy (default recommended; SOAR/codegen is disabled).",
+        help="Build strategy name (default recommended).",
     ),
     max_outer: Optional[int] = typer.Option(
         None,

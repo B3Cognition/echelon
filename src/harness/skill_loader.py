@@ -15,7 +15,6 @@ ECHELON_SKILL_MAP = {
     "build":   "echelon.build",
     "review":  "echelon.review",
     "change":  "echelon.change",
-    "codegen": "echelon.codegen",
 }
 
 def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
@@ -69,7 +68,6 @@ def _is_prosaic_command_path(path: Path) -> bool:
 def build_command_to_skill_base(build_command: str) -> Optional[str]:
     """Derive skill base name from a strategy build command.
 
-    "echelon codegen" -> "echelon.codegen"
     "echelon build"   -> "echelon.build"
     Returns None if the command doesn't map to a known skill.
     """
