@@ -6,7 +6,7 @@ starting another.
 **Design:**
 [`2026-09-21-harness-simplification-control-design.md`](superpowers/specs/2026-09-21-harness-simplification-control-design.md)
 
-**Current milestone:** S2 — Make controlled delivery the sole supported path
+**Current milestone:** S3 — Complete the Typer CLI cutover
 
 ## Status
 
@@ -14,8 +14,8 @@ starting another.
 | --- | --- | --- | --- | --- |
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
-| S2 | ACTIVE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | PENDING | Complete the Typer CLI cutover. | `cli_app.py` is the front door but still delegates many commands to private functions in the 22,237-line `cli.py`. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
+| S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
+| S3 | ACTIVE | Complete the Typer CLI cutover. | `cli_app.py` is the front door but still delegates many commands to private functions in the 22,237-line `cli.py`. Next: inventory every public Typer command's private `cli.py` delegation and classify service, compatibility, and dead paths. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
 | S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
@@ -47,6 +47,8 @@ starting another.
 | 2026-09-21 | S2 | Inventory found the switch in config parsing/templates, coordinator prompt selection/token accounting, Ralph build/feedback/recovery branches, raw CLI dispatch, current guidance, and 11 focused test files. Hard-cutover design approved: `docs/superpowers/specs/2026-09-21-controlled-delivery-hard-cutover-design.md`. |
 | 2026-09-21 | S2 | Legacy execution deletion complete: removed the runner/prompt modules, raw Prosaic build command, and `build-*` phase graph. Task 4 acceptance ran 811 cases: 809 passed; the two failures are prompt-governance drift in unchanged producer/reviewer and WHY1 prompt files, not controlled-delivery regressions. Active production search found no retired delivery import or runtime reference. |
 | 2026-09-21 | S2 | Current guidance now names `echelon delivery run <id>` as the sole Phase B entry point. Active-surface search found no feature flag or retired runner/prompt identifier; remaining `echelon build` references are the validated internal strategy identifier or the explicit CLI migration error. Focused S2 gate: 357 passed in 115.13s. |
+| 2026-09-21 | S2 | Completed. Repository merge verification against `42497d25`: 9,804 passed, 11,394 deselected in 29m19s; receipt `tests/reports/merge-verification/receipt-84c904c47e9a-c8590de8e92846b68497e6bdc72eb549.json`. |
+| 2026-09-21 | S3 | Activated after all S2 exit checks passed. Next action: inventory every public Typer command's delegation into `cli.py` and classify typed-service, compatibility, and dead paths before changing behavior. |
 
 ## S2 Work Queue
 
@@ -58,6 +60,16 @@ starting another.
 - [x] Delete legacy delivery runner and prompt-resolution implementation.
 - [x] Update current documentation and focused tests.
 - [x] Run focused delivery verification.
+- [x] Run the repository verification gate and record its result.
+
+## S3 Work Queue
+
+- [ ] Inventory every public Typer command and its delegated `cli.py` entry point.
+- [ ] Classify each route as typed service, compatibility alias, or dead path.
+- [ ] Define and approve the minimum cutover boundary before editing behavior.
+- [ ] Move active command workflows behind typed application services.
+- [ ] Isolate compatibility aliases from active routing.
+- [ ] Run focused CLI verification.
 - [ ] Run the repository verification gate and record its result.
 
 ## Drift Guard

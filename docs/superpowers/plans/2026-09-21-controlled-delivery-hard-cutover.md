@@ -471,7 +471,7 @@ Run:
 
 Expected: all pass.
 
-- [ ] **Step 4: Run repository merge verification**
+- [x] **Step 4: Run repository merge verification**
 
 Run:
 
@@ -482,11 +482,11 @@ Run:
 
 Expected: the planned repository gate passes and writes a receipt under `tests/reports/merge-verification/`.
 
-- [ ] **Step 5: Record evidence and advance the control sheet**
+- [x] **Step 5: Record evidence and advance the control sheet**
 
 In `docs/simplification-control.md`, mark every S2 work item complete, record focused counts and the merge-verification receipt, change S2 to `DONE`, and change S3 to `ACTIVE` with its next inventory action. Do not activate S3 if verification fails.
 
-- [ ] **Step 6: Commit the verified milestone**
+- [x] **Step 6: Commit the verified milestone**
 
 ```bash
 git add AGENTS.md CLAUDE.md README.md prosaic docs/simplification-control.md \
