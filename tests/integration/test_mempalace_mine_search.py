@@ -1,7 +1,7 @@
 """Integration tests for MemPalace requirements mining and retrieval.
 
 Tests the full mine → store → search round-trip with a real isolated ChromaDB
-palace. Does NOT require SOAR. Uses Python API directly.
+palace. Uses the retained Python API directly.
 
 Run with: pytest tests/integration/test_mempalace_mine_search.py -v -m integration
 """

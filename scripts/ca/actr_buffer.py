@@ -169,7 +169,7 @@ def enrich_context(context_pack: dict, run_id: str) -> dict:  # noqa: ARG001
         evicted = buffers["declarative"].pop(0)  # oldest first
         total_new_tokens -= _token_estimate(evicted)
 
-    # ISS-004 / FR-SOAR-011: return only actr_buffers (no original key duplication)
+    # Return only actr_buffers (no original key duplication).
     return {
         "actr_buffers": {
             "declarative": buffers["declarative"],

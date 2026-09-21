@@ -5,6 +5,6 @@ from codegen.security.secret_scrubber import scrub_secrets
 
 
 def test_secret_scrubber_owns_patterns_without_soar_import() -> None:
-    """Removing the SOAR package must not remove credential scrubbing."""
+    """Removing the execution package must not remove credential scrubbing."""
     assert CREDENTIAL_DENY_PATTERNS
     assert scrub_secrets("token=abcdefghijklmnopqrstuvwxyz123456") == "[REDACTED]"

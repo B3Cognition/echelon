@@ -207,7 +207,7 @@ class TestBuildPromptBuilder:
             spec_content="spec",
             tasks_content="tasks",
             build_skill="echelon.build",
-            strategy_context="Use the SOAR pipeline",
+            strategy_context="Use the alternate pipeline",
         )
-        assert "Use the SOAR pipeline" in prompt
+        assert "Use the alternate pipeline" in prompt
         assert "Strategy Context" in prompt

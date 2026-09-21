@@ -1,13 +1,9 @@
 # Echelon Pipeline Matrix
 
-> SOAR/codegen execution is disabled pending removal. The SOAR rows below are
-> historical reference, not supported choices. Use the default delivery strategy;
-> shared memory and graph utilities remain supported.
-
-Echelon currently has two independent pipeline choices:
+Echelon has two related pipeline concerns:
 
 1. **Spec authoring format** in Phase A.
-2. **Build execution strategy** in Phase B.
+2. **Build execution** in Phase B.
 
 These choices are related because Phase B consumes Phase A artifacts, but they
 are not the same switch. Treating them as one decision is a source of operator
@@ -38,26 +34,23 @@ Echelon's supported dual-artifact contract is:
   and rejects derived requirement, acceptance-criteria, or error IDs that are not
   projected from `spec.md`.
 
-## Phase B: Build Execution Pipelines
+## Phase B: Build Execution
 
 | Pipeline | Trigger | Build engine | Consumes | Current status |
 |---|---|---|---|---|
 | Default delivery strategy | `echelon delivery run <id>` | Echelon squad build via `echelon.build` | Published Phase A artifacts under `specs/<id>-*/` | Primary supported path |
-| Codegen delivery strategy | `echelon delivery run <id> strategy=codegen` | SOAR CQ-ISC pipeline via `echelon.codegen` | Same published Phase A artifacts; mines requirements into MemPalace | Alternative build path with stricter quality gates |
 | Direct build command | `echelon build <id>` | Echelon build skill outside harness | Phase A artifacts | Advanced/manual |
-| Direct codegen command | `echelon codegen <id>` | SOAR pipeline outside harness | Phase A artifacts | Advanced/manual |
 
-Build strategy should not change the Phase A spec contract. Both build
-strategies should be able to locate the same published `spec.md`, `plan.md`,
-`research.md`, `data-model.md`, and `tasks.md` files.
+Build execution consumes the published `spec.md`, `plan.md`, `research.md`,
+`data-model.md`, and `tasks.md` files without changing the Phase A contract.
 
 ## Supported Combinations
 
-| Phase A format | Phase B default strategy | Phase B codegen strategy | Notes |
-|---|---|---|---|
-| Standard spec-kit `spec.md` | Supported | Supported | Safest current combination. |
-| Standard `spec.md` + derived Lexicon artifact | Supported | Supported | Preserves human contract while enabling hard machine validation. |
-| Lexicon `spec.md` replacement | Risky | Risky | Requires every downstream consumer to understand Lexicon grammar; keep behind future explicit opt-in. |
+| Phase A format | Phase B delivery | Notes |
+|---|---|---|
+| Standard spec-kit `spec.md` | Supported | Safest current combination. |
+| Standard `spec.md` + derived Lexicon artifact | Supported | Preserves human contract while enabling hard machine validation. |
+| Lexicon `spec.md` replacement | Risky | Requires every downstream consumer to understand Lexicon grammar; keep behind future explicit opt-in. |
 
 ## Current Configuration Risk
 

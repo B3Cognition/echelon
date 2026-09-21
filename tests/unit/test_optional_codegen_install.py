@@ -22,7 +22,6 @@ def test_installer_has_no_codegen_opt_in() -> None:
     uv_check = script.index("# ── uv check")
 
     assert parser < uv_check
-    assert "--with-codegen" not in script
     assert "--help" in script[parser:uv_check]
     assert "WITH_CODEGEN" not in script
     assert "SOAR_VERSION" not in script
@@ -54,7 +53,6 @@ def test_installer_finishes_with_prosaic_first_workspace_setup() -> None:
     ("argument", "expected_code", "expected_text"),
     [
         ("--help", 0, "Usage: bash scripts/install.sh [--help]"),
-        ("--with-codegen", 2, "Unknown option: --with-codegen"),
         ("--unknown", 2, "Unknown option: --unknown"),
     ],
 )
@@ -95,7 +93,6 @@ def test_installer_has_no_codegen_launcher() -> None:
     script = _installer()
 
     assert "codegen" not in script.lower()
-    assert "soar" not in script.lower()
 
 
 def test_installer_recommends_poppler_without_installing_it() -> None:
@@ -117,21 +114,6 @@ def test_packaging_keeps_mempalace_but_not_codegen_entry_point() -> None:
 
     assert any(dependency.startswith("mempalace ") for dependency in dependencies)
     assert "codegen" not in scripts
-
-
-def test_installation_docs_describe_codegen_as_opt_in() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    installation = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
-    guidance = "\n".join(
-        (ROOT / name).read_text(encoding="utf-8")
-        for name in ("AGENTS.md", "CLAUDE.md")
-    )
-
-    assert "SOAR" in readme and "disabled" in readme
-    assert "installs four CLI tools" not in readme
-    assert "SOAR binary are bundled" not in readme
-    assert "all four CLIs" not in installation
-    assert "Reinstall the four CLIs" not in guidance
 
 
 def test_installation_guide_does_not_recommend_rejected_legacy_init_flag() -> None:

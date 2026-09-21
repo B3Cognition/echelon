@@ -286,12 +286,12 @@ class TestHarnessRunTaskFormatErrors:
         from echelon.cli import _cmd_harness_run
 
         with pytest.raises(SystemExit) as exc:
-            _cmd_harness_run(["003", "mode=banzai", "strategy=soar", "finish slice"])
+            _cmd_harness_run(["003", "mode=banzai", "strategy=alternate", "finish slice"])
 
         assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "workspace root is not a Git repo" in err
-        assert "echelon delivery run 003 mode=banzai strategy=soar 'finish slice'" in err
+        assert "echelon delivery run 003 mode=banzai strategy=alternate 'finish slice'" in err
 
     def test_harness_run_snapshots_spec_before_preflight_exit(
         self,
@@ -393,11 +393,11 @@ class TestHarnessRunTaskFormatErrors:
             from echelon.cli import _cmd_harness_run
 
             with pytest.raises(SystemExit):
-                _cmd_harness_run(["003", "mode=banzai", "strategy=soar", "finish slice"])
+                _cmd_harness_run(["003", "mode=banzai", "strategy=alternate", "finish slice"])
 
         mock_run.assert_not_called()
         err = capsys.readouterr().err
-        assert "echelon delivery run 003 mode=banzai strategy=soar 'finish slice'" in err
+        assert "echelon delivery run 003 mode=banzai strategy=alternate 'finish slice'" in err
 
     def test_invalid_plan_format_exits_with_migration_guidance(
         self,

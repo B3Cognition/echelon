@@ -850,11 +850,3 @@ def test_phase3_consensus_leaves_final_timing_close_to_controller():
     assert 'state.json.status = "done"' not in text
     assert "closes after successful `phase4-document` execution" in text
     assert "agents do not start, stop, or report" in text
-
-
-def test_codegen_decompose_names_codegen_state_explicitly():
-    prompt = RUNTIME_ROOT / "workflow" / "phases" / "codegen-2-decompose.md"
-    text = prompt.read_text()
-
-    assert "Update state.json:" not in text
-    assert "Update `codegen-state.json`" in text

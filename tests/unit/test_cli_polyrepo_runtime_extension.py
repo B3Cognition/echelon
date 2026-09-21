@@ -433,11 +433,6 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
         "build-1-init.md",
         "verify-spec-1-init.md",
         "bugfix-1-init.md",
-        "codegen-0-preflight.md",
-        "codegen-A-preamble.md",
-        "codegen-resume.md",
-        "codegenlight-0-preflight.md",
-        "codegenlight-resume.md",
         "phase1-what.md",
         "phase3-plan.md",
         "phase4-document.md",
@@ -466,11 +461,6 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "bugfix-1-init.md").exists()
-    assert not (phases / "codegen-0-preflight.md").exists()
-    assert not (phases / "codegen-A-preamble.md").exists()
-    assert not (phases / "codegen-resume.md").exists()
-    assert not (phases / "codegenlight-0-preflight.md").exists()
-    assert not (phases / "codegenlight-resume.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()
@@ -572,7 +562,7 @@ def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
     for path in phases_root.rglob("*.md"):
         relative = Path("workflow") / "phases" / path.relative_to(phases_root)
         assert is_delivery_workflow_phase_path(relative), relative
-        assert not path.name.startswith(("bugfix-", "codegen-", "codegenlight-"))
+        assert not path.name.startswith("bugfix-")
         assert not path.name.startswith(("phase", "re-", "init"))
 
     for forbidden in [

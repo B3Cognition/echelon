@@ -89,8 +89,6 @@ COMMAND_POLICY = {
     "echelon.build.md": ("strong", "high"),
     "echelon.change.md": ("strong", "high"),
     "echelon.cicd.md": ("fast", "low"),
-    "echelon.codegen.md": ("strong", "high"),
-    "echelon.codegenlight.md": ("strong", "high"),
     "echelon.deploy.md": ("balanced", "medium"),
     "echelon.feedback.md": ("balanced", "medium"),
     "echelon.ground.md": ("fast", "low"),

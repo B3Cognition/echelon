@@ -81,7 +81,7 @@ def test_missing_delivery_command_never_falls_back_to_bare_arguments(tmp_path: P
 
 
 @pytest.mark.parametrize("command", [
-    "", "make build", "echelon review", "echelon codegen", "echelon build --fix",
+    "", "make build", "echelon review", "echelon alternate", "echelon build --fix",
     "echelon build; echo ignored",
 ])
 def test_unsupported_llm_strategy_command_is_rejected_before_inspection(

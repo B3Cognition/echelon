@@ -33,10 +33,6 @@ The default installer:
 3. Adds `~/.echelon/venv/bin` to your PATH
 4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
 
-SOAR execution is disabled pending removal. `--with-codegen` is rejected before
-installation begins. Existing SOAR files are left untouched; Echelon will not
-execute them. Shared MemPalace functionality remains installed.
-
 Set `ECHELON_HOME` before installation to relocate the shared Node runtimes. A
 complete project-deployed runtime takes precedence when present; otherwise
 Echelon's wrappers and harness commands use `${ECHELON_HOME:-$HOME/.echelon}/node`.
@@ -81,8 +77,8 @@ echelon delivery --help
 understanding version
 prosaic --version
 
-# Check shared memory stores (no SOAR)
-python -m codegen.cli.codegen_cli memory status
+# Check shared memory rooms
+echelon memory list-rooms
 
 # Validate the workspace runtime contract
 echelon workspace doctor
@@ -119,30 +115,20 @@ Re-running `echelon workspace init` on an already-configured project is safe —
 
 ## Mine requirements into MemPalace
 
-After `echelon workspace init`, mine your spec files so shared memory utilities can retrieve requirements semantically:
+After `echelon workspace init`, mine a canonical spec so shared memory utilities
+can retrieve its requirements semantically:
 
 ```bash
-# Mine a single spec file
-python -m codegen.cli.codegen_cli requirements mine specs/spec.md
-
-# Mine all specs matching a glob
-python -m codegen.cli.codegen_cli requirements mine "specs/*.md"
+# Mine a canonical spec by id
+echelon spec memory mine 001
 
 # Search what was mined
-python -m codegen.cli.codegen_cli requirements search "user authentication" --wing my-app
+echelon memory search "user authentication" --spec 001
 ```
 
 Requirements are parsed by ID (`FR-xxx`, `NFR-xxx`, `AC-xxx`, `ADR-xxx`, `US-xxx`). Documents without explicit IDs are chunked by heading and stored in the `uncategorised` room.
 
-To remove stale drawers (e.g. after re-specifying):
-
-```bash
-# Preview
-python -m codegen.cli.codegen_cli requirements clean --from-wing my-app --project-dir . --dry-run
-
-# Delete
-python -m codegen.cli.codegen_cli requirements clean --from-wing my-app --project-dir .
-```
+Successful spec-memory mining cleans stale drawers for that canonical spec.
 
 ---
 
@@ -150,14 +136,7 @@ python -m codegen.cli.codegen_cli requirements clean --from-wing my-app --projec
 
 ```bash
 cd ~/echelon && git pull
-bash ~/echelon/scripts/install.sh   # re-runs installer; SOAR skipped if already present, venv rebuilt
-```
-
-To force a fresh SOAR download:
-
-```bash
-rm -rf ~/.echelon/soar
-bash ~/echelon/scripts/install.sh
+bash ~/echelon/scripts/install.sh   # re-runs installer and rebuilds the venv
 ```
 
 To upgrade the MemPalace or understanding model versions, update the relevant URLs in `pyproject.toml` and re-run the installer.
@@ -167,7 +146,7 @@ To upgrade the MemPalace or understanding model versions, update the relevant UR
 ## Uninstall
 
 ```bash
-# Remove the Echelon venv, SOAR, shared Node runtimes, and PATH entries.
+# Remove the Echelon venv, shared Node runtimes, and PATH entries.
 # Memory is preserved unless explicitly purged.
 bash ~/echelon/scripts/uninstall.sh
 
@@ -180,7 +159,7 @@ bash ~/echelon/scripts/uninstall.sh --purge-memory
 
 ## Troubleshooting
 
-### `echelon`, `harness`, `codegen` or `understanding` not found after install
+### `echelon`, `harness`, or `understanding` not found after install
 
 The venv bin directory may not be in your PATH yet:
 
@@ -190,11 +169,6 @@ source ~/.zshrc   # or ~/.bashrc
 # Or add it manually
 export PATH="$HOME/.echelon/venv/bin:$PATH"
 ```
-
-### SOAR commands are disabled
-
-This is intentional. Use the default Echelon delivery strategy. Installing a
-SOAR binary does not re-enable Echelon's retired execution paths.
 
 ### Embedding model download fails
 
@@ -208,8 +182,8 @@ shared runtimes and refreshes them from the pinned lockfiles.
 
 ### Re-run the installer
 
-The installer is safe to re-run. SOAR is skipped if already present, the venv is
-rebuilt, and the MemPalace store is preserved.
+The installer is safe to re-run. The venv is rebuilt and the MemPalace store is
+preserved.
 
 ---
 
@@ -218,4 +192,3 @@ rebuilt, and the MemPalace store is preserved.
 - **Python**: 3.11 or higher
 - **Node.js with npm**: optional; enables Context7, CodeGraph, and PerlGraph
 - **Docker or Podman**: needed for default delivery sandbox verification
-- **SOAR**: disabled pending removal; no installation option is supported
