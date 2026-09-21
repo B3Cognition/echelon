@@ -23,11 +23,11 @@ starting another.
 
 ## S1 Work Queue
 
-- [ ] Inventory every `src/codegen` import and classify it as active shared
+- [x] Inventory every `src/codegen` import and classify it as active shared
   utility, rejected compatibility entry point, or dead execution code.
-- [ ] Inventory CLI, installer, strategy, documentation, and test references to
+- [x] Inventory CLI, installer, strategy, documentation, and test references to
   SOAR/codegen execution.
-- [ ] Define the exact retained utility boundary before deleting files.
+- [x] Define the exact retained utility boundary before deleting files.
 - [ ] Remove execution entry points, installer flags, strategies, and tests that
   exist only to support retired execution.
 - [ ] Update command help and documentation to describe only supported paths.
@@ -40,6 +40,7 @@ starting another.
 | --- | --- | --- |
 | 2026-09-21 | S0 | `.venv/bin/python -m pytest -q tests/unit/test_coordinator.py tests/unit/test_re_controller.py tests/unit/test_re_lifecycle.py tests/unit/test_re_v2_controller.py` — 274 passed in 24.32s. |
 | 2026-09-21 | S1 | Activated. Execution is already fail-closed through `src/codegen/retirement.py`; deletion inventory is next. |
+| 2026-09-21 | S1 | Production imports reach seven current `codegen` modules: five shared memory modules, the secret scrubber, and the retirement guard. The guard is deletion-only; the scrubber's only execution dependency is the credential deny-list in `codegen.soar.smem_writer`, which the S1 plan extracts before deleting the execution tree. |
 
 ## Drift Guard
 
@@ -50,4 +51,3 @@ Until S7 is complete:
 - Do not add new behavior to a path scheduled for deletion.
 - Do not create a general framework before two active consumers need it.
 - Do not mark a milestone done without recording its verification evidence.
-
