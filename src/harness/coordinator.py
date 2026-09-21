@@ -49,7 +49,7 @@ from harness.repair_loop import (
 )
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
-from harness.delivery_prompt import DeliveryPromptError, resolve_delivery_build_prompt
+from harness.delivery_errors import DeliveryConfigurationError
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
 from harness.task_progress import (
     TaskProgressError,
@@ -1360,6 +1360,15 @@ class StrategyCoordinator:
                 stack_context,
             )
 
+            if llm_provider is None:
+                raise DeliveryConfigurationError(
+                    "Controlled delivery requires an enabled LLM provider"
+                )
+            if spec.build_command.split() != ["echelon", "build"]:
+                raise DeliveryConfigurationError(
+                    "Controlled delivery requires the 'echelon build' strategy identifier"
+                )
+
             arguments = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
             if intent.task_description:
                 arguments += f"\n\n{intent.task_description}"
@@ -1367,28 +1376,13 @@ class StrategyCoordinator:
                 arguments += f"\n\n{strategy_context}"
 
             build_prompt: str | None = None
-            prompt_error: str | None = None
             initial_review_artifacts: tuple[Path, ...] = ()
 
             def get_build_prompt() -> str:
-                """Resolve only when implementation or repair actually needs a model."""
-                nonlocal build_prompt, prompt_error
+                """Return controller context only when a model step needs it."""
+                nonlocal build_prompt
                 if build_prompt is None:
-                    try:
-                        if self._config.llm.features.get("delivery_gate_controller") is True:
-                            if spec.build_command.split() != ["echelon", "build"]:
-                                raise DeliveryPromptError("Controlled delivery requires 'echelon build'")
-                            resolved = arguments
-                        else:
-                            resolved = (
-                                resolve_delivery_build_prompt(
-                                    spec.build_command, arguments, Path(self._base_dir),
-                                )
-                                if llm_provider is not None else arguments
-                            )
-                    except DeliveryPromptError as exc:
-                        prompt_error = str(exc)
-                        raise
+                    resolved = arguments
                     if initial_review_artifacts:
                         resolved = self._build_reentry_prompt(
                             resolved, intent.spec_id, spec_dir=spec_dir,
@@ -1633,10 +1627,7 @@ class StrategyCoordinator:
                         return current_visual_result
                     state_store.transition("running")
                     controller.reuse_worktree_on_next_run(worktree_path)
-                    reentry_usage_baseline = (
-                        state_store.read().get("tokens_used", 0)
-                        if self._config.llm.features.get("delivery_gate_controller") is True else 0
-                    )
+                    reentry_usage_baseline = state_store.read().get("tokens_used", 0)
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,
@@ -1685,7 +1676,6 @@ class StrategyCoordinator:
                     outer_iterations=implementation_outer_iterations + visual_iterations,
                     tokens_used=implementation_tokens + visual_tokens,
                     final_verify=visual_result.final_verify,
-                    diagnostic=prompt_error,
                 )
 
             review_result: ReviewResult | None = None
@@ -1781,17 +1771,16 @@ class StrategyCoordinator:
                             )
                         review_iterations += review_result.iterations
                         review_tokens += review_result.tokens_used
-                        if self._config.llm.features.get("delivery_gate_controller") is True:
-                            # Ralph may be interrupted during the queued repair.
-                            # Its durable baseline must already include triage;
-                            # the re-entry delta below excludes that baseline.
-                            current = state_store.read()
-                            state_store.transition(current["status"], updates={
-                                "tokens_used": max(
-                                    current.get("tokens_used", 0),
-                                    implementation_tokens + visual_tokens + review_tokens,
-                                ),
-                            })
+                        # Ralph may be interrupted during the queued repair.
+                        # Its durable baseline must already include triage;
+                        # the re-entry delta below excludes that baseline.
+                        current = state_store.read()
+                        state_store.transition(current["status"], updates={
+                            "tokens_used": max(
+                                current.get("tokens_used", 0),
+                                implementation_tokens + visual_tokens + review_tokens,
+                            ),
+                        })
                         if review_result.status != "review_fix_queued":
                             return RepairAttempt(
                                 output={
@@ -1848,27 +1837,14 @@ class StrategyCoordinator:
                                     "review_result": review_result,
                                 }
                             )
-                        try:
-                            reentry_prompt = self._build_reentry_prompt(
-                                get_build_prompt(),
-                                intent.spec_id,
-                                spec_dir=spec_dir,
-                                published_artifacts=published_artifacts,
-                            )
-                        except DeliveryPromptError:
-                            review_result = replace(
-                                review_result, status="blocked",
-                                termination_reason="delivery_prompt_invalid",
-                            )
-                            return RepairAttempt(output={
-                                "result": implementation_result,
-                                "review_result": review_result,
-                            })
-                        state_store.transition("running")
-                        reentry_usage_baseline = (
-                            state_store.read().get("tokens_used", 0)
-                            if self._config.llm.features.get("delivery_gate_controller") is True else 0
+                        reentry_prompt = self._build_reentry_prompt(
+                            get_build_prompt(),
+                            intent.spec_id,
+                            spec_dir=spec_dir,
+                            published_artifacts=published_artifacts,
                         )
+                        state_store.transition("running")
+                        reentry_usage_baseline = state_store.read().get("tokens_used", 0)
                         implementation_result = controller.run_loop(
                             max_outer=intent.max_outer,
                             max_inner=intent.max_inner,
@@ -2086,7 +2062,6 @@ class StrategyCoordinator:
                     outer_iterations=total_outer_iterations,
                     tokens_used=total_tokens,
                     final_verify=final_verify,
-                    diagnostic=prompt_error,
                 )
             elif delivery_status == "failed":
                 state_store.transition("failed")
@@ -2108,7 +2083,7 @@ class StrategyCoordinator:
                 branch=implementation_result.branch,
             )
 
-        except DeliveryPromptError as exc:
+        except DeliveryConfigurationError as exc:
             state = state_store.read()
             phase = {
                 "running": "implementation",
@@ -2120,7 +2095,7 @@ class StrategyCoordinator:
             return self._persist_phase_block(
                 state_store,
                 phase=phase,
-                reason="delivery_prompt_invalid",
+                reason="delivery_configuration_invalid",
                 implementation=implementation,
                 outer_iterations=implementation.outer_iterations,
                 tokens_used=implementation.tokens_used,

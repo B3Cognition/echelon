@@ -13,6 +13,7 @@ from harness.verify_result import VerifyResult
 from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
 from harness.state import StateStore
+from harness.strategy_loader import StrategySpec
 
 
 def _config(tmp_path: Path) -> HarnessConfig:
@@ -55,6 +56,10 @@ class TestCoordinatorReviewReentry:
     ) -> None:
         """Ambient targets cannot replace an already verified review handoff."""
         config = _config(tmp_path)
+        config.llm.enabled = True
+        monkeypatch.setattr(
+            "harness.coordinator.AICodingCliProvider", lambda config: object()
+        )
         spec_dir = tmp_path / "specs" / "005-owned"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -97,7 +102,10 @@ class TestCoordinatorReviewReentry:
                 "completed", "converged", 1, "https://github.com/org/repo/pull/1", 0
             )
             result = coord._run_strategy(
-                RunIntent(spec_id="005", max_outer=1, max_inner=1), "default", None, MagicMock()
+                RunIntent(spec_id="005", max_outer=1, max_inner=1),
+                "default",
+                None,
+                StrategySpec(),
             )
             assert result.status == "converged", result
             captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
@@ -295,6 +303,7 @@ class TestCoordinatorReviewReentry:
         worktree = harness_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
         worktree.mkdir(parents=True)
         config = _config(workspace)
+        config.llm.enabled = True
 
         spec_dir = workspace / "specs" / "005-my-spec"
         spec_dir.mkdir(parents=True)
@@ -335,7 +344,8 @@ class TestCoordinatorReviewReentry:
                 repair_loop_runs.append(draft)
                 return super().run(draft)
 
-        with patch.object(coord, "_worktree_head", return_value="verified-head"), \
+        with patch("harness.coordinator.AICodingCliProvider", return_value=object()), \
+             patch.object(coord, "_worktree_head", return_value="verified-head"), \
              patch("harness.coordinator.RalphController") as MockRalph, \
              patch("harness.coordinator.ReviewLoopController") as MockReview, \
              patch("harness.coordinator.VisualRalphController") as MockVisual, \
@@ -408,7 +418,6 @@ class TestCoordinatorReviewReentry:
             MockState.return_value = state_instance
 
             # Strategy loader
-            from harness.strategy_loader import StrategySpec
             mock_strat.return_value = {"default": StrategySpec()}
 
             result = coord._run_strategy(
@@ -434,4 +443,6 @@ class TestCoordinatorReviewReentry:
         assert MockVisual.return_value.run_loop.call_count == 2
         assert result.final_verify == VerifyResult(True, [])
         assert result.outer_iterations == 9
-        assert result.tokens_used == 44
+        # Controlled re-entry reports cumulative Ralph usage, so the persisted
+        # baseline is subtracted instead of charging the first slice twice.
+        assert result.tokens_used == 31

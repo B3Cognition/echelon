@@ -100,12 +100,12 @@ PLAYWRIGHT_FAIL_JSON = json.dumps({
 
 
 def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Path):
-    from harness.delivery_prompt import DeliveryPromptError
+    from harness.delivery_errors import DeliveryConfigurationError
     from harness.visual_evidence import validate_visual_receipt
     from harness.visual_ralph import VisualRalphController
 
     def invalid_setup(*args):
-        raise DeliveryPromptError("canonical build command is missing")
+        raise DeliveryConfigurationError("canonical build command is missing")
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -125,7 +125,7 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
         result = controller.run_loop(worktree_path=str(worktree))
 
     assert result.status == "blocked"
-    assert result.termination_reason == "delivery_prompt_invalid"
+    assert result.termination_reason == "delivery_configuration_invalid"
     assert result.iterations == 1
     assert result.tokens_used > 0
     assert result.final_verify is not None
@@ -141,6 +141,33 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
     receipt = json.loads(result.evidence.path.read_text(encoding="utf-8"))
     assert receipt["status"] == "failed"
     provider.destroy.assert_called_once()
+
+
+def test_visual_feedback_without_controller_callback_is_configuration_failure(
+    tmp_path: Path,
+):
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(exit_code=0)
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=str(tmp_path),
+    )
+
+    result = controller._exec_visual_feedback(
+        SandboxHandle(id="visual", session_id="attempt-1"),
+        str(tmp_path),
+        VerifyResult(passed=False),
+        [],
+    )
+
+    assert result["passed"] is False
+    assert result["build_status"] == "delivery_configuration_invalid"
+    provider.exec.assert_not_called()
 
 
 def test_exec_visual_verify_pass():
@@ -640,6 +667,9 @@ def test_run_loop_reports_fix_applied_after_visual_feedback():
         spec_id="001",
         strategy_id="default",
         base_dir=".",
+        feedback_runner=lambda *args: {
+            "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
@@ -727,6 +757,9 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
         spec_id="001",
         strategy_id="default",
         base_dir=".",
+        feedback_runner=lambda *args: {
+            "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
@@ -840,6 +873,13 @@ def test_run_loop_blocks_when_visual_feedback_fails():
         config=_make_config(max_iterations=1),
         spec_id="001",
         strategy_id="default",
+        feedback_runner=lambda *args: {
+            "exit_code": 1,
+            "passed": False,
+            "duration_s": 0.0,
+            "tokens": 0,
+            "stderr": "build fix failed",
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):

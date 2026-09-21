@@ -119,7 +119,7 @@ git commit -m "refactor: close legacy delivery entry points"
 - Produces: `get_build_prompt() -> str` returning controller context only; it never resolves Prosaic command prose.
 - Consumes: `AICodingCliProvider` when `config.llm.enabled` is true and canonical `StrategySpec.build_command` data.
 
-- [ ] **Step 1: Add failing setup-boundary tests**
+- [x] **Step 1: Add failing setup-boundary tests**
 
 Create `tests/unit/test_controlled_delivery_setup.py` with focused tests using the existing coordinator fixtures:
 
@@ -144,7 +144,7 @@ def test_noncanonical_strategy_blocks_before_ralph(coordinator, intent, monkeypa
 
 Adapt fixture names to the existing coordinator helper API rather than introducing a second harness fixture.
 
-- [ ] **Step 2: Run the setup tests and verify they fail**
+- [x] **Step 2: Run the setup tests and verify they fail**
 
 Run:
 
@@ -157,7 +157,7 @@ Run:
 
 Expected: missing-provider delivery reaches legacy fallback, and the new error type does not exist.
 
-- [ ] **Step 3: Add the explicit configuration error and simplify prompt setup**
+- [x] **Step 3: Add the explicit configuration error and simplify prompt setup**
 
 Create:
 
@@ -179,7 +179,7 @@ controller callback. Remove its direct `echelon build --fix` fallback: when no
 controller feedback callback is configured, return a
 `delivery_configuration_invalid` result without invoking the sandbox provider.
 
-- [ ] **Step 4: Run coordinator and continuation tests**
+- [x] **Step 4: Run coordinator and continuation tests**
 
 Run:
 
@@ -194,7 +194,7 @@ Run:
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit controller-only setup**
+- [x] **Step 5: Commit controller-only setup**
 
 ```bash
 git add src/harness/delivery_errors.py src/harness/coordinator.py \

@@ -51,7 +51,7 @@ starting another.
 - [x] Inventory the feature switch and feature-off call graph.
 - [x] Approve the hard-cutover design and preserved recovery boundary.
 - [x] Write and review the implementation plan.
-- [ ] Remove configuration, CLI, and coordinator branching.
+- [x] Remove configuration, CLI, and coordinator branching.
 - [ ] Remove Ralph's legacy build, feedback, and recovery paths.
 - [ ] Delete legacy delivery runner and prompt-resolution implementation.
 - [ ] Update current documentation and focused tests.

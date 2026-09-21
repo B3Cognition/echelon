@@ -2,7 +2,7 @@
 
 Runs Playwright headless tests inside the container sandbox after Phase 1
 (unit/logic) converges. Retrieves screenshots via container cp and passes
-them as evidence to echelon build --fix.
+them to the controller-owned repair callback as evidence.
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from harness.config import HarnessConfig
+from harness.delivery_errors import DeliveryConfigurationError
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
-from harness.delivery_prompt import DeliveryPromptError
 from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -184,8 +184,9 @@ class VisualRalphController:
                     return VisualResult(
                         status="blocked",
                         termination_reason=(
-                            "delivery_prompt_invalid"
-                            if fix_result.get("build_status") == "delivery_prompt_invalid"
+                            "delivery_configuration_invalid"
+                            if fix_result.get("build_status")
+                            == "delivery_configuration_invalid"
                             else "visual_feedback_failed"
                         ),
                         iterations=iteration + 1,
@@ -579,7 +580,7 @@ class VisualRalphController:
         verify_result: VerifyResult,
         screenshots: List[str],
     ) -> Dict[str, Any]:
-        """Run echelon build --fix with visual failure context."""
+        """Run controller-owned visual repair with visual failure context."""
         if self._feedback_runner is not None:
             try:
                 result = dict(
@@ -590,14 +591,14 @@ class VisualRalphController:
                         screenshots,
                     )
                 )
-            except DeliveryPromptError as exc:
+            except DeliveryConfigurationError as exc:
                 # Return through normal accounting so evidence and usage survive.
                 return {
                     "exit_code": 1,
                     "passed": False,
                     "duration_s": 0.0,
                     "tokens": 0,
-                    "build_status": "delivery_prompt_invalid",
+                    "build_status": "delivery_configuration_invalid",
                     "build_reason": str(exc),
                 }
             except Exception as exc:
@@ -615,33 +616,13 @@ class VisualRalphController:
             )[-1000:]
             return result
 
-        failures_json = json.dumps([
-            {"category": f.category.value, "id": f.id, "error": f.error}
-            for f in verify_result.failures
-        ])
-
-        screenshot_env = ""
-        if screenshots:
-            screenshot_env = f"VISUAL_SCREENSHOTS='{json.dumps(screenshots)}' "
-
-        cmd = (
-            f"{screenshot_env}"
-            f"echelon build --fix --failures '{failures_json}' --context 'visual'"
-        )
-
-        result = self._provider.exec(
-            handle,
-            cmd,
-            cwd="/workspace",
-            env=dict(self._runtime_env),
-            timeout_ms=1_200_000,
-        )
         return {
-            "exit_code": result.exit_code,
-            "passed": result.exit_code == 0,
-            "duration_s": result.duration_ms / 1000.0,
-            "tokens": _estimate_tokens(result),
-            "diagnostic": self._command_diagnostic(result),
+            "exit_code": 1,
+            "passed": False,
+            "duration_s": 0.0,
+            "tokens": 0,
+            "build_status": "delivery_configuration_invalid",
+            "build_reason": "Controlled visual repair requires a controller callback",
         }
 
     # === Sandbox spec ===
