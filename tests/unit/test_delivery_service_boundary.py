@@ -1,7 +1,35 @@
+import ast
+import inspect
 from pathlib import Path
+import textwrap
 
 import pytest
 from typer.testing import CliRunner
+
+
+ACTIVE_DELIVERY_FUNCTIONS = {
+    "delivery_init",
+    "delivery_target",
+    "delivery_verify_local",
+    "delivery_cleanup_local",
+    "delivery_run",
+    "delivery_resume",
+    "delivery_continue",
+    "delivery_land",
+    "delivery_checkpoint_list",
+}
+
+REMOVED_HANDLERS = {
+    "_cmd_land",
+    "_cmd_harness_init",
+    "_cmd_delivery_target",
+    "_cmd_harness_run",
+    "_cmd_harness_resume",
+    "_cmd_harness_continue",
+    "_cmd_delivery_verify_local",
+    "_cmd_delivery_cleanup_local",
+    "_cmd_delivery_checkpoint",
+}
 
 
 def test_delivery_init_routes_extra_args_to_service(monkeypatch):
@@ -174,6 +202,61 @@ def test_delivery_continue_routes_answerless_request(monkeypatch):
         Path.cwd(),
         DeliveryRecoveryRequest(spec_id="001-demo", mode="banzai"),
     )]
+
+
+def test_delivery_land_routes_immutable_request(monkeypatch):
+    from echelon.cli_app import app
+    from echelon.delivery_service import DeliveryLandRequest
+
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.land_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "delivery", "land", "001-demo", "legacy=value", "--continue",
+            "--prepare-only", "--no-autoresolve",
+            "--allow-fulfillment-gaps", "--strategy", "rebase",
+        ],
+    )
+    assert result.exit_code == 0
+    assert calls == [(
+        Path.cwd(),
+        DeliveryLandRequest(
+            spec_id="001-demo",
+            extra_args=("legacy=value",),
+            continue_existing=True,
+            prepare_only=True,
+            autoresolve=False,
+            allow_fulfillment_gaps=True,
+            strategy="rebase",
+        ),
+    )]
+
+
+def test_active_delivery_surfaces_do_not_import_legacy_cli():
+    import echelon.cli_app as cli_app
+    import echelon.delivery_status as delivery_status
+
+    for name in ACTIVE_DELIVERY_FUNCTIONS:
+        source = textwrap.dedent(inspect.getsource(getattr(cli_app, name)))
+        assert "echelon import cli" not in source
+        assert "echelon.cli import" not in source
+    status_source = inspect.getsource(delivery_status)
+    assert "echelon import cli" not in status_source
+    assert "echelon.cli import" not in status_source
+
+
+def test_legacy_cli_does_not_define_delivery_handlers():
+    from echelon import cli
+
+    tree = ast.parse(inspect.getsource(cli))
+    definitions = {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    assert definitions.isdisjoint(REMOVED_HANDLERS)
 
 
 def test_continue_delivery_rejects_answer():

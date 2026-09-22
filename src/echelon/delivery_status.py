@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness.provider_capability import ProviderCapability
+from echelon.ui import banner as _banner
 
 
 def command(
@@ -16,21 +16,19 @@ def command(
     project_root: Path | None = None,
 ) -> None:
     """Render Phase B status from values already validated by Typer."""
-    from echelon.cli import (
-        _banner,
+    from echelon.delivery_service import (
         _delivery_status_fields,
         _delivery_status_summary,
-        _iter_harness_build_states,
-        _require_provider_capability,
+        _iter_delivery_states,
+        _require_delivery_capability,
     )
 
     root = project_root or Path.cwd()
-    _require_provider_capability(
+    _require_delivery_capability(
         "echelon delivery status",
-        ProviderCapability.BUILD,
-        project_dir=root,
+        root,
     )
-    states = _iter_harness_build_states(root)
+    states = _iter_delivery_states(root)
     if spec_id:
         states = [
             state

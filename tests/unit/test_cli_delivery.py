@@ -305,17 +305,20 @@ def test_delivery_land_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon.delivery_service import DeliveryLandRequest, land_delivery
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
-    monkeypatch.setattr("echelon.cli._dispatch_land_to_spec_targets", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "echelon.delivery_service._dispatch_land_to_spec_targets",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(
         "harness.config.load_config",
         lambda *_args, **_kwargs: pytest.fail("land should be blocked before loading build config"),
     )
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_land(["001-demo"])
+        land_delivery(tmp_path, DeliveryLandRequest(spec_id="001-demo"))
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery land")
@@ -724,25 +727,33 @@ def test_delivery_continue_routes_to_harness_continue(monkeypatch: pytest.Monkey
 @pytest.mark.unit
 def test_delivery_land_routes_to_land(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryLandRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "delivery", "land", "001", "--continue"])
 
-    with patch("echelon.cli._cmd_land") as mock_land:
+    with patch("echelon.delivery_service.land_delivery") as mock_land:
         main()
 
-    mock_land.assert_called_once_with(["001", "--continue"])
+    mock_land.assert_called_once_with(
+        Path.cwd(),
+        DeliveryLandRequest(spec_id="001", continue_existing=True),
+    )
 
 
 @pytest.mark.unit
 def test_harness_land_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryLandRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "harness", "land", "001", "--continue"])
 
-    with patch("echelon.cli._cmd_land") as mock_land:
+    with patch("echelon.delivery_service.land_delivery") as mock_land:
         main()
 
-    mock_land.assert_called_once_with(["001", "--continue"])
+    mock_land.assert_called_once_with(
+        Path.cwd(),
+        DeliveryLandRequest(spec_id="001", continue_existing=True),
+    )
 
 
 @pytest.mark.unit
