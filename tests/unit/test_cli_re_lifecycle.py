@@ -836,16 +836,20 @@ def test_spec_run_help_moves_re_options_and_exposes_ignore_re() -> None:
 
 
 @pytest.mark.unit
-def test_spec_run_ignore_re_routes_to_legacy_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_spec_run_ignore_re_routes_to_spec_service(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli_app import app
+    from echelon.spec_service import SpecRunRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_run", lambda args: calls.append(args))
+    calls: list[SpecRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.run_spec",
+        lambda _root, request: calls.append(request),
+    )
 
     result = CliRunner().invoke(app, ["spec", "run", "Build dashboards", "--ignore-re"])
 
     assert result.exit_code == 0
-    assert calls == [["Build dashboards", "--ignore-re"]]
+    assert calls == [SpecRunRequest(description="Build dashboards", ignore_re=True)]
 
 
 @pytest.mark.unit
@@ -856,10 +860,13 @@ def test_legacy_spec_parser_rejects_moved_re_options(
     capsys: pytest.CaptureFixture[str],
     flag: str,
 ) -> None:
-    from echelon.cli import _cmd_run
+    from echelon.spec_service import _cmd_run
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *a, **k: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "echelon.spec_service._workspace_git_preflight",
+        lambda *a, **k: None,
+    )
     value = "changed" if flag == "--re-policy" else "9"
 
     with pytest.raises(SystemExit) as exc:
@@ -875,7 +882,7 @@ def test_spec_continue_rejects_moved_re_budget(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_continue
+    from echelon.spec_service import _cmd_continue
 
 
     with pytest.raises(SystemExit) as exc:

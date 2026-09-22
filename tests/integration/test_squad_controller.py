@@ -2008,7 +2008,7 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     capsys,
 ) -> None:
     from echelon.checkpoint_cli import run_checkpoint_command
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
 
     provider = _mock_provider()
     default_dispatch = provider.exec_agent.side_effect
@@ -7089,7 +7089,7 @@ class TestSquadControllerBasics:
         assert remediation["qualitative_findings"] == qualitative_findings
 
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
-        from echelon.cli import _classify_run_recovery
+        from echelon.spec_service import _classify_run_recovery
 
         ctrl, store = _controller(tmp_path)
         store.initialize(
@@ -10245,7 +10245,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from echelon.cli import _cmd_status
+        from echelon.spec_service import _cmd_status
         from echelon.phase_service import run_phase
 
         invalid = SquadAgentResult(

@@ -20,10 +20,15 @@ def _run_artifacts(tmp_path: Path, args: list[str]) -> int:
     orig = os.getcwd()
     try:
         os.chdir(tmp_path)
-        from echelon.cli import _cmd_artifacts
+        from echelon.spec_service import write_artifacts
 
         try:
-            _cmd_artifacts(args)
+            if not args:
+                from echelon.cli_app import app
+                from typer.testing import CliRunner
+
+                return CliRunner().invoke(app, ["spec", "artifacts"]).exit_code
+            write_artifacts(tmp_path, spec_id=args[0], extra_args=args[1:])
             return 0
         except SystemExit as e:
             return int(e.code) if e.code is not None else 0
@@ -49,9 +54,7 @@ def test_artifacts_command_requires_spec_id(
 ) -> None:
     rc = _run_artifacts(tmp_path, [])
 
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "missing spec_id" in captured.err
+    assert rc == 2
 
 
 @pytest.mark.unit

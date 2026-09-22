@@ -1,6 +1,6 @@
 import pytest
 
-from echelon.cli import _classify_run_recovery
+from echelon.spec_service import _classify_run_recovery
 
 
 @pytest.mark.parametrize("reason", ["repair_no_progress", "repair_action_unclassified", "repair_review_stale", "repair_context_incomplete", "repair_external_prerequisite", "repair_human_decision"])

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from harness.ai_cli_backend import CliRunResult
-from echelon.cli import _print_squad_summary
+from echelon.spec_service import _print_squad_summary
 from harness.run_summary import (
     SummaryAgent,
     SummaryFact,
@@ -227,7 +227,7 @@ def test_summary_does_not_publish_configured_or_missing_spec_directory(tmp_path)
 
 
 def test_summary_separates_distinct_phases_and_execution_count():
-    from echelon.cli import _phase_a_summary_facts
+    from echelon.spec_service import _phase_a_summary_facts
     facts = _phase_a_summary_facts({"completed_phases": ["phase1-discover", "phase1-why1"],
         "phase_dispatch_counts": {"phase1-discover": 14, "phase1-why1": 13}}, spec_dir="", stopped="blocked")
     assert any("27 phase executions" in fact.text for fact in facts)
@@ -237,7 +237,7 @@ def test_spec_continue_preserves_top_level_command_through_internal_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from echelon import cli
+    from echelon import spec_service as cli
 
     captured: dict[str, str] = {}
     monkeypatch.chdir(tmp_path)
@@ -249,7 +249,7 @@ def test_spec_continue_preserves_top_level_command_through_internal_run(
 
     monkeypatch.setattr(cli, "_cmd_continue", continue_run)
 
-    cli._cmd_spec_continue([])
+    cli.continue_spec(tmp_path, mode=None)
 
     assert captured["command"] == "echelon spec continue"
     assert cli._SPEC_SUMMARY_COMMAND.get() == "echelon spec run"
@@ -260,7 +260,7 @@ def test_spec_continue_checkpoint_exit_emits_one_durable_summary(
     monkeypatch,
     capsys,
 ) -> None:
-    from echelon import cli
+    from echelon import spec_service as cli
 
     run_dir = tmp_path / "runs" / "spec-current"
     run_dir.mkdir(parents=True)
@@ -302,7 +302,7 @@ def test_spec_continue_checkpoint_exit_emits_one_durable_summary(
         "harness.run_summary.summarize_run_for_cli",
         return_value="Recorded the blocked specification handoff.",
     ):
-        cli._cmd_spec_continue([])
+        cli.continue_spec(tmp_path, mode=None)
 
     output = capsys.readouterr().out
     assert output.count("SQUAD SUMMARY") == 1

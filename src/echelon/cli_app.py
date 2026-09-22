@@ -1707,7 +1707,9 @@ def root_run(
 
 def _dispatch_review_compatibility(args: list[str]) -> None:
     """Keep the unmatched review alias behind one explicit legacy boundary."""
-    _legacy_cli()._dispatch_skill_command("review", args)
+    from echelon.skill_command_service import dispatch_skill
+
+    dispatch_skill("review", args, project_root=Path.cwd())
 
 
 @app.command("review", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2779,32 +2781,24 @@ def spec_run(
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Run Phase A squad spec authoring."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRunRequest, run_spec
 
-    args: list[str] = []
-    if description is not None:
-        args.append(description)
-    args.extend(list(ctx.args))
-    _extend_option(args, "--mode", mode)
-    if reset:
-        args.append("--reset")
-    if perfectionist:
-        args.append("--perfectionist")
-    if init:
-        args.append("--init")
-    _extend_option(args, "--message", message)
-    _extend_option(args, "--next-phase", next_phase)
-    _extend_repeated_option(args, "--target", target)
-    _extend_repeated_option(args, "--input", input_values)
-    if ignore_re:
-        args.append("--ignore-re")
-    if stash:
-        args.append("--stash")
-    if discard:
-        args.append("--discard")
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_spec_run(args)
+    run_spec(Path.cwd(), SpecRunRequest(
+        description=description,
+        extra_args=tuple(ctx.args),
+        mode=mode,
+        reset=reset,
+        perfectionist=perfectionist,
+        init=init,
+        message=message,
+        next_phase=next_phase,
+        targets=tuple(target or ()),
+        input_values=tuple(input_values or ()),
+        ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("retarget")
@@ -2823,22 +2817,21 @@ def spec_retarget(
     ),
 ) -> None:
     """Destructively replace the active spec's complete target set."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRetargetRequest, retarget_spec
 
-    args = [spec_id]
-    _extend_repeated_option(args, "--target", target)
-    args.extend("--confirm" for _ in range(confirm))
-    legacy_cli._cmd_spec_retarget(args)
+    retarget_spec(Path.cwd(), SpecRetargetRequest(
+        spec_id=spec_id,
+        targets=tuple(target),
+        confirm_count=confirm,
+    ))
 
 
 @spec_app.command("status")
 def spec_status() -> None:
     """Show current spec run state and next action."""
-    from pathlib import Path
+    from echelon.spec_service import show_status
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_status(Path.cwd())
+    show_status(Path.cwd())
 
 
 @spec_app.command(
@@ -2854,11 +2847,9 @@ def spec_continue(
     ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import continue_spec
 
-    args = list(ctx.args)
-    _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
+    continue_spec(Path.cwd(), mode=mode, extra_args=tuple(ctx.args))
 
 
 @spec_app.command(
@@ -2873,13 +2864,9 @@ def spec_resume(
     ),
 ) -> None:
     """Answer escalation questions from a blocked run."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import resume_spec
 
-    args: list[str] = []
-    if answer is not None:
-        args.append(answer)
-    args.extend(list(ctx.args))
-    legacy_cli._cmd_spec_resume(args)
+    resume_spec(Path.cwd(), answer=answer, extra_args=tuple(ctx.args))
 
 
 @spec_app.command("add-input")
@@ -2894,11 +2881,9 @@ def spec_add_input(
     ),
 ) -> None:
     """Add declared evidence to a parked investigation access checkpoint."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import add_input
 
-    args: list[str] = []
-    _extend_repeated_option(args, "--input", input_values)
-    legacy_cli._cmd_spec_add_input(args)
+    add_input(Path.cwd(), input_values=tuple(input_values or ()))
 
 
 @spec_app.command(
@@ -2911,20 +2896,14 @@ def spec_resolve(
     decision: Optional[str] = typer.Argument(None, help="Explicit project decision for this issue."),
 ) -> None:
     """Record one issue decision and dispatch its targeted WHAT repair."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import resolve_issue
 
-    project_root = Path.cwd()
-    args = [issue_id]
-    if decision is not None:
-        args.append(decision)
-    args.extend(list(ctx.args))
-    ext_dir = legacy_cli._installed_extension_or_exit(project_root)
-    legacy_cli._require_provider_capability(
-        "echelon spec resolve",
-        legacy_cli.ProviderCapability.ARTIFACT,
-        project_dir=project_root,
+    resolve_issue(
+        Path.cwd(),
+        issue_id=issue_id,
+        decision=decision,
+        extra_args=tuple(ctx.args),
     )
-    legacy_cli._cmd_spec_resolve(args, project_root=project_root, ext_dir=ext_dir)
 
 
 @spec_app.command(
@@ -2947,16 +2926,15 @@ def spec_rewind(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
-    from pathlib import Path
+    from echelon.spec_service import SpecRewindRequest, rewind_spec
 
-    from echelon import cli as legacy_cli
-
-    args = [phase_id, *list(ctx.args)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_rewind(args, project_root=Path.cwd())
+    rewind_spec(Path.cwd(), SpecRewindRequest(
+        phase_id=phase_id,
+        extra_args=tuple(ctx.args),
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=checkpoint_next_phase,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("repair-traceability")
@@ -2964,13 +2942,9 @@ def spec_repair_traceability(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the safe traceability repair."),
 ) -> None:
     """Repair safely-prunable product-input task mappings and resume finalization."""
-    from pathlib import Path
+    from echelon.spec_service import repair_traceability
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_repair_traceability(
-        ["--confirm"] if confirm else [], project_root=Path.cwd()
-    )
+    repair_traceability(Path.cwd(), confirm=confirm)
 
 
 @spec_app.command("switch")
@@ -3076,12 +3050,14 @@ def spec_drop_target(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the target removal."),
 ) -> None:
     """Remove an unused target and re-run task planning for the remaining targets."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import drop_target
 
-    args = [spec_id, target]
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_drop_target(args, project_root=Path.cwd())
+    drop_target(
+        Path.cwd(),
+        spec_id=spec_id,
+        target=target,
+        confirm=confirm,
+    )
 
 
 @spec_checkpoint_app.command(
@@ -4087,12 +4063,10 @@ def spec_target(
     init: bool = typer.Option(False, "--init", help="Create or prepare target Git repo(s)."),
 ) -> None:
     """Set implementation targets in spec metadata."""
-    from echelon import cli as legacy_cli
+    del ctx, spec_id, repo, init
+    from echelon.spec_service import reject_target_mutation
 
-    args = [spec_id, *repo, *list(ctx.args)]
-    if init:
-        args.append("--init")
-    legacy_cli._cmd_spec_target(args)
+    reject_target_mutation()
 
 
 @spec_app.command("targets")
@@ -4100,9 +4074,9 @@ def spec_targets(
     spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to inspect."),
 ) -> None:
     """Display every task grouped by delivery target."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import show_targets
 
-    legacy_cli._cmd_spec_targets([spec_id])
+    show_targets(Path.cwd(), spec_id=spec_id)
 
 
 @spec_app.command(
@@ -4114,9 +4088,9 @@ def spec_artifacts(
     spec_id: str = typer.Argument(..., help="Spec id to index."),
 ) -> None:
     """Generate specs/<id>/ARTIFACTS.md."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import write_artifacts
 
-    legacy_cli._cmd_artifacts([spec_id, *list(ctx.args)])
+    write_artifacts(Path.cwd(), spec_id=spec_id, extra_args=tuple(ctx.args))
 
 
 @spec_app.command(
@@ -4313,13 +4287,13 @@ def spec_reopen(
     ),
 ) -> None:
     """Reopen spec from fulfillment gaps."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
     args = [spec_id]
     if report is not None:
         args.append(report)
     args.extend(list(ctx.args))
-    legacy_cli._dispatch_skill_command("reopen", args)
+    dispatch_skill("reopen", args, project_root=Path.cwd())
 
 
 @spec_app.command("defer")
@@ -4490,9 +4464,13 @@ def spec_bugfix(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
 ) -> None:
     """Diagnose and plan a bugfix."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
-    legacy_cli._dispatch_skill_command("bugfix", [spec_id, description, *list(ctx.args)])
+    dispatch_skill(
+        "bugfix",
+        [spec_id, description, *list(ctx.args)],
+        project_root=Path.cwd(),
+    )
 
 
 @spec_app.command(
@@ -4505,9 +4483,13 @@ def spec_change(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
 ) -> None:
     """Plan a scope change."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
-    legacy_cli._dispatch_skill_command("change", [spec_id, description, *list(ctx.args)])
+    dispatch_skill(
+        "change",
+        [spec_id, description, *list(ctx.args)],
+        project_root=Path.cwd(),
+    )
 
 
 @spec_app.command(
@@ -4526,13 +4508,16 @@ def spec_amend(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview baseline and inputs without mutation."),
 ) -> None:
     """Prepare an isolated amendment for an unbuilt spec."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import prepare_amendment
 
-    args = [spec_id, description, *list(ctx.args)]
-    _extend_repeated_option(args, "--input", input_values)
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_spec_amend(args)
+    prepare_amendment(
+        Path.cwd(),
+        spec_id=spec_id,
+        description=description,
+        input_values=tuple(input_values or ()),
+        dry_run=dry_run,
+        extra_args=tuple(ctx.args),
+    )
 
 
 @delivery_app.command(

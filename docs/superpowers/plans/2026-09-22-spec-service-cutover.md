@@ -63,7 +63,7 @@
 - Produces: 'reject_target_mutation() -> NoReturn'.
 - Consumes: existing spec domain modules and current console/error contracts.
 
-- [ ] **Step 1: Write failing typed-routing tests**
+- [x] **Step 1: Write failing typed-routing tests**
 
 In 'tests/unit/test_spec_service_boundary.py', invoke the Typer app and patch the new services. Cover every Task 1 route. Representative tests:
 
@@ -109,7 +109,7 @@ def test_spec_drop_target_routes_typed_values(monkeypatch):
 
 For 'reopen', 'bugfix', and 'change', patch 'dispatch_skill' and assert the command, tuple of arguments, and 'Path.cwd()'.
 
-- [ ] **Step 2: Verify the new boundary is absent**
+- [x] **Step 2: Verify the new boundary is absent**
 
 Run:
 
@@ -119,7 +119,7 @@ Run:
 
 Expected: collection or monkeypatch resolution fails because the two service modules do not exist.
 
-- [ ] **Step 3: Move shared skill dispatch**
+- [x] **Step 3: Move shared skill dispatch**
 
 Create 'skill_command_service.py' with:
 
@@ -188,7 +188,7 @@ def dispatch_skill(
 
 Move 'SKILL_MAP', '_load_prosaic_command', '_skill_required_capability', '_skill_not_found_msg', and '_build_prompt' with the dispatcher. Keep the provider/config and skill-location helpers in 'cli.py' because delivery and RE still use them; the local import above avoids an import-time cycle. Update '_dispatch_review_compatibility' to call the service. Delete the old dispatcher and only its now-exclusive helpers from 'cli.py'.
 
-- [ ] **Step 4: Add typed leaf functions and redirect Typer**
+- [x] **Step 4: Add typed leaf functions and redirect Typer**
 
 Implement the exact signatures already listed in this task's Interfaces block, with 'project_root' positional and all command values keyword-only. 'resolve_issue', 'write_artifacts', and 'prepare_amendment' additionally accept 'extra_args: Sequence[str] = ()'; 'reject_target_mutation' returns 'NoReturn'.
 
@@ -199,7 +199,7 @@ capability gate currently performed by 'spec_resolve' in 'cli_app.py' into the
 service before entering the relocated handler. This preserves validation while
 leaving Typer responsible only for parsing.
 
-- [ ] **Step 5: Delete legacy leaf definitions and repair imports**
+- [x] **Step 5: Delete legacy leaf definitions and repair imports**
 
 Delete '_cmd_spec_add_input', '_format_product_input_declarations', '_cmd_spec_resolve', '_cmd_drop_target', '_cmd_spec_target', '_cmd_spec_targets', '_cmd_artifacts', '_cmd_spec_amend', '_dispatch_skill_command', and the already-dead '_cmd_spec' dispatcher from 'cli.py'. Deleting '_cmd_spec' here prevents it from retaining references to removed leaf handlers; its direct help/switch tests move to the canonical Typer surface.
 
@@ -213,7 +213,7 @@ Import or patch the new owner in every match. Do not retain test-only aliases.
 In 'test_cli_spec_switch.py', remove direct '_cmd_spec' imports and invoke the
 Typer app with 'CliRunner' for help and switch coverage.
 
-- [ ] **Step 6: Run the leaf focused suite**
+- [x] **Step 6: Run the leaf focused suite**
 
 ~~~bash
 .venv/bin/python -m pytest -q \
@@ -228,7 +228,7 @@ Typer app with 'CliRunner' for help and switch coverage.
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit the leaf cutover**
+- [x] **Step 7: Commit the leaf cutover**
 
 ~~~bash
 git add src/echelon/spec_service.py src/echelon/skill_command_service.py \
@@ -284,7 +284,7 @@ git commit -m "refactor: move leaf spec commands to service"
 - Produces: 'repair_traceability(project_root: Path, *, confirm: bool) -> None'.
 - Produces for 'phase_service': 'find_current_run_dir', 'failed_automatic_phase_replay', 'resolve_phase_target_spec_dir', 'phase_state_updates_for_target', 'phase_context_resolution_rows', 'classify_run_recovery', 'enforce_project_config_compatibility', 'workspace_git_preflight', and 'command_display'.
 
-- [ ] **Step 1: Write failing typed-core and ownership tests**
+- [x] **Step 1: Write failing typed-core and ownership tests**
 
 Add route tests for run, retarget, status, continue, resume, rewind, and repair. The run assertion must compare this value:
 
@@ -335,7 +335,7 @@ def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
     assert "echelon.cli import" not in phase_source
 ~~~
 
-- [ ] **Step 2: Verify the core boundary tests fail**
+- [x] **Step 2: Verify the core boundary tests fail**
 
 ~~~bash
 .venv/bin/python -m pytest -q tests/unit/test_spec_service_boundary.py \
@@ -344,7 +344,7 @@ def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
 
 Expected: missing APIs and remaining legacy ownership cause failures.
 
-- [ ] **Step 3: Define typed request objects and public entry points**
+- [x] **Step 3: Define typed request objects and public entry points**
 
 Add:
 
@@ -385,17 +385,17 @@ class SpecRewindRequest:
 
 Public functions accept these types or explicit typed keywords. Only private helpers inside 'spec_service.py' may adapt them to the mechanically moved parser.
 
-- [ ] **Step 4: Move the Phase A kernel mechanically**
+- [x] **Step 4: Move the Phase A kernel mechanically**
 
 Move implementations rooted at '_cmd_run', '_cmd_continue', '_cmd_continue_impl', '_cmd_resume', '_cmd_status', '_cmd_rewind', '_cmd_repair_traceability', and '_cmd_repair_traceability_locked', plus their spec-only reachable helpers. Include summary rendering, recovery classification, rewind selection/reset, active-run selection, phase-target resolution, and spec context preservation.
 
 Preserve bodies before correcting imports. Do not combine branches, rename persisted fields, alter state-write order, or change exceptions. Shared generic helpers still used by delivery/RE may remain in 'cli.py'; use narrow local imports and never dispatch back to a removed spec handler.
 
-- [ ] **Step 5: Redirect Typer and 'phase_service'**
+- [x] **Step 5: Redirect Typer and 'phase_service'**
 
 Construct typed requests in 'cli_app.py'. In 'phase_service.py', replace 'from echelon import cli as shared' with explicit imports from 'echelon.spec_service', then call those names directly. Preserve phase replay ordering and authority comparisons.
 
-- [ ] **Step 6: Delete legacy ownership and migrate tests**
+- [x] **Step 6: Delete legacy ownership and migrate tests**
 
 Delete the four remaining '_cmd_spec_*' wrappers, moved core handlers, and helpers now exclusive to 'spec_service.py'. Delete '_installed_extension_or_exit' if no caller remains. The dead '_cmd_spec' dispatcher was already removed in Task 1.
 
@@ -407,7 +407,7 @@ rg -n '_cmd_spec|_cmd_status|_cmd_continue|_cmd_resume|_cmd_rewind|_cmd_repair_t
 
 Move Phase A test imports to 'echelon.spec_service'. Retain 'echelon.cli' imports only for definitions that remain generic and are still owned there. Remove obsolete '_cmd_spec' help/dispatch tests; Typer and boundary tests replace them.
 
-- [ ] **Step 7: Run focused Phase A verification**
+- [x] **Step 7: Run focused Phase A verification**
 
 ~~~bash
 .venv/bin/python -m pytest -q \
@@ -427,7 +427,7 @@ Move Phase A test imports to 'echelon.spec_service'. Retain 'echelon.cli' import
 
 Expected: all selected tests pass. Poll a long-running pytest process instead of restarting it.
 
-- [ ] **Step 8: Run the CLI regression gate**
+- [x] **Step 8: Run the CLI regression gate**
 
 ~~~bash
 .venv/bin/python -m pytest -q \
@@ -437,7 +437,7 @@ Expected: all selected tests pass. Poll a long-running pytest process instead of
 
 Expected: all selected tests pass.
 
-- [ ] **Step 9: Commit the core cutover**
+- [x] **Step 9: Commit the core cutover**
 
 ~~~bash
 git add src/echelon/spec_service.py src/echelon/cli_app.py \
@@ -473,7 +473,7 @@ git commit -m "refactor: move phase a commands to spec service"
 - Consumes: both production commits.
 - Produces: exact verification evidence and makes active delivery workflows the next S3 action; S3 remains 'ACTIVE'.
 
-- [ ] **Step 1: Run structural guards**
+- [x] **Step 1: Run structural guards**
 
 ~~~bash
 rg -n '^def _cmd_spec|^def _cmd_status|^def _cmd_continue|^def _cmd_resume|^def _cmd_rewind|^def _cmd_repair_traceability' \
@@ -483,7 +483,7 @@ rg -n '^def _cmd_spec|^def _cmd_status|^def _cmd_continue|^def _cmd_resume|^def 
 
 Expected: the search returns no matches and the boundary tests pass, including the AST-scoped checks for active spec functions and 'phase_service.py'.
 
-- [ ] **Step 2: Run repository merge verification**
+- [x] **Step 2: Run repository merge verification**
 
 ~~~bash
 .venv/bin/python scripts/merge_verification.py plan --base f6a3d2a4
@@ -492,11 +492,11 @@ Expected: the search returns no matches and the boundary tests pass, including t
 
 Expected: the planned repository gate passes and writes a receipt. Record exact pass, skip, deselection, failure, and duration totals.
 
-- [ ] **Step 3: Update tracking documents**
+- [x] **Step 3: Update tracking documents**
 
 Move all 16 active spec routes to the modular-service table, name 'echelon.spec_service', isolate hidden 'spec target', and update totals in the route inventory. In the control sheet, check the spec cutover item, record commits/test totals/receipt, keep S3 'ACTIVE', and set active delivery workflows as next.
 
-- [ ] **Step 4: Check and commit evidence**
+- [x] **Step 4: Check and commit evidence**
 
 ~~~bash
 git diff --check
@@ -508,7 +508,7 @@ git commit -m "docs: record spec service cutover verification"
 
 Expected before commit: only the two documentation files and generated receipt are uncommitted.
 
-- [ ] **Step 5: Verify final state**
+- [x] **Step 5: Verify final state**
 
 ~~~bash
 git status --short

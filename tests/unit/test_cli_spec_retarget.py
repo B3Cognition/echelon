@@ -625,7 +625,7 @@ def test_duplicate_targets_after_resolution_are_rejected(
     from echelon.spec_retarget_cli import run_spec_retarget_command
 
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda _root, _targets, allow_missing: ["apps/web"],
     )
 

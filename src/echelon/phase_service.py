@@ -7,6 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from echelon.strict_json import loads_strict_json
+from echelon.spec_service import (
+    classify_run_recovery,
+    command_display,
+    enforce_project_config_compatibility,
+    failed_automatic_phase_replay,
+    find_current_run_dir,
+    phase_context_resolution_rows,
+    phase_state_updates_for_target,
+    resolve_phase_target_spec_dir,
+    workspace_git_preflight,
+)
 from echelon.ui import banner
 from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
 from harness.recovery_instruction import RecoveryInstructionError
@@ -97,10 +108,6 @@ def run_phase(
         )
         raise SystemExit(1)
 
-    # These helpers are shared with active spec workflows. They remain in the
-    # legacy module until those workflows move, while this service owns the
-    # phase command's parsing, validation, orchestration, and rendering.
-    from echelon import cli as shared
     from harness.config import get_full_resolved_config, load_config
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
@@ -111,11 +118,11 @@ def run_phase(
         "phase3-consensus",
         "phase3-consensus-tasks-lexicon",
     }:
-        shared._enforce_project_config_compatibility(project_root)
+        enforce_project_config_compatibility(project_root)
 
-    shared._workspace_git_preflight(project_root, command_name="echelon phase run")
+    workspace_git_preflight(project_root, command_name="echelon phase run")
 
-    run_dir = shared._find_current_run_dir(project_root)
+    run_dir = find_current_run_dir(project_root)
     if run_dir is None:
         print(
             "✗ echelon phase run requires an active spec run. "
@@ -139,7 +146,7 @@ def run_phase(
 
     spec_arg = spec_id or ""
     try:
-        failed_replay = shared._failed_automatic_phase_replay(
+        failed_replay = failed_automatic_phase_replay(
             current_state,
             phase_id=phase_id,
             spec_arg=spec_arg,
@@ -160,7 +167,7 @@ def run_phase(
         )
         raise SystemExit(1)
     current_state = loaded_state
-    target_spec_dir = shared._resolve_phase_target_spec_dir(
+    target_spec_dir = resolve_phase_target_spec_dir(
         project_root,
         current_state,
         run_dir,
@@ -182,7 +189,7 @@ def run_phase(
         )
         raise SystemExit(1)
 
-    initial_updates = shared._phase_state_updates_for_target(
+    initial_updates = phase_state_updates_for_target(
         project_root,
         current_state,
         target_spec_dir,
@@ -196,7 +203,7 @@ def run_phase(
         initial_updates["manual_phase_run"] = True
 
     node = graph.get(phase_id)
-    context_rows = shared._phase_context_resolution_rows(
+    context_rows = phase_context_resolution_rows(
         node,
         project_root,
         {**current_state, **initial_updates},
@@ -260,7 +267,7 @@ def run_phase(
             raise SystemExit(1) from exc
         if not authorized:
             source_phase = str(failed_replay.decision.get("source_phase") or "").strip()
-            replay_command = shared._command_display("echelon phase run", [source_phase])
+            replay_command = command_display("echelon phase run", [source_phase])
             print(
                 "✗ Failed automatic decision can only be retired by its exact "
                 f"source replay: {replay_command}",
@@ -300,7 +307,7 @@ def run_phase(
     recovery_note = ""
     final_state = state_store.load()
     if result.status == "blocked":
-        recovery = shared._classify_run_recovery(final_state, project_root=project_root)
+        recovery = classify_run_recovery(final_state, project_root=project_root)
         if recovery.kind in {"manual_recovery", "human_resume", "safe_rewind"} and recovery.command:
             next_action = recovery.command
             recovery_note = recovery.note

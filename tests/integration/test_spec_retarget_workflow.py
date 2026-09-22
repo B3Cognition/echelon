@@ -216,7 +216,7 @@ class RetargetWorkspace:
         _git(self.root, "commit", "-m", "add unrelated warning spec")
 
     def run_drop_target(self, target: str) -> CommandOutcome:
-        from echelon.cli import _cmd_drop_target
+        from echelon.spec_service import drop_target
 
         self.park_before_ready()
         state = self.active_state()
@@ -238,9 +238,11 @@ class RetargetWorkspace:
         stderr = io.StringIO()
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                _cmd_drop_target(
-                    [self.spec_id, target, "--confirm"],
-                    project_root=self.root,
+                drop_target(
+                    self.root,
+                    spec_id=self.spec_id,
+                    target=target,
+                    confirm=True,
                 )
         except SystemExit as exc:
             return CommandOutcome(int(exc.code or 0), stdout.getvalue(), stderr.getvalue())
@@ -345,7 +347,7 @@ class RetargetWorkspace:
         crash_after_commit: bool = False,
         forbid_replayed_effects: bool = False,
     ) -> CommandOutcome:
-        from echelon import cli as legacy_cli
+        from echelon import spec_service as spec_commands
 
         match = re.search(r"checkpoint:([^\s]+)", failed.stderr)
         checkpoint_id = match.group(1) if match else self.last_checkpoint_id
@@ -385,7 +387,7 @@ class RetargetWorkspace:
             stack.enter_context(redirect_stdout(stdout))
             stack.enter_context(redirect_stderr(stderr))
             try:
-                legacy_cli._cmd_rewind(
+                spec_commands._cmd_rewind(
                     [f"checkpoint:{checkpoint_id}", "--confirm"],
                     self.root,
                 )

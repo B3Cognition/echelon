@@ -66,7 +66,7 @@ def test_managed_why2_rejects_inline_value_before_publication():
     ('phase_dispatch_limit_evidence_too_many_candidates', 'bounded recovery option count'),
 ])
 def test_recovery_note_distinguishes_invalid_and_ineligible_evidence(reason, expected):
-    from echelon.cli import _recovery_action_from_instruction
+    from echelon.spec_service import _recovery_action_from_instruction
     from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
     instruction = RecoveryInstruction(kind=RecoveryKind.MANUAL_DIAGNOSIS,
         reason_code=reason, phase='', requires_human_input=False)

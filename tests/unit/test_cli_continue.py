@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from echelon.cli import (
+from echelon.spec_service import (
     _automatic_decision_is_eligible,
     _classify_run_recovery,
     _cmd_continue,
@@ -474,7 +474,7 @@ def test_continue_delegates_legacy_banzai_why2_to_the_controller(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -514,7 +514,7 @@ def test_continue_restores_interrupted_legacy_banzai_why2_reassessment(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -560,7 +560,7 @@ def test_continue_rearms_stale_banzai_product_recommendation(
         graph=graph,
     )
     monkeypatch.setattr(
-        "echelon.cli._automatic_decision_is_eligible",
+        "echelon.spec_service._automatic_decision_is_eligible",
         lambda candidate, **_kwargs: _automatic_decision_is_eligible(
             candidate,
             project_root=tmp_path,
@@ -620,7 +620,7 @@ def test_continue_does_not_revive_a_historical_run_without_current_pointer(
     )
     (tmp_path / "runs" / ".current").unlink()
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda *_args, **_kwargs: pytest.fail("historical run must not dispatch"),
     )
 
@@ -748,7 +748,7 @@ def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
     calls: list[list[str]] = []
 
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
@@ -788,7 +788,7 @@ def test_continue_routes_eligible_semi_and_recovering_decisions_without_cli_muta
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
     state_path = run_dir / "state.json"
@@ -994,7 +994,7 @@ THEN: The dashboard is visible
         encoding="utf-8",
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda args, **_kwargs: calls.append(args))
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1053,7 +1053,7 @@ def test_continue_retries_exhausted_tasks_lexicon_gate(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -1098,7 +1098,7 @@ def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
     spec_dir = run_dir / "specs" / "004-transform-selector-above-stat"
     spec_dir.mkdir(parents=True)
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda args, **_kwargs: calls.append(args))
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1188,7 +1188,7 @@ def test_continue_sentinel_drops_obsolete_tasks_error_before_planning(tmp_path, 
             "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
             "  **Named Test Ownership:** `UT-002`.\n"
         )
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **kwargs: calls.append(args))
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda args, **kwargs: calls.append(args))
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
     state = json.loads((run_dir / "state.json").read_text())
     assert calls
@@ -1240,7 +1240,7 @@ def test_continue_routes_invalid_coverage_contract_to_sentinel_repair(
 
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -1482,7 +1482,7 @@ def test_continue_does_not_apply_retired_re_generation_recovery(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1574,7 +1574,7 @@ def test_continue_reopens_completed_run_in_same_directory(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1615,7 +1615,7 @@ def test_continue_sets_active_run_spec_context_for_phase3_resume_from_published_
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1658,7 +1658,7 @@ def test_continue_does_not_guess_latest_spec_when_multiple_specs_exist(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1741,7 +1741,7 @@ def test_cmd_continue_resumes_tracker_repair_at_specialists(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1802,7 +1802,7 @@ def test_continue_retries_incomplete_phase_before_constitution(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     assert _next_continue_phase(tmp_path) == "phase1-discover"
 
@@ -1846,7 +1846,7 @@ def test_continue_provider_session_limit_retries_incomplete_phase(
 
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
@@ -1901,7 +1901,7 @@ def test_continue_allows_legacy_branchless_running_recovery(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path)
 
@@ -1933,7 +1933,7 @@ def test_continue_retries_timeout_without_resume_dead_end(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -1981,7 +1981,7 @@ def test_continue_ignores_legacy_nested_re_state_during_outer_escalation(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -2019,7 +2019,7 @@ def test_continue_explains_how_to_recover_from_phase_dispatch_limit(
         },
     )
 
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda *args, **kwargs: None)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -2054,7 +2054,7 @@ def test_continue_ignores_legacy_nested_re_state_for_active_spec_run(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
@@ -2098,7 +2098,7 @@ def test_continue_blocks_branchless_completed_run_from_starting_new_phase(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path)
@@ -2384,7 +2384,7 @@ def test_continue_preserves_finding_routes_for_quality_remediation_retry(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
@@ -2487,7 +2487,7 @@ def test_continue_retries_dispatch_cap_option_contract_with_count_preserved(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
@@ -2510,7 +2510,7 @@ def test_dispatch_cap_malformed_pass_issues_retries_current_certification_epoch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "echelon.cli.has_current_phase1_quality_prerequisite",
+        "echelon.spec_service.has_current_phase1_quality_prerequisite",
         lambda *_args, **_kwargs: True,
     )
 
@@ -2600,7 +2600,7 @@ def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "echelon.cli._runtime_bundle_compatibility",
+        "echelon.spec_service._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=True,
             command="",
@@ -2706,7 +2706,7 @@ def test_continue_prioritizes_phase_output_recovery_over_pending_issue(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -2756,7 +2756,7 @@ def test_continue_starts_controller_owned_issue_repair(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -2803,7 +2803,7 @@ def test_continue_revalidates_repaired_issue_before_requesting_new_decision(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -2872,7 +2872,7 @@ def test_continue_consumes_controller_recovery_instruction(
         },
     )
     monkeypatch.setattr(
-        "echelon.cli._runtime_bundle_compatibility",
+        "echelon.spec_service._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=True,
             command="",
@@ -2882,7 +2882,7 @@ def test_continue_consumes_controller_recovery_instruction(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -2923,7 +2923,7 @@ def test_continue_requires_runtime_sync_before_retry(
     )
     update_command = "echelon workspace migrate-to-prosaic"
     monkeypatch.setattr(
-        "echelon.cli._runtime_bundle_compatibility",
+        "echelon.spec_service._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=False,
             command=update_command,
@@ -2933,7 +2933,7 @@ def test_continue_requires_runtime_sync_before_retry(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, **_kwargs: calls.append(args),
     )
 
@@ -3048,7 +3048,7 @@ def test_continue_retries_external_blocker_phase_after_fix(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -3082,7 +3082,7 @@ def test_continue_retries_interrupted_phase(
     def fake_cmd_run(args, project_root, ext_dir):
         calls.append(args)
 
-    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", fake_cmd_run)
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -3137,7 +3137,7 @@ def test_continue_recovers_legacy_failed_generic_agent_block(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_run",
+        "echelon.spec_service._cmd_run",
         lambda args, project_root, ext_dir: calls.append(args),
     )
 
