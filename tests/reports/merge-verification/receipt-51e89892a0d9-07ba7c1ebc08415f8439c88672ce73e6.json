@@ -1,0 +1,76 @@
+{
+  "plan": {
+    "base_commit": "f6a3d2a437ccbf3bb9b0e45d7ced9d37ce7eec85",
+    "candidate_commit": "51e89892a0d96c86b25b9144fb40539fc06b72a0",
+    "candidate_tree": "c9963e5488c26050442171ca0ffd79fa4ae28f80",
+    "changed_paths": [
+      "docs/superpowers/plans/2026-09-22-spec-service-cutover.md",
+      "src/echelon/cli.py",
+      "src/echelon/cli_app.py",
+      "src/echelon/phase_service.py",
+      "src/echelon/skill_command_service.py",
+      "src/echelon/spec_retarget_cli.py",
+      "src/echelon/spec_service.py",
+      "tests/e2e/test-e2e-spec-target-cmd.sh",
+      "tests/integration/test_human_input_routing.py",
+      "tests/integration/test_spec_retarget_workflow.py",
+      "tests/integration/test_squad_controller.py",
+      "tests/unit/test_cli_add_input.py",
+      "tests/unit/test_cli_artifacts.py",
+      "tests/unit/test_cli_checkpoint.py",
+      "tests/unit/test_cli_config_compatibility.py",
+      "tests/unit/test_cli_continue.py",
+      "tests/unit/test_cli_drop_target.py",
+      "tests/unit/test_cli_fulfillment_commands.py",
+      "tests/unit/test_cli_llm_tool_policy.py",
+      "tests/unit/test_cli_mode_args.py",
+      "tests/unit/test_cli_next_step_escalation.py",
+      "tests/unit/test_cli_phase.py",
+      "tests/unit/test_cli_re_lifecycle.py",
+      "tests/unit/test_cli_resume_escalation_options.py",
+      "tests/unit/test_cli_resume_spec_context.py",
+      "tests/unit/test_cli_rewind.py",
+      "tests/unit/test_cli_run_summary.py",
+      "tests/unit/test_cli_spec_retarget.py",
+      "tests/unit/test_cli_spec_switch.py",
+      "tests/unit/test_cli_spec_target.py",
+      "tests/unit/test_cli_spec_targets.py",
+      "tests/unit/test_cli_status.py",
+      "tests/unit/test_cli_typer_app.py",
+      "tests/unit/test_cli_wiki.py",
+      "tests/unit/test_cli_workspace.py",
+      "tests/unit/test_managed_retarget_rewind_exclusion.py",
+      "tests/unit/test_phase3_repair_reporting.py",
+      "tests/unit/test_run_readiness.py",
+      "tests/unit/test_sage_eligibility.py",
+      "tests/unit/test_spec_service_boundary.py",
+      "tests/unit/test_status_roadmap.py"
+    ],
+    "commands": [
+      [
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ]
+    ],
+    "requires_full_suite": true,
+    "scope": "full-unit"
+  },
+  "results": [
+    {
+      "command": [
+        "/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ],
+      "duration_ms": 1772428,
+      "exit_code": 0
+    }
+  ],
+  "schema_version": 1,
+  "status": "passed"
+}

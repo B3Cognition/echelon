@@ -437,7 +437,7 @@ Expected: all selected tests pass. Poll a long-running pytest process instead of
 
 Expected: all selected tests pass.
 
-- [ ] **Step 9: Commit the core cutover**
+- [x] **Step 9: Commit the core cutover**
 
 ~~~bash
 git add src/echelon/spec_service.py src/echelon/cli_app.py \
@@ -473,7 +473,7 @@ git commit -m "refactor: move phase a commands to spec service"
 - Consumes: both production commits.
 - Produces: exact verification evidence and makes active delivery workflows the next S3 action; S3 remains 'ACTIVE'.
 
-- [ ] **Step 1: Run structural guards**
+- [x] **Step 1: Run structural guards**
 
 ~~~bash
 rg -n '^def _cmd_spec|^def _cmd_status|^def _cmd_continue|^def _cmd_resume|^def _cmd_rewind|^def _cmd_repair_traceability' \
@@ -483,7 +483,7 @@ rg -n '^def _cmd_spec|^def _cmd_status|^def _cmd_continue|^def _cmd_resume|^def 
 
 Expected: the search returns no matches and the boundary tests pass, including the AST-scoped checks for active spec functions and 'phase_service.py'.
 
-- [ ] **Step 2: Run repository merge verification**
+- [x] **Step 2: Run repository merge verification**
 
 ~~~bash
 .venv/bin/python scripts/merge_verification.py plan --base f6a3d2a4
@@ -492,11 +492,11 @@ Expected: the search returns no matches and the boundary tests pass, including t
 
 Expected: the planned repository gate passes and writes a receipt. Record exact pass, skip, deselection, failure, and duration totals.
 
-- [ ] **Step 3: Update tracking documents**
+- [x] **Step 3: Update tracking documents**
 
 Move all 16 active spec routes to the modular-service table, name 'echelon.spec_service', isolate hidden 'spec target', and update totals in the route inventory. In the control sheet, check the spec cutover item, record commits/test totals/receipt, keep S3 'ACTIVE', and set active delivery workflows as next.
 
-- [ ] **Step 4: Check and commit evidence**
+- [x] **Step 4: Check and commit evidence**
 
 ~~~bash
 git diff --check
@@ -508,7 +508,7 @@ git commit -m "docs: record spec service cutover verification"
 
 Expected before commit: only the two documentation files and generated receipt are uncommitted.
 
-- [ ] **Step 5: Verify final state**
+- [x] **Step 5: Verify final state**
 
 ~~~bash
 git status --short

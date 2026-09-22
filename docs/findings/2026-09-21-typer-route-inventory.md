@@ -14,9 +14,9 @@ The count treats commands below the hidden `harness` group as compatibility
 routes even though the nested `run` and `land` decorators are not themselves
 marked hidden.
 
-Current S3 progress after the benchmark, stack, workspace, and phase/version
-slices: 71 public commands use modular services and 36 still delegate into
-`echelon.cli`.
+Current S3 progress after the benchmark, stack, workspace, phase/version,
+compatibility, and spec slices: 87 public commands use modular services and 20
+still delegate into `echelon.cli`.
 
 The compatibility cleanup removed the hidden retired `build` and `cicd`
 routes. Retained root and hidden `harness` aliases now call their canonical
@@ -41,7 +41,7 @@ compatibility adapter.
 | `spec memory` | `mine`, `audit`, `refresh` |
 | `spec evidence` | `publish` |
 | `spec evidence memory` | `refresh`, `audit` |
-| `spec` | `switch`, `publish`, `verify`, `reconcile-fulfillment`, `defer`, `defer-runnability`, `plan-runnability`, `plan` |
+| `spec` | `run`, `retarget`, `status`, `continue`, `resume`, `add-input`, `resolve`, `rewind`, `repair-traceability`, `drop-target`, `targets`, `artifacts`, `reopen`, `bugfix`, `change`, `amend`, `switch`, `publish`, `verify`, `reconcile-fulfillment`, `defer`, `defer-runnability`, `plan-runnability`, `plan` |
 | `delivery` | `status` |
 
 ## Baseline public routes delegated into `cli.py`
@@ -54,7 +54,6 @@ compatibility adapter.
 | `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Cut over to modular services |
 | `workspace sources` | `sync` | Cut over to modular services |
 | `phase` | `list`, `run` | Cut over to `echelon.phase_service`; replay temporarily reuses shared spec/recovery helpers in `cli.py` pending the spec slice |
-| `spec` | `run`, `retarget`, `status`, `continue`, `resume`, `add-input`, `resolve`, `rewind`, `repair-traceability`, `drop-target`, `targets`, `artifacts`, `reopen`, `bugfix`, `change`, `amend` | Active |
 | `delivery` | `init`, `target`, `verify-local`, `cleanup-local`, `run`, `resume`, `continue`, `land` | Active |
 | `delivery checkpoint` | `list` | Active |
 | `re` | `run`, `refresh`, `deepen`, `status`, `continue`, `resume`, `publish`, `finalize`, `synthesize` | Active; keep protocol consolidation in S6 |
@@ -68,7 +67,7 @@ compatibility adapter.
 | `harness run`, `harness land`, `harness continue`, `harness resume` | Compatibility aliases forwarding to canonical `delivery` commands |
 | `re execute-run`, `re check-domain` | Active internal workflow entry points |
 | `re analyze`, `spec analyze` | Modular diagnostic entry points |
-| `spec target` | Compatibility route |
+| `spec target` | Retired mutation guard isolated in `echelon.spec_service`; no `cli.py` delegation |
 
 ## Recommended cutover order
 

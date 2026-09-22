@@ -15,7 +15,7 @@ starting another.
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 71 now use modular services and 36 still delegate into `cli.py`. Benchmark, stack, workspace, and phase/version are cut over; retired routes are deleted and compatibility aliases are isolated. Active spec workflows are next. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
+| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 87 now use modular services and 20 still delegate into `cli.py`. Benchmark, stack, workspace, phase/version, and active spec workflows are cut over; retired routes are deleted and compatibility aliases are isolated. Active delivery workflows are next. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
 | S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
@@ -60,6 +60,8 @@ starting another.
 | 2026-09-22 | S3 | Phase/version slice repository gate: 9,822 passed and 11,396 deselected in 31m32s on the feature branch. |
 | 2026-09-22 | S3 | Compatibility cleanup implemented: hidden retired `build` and `cicd` routes and their private handler branches are deleted; root and hidden `harness` aliases forward through canonical commands, with only `review` retained behind an explicit compatibility adapter. The 90-test Typer contract suite and 1,093-test CLI regression gate pass. S3 remains active; `spec` is next. |
 | 2026-09-22 | S3 | Compatibility cleanup repository gate: 9,822 passed and 11,409 deselected in 34m14s on the feature branch. |
+| 2026-09-22 | S3 | Spec service cutover implemented in `025ea318` and `51e89892`: all 16 active `spec` routes now call typed services, Phase A run/recovery ownership moved to `echelon.spec_service`, shared manual phase replay consumes its public recovery helpers, and the hidden `spec target` mutation guard is isolated there. Focused verification: 1,492 passed across the planned Spec/Phase A partitions. The CLI regression gate had 2,523 applicable passes; its sole remaining missing-template failure reproduced unchanged on the base branch. |
+| 2026-09-22 | S3 | Spec service repository gate: 9,822 passed and 11,421 deselected in 29m30s; receipt `tests/reports/merge-verification/receipt-51e89892a0d9-07ba7c1ebc08415f8439c88672ce73e6.json`. S3 remains active; active `delivery` workflows are next. |
 
 ## S2 Work Queue
 
@@ -90,7 +92,7 @@ starting another.
 - [x] Cut over `workspace` initialization, doctor, migration, and source sync.
 - [x] Cut over `phase` and `version`.
 - [x] Delete retired routes and isolate root/`harness` compatibility aliases.
-- [ ] Cut over active `spec` workflows.
+- [x] Cut over active `spec` workflows.
 - [ ] Cut over active `delivery` workflows without changing the state contract.
 - [ ] Put active `re` workflows behind a typed facade; leave protocol consolidation to S6.
 
