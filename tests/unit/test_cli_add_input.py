@@ -641,8 +641,8 @@ def test_spec_add_input_preserves_existing_mixed_package_modes(
     assert stat.S_IMODE(executable.stat().st_mode) == 0o751
 
 
-def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> None:
-    from echelon import cli
+def test_spec_service_add_input_accepts_repeatable_inputs(monkeypatch, capsys) -> None:
+    from echelon.spec_service import add_input
     from echelon.spec_add_input import SpecAddInputResult
 
     calls: list[list[str]] = []
@@ -660,11 +660,13 @@ def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> Non
 
     monkeypatch.setattr("echelon.spec_add_input.add_input_to_active_run", fake_add_input)
 
-    cli._cmd_spec_add_input([
-        "--input",
-        "reference:sources/new",
-        "--input=reference:sources/bench",
-    ])
+    add_input(
+        Path.cwd(),
+        input_values=(
+            "reference:sources/new",
+            "reference:sources/bench",
+        ),
+    )
 
     assert calls == [["reference:sources/new", "reference:sources/bench"]]
     output = capsys.readouterr().out

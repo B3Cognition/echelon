@@ -21,7 +21,7 @@ def _write_spec(spec_dir: Path) -> None:
 def test_drop_target_reopens_active_run_at_planning_and_invalidates_task_outputs(
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_drop_target
+    from echelon.spec_service import drop_target
 
     run_dir = tmp_path / "runs" / "spec-run"
     active_spec = run_dir / "specs" / "002-video"
@@ -46,9 +46,11 @@ def test_drop_target_reopens_active_run_at_planning_and_invalidates_task_outputs
         encoding="utf-8",
     )
 
-    _cmd_drop_target(
-        ["002-video", "sources/api", "--confirm"],
-        project_root=tmp_path,
+    drop_target(
+        tmp_path,
+        spec_id="002-video",
+        target="sources/api",
+        confirm=True,
     )
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
@@ -67,7 +69,7 @@ def test_drop_target_refuses_while_same_spec_mutation_is_locked(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_drop_target
+    from echelon.spec_service import drop_target
     from echelon.spec_lifecycle import SpecMutationLock
 
     run_dir = tmp_path / "runs" / "spec-run"
@@ -92,9 +94,11 @@ def test_drop_target_refuses_while_same_spec_mutation_is_locked(
 
     with SpecMutationLock.acquire(tmp_path, "002-video", "retarget-held"):
         with pytest.raises(SystemExit) as exc:
-            _cmd_drop_target(
-                ["002-video", "sources/api", "--confirm"],
-                project_root=tmp_path,
+            drop_target(
+                tmp_path,
+                spec_id="002-video",
+                target="sources/api",
+                confirm=True,
             )
 
     assert exc.value.code == 1

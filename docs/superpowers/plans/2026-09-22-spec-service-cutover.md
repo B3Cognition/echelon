@@ -63,7 +63,7 @@
 - Produces: 'reject_target_mutation() -> NoReturn'.
 - Consumes: existing spec domain modules and current console/error contracts.
 
-- [ ] **Step 1: Write failing typed-routing tests**
+- [x] **Step 1: Write failing typed-routing tests**
 
 In 'tests/unit/test_spec_service_boundary.py', invoke the Typer app and patch the new services. Cover every Task 1 route. Representative tests:
 
@@ -109,7 +109,7 @@ def test_spec_drop_target_routes_typed_values(monkeypatch):
 
 For 'reopen', 'bugfix', and 'change', patch 'dispatch_skill' and assert the command, tuple of arguments, and 'Path.cwd()'.
 
-- [ ] **Step 2: Verify the new boundary is absent**
+- [x] **Step 2: Verify the new boundary is absent**
 
 Run:
 
@@ -119,7 +119,7 @@ Run:
 
 Expected: collection or monkeypatch resolution fails because the two service modules do not exist.
 
-- [ ] **Step 3: Move shared skill dispatch**
+- [x] **Step 3: Move shared skill dispatch**
 
 Create 'skill_command_service.py' with:
 
@@ -188,7 +188,7 @@ def dispatch_skill(
 
 Move 'SKILL_MAP', '_load_prosaic_command', '_skill_required_capability', '_skill_not_found_msg', and '_build_prompt' with the dispatcher. Keep the provider/config and skill-location helpers in 'cli.py' because delivery and RE still use them; the local import above avoids an import-time cycle. Update '_dispatch_review_compatibility' to call the service. Delete the old dispatcher and only its now-exclusive helpers from 'cli.py'.
 
-- [ ] **Step 4: Add typed leaf functions and redirect Typer**
+- [x] **Step 4: Add typed leaf functions and redirect Typer**
 
 Implement the exact signatures already listed in this task's Interfaces block, with 'project_root' positional and all command values keyword-only. 'resolve_issue', 'write_artifacts', and 'prepare_amendment' additionally accept 'extra_args: Sequence[str] = ()'; 'reject_target_mutation' returns 'NoReturn'.
 
@@ -199,7 +199,7 @@ capability gate currently performed by 'spec_resolve' in 'cli_app.py' into the
 service before entering the relocated handler. This preserves validation while
 leaving Typer responsible only for parsing.
 
-- [ ] **Step 5: Delete legacy leaf definitions and repair imports**
+- [x] **Step 5: Delete legacy leaf definitions and repair imports**
 
 Delete '_cmd_spec_add_input', '_format_product_input_declarations', '_cmd_spec_resolve', '_cmd_drop_target', '_cmd_spec_target', '_cmd_spec_targets', '_cmd_artifacts', '_cmd_spec_amend', '_dispatch_skill_command', and the already-dead '_cmd_spec' dispatcher from 'cli.py'. Deleting '_cmd_spec' here prevents it from retaining references to removed leaf handlers; its direct help/switch tests move to the canonical Typer surface.
 
@@ -213,7 +213,7 @@ Import or patch the new owner in every match. Do not retain test-only aliases.
 In 'test_cli_spec_switch.py', remove direct '_cmd_spec' imports and invoke the
 Typer app with 'CliRunner' for help and switch coverage.
 
-- [ ] **Step 6: Run the leaf focused suite**
+- [x] **Step 6: Run the leaf focused suite**
 
 ~~~bash
 .venv/bin/python -m pytest -q \
@@ -228,7 +228,7 @@ Typer app with 'CliRunner' for help and switch coverage.
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit the leaf cutover**
+- [x] **Step 7: Commit the leaf cutover**
 
 ~~~bash
 git add src/echelon/spec_service.py src/echelon/skill_command_service.py \

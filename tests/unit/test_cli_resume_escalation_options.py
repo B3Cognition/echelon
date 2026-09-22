@@ -535,7 +535,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -576,10 +576,10 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
         }
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    _cmd_spec_resolve(
-        ["ISS-002", "Use exponential backoff with a documented cap."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-002",
+        decision="Use exponential backoff with a documented cap.",
     )
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
@@ -615,7 +615,7 @@ def test_resolve_same_selected_decision_is_idempotent(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -648,17 +648,17 @@ def test_resolve_same_selected_decision_is_idempotent(
 
     # Establish content-bound authority through the real CLI first. A legacy
     # ID-only record cannot certify the current issue after an upgrade.
-    _cmd_spec_resolve(
-        ["ISS-001", "Use exponential backoff."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-001",
+        decision="Use exponential backoff.",
     )
     first_state = json.loads(state_path.read_text(encoding="utf-8"))
     first_baseline = first_state["issue_resolution_repair_baseline"]
-    _cmd_spec_resolve(
-        ["ISS-001", "Use exponential backoff."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-001",
+        decision="Use exponential backoff.",
     )
 
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
@@ -668,7 +668,7 @@ def test_resolve_same_selected_decision_is_idempotent(
 
 
 def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -691,10 +691,10 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_spec_resolve(
-            ["ISS-002", "Second value"],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
+        _resolve_issue(
+            tmp_path,
+            issue_id="ISS-002",
+            decision="Second value",
         )
 
     assert exc.value.code == 1
@@ -703,7 +703,8 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: Path) -> None:
-    from echelon.cli import _cmd_spec_resolve, _issue_resolution_screen_guidance
+    from echelon.cli import _issue_resolution_screen_guidance
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -719,7 +720,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
     state = json.loads(state_path.read_text())
     state["spec_dir"] = str(spec_dir)
     state_path.write_text(json.dumps(state))
-    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    _resolve_issue(tmp_path, issue_id="ISS-001", decision="Reconcile the discovery evidence.")
     state = json.loads(state_path.read_text())
     state["issue_resolution_ledger"]["ISS-001"]["status"] = "validated"
     state["selected_issue_resolution"] = None
@@ -729,7 +730,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
 
     guidance = dict(_issue_resolution_screen_guidance(tmp_path, run_dir, state))
     assert "ISS-001" in guidance
-    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    _resolve_issue(tmp_path, issue_id="ISS-001", decision="Reconcile the discovery evidence.")
 
     selected = json.loads(state_path.read_text())["issue_resolution_ledger"]["ISS-001"]
     assert selected["status"] == "selected"
@@ -772,7 +773,8 @@ No action required.
 def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve, _issue_resolution_requests
+    from echelon.cli import _issue_resolution_requests
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -816,10 +818,10 @@ def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
     assert [request["issue_id"] for request in requests] == ["ISS-002"]
     assert requests[0]["repair_phase"] == "phase1-discover"
 
-    _cmd_spec_resolve(
-        ["ISS-002", "Reconcile the discovery model."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-002",
+        decision="Reconcile the discovery model.",
     )
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))

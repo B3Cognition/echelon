@@ -507,8 +507,11 @@ def test_spec_retarget_typer_invalid_shapes_exit_2(args):
 def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.prepare_amendment",
+        lambda project_root, **values: calls.append((project_root, values)),
+    )
 
     run([
         "spec",
@@ -522,23 +525,29 @@ def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
         "--dry-run",
     ])
 
-    assert calls == [[
-        "004-demo",
-        "Add requirement evidence",
-        "--input",
-        "requirement:sources/PBS-E-73.pdf",
-        "--input",
-        "reference:sources/PBS-E-73-figma-design.pdf",
-        "--dry-run",
-    ]]
+    assert calls == [(Path.cwd(), {
+        "spec_id": "004-demo",
+        "description": "Add requirement evidence",
+        "input_values": (
+            "requirement:sources/PBS-E-73.pdf",
+            "reference:sources/PBS-E-73-figma-design.pdf",
+        ),
+        "dry_run": True,
+        "extra_args": (),
+    })]
 
 
 @pytest.mark.unit
 def test_spec_add_input_routes_product_inputs(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_add_input", lambda args: calls.append(args))
+    calls: list[tuple[Path, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.add_input",
+        lambda project_root, *, input_values: calls.append(
+            (project_root, tuple(input_values))
+        ),
+    )
 
     run([
         "spec",
@@ -549,12 +558,10 @@ def test_spec_add_input_routes_product_inputs(monkeypatch):
         "reference:sources/DE-RESOLVER-BENCHMARK",
     ])
 
-    assert calls == [[
-        "--input",
+    assert calls == [(Path.cwd(), (
         "reference:sources/DE-OPTA-SCHEMA-MAPPING",
-        "--input",
         "reference:sources/DE-RESOLVER-BENCHMARK",
-    ]]
+    ))]
 
 
 @pytest.mark.unit
@@ -580,12 +587,21 @@ def test_spec_amend_help_declares_input_and_dry_run_options():
 def test_spec_amend_status_routes_to_the_amendment_lifecycle(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.prepare_amendment",
+        lambda project_root, **values: calls.append((project_root, values)),
+    )
 
     run(["spec", "amend", "status", "004-demo/001"])
 
-    assert calls == [["status", "004-demo/001"]]
+    assert calls == [(Path.cwd(), {
+        "spec_id": "status",
+        "description": "004-demo/001",
+        "input_values": (),
+        "dry_run": False,
+        "extra_args": (),
+    })]
 
 
 @pytest.mark.unit
@@ -1179,12 +1195,15 @@ def test_spec_targets_declares_argument_and_routes(monkeypatch):
     assert "SPEC_ID" in result.output
     assert "Display every task grouped by delivery target" in result.output
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_targets", lambda args: calls.append(args))
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.show_targets",
+        lambda project_root, *, spec_id: calls.append((project_root, spec_id)),
+    )
 
     run(["spec", "targets", "001"])
 
-    assert calls == [["001"]]
+    assert calls == [(Path.cwd(), "001")]
 
 
 @pytest.mark.unit
@@ -1369,15 +1388,18 @@ def test_workspace_init_help_declares_workspace_options():
 
 
 @pytest.mark.unit
-def test_spec_target_typed_args_route_to_legacy_spec_target(monkeypatch):
+def test_spec_target_routes_to_service_rejection(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_target", lambda args: calls.append(args))
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.reject_target_mutation",
+        lambda: calls.append(True),
+    )
 
     run(["spec", "target", "001", "sources/api", "sources/web", "--init"])
 
-    assert calls == [["001", "sources/api", "sources/web", "--init"]]
+    assert calls == [True]
 
 
 @pytest.mark.unit

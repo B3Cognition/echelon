@@ -1,0 +1,186 @@
+"""Typed application-service boundaries for active spec commands."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from types import ModuleType
+
+from typer.testing import CliRunner
+
+
+def _install_module(monkeypatch, name: str, **members: object) -> ModuleType:
+    module = ModuleType(name)
+    for member_name, value in members.items():
+        setattr(module, member_name, value)
+    monkeypatch.setitem(sys.modules, name, module)
+    package_name, attribute = name.rsplit(".", 1)
+    package = sys.modules[package_name]
+    monkeypatch.setattr(package, attribute, module, raising=False)
+    return module
+
+
+def _invoke(*args: str):
+    from echelon.cli_app import app
+
+    return CliRunner().invoke(app, list(args))
+
+
+def test_spec_add_input_routes_typed_values(monkeypatch):
+    calls: list[tuple[Path, tuple[str, ...]]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        add_input=lambda project_root, *, input_values: calls.append(
+            (project_root, tuple(input_values))
+        ),
+    )
+    result = _invoke(
+        "spec", "add-input", "--input", "reference:notes.md",
+        "--input", "requirement:req.md",
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        (Path.cwd(), ("reference:notes.md", "requirement:req.md"))
+    ]
+
+
+def test_spec_resolve_routes_typed_values(monkeypatch):
+    calls: list[tuple[Path, str, str | None, tuple[str, ...]]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        resolve_issue=lambda project_root, *, issue_id, decision, extra_args=(): calls.append(
+            (project_root, issue_id, decision, tuple(extra_args))
+        ),
+    )
+    result = _invoke("spec", "resolve", "ISS-002", "Use SQLite", "--force")
+
+    assert result.exit_code == 0
+    assert calls == [(Path.cwd(), "ISS-002", "Use SQLite", ("--force",))]
+
+
+def test_spec_drop_target_routes_typed_values(monkeypatch):
+    calls: list[tuple[Path, str, str, bool]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        drop_target=lambda project_root, *, spec_id, target, confirm: calls.append(
+            (project_root, spec_id, target, confirm)
+        ),
+    )
+    result = _invoke(
+        "spec", "drop-target", "001-demo", "sources/api", "--confirm"
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(Path.cwd(), "001-demo", "sources/api", True)]
+
+
+def test_spec_targets_and_artifacts_route_typed_values(monkeypatch):
+    target_calls: list[tuple[Path, str]] = []
+    artifact_calls: list[tuple[Path, str, tuple[str, ...]]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        show_targets=lambda project_root, *, spec_id: target_calls.append(
+            (project_root, spec_id)
+        ),
+        write_artifacts=lambda project_root, *, spec_id, extra_args=(): artifact_calls.append(
+            (project_root, spec_id, tuple(extra_args))
+        ),
+    )
+    targets = _invoke("spec", "targets", "001-demo")
+    artifacts = _invoke("spec", "artifacts", "001-demo", "legacy-extra")
+
+    assert targets.exit_code == 0
+    assert artifacts.exit_code == 0
+    assert target_calls == [(Path.cwd(), "001-demo")]
+    assert artifact_calls == [(Path.cwd(), "001-demo", ("legacy-extra",))]
+
+
+def test_spec_amend_routes_typed_values(monkeypatch):
+    calls: list[tuple[object, ...]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        prepare_amendment=lambda project_root, **values: calls.append(
+            (project_root, values)
+        ),
+    )
+    result = _invoke(
+        "spec", "amend", "001-demo", "Add export",
+        "--input", "reference:notes.md", "--dry-run",
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        (
+            Path.cwd(),
+            {
+                "spec_id": "001-demo",
+                "description": "Add export",
+                "input_values": ("reference:notes.md",),
+                "dry_run": True,
+                "extra_args": (),
+            },
+        )
+    ]
+
+
+def test_hidden_spec_target_uses_service_rejection(monkeypatch):
+    calls: list[bool] = []
+    _install_module(
+        monkeypatch,
+        "echelon.spec_service",
+        reject_target_mutation=lambda: calls.append(True),
+    )
+    result = _invoke("spec", "target", "001-demo", "sources/api")
+
+    assert result.exit_code == 0
+    assert calls == [True]
+
+
+def test_spec_skill_commands_use_shared_typed_dispatch(monkeypatch):
+    calls: list[tuple[str, tuple[str, ...], Path]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.skill_command_service",
+        dispatch_skill=lambda command, arguments, *, project_root: calls.append(
+            (command, tuple(arguments), project_root)
+        ),
+    )
+    results = [
+        _invoke("spec", "reopen", "001-demo", "from=report.json"),
+        _invoke("spec", "bugfix", "001-demo", "Fix export"),
+        _invoke("spec", "change", "001-demo", "Add export"),
+    ]
+
+    assert [result.exit_code for result in results] == [0, 0, 0]
+    assert calls == [
+        ("reopen", ("001-demo", "from=report.json"), Path.cwd()),
+        ("bugfix", ("001-demo", "Fix export"), Path.cwd()),
+        ("change", ("001-demo", "Add export"), Path.cwd()),
+    ]
+
+
+def test_review_compatibility_uses_shared_typed_dispatch(monkeypatch):
+    calls: list[tuple[str, tuple[str, ...], Path]] = []
+    _install_module(
+        monkeypatch,
+        "echelon.skill_command_service",
+        dispatch_skill=lambda command, arguments, *, project_root: calls.append(
+            (command, tuple(arguments), project_root)
+        ),
+    )
+    result = _invoke("review", "001-demo", "--pr-url", "https://example.test/pr/1")
+
+    assert result.exit_code == 0
+    assert calls == [
+        (
+            "review",
+            ("001-demo", "--pr-url", "https://example.test/pr/1"),
+            Path.cwd(),
+        )
+    ]

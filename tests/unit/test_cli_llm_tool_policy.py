@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from echelon import cli
+from echelon.skill_command_service import dispatch_skill
 from harness.config import HarnessConfig, LlmConfig
 from harness.provider_capability import (
     BUILD_PROVIDER_CAPABILITIES,
@@ -26,7 +27,7 @@ def _install_prosaic_command(
 ) -> None:
     (project_root / ".echelon" / "prosaic" / "commands").mkdir(parents=True)
     monkeypatch.setattr(
-        "echelon.cli.ProsaicPromptLoader.load_command",
+        "echelon.skill_command_service.ProsaicPromptLoader.load_command",
         lambda self, command_id: ProsaicCommandArtifact(
             frontmatter=frontmatter or {},
             body=body,
@@ -60,9 +61,10 @@ def test_dispatch_skill_command_routes_prosaic_review_through_claude_provider(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
     monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr("echelon.skill_command_service.AICodingCliProvider", FakeProvider)
 
     with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("review", ["005"])
+        dispatch_skill("review", ["005"], project_root=tmp_path)
 
     assert exc.value.code == 0
     assert calls
@@ -98,8 +100,9 @@ def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill
     monkeypatch.setenv("ECHELON_LLM", "claude")
     monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
     monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr("echelon.skill_command_service.AICodingCliProvider", FakeProvider)
     monkeypatch.setattr(
-        "echelon.cli.ProsaicPromptLoader.load_command",
+        "echelon.skill_command_service.ProsaicPromptLoader.load_command",
         lambda self, command_id: ProsaicCommandArtifact(
             frontmatter={
                 "model_tier": "balanced",
@@ -113,7 +116,7 @@ def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill
     )
 
     with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("review", ["005"])
+        dispatch_skill("review", ["005"], project_root=tmp_path)
 
     assert exc.value.code == 0
     assert calls
@@ -154,9 +157,14 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
     monkeypatch.setenv("ECHELON_LLM", "copilot")
     monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
     monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr("echelon.skill_command_service.AICodingCliProvider", FakeProvider)
 
     with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("review", ["005", "pr_url=https://github.com/org/repo/pull/1"])
+        dispatch_skill(
+            "review",
+            ["005", "pr_url=https://github.com/org/repo/pull/1"],
+            project_root=tmp_path,
+        )
 
     assert exc.value.code == 0
     assert calls
@@ -196,9 +204,14 @@ def test_dispatch_spec_skill_allows_artifact_only_provider(
     monkeypatch.setenv("ECHELON_LLM", "openai-compatible")
     monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
     monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr("echelon.skill_command_service.AICodingCliProvider", FakeProvider)
 
     with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("change", ["001-demo", "clarify PM artifact"])
+        dispatch_skill(
+            "change",
+            ["001-demo", "clarify PM artifact"],
+            project_root=tmp_path,
+        )
 
     assert exc.value.code == 0
     assert calls

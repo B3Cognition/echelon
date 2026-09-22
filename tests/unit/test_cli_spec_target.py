@@ -14,10 +14,10 @@ def _run_spec_target(tmp_path: Path, args: list[str]) -> int:
     original = os.getcwd()
     try:
         os.chdir(tmp_path)
-        from echelon.cli import _cmd_spec_target
+        from echelon.spec_service import reject_target_mutation
 
         try:
-            _cmd_spec_target(args)
+            reject_target_mutation()
             return 0
         except SystemExit as exc:
             return int(exc.code) if exc.code is not None else 0

@@ -10,8 +10,9 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
-from echelon.cli import USAGE, _cmd_spec, _next_continue_phase, _select_squad_dir
+from echelon.cli import USAGE, _next_continue_phase, _select_squad_dir
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 
 
@@ -189,27 +190,29 @@ def test_manual_next_phase_reuses_a_human_blocked_run(tmp_path: Path, monkeypatc
     assert is_fresh is False
 
 
-def test_spec_help_documents_checkpoint_gated_switch_flags(capsys) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        _cmd_spec(["--help"])
+def test_spec_help_documents_checkpoint_gated_switch_flags() -> None:
+    from echelon.cli_app import app
 
-    output = capsys.readouterr().out
-    assert exit_info.value.code == 0
-    assert "switch <spec-or-run-id>" in output
-    assert "--stash | --discard --confirm" in output
-    assert "--restore-stash" in output
+    result = CliRunner().invoke(app, ["spec", "switch", "--help"])
+
+    assert result.exit_code == 0
+    assert "SPEC_OR_RUN_ID" in result.output
+    assert "--stash" in result.output
+    assert "--discard" in result.output
+    assert "--confirm" in result.output
+    assert "--restore-stash" in result.output
     assert "spec switch <spec-or-run-id>" in USAGE
 
 
-def test_spec_help_documents_perfectionist_authoring_mode(capsys) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        _cmd_spec(["--help"])
+def test_spec_help_documents_perfectionist_authoring_mode() -> None:
+    from echelon.cli_app import app
 
-    output = capsys.readouterr().out
-    assert exit_info.value.code == 0
-    assert "run <description>" in output
-    assert "--perfectionist" in output
-    assert "Exhaustive Cartographer authoring" in output
+    result = CliRunner().invoke(app, ["spec", "run", "--help"])
+
+    assert result.exit_code == 0
+    assert "DESCRIPTION" in result.output
+    assert "--perfectionist" in result.output
+    assert "systematic exhaustive Cartographer" in result.output
     assert "--perfectionist" in USAGE
 
 
@@ -229,8 +232,11 @@ def test_spec_switch_dispatches_to_deterministic_presenter(
         fake_command,
     )
 
-    _cmd_spec(["switch", "run-b", "--stash"])
+    from echelon.cli_app import app
 
+    result = CliRunner().invoke(app, ["spec", "switch", "run-b", "--stash"])
+
+    assert result.exit_code == 0
     assert calls == [(["run-b", "--stash"], tmp_path)]
 
 

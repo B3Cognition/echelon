@@ -61,13 +61,6 @@ from echelon.version import CLI_VERSION
 # (_cmd_run) and must never fall through to the skill-based LLM path.
 # Keeping "run" here would cause infinite recursion: skill → claude -p →
 # echelon.run.md → "echelon spec run" → skill → ... (155 nested processes).
-SKILL_MAP = {
-    "bugfix":  "echelon.bugfix",
-    "review":  "echelon.review",
-    "change":  "echelon.change",
-    "verify-spec": "echelon.verify-spec",
-    "reopen":  "echelon.reopen",
-}
 
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
@@ -5376,151 +5369,6 @@ def _is_issue_resolution_recovery(action: _RunRecoveryAction) -> bool:
     return action.command.startswith("echelon spec resolve ")
 
 
-def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> None:
-    """Record one issue decision, then run its targeted Phase 1 repair."""
-    if len(args) < 2:
-        print(
-            'Usage: echelon spec resolve ISS-<n> "<project decision>"\n'
-            "Resolve issues one at a time; use `echelon spec status` to see guidance.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-    issue_id = args[0].strip().upper()
-    decision = " ".join(args[1:]).strip()
-    if not re.fullmatch(r"ISS-\d+", issue_id) or not decision:
-        print("✗ resolve requires an ISS-<n> id and a non-empty decision", file=sys.stderr)
-        raise SystemExit(2)
-    squad_dir = _find_current_run_dir(project_root)
-    if squad_dir is None:
-        print("✗ No active squad run found.", file=sys.stderr)
-        raise SystemExit(1)
-    from harness.squad_state import SquadStateStore
-
-    store = SquadStateStore(squad_dir)
-    state = store.load()
-    requests = _issue_resolution_requests(project_root, squad_dir, state)
-    matching = next((item for item in requests if item["issue_id"] == issue_id), None)
-    if matching is None:
-        print(f"✗ {issue_id} is not an unresolved issue in the active run.", file=sys.stderr)
-        raise SystemExit(1)
-    ledger = state.get("issue_resolution_ledger")
-    if not isinstance(ledger, dict):
-        ledger = {}
-    existing = matching_issue_resolution(ledger, matching["issue_fingerprint"])
-    if existing:
-        existing_status = str(existing.get("status") or "").strip()
-        existing_decision = " ".join(
-            str(existing.get("decision") or "").split()
-        )
-        normalized_decision = " ".join(decision.split())
-        if existing_status == "validated":
-            print(
-                f"[squad] {issue_id} is already validated; no resolution was changed.",
-                flush=True,
-            )
-            return
-        if (
-            existing_status in {"selected", "repaired"}
-            and existing_decision == normalized_decision
-        ):
-            print(
-                f"[squad] {issue_id} is already recorded with this decision; "
-                "no resolution was changed.\n"
-                "[squad] next: echelon spec continue",
-                flush=True,
-            )
-            return
-    unresolved_before = [
-        item["issue_id"]
-        for item in requests
-        if matching_issue_resolution(
-            ledger, item["issue_fingerprint"]
-        ).get("status") != "validated"
-    ]
-    if unresolved_before and unresolved_before[0] != issue_id:
-        print(
-            f"✗ Resolve {unresolved_before[0]} before {issue_id}; issues are handled in SAGE order.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    repair_phase = str(matching.get("repair_phase") or "phase1-what").strip()
-    if repair_phase not in {"phase1-discover", "phase1-what"}:
-        print(
-            f"✗ {issue_id} has unsupported Phase 1 repair owner {repair_phase!r}.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    ledger = record_issue_resolution(ledger, issue_id, {
-        **matching,
-        "status": "selected",
-        "decision": decision,
-        "repair_phase": repair_phase,
-    })
-    state["issue_resolution_ledger"] = ledger
-    state["selected_issue_resolution"] = issue_id
-    # A new decision starts a new targeted-validation allowance, even when it
-    # revisits an issue whose previous validation had to be retried.
-    state.pop("issue_resolution_revalidation_attempted", None)
-    state["issue_resolution_repair_baseline"] = {
-        "issue_id": issue_id,
-        "repair_phase": repair_phase,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-    }
-    # This is a controller-owned recovery edge, not an agent instruction and
-    # not a free-form phase override. It is consumed only after the controller
-    # verifies that WHY2 declares the repair transition in definition.yaml.
-    state["issue_resolution_recovery"] = {
-        "issue_id": issue_id,
-        "from_phase": "phase1-why2",
-        "to_phase": repair_phase,
-        "reason": "issue_resolution",
-    }
-    dispatch_counts = state.get("phase_dispatch_counts")
-    if isinstance(dispatch_counts, dict):
-        reset_phases = {
-            "phase1-what",
-            "phase1-understanding",
-            "phase1-why2",
-            "phase1-lexicon-derive",
-            "phase1-lexicon",
-            "checkpoint-assess",
-        }
-        if repair_phase == "phase1-discover":
-            reset_phases.update({
-                "phase1-discover",
-                "phase1-synthesizer",
-                "phase1-modeler",
-                "phase1-tracker",
-                "phase1-why1",
-                "phase1-constitution",
-            })
-        state["phase_dispatch_counts"] = {
-            phase: count
-            for phase, count in dispatch_counts.items()
-            if phase not in reset_phases
-        }
-    state["phase"] = repair_phase
-    state["status"] = "running"
-    for key in (
-        "blocked_reason",
-        "escalation_question",
-        "escalation_options",
-        "blocked_decision",
-        "phase_dispatch_limit",
-        "phase_dispatch_limit_phase",
-    ):
-        state.pop(key, None)
-    state["phase_dispatch_limit_recovery"] = {
-        "phase": repair_phase,
-        "resolver": "issue_resolution",
-    }
-    store.save(state)
-    print(
-        f"[squad] recorded resolution for {issue_id}; the controller will validate "
-        "and consume the declared WHY2 → WHAT recovery edge.\n"
-        "[squad] next: echelon spec continue",
-        flush=True,
-    )
 
 
 def _register_spec_summary_run(
@@ -11457,174 +11305,6 @@ def _cmd_repair_traceability_locked(
     _banner("TRACEABILITY REPAIRED", rows, subtitle="Direct mappings preserved; finalization can resume.")
 
 
-def _cmd_drop_target(
-    args: list[str],
-    project_root: Path,
-    *,
-    _mutation_locked: bool = False,
-) -> None:
-    """Remove one unreferenced delivery target from the active unfinished run.
-
-    This deliberately supports only a declared target with no task ownership.
-    Adding or replacing targets requires re-authoring because it changes the
-    architecture decision space; an unused target can safely return to PLAN.
-    """
-    confirm = "--confirm" in args
-    positional = [arg for arg in args if arg != "--confirm"]
-    if len(positional) != 2:
-        print(
-            "Usage: echelon spec drop-target <spec_id> <target> --confirm\n"
-            "  Removes one unused declared target and re-dispatches phase3-plan.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    spec_id, target = (value.strip().rstrip("/") for value in positional)
-    if not spec_id or not target:
-        print("✗ spec id and target must not be empty", file=sys.stderr)
-        sys.exit(1)
-
-    if confirm and not _mutation_locked:
-        from echelon.spec_lifecycle import (
-            PhaseAExecutionLock,
-            SpecLifecycleLocked,
-            SpecMutationLock,
-        )
-
-        operation_id = f"drop-target-{os.getpid()}"
-        try:
-            with SpecMutationLock.acquire(project_root, spec_id, operation_id):
-                with PhaseAExecutionLock.acquire(project_root, operation_id):
-                    return _cmd_drop_target(
-                        args,
-                        project_root,
-                        _mutation_locked=True,
-                    )
-        except SpecLifecycleLocked as exc:
-            print(
-                "✗ Cannot drop a target while the spec mutation lease is owned by "
-                f"{exc.operation_id}.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1) from exc
-
-    squad_dir = _find_current_run_dir(project_root)
-    if squad_dir is None or not (squad_dir / "state.json").is_file():
-        print("✗ No active squad run found.", file=sys.stderr)
-        sys.exit(1)
-
-    from harness.spec_frontmatter import write_targets
-    from harness.squad_state import SquadStateStore
-    from harness.task_targets import analyze_task_targets
-
-    store = SquadStateStore(squad_dir)
-    state = store.load()
-    active_spec_id = str(state.get("spec_id") or "").strip()
-    if active_spec_id != spec_id:
-        print(
-            f"✗ Active run owns spec {active_spec_id or '(unknown)'!r}, not {spec_id!r}.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if str(state.get("status") or "") == "done":
-        print(
-            "✗ Cannot drop a target from a completed spec. Start a new spec run instead.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    declared = [
-        str(value).strip().rstrip("/")
-        for value in state.get("implementation_targets") or []
-        if str(value).strip()
-    ]
-    if target not in declared:
-        print(f"✗ Target {target!r} is not declared by the active run.", file=sys.stderr)
-        sys.exit(1)
-    replacement_targets = [value for value in declared if value != target]
-    if not replacement_targets:
-        print("✗ A spec must retain at least one implementation target.", file=sys.stderr)
-        sys.exit(1)
-
-    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
-    if spec_dir is None or spec_dir_ref is None:
-        print("✗ Could not resolve the active spec directory from state.json.", file=sys.stderr)
-        sys.exit(1)
-
-    tasks_file = spec_dir / "tasks.md"
-    if tasks_file.is_file():
-        analysis = analyze_task_targets(tasks_file.read_text(encoding="utf-8"))
-        owned_tasks = analysis.target_tasks.get(target, ())
-        if owned_tasks:
-            print(
-                f"✗ Cannot drop {target!r}: it owns task(s) {', '.join(owned_tasks)}.\n"
-                "  Re-author the target decision before changing delivery scope.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-    planning_outputs = _REWIND_CLEANUP_OUTPUTS["phase3-plan"]
-    if not confirm:
-        _banner(
-            "DROP TARGET PREVIEW",
-            [
-                ("spec", spec_id),
-                ("remove", target),
-                ("remain", ", ".join(replacement_targets)),
-                ("invalidate", ", ".join(planning_outputs)),
-                ("next", f"echelon spec drop-target {spec_id} {target} --confirm"),
-            ],
-            subtitle="No files or run state changed.",
-        )
-        return
-
-    from echelon.rewind import RewindError
-
-    try:
-        updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
-    except RewindError as exc:
-        print(f"✗ Cannot drop target: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    spec_dirs = [spec_dir]
-    published_ref = str(state.get("published_spec_dir") or "").strip()
-    if published_ref:
-        published_dir = Path(published_ref)
-        if not published_dir.is_absolute():
-            published_dir = project_root / published_dir
-        if published_dir.is_dir() and published_dir not in spec_dirs:
-            spec_dirs.append(published_dir)
-
-    removed: list[str] = []
-    for directory in spec_dirs:
-        write_targets(directory, replacement_targets)
-        for name in planning_outputs:
-            output = directory / name
-            if output.exists():
-                output.unlink()
-                if name not in removed:
-                    removed.append(name)
-
-    updated["implementation_targets"] = replacement_targets
-    updated["tasks_lexicon_pass"] = None
-    updated["target_change"] = {
-        "action": "drop-unused-target",
-        "removed": target,
-        "remaining": replacement_targets,
-        "invalidated_outputs": removed,
-    }
-    store.save(updated)
-
-    _banner(
-        "TARGET REMOVED",
-        [
-            ("spec", spec_id),
-            ("removed", target),
-            ("targets", ", ".join(replacement_targets)),
-            ("invalidated", ", ".join(removed) if removed else "(none)"),
-            ("next", "echelon spec continue"),
-        ],
-        subtitle="Task planning will be regenerated for the remaining targets.",
-    )
 
 
 
@@ -12077,16 +11757,13 @@ def _is_spec_feature_branch(branch: str) -> bool:
 
 from harness.skill_loader import (
     find_skill as _find_skill_impl,
-    build_skill_prompt as _build_skill_prompt_impl,
 )
 from harness.prosaic_prompt_loader import (
     ProsaicPromptLoadError,
     ProsaicPromptLoader,
-    RenderedProsaicCommand,
 )
 from harness.config import load_config
 from harness.llm_provider import AICodingCliProvider
-from harness.llm_tool_policy import build_opencode_skill_command
 from harness.provider_capability import ProviderCapability
 
 
@@ -12094,22 +11771,8 @@ def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
     return _find_skill_impl(skill_base, project_dir, cli)
 
 
-def _build_prompt(skill_path: Path, arguments: str) -> str:
-    return _build_skill_prompt_impl(skill_path, arguments)
 
 
-def _load_prosaic_command(
-    skill_base: str, arguments: str, project_dir: Path
-) -> RenderedProsaicCommand | None:
-    """Load an installer-owned neutral command when the project has one."""
-    try:
-        artifact = ProsaicPromptLoader(project_dir).load_command(skill_base)
-    except ProsaicPromptLoadError as exc:
-        print(f"echelon: {exc}", file=sys.stderr)
-        sys.exit(1)
-    if artifact is None:
-        return None
-    return ProsaicPromptLoader.render_command(artifact, arguments)
 
 
 def _load_cli_config(project_dir: Path):
@@ -12172,70 +11835,10 @@ def _require_provider_capability(
     sys.exit(2)
 
 
-def _skill_required_capability(command: str) -> ProviderCapability:
-    if command == "review":
-        return ProviderCapability.BUILD
-    return ProviderCapability.ARTIFACT
 
 
-def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
-    del cli
-    return (
-        f"echelon: command prose '{skill_base}' not found.\n"
-        "Expected at:\n"
-        f"  {project_dir / '.echelon' / 'prosaic' / 'commands' / f'{skill_base}.md'}\n"
-        "Run: echelon workspace migrate-to-prosaic"
-    )
 
 
-def _dispatch_skill_command(command: str, args: list[str]) -> None:
-    arguments = " ".join(args)
-
-    if not arguments:
-        print(f"echelon {command}: missing arguments\n", file=sys.stderr)
-        print(USAGE)
-        sys.exit(1)
-
-    skill_base = SKILL_MAP[command]
-
-    project_dir = Path.cwd()
-    _require_provider_capability(
-        f"echelon {command}",
-        _skill_required_capability(command),
-        project_dir=project_dir,
-    )
-    try:
-        config = _load_cli_config(project_dir)
-    except Exception as exc:
-        print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
-        sys.exit(1)
-    cli = config.llm.cli
-
-    prosaic_command = _load_prosaic_command(skill_base, arguments, project_dir)
-    prompt = prosaic_command.prompt if prosaic_command is not None else None
-    if prompt is None:
-        skill_path = _find_skill(skill_base, project_dir, cli)
-        if skill_path is None:
-            print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
-            sys.exit(1)
-
-    if cli == "opencode" and prompt is None:
-        bin_ = shutil.which(cli) or cli
-        cmd = build_opencode_skill_command(
-            bin_, skill_base, arguments, config.llm.tool_policy
-        )
-        result = subprocess.run(cmd, cwd=str(project_dir))
-        sys.exit(result.returncode)
-
-    if prompt is None:
-        prompt = _build_prompt(skill_path, arguments)
-    metadata = None
-    if prosaic_command is not None:
-        metadata = {"prompt_metadata": prosaic_command.frontmatter}
-    result = AICodingCliProvider(config).run_prompt_result(
-        str(project_dir), prompt, request_metadata=metadata
-    )
-    sys.exit(result.exit_code)
 
 
 # ── RE lifecycle and publication subcommands ────────────────────────────────
@@ -19474,91 +19077,6 @@ def _commit_re_publication(project_root: Path, generation: int, run_git) -> None
 
 # ── spec subcommands ──────────────────────────────────────────────────────────
 
-def _cmd_spec(args: list[str]) -> None:
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: echelon spec <subcommand> [args...]\n\n"
-            "  run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]\n"
-            "                    [--message <text>] [--next-phase <id>]\n"
-            "                    [--target <source-id-or-path>]... [--re-source <source-id-or-re-path>]... [--init]\n"
-            "                    [--ignore-re] [--stash | --discard --confirm]\n"
-            "                                      Run Phase A squad spec authoring\n"
-            "                                      --perfectionist: Exhaustive Cartographer authoring\n"
-            "  status                              Show current run state and next action\n"
-            "  continue [--mode semi|banzai|guided]\n"
-            "                                      Run the next no-input Phase A recovery action\n"
-            "  resume <answers>                    Answer escalation questions from a blocked run\n"
-            "  add-input --input <role:path>...     Add evidence to a parked investigation run\n"
-            "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
-            "  rewind <phase-id> [--commit <sha>] [--next-phase <phase-id>]\n"
-            "                                      Rewind the active squad run to a checkpoint\n"
-            "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
-            "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
-            "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
-            "  drop-target <spec_id> <target> --confirm\n"
-            "                                      Remove an unused target and re-plan tasks\n"
-            "  defer-runnability <spec_id> --reason <owner-approved reason>\n"
-            "                                      Defer failed runnability to advisory follow-up\n"
-            "  plan-runnability <spec_id>          Restore runnability to current-spec work\n"
-            "  retarget <spec_id> --target <source-id-or-path>... [--confirm]\n"
-            "                                      Destructively replace all implementation targets\n"
-            "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
-            "                                      Manage Phase A/spec checkpoints\n"
-            "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
-            "  verify <spec_id> [--reconcile] [--dry-run]\n"
-            "                                      Audit implementation against spec\n"
-            "  reopen <spec_id> [from=<report>]    Reopen spec from fulfillment gaps\n"
-            "  bugfix <spec_id> <description>      Diagnose and plan a bugfix\n"
-            "  change <spec_id> <description>      Plan a scope change\n",
-        )
-        sys.exit(0)
-    subcmd = args[0]
-    if subcmd == "target":
-        _cmd_spec_target(args[1:])
-    elif subcmd == "run":
-        _cmd_spec_run(args[1:])
-    elif subcmd == "status":
-        _cmd_status(Path.cwd())
-    elif subcmd == "continue":
-        _cmd_spec_continue(args[1:])
-    elif subcmd == "resume":
-        _cmd_spec_resume(args[1:])
-    elif subcmd == "add-input":
-        _cmd_spec_add_input(args[1:])
-    elif subcmd == "resolve":
-        project_root = Path.cwd()
-        ext_dir = _installed_extension_or_exit(project_root)
-        _require_provider_capability("echelon spec resolve", ProviderCapability.ARTIFACT, project_dir=project_root)
-        _cmd_spec_resolve(args[1:], project_root=project_root, ext_dir=ext_dir)
-    elif subcmd == "rewind":
-        _cmd_rewind(args[1:], project_root=Path.cwd())
-    elif subcmd == "repair-traceability":
-        _cmd_repair_traceability(args[1:], project_root=Path.cwd())
-    elif subcmd == "switch":
-        from echelon.spec_switch_cli import run_spec_switch_command
-
-        exit_code = run_spec_switch_command(args[1:], project_root=Path.cwd())
-        if exit_code:
-            sys.exit(exit_code)
-    elif subcmd == "drop-target":
-        _cmd_drop_target(args[1:], project_root=Path.cwd())
-    elif subcmd == "retarget":
-        _cmd_spec_retarget(args[1:])
-    elif subcmd == "checkpoint":
-        from echelon.checkpoint_cli import run_checkpoint_command
-
-        run_checkpoint_command(args[1:], project_root=Path.cwd())
-    elif subcmd == "artifacts":
-        _cmd_artifacts(args[1:])
-    elif subcmd == "verify":
-        _dispatch_skill_command("verify-spec", args[1:])
-    elif subcmd == "amend":
-        _cmd_spec_amend(args[1:])
-    elif subcmd in {"bugfix", "change", "reopen"}:
-        _dispatch_skill_command(subcmd, args[1:])
-    else:
-        print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
-        sys.exit(1)
 
 
 def _installed_extension_or_exit(project_root: Path) -> Path:
@@ -19617,51 +19135,6 @@ def _installed_re_runtime_or_exit(project_root: Path) -> tuple[Path, Path | None
 
 
 
-def _cmd_spec_amend(args: list[str]) -> None:
-    """Prepare a pre-build amendment without switching the caller checkout."""
-    if args and args[0] == "status":
-        if len(args) != 2:
-            print("Usage: echelon spec amend status <amendment-id-or-spec-id>", file=sys.stderr)
-            raise SystemExit(2)
-        from echelon.spec_amendment import load_amendment_state
-
-        print(json.dumps(load_amendment_state(Path.cwd(), args[1]), indent=2))
-        return
-    if args and args[0] == "abandon":
-        if len(args) != 2:
-            print("Usage: echelon spec amend abandon <amendment-id-or-spec-id>", file=sys.stderr)
-            raise SystemExit(2)
-        from echelon.spec_amendment import abandon_amendment
-
-        state = abandon_amendment(Path.cwd(), args[1])
-        print(f"Amendment abandoned: {state['amendment_id']}")
-        return
-    if len(args) < 2:
-        print(
-            "Usage: echelon spec amend <spec-id> <description> "
-            "[--input requirement:<path>|reference:<path>]... [--dry-run]",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-    from echelon.spec_amendment import prepare_amendment
-
-    result = prepare_amendment(Path.cwd(), args)
-    if result.dry_run:
-        print(
-            f"Amendment dry run: {result.amendment_id}\n"
-            f"  baseline: {result.baseline.branch}@{result.baseline.commit}\n"
-            "  no worktree or amendment state was created"
-        )
-        return
-    assert result.worktree is not None and result.state_path is not None
-    print(
-        f"Amendment prepared: {result.amendment_id}\n"
-        f"  baseline: {result.baseline.branch}@{result.baseline.commit}\n"
-        f"  worktree: {result.worktree.path}\n"
-        f"  state: {result.state_path}\n"
-        "  No canonical spec, plan, or task artifact has been changed.\n"
-        "  Next: inspect change-request.md and impact.md in the amendment worktree."
-    )
 
 
 def _cmd_spec_run(args: list[str]) -> None:
@@ -19743,69 +19216,8 @@ def _cmd_spec_resume(args: list[str]) -> None:
         _SPEC_SUMMARY_COMMAND.reset(token)
 
 
-def _cmd_spec_add_input(args: list[str]) -> None:
-    from echelon.product_inputs import ProductInputError
-    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
-
-    input_values: list[str] = []
-    i = 0
-    while i < len(args):
-        if args[i] == "--input":
-            if i + 1 >= len(args):
-                print("✗ echelon spec add-input: --input requires role:path", file=sys.stderr)
-                raise SystemExit(2)
-            input_values.append(args[i + 1].strip())
-            i += 2
-        elif args[i].startswith("--input="):
-            input_values.append(args[i].split("=", 1)[1].strip())
-            i += 1
-        else:
-            print(
-                f"✗ echelon spec add-input: unknown argument {args[i]!r}",
-                file=sys.stderr,
-            )
-            raise SystemExit(2)
-    if not input_values:
-        print(
-            "Usage: echelon spec add-input --input reference:<path> [--input reference:<path>...]",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-    try:
-        result = add_input_to_active_run(Path.cwd(), input_values)
-    except (ProductInputError, SpecAddInputError) as exc:
-        print(f"✗ echelon spec add-input: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    _banner(
-        "INPUT ADDED" if result.added_count else "INPUT ALREADY DECLARED",
-        [
-            ("Run", result.run_dir.name),
-            ("Attachment", result.attachment_id),
-            ("Added resources", str(result.added_count)),
-            ("Duplicate resources", str(result.duplicate_count)),
-            (
-                "Original inputs",
-                _format_product_input_declarations(result.original_declarations),
-            ),
-            (
-                "Attached inputs",
-                _format_product_input_declarations(result.attached_declarations),
-            ),
-            ("Next", result.next_command),
-        ],
-    )
 
 
-def _format_product_input_declarations(
-    declarations: Sequence[Mapping[str, object]],
-) -> str:
-    rendered = [
-        f"{item.get('role')}:{item.get('location')}"
-        for item in declarations
-        if isinstance(item, Mapping)
-    ]
-    return ", ".join(rendered) if rendered else "(none)"
 
 
 def _run_spec_target_git(
@@ -19996,173 +19408,11 @@ def _commit_initialized_workspace_sources(
     return commit
 
 
-def _cmd_spec_target(args: list[str]) -> None:
-    print(
-        "✗ echelon spec target no longer mutates generated specifications.\n"
-        "  Implementation targets must be declared when authoring begins:\n"
-        "    echelon spec run <description> --target <source-path> "
-        "[--target <source-path> ...]\n"
-        "  Changing targets afterward invalidates target-dependent artifacts; "
-        "start a new spec run instead.",
-        file=sys.stderr,
-    )
-    raise SystemExit(2)
-
-
-def _cmd_spec_targets(args: list[str]) -> None:
-    """Display every canonical task grouped by its explicit source target."""
-    if len(args) != 1:
-        print(
-            "echelon spec targets: usage: echelon spec targets <spec_id>",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from harness.spec_frontmatter import find_spec_dir, read_targets
-    from harness.task_targets import analyze_task_targets
-
-    spec_id = args[0]
-    spec_dir = find_spec_dir(spec_id, Path.cwd())
-    if spec_dir is None:
-        print(f"✗ Spec '{spec_id}' not found (searched from {Path.cwd()})", file=sys.stderr)
-        sys.exit(1)
-
-    tasks_file = spec_dir / "tasks.md"
-    if not tasks_file.is_file():
-        print(
-            f"✗ Spec {spec_dir.name}: canonical tasks file not found: {tasks_file}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    analysis = analyze_task_targets(tasks_file.read_text(encoding="utf-8"))
-
-    def normalize_target(value: str) -> str:
-        normalized = str(value).strip().replace("\\", "/")
-        while normalized.startswith("./"):
-            normalized = normalized[2:]
-        return normalized.rstrip("/") or "."
-
-    declared_targets = tuple(
-        sorted(
-            {
-                normalize_target(target)
-                for target in read_targets(spec_dir)
-                if str(target).strip()
-            }
-        )
-    )
-    declared_set = set(declared_targets)
-    referenced_targets = set(analysis.target_tasks)
-    for targets in analysis.cross_target_tasks.values():
-        referenced_targets.update(targets)
-    missing_targets = tuple(sorted(referenced_targets - declared_set))
-    unreferenced_targets = tuple(sorted(declared_set - referenced_targets))
-
-    def task_line(task_id: str, *, target_suffix: str = "") -> str:
-        title = analysis.task_titles.get(task_id, "")
-        label = f"{task_id}  {title}" if title else task_id
-        return f"  {label}{target_suffix}"
-
-    print(f"Spec: {spec_dir.name}")
-    print("Declared targets:")
-    if declared_targets:
-        for target in declared_targets:
-            print(f"  {target}")
-    else:
-        print("  (none)")
-
-    for target, task_ids in analysis.target_tasks.items():
-        status = "declared" if target in declared_set else "missing declaration"
-        print()
-        print(f"{target} [{status}]")
-        for task_id in task_ids:
-            print(task_line(task_id))
-
-    if analysis.unowned_tasks:
-        print()
-        print("UNOWNED")
-        for task_id in analysis.unowned_tasks:
-            print(task_line(task_id))
-
-    if analysis.cross_target_tasks:
-        print()
-        print("CROSS-TARGET")
-        for task_id, targets in analysis.cross_target_tasks.items():
-            print(task_line(task_id, target_suffix=f" [{', '.join(targets)}]"))
-
-    non_cross_path_mismatches = {
-        task_id: mismatch
-        for task_id, mismatch in analysis.path_target_mismatches.items()
-        if task_id not in analysis.cross_target_tasks
-    }
-    if non_cross_path_mismatches:
-        print()
-        print("TARGET/PATH MISMATCH")
-        for task_id, (target, paths) in non_cross_path_mismatches.items():
-            print(
-                f"  mismatch {task_id}: target={target}; paths={', '.join(paths)}"
-            )
-
-    if missing_targets:
-        print()
-        print("Missing declared targets:")
-        for target in missing_targets:
-            print(f"  {target}")
-
-    if unreferenced_targets:
-        print()
-        print("Declared but unreferenced targets:")
-        for target in unreferenced_targets:
-            print(f"  {target}")
-
-    assigned_count = sum(len(task_ids) for task_ids in analysis.target_tasks.values())
-    print()
-    print(
-        f"Tasks: {len(analysis.all_task_ids)} total; {assigned_count} assigned; "
-        f"{len(analysis.unowned_tasks)} unowned; "
-        f"{len(analysis.cross_target_tasks)} cross-target"
-    )
-
-    invalid_reasons: list[str] = []
-    if missing_targets:
-        invalid_reasons.append(f"{len(missing_targets)} missing declaration(s)")
-    if unreferenced_targets:
-        invalid_reasons.append(f"{len(unreferenced_targets)} unreferenced declaration(s)")
-    if analysis.unowned_tasks:
-        invalid_reasons.append(f"{len(analysis.unowned_tasks)} unowned task(s)")
-    if analysis.cross_target_tasks:
-        invalid_reasons.append(
-            f"{len(analysis.cross_target_tasks)} cross-target task(s)"
-        )
-    if analysis.path_target_mismatches:
-        invalid_reasons.append(
-            f"{len(analysis.path_target_mismatches)} target/path mismatch(es)"
-        )
-
-    if invalid_reasons:
-        print("Result: invalid — " + ", ".join(invalid_reasons))
-        sys.exit(2)
-    print("Result: valid")
 
 
 
-def _cmd_artifacts(args: list[str]) -> None:
-    if not args:
-        print("echelon spec artifacts: missing spec_id", file=sys.stderr)
-        sys.exit(1)
 
-    from echelon.artifact_index import write_artifact_index
-    from harness.spec_frontmatter import find_spec_dir
 
-    spec_id = args[0]
-    spec_dir = find_spec_dir(spec_id, Path.cwd())
-    if spec_dir is None:
-        print(f"✗ Spec not found: {spec_id}", file=sys.stderr)
-        sys.exit(1)
-
-    path = write_artifact_index(spec_dir)
-    print(f"✓ Wrote artifact map: {path}")
 
 
 from harness.stacks import provisioning_statuses, resolve_stacks  # noqa: E402
