@@ -266,7 +266,7 @@ def test_workspace_sources_sync_normalizes_path_only_sources_entries(
 
 
 def test_phase_runtime_guard_accepts_complete_prosaic_workspace(tmp_path: Path) -> None:
-    from echelon.cli import _installed_phase_runtime_or_exit
+    from echelon.spec_service import _installed_phase_runtime_or_exit
 
     workflow = tmp_path / ".echelon/runtime/workflow"
     subagents = tmp_path / ".echelon/prosaic/subagents"
@@ -292,7 +292,7 @@ def test_phase_runtime_guard_rejects_legacy_extension_only_workspace(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _installed_phase_runtime_or_exit
+    from echelon.spec_service import _installed_phase_runtime_or_exit
 
     (tmp_path / ".specify/extensions/echelon/workflow").mkdir(parents=True)
 

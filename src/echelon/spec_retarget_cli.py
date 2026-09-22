@@ -53,7 +53,7 @@ def _parse_args(args: list[str]) -> tuple[str, tuple[str, ...], bool]:
 
 
 def _resolved_targets(project_root: Path, raw_targets: tuple[str, ...]) -> tuple[str, ...]:
-    from echelon.cli import _resolve_spec_run_implementation_targets
+    from echelon.spec_service import _resolve_spec_run_implementation_targets
 
     resolved: list[str] = []
     for raw in raw_targets:

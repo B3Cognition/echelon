@@ -13,7 +13,10 @@ from typer.testing import CliRunner
 
 from tests.support.temp_storage import copy_package_build_tree
 
-from echelon.cli import _cmd_continue, _cmd_run
+from echelon.spec_service import (
+    _cmd_continue,
+    _cmd_run,
+)
 from echelon.phase_service import list_phases, run_phase
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
@@ -238,7 +241,7 @@ def test_phase_list_does_not_require_dispatch_config_compatibility(
     def fail_if_called(_project_root: Path) -> None:
         raise AssertionError("phase list must not enforce agent-dispatch config")
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
+    monkeypatch.setattr("echelon.phase_service.enforce_project_config_compatibility", fail_if_called)
 
     phases = list_phases(tmp_path)
 
@@ -276,10 +279,10 @@ def test_cli_bypass_entrypoints_reject_unresolved_v2_decisions(
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
     if entrypoint == "next_phase":
         with pytest.raises(SystemExit) as exc:
             _cmd_run(
@@ -346,10 +349,10 @@ def test_continue_resolves_eligible_v2_decisions_through_real_controller(
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
     with pytest.raises((SystemExit, StateAdvanceError)):
         _cmd_continue(
             [],
@@ -390,10 +393,10 @@ def test_direct_run_with_a_different_message_preserves_active_v2_decision_run(
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
     with pytest.raises((SystemExit, StateAdvanceError)):
         _cmd_run(
             ["a different task"],
@@ -446,7 +449,7 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
                 timed_out=False,
             )
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
+    monkeypatch.setattr("echelon.phase_service.enforce_project_config_compatibility", fail_if_called)
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
     run_phase(tmp_path, "phase1-constitution", spec_id="001")
@@ -461,7 +464,7 @@ def test_phase_run_plan_enforces_task_lexicon_config(
     def blocked(_project_root: Path) -> None:
         raise SystemExit(7)
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", blocked)
+    monkeypatch.setattr("echelon.phase_service.enforce_project_config_compatibility", blocked)
 
     with pytest.raises(SystemExit) as exc:
         run_phase(tmp_path, "phase3-plan")
@@ -497,7 +500,7 @@ def test_phase_run_tasks_lexicon_nodes_use_single_phase_controller(
     calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(
-        "echelon.cli._enforce_project_config_compatibility",
+        "echelon.phase_service.enforce_project_config_compatibility",
         lambda root: compatibility_checks.append(root),
     )
     monkeypatch.setattr(

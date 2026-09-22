@@ -110,7 +110,10 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume, _spec_summary_session
+    from echelon.spec_service import (
+        _cmd_resume,
+        _spec_summary_session,
+    )
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -196,7 +199,7 @@ def test_resume_rejects_stale_v2_reason_before_controller_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, [])
     decision = build_blocked_decision_v2(
@@ -241,7 +244,7 @@ def test_resume_rejects_stale_v2_reason_before_controller_construction(
 
 
 def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -281,7 +284,7 @@ def test_resume_rejects_option_with_invalid_next_phase(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -312,7 +315,7 @@ def test_resume_rejects_unmatched_answer_when_structured_options_exist(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -347,7 +350,7 @@ def test_resume_accepts_free_text_decision_without_options(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     _patch_resume_dependencies(monkeypatch)
@@ -374,7 +377,7 @@ def test_resume_uses_existing_blocked_decision_after_process_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -416,7 +419,7 @@ def test_resume_terminal_block_delegates_to_continue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     state_path = run_dir / "state.json"
@@ -440,7 +443,7 @@ def test_resume_terminal_block_delegates_to_continue(
     def fake_continue(args, project_root, ext_dir):
         calls.append((args, project_root, ext_dir))
 
-    monkeypatch.setattr("echelon.cli._cmd_continue", fake_continue)
+    monkeypatch.setattr("echelon.spec_service._cmd_continue", fake_continue)
 
     _cmd_resume(["retry with narrower scope"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
@@ -457,7 +460,7 @@ def test_resume_that_runs_the_controller_ends_with_the_shared_squad_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _write_blocked_run(
         tmp_path,
@@ -492,7 +495,7 @@ def test_resume_phase_dispatch_limit_requires_issue_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     state_path = run_dir / "state.json"
@@ -516,7 +519,7 @@ def test_resume_phase_dispatch_limit_requires_issue_resolution(
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
     _patch_resume_dependencies(monkeypatch)
-    monkeypatch.setattr("echelon.cli._cmd_continue", lambda *args, **kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._cmd_continue", lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_resume(
@@ -688,7 +691,7 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["spec_dir"] = str(spec_dir)
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
         _resolve_issue(
@@ -703,7 +706,7 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: Path) -> None:
-    from echelon.cli import _issue_resolution_screen_guidance
+    from echelon.spec_service import _issue_resolution_screen_guidance
     from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
@@ -739,7 +742,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
 
 
 def test_issue_requests_skip_resolved_issues_and_read_required_amendment(tmp_path: Path) -> None:
-    from echelon.cli import _issue_resolution_requests
+    from echelon.spec_service import _issue_resolution_requests
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -773,7 +776,7 @@ No action required.
 def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _issue_resolution_requests
+    from echelon.spec_service import _issue_resolution_requests
     from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
@@ -834,7 +837,7 @@ def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
 
 
 def test_issue_screen_guidance_shows_action_command_and_clickable_source(tmp_path: Path) -> None:
-    from echelon.cli import _issue_resolution_screen_guidance
+    from echelon.spec_service import _issue_resolution_screen_guidance
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"

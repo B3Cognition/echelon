@@ -196,15 +196,15 @@ def test_quiet_is_accepted_after_a_nested_command_and_scoped_to_that_invocation(
     from echelon.cli_app import run
     from harness.verbosity import is_verbose
 
-    observed: list[tuple[list[str], bool]] = []
+    observed: list[tuple[str | None, bool]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_spec_run",
-        lambda args: observed.append((args, is_verbose())),
+        "echelon.spec_service.run_spec",
+        lambda _root, request: observed.append((request.description, is_verbose())),
     )
 
     run(["spec", "run", "Describe the feature", "--quiet"])
 
-    assert observed == [(["Describe the feature"], False)]
+    assert observed == [("Describe the feature", False)]
     assert is_verbose() is False
 
 
@@ -346,7 +346,7 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
 
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_rewind",
+        "echelon.spec_service._cmd_rewind",
         lambda args, project_root: calls.append(args),
     )
 
@@ -370,12 +370,12 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
 @pytest.mark.unit
 def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
     from echelon.cli_app import run
+    from echelon.spec_service import SpecRetargetRequest
 
-    calls: list[list[str]] = []
+    calls: list[SpecRetargetRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_spec_retarget",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.spec_service.retarget_spec",
+        lambda _root, request: calls.append(request),
     )
 
     run([
@@ -389,14 +389,11 @@ def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
         "--confirm",
     ])
 
-    assert calls == [[
-        "001-demo",
-        "--target",
-        "apps/web",
-        "--target",
-        "services/api",
-        "--confirm",
-    ]]
+    assert calls == [SpecRetargetRequest(
+        spec_id="001-demo",
+        targets=("apps/web", "services/api"),
+        confirm_count=1,
+    )]
 
     from echelon.cli import USAGE
 
@@ -416,7 +413,8 @@ def test_spec_retarget_typer_help_declares_destructive_arguments():
 
 @pytest.mark.unit
 def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_path):
-    from echelon import cli
+    from echelon import spec_service as cli
+    from echelon.spec_service import SpecRetargetRequest
     from echelon.spec_retarget import RetargetCommandResult
 
     result = RetargetCommandResult(
@@ -448,8 +446,11 @@ def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_p
         lambda args, project_root, ext_dir: calls.append((args, project_root, ext_dir)),
     )
 
-    cli._cmd_spec_retarget(
-        ["001-demo", "--target", "apps/web", "--confirm"]
+    cli.retarget_spec(
+        tmp_path,
+        SpecRetargetRequest(
+            spec_id="001-demo", targets=("apps/web",), confirm_count=1
+        ),
     )
 
     assert calls == [
@@ -1294,11 +1295,15 @@ def test_spec_help_offers_only_guarded_unused_target_removal():
 
 
 @pytest.mark.unit
-def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
+def test_spec_run_typed_options_route_to_spec_service(monkeypatch):
     from echelon.cli_app import run
+    from echelon.spec_service import SpecRunRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_run", lambda args: calls.append(args))
+    calls: list[SpecRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.run_spec",
+        lambda _root, request: calls.append(request),
+    )
 
     run([
         "spec",
@@ -1325,28 +1330,22 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--stash",
     ])
 
-    assert calls == [[
-        "Add archive export",
-        "--mode",
-        "banzai",
-        "--reset",
-        "--perfectionist",
-        "--init",
-        "--message",
-        "include migration notes",
-        "--next-phase",
-        "phase2-model",
-        "--target",
-        "api",
-        "--target",
-        "web",
-        "--input",
-        "requirement:sources/PBS-E-45",
-        "--input",
-        "reference:sources/provision",
-        "--ignore-re",
-        "--stash",
-    ]]
+    assert calls == [SpecRunRequest(
+        description="Add archive export",
+        mode="banzai",
+        reset=True,
+        perfectionist=True,
+        init=True,
+        message="include migration notes",
+        next_phase="phase2-model",
+        targets=("api", "web"),
+        input_values=(
+            "requirement:sources/PBS-E-45",
+            "reference:sources/provision",
+        ),
+        ignore_re=True,
+        stash=True,
+    )]
 
 
 @pytest.mark.unit
@@ -1632,7 +1631,7 @@ def test_spec_status_routes_to_legacy_status(monkeypatch):
     from echelon.cli_app import run
 
     calls = []
-    monkeypatch.setattr("echelon.cli._cmd_status", lambda project_root: calls.append(project_root))
+    monkeypatch.setattr("echelon.spec_service._cmd_status", lambda project_root: calls.append(project_root))
 
     run(["spec", "status"])
 

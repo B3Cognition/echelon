@@ -284,7 +284,7 @@ git commit -m "refactor: move leaf spec commands to service"
 - Produces: 'repair_traceability(project_root: Path, *, confirm: bool) -> None'.
 - Produces for 'phase_service': 'find_current_run_dir', 'failed_automatic_phase_replay', 'resolve_phase_target_spec_dir', 'phase_state_updates_for_target', 'phase_context_resolution_rows', 'classify_run_recovery', 'enforce_project_config_compatibility', 'workspace_git_preflight', and 'command_display'.
 
-- [ ] **Step 1: Write failing typed-core and ownership tests**
+- [x] **Step 1: Write failing typed-core and ownership tests**
 
 Add route tests for run, retarget, status, continue, resume, rewind, and repair. The run assertion must compare this value:
 
@@ -335,7 +335,7 @@ def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
     assert "echelon.cli import" not in phase_source
 ~~~
 
-- [ ] **Step 2: Verify the core boundary tests fail**
+- [x] **Step 2: Verify the core boundary tests fail**
 
 ~~~bash
 .venv/bin/python -m pytest -q tests/unit/test_spec_service_boundary.py \
@@ -344,7 +344,7 @@ def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
 
 Expected: missing APIs and remaining legacy ownership cause failures.
 
-- [ ] **Step 3: Define typed request objects and public entry points**
+- [x] **Step 3: Define typed request objects and public entry points**
 
 Add:
 
@@ -385,17 +385,17 @@ class SpecRewindRequest:
 
 Public functions accept these types or explicit typed keywords. Only private helpers inside 'spec_service.py' may adapt them to the mechanically moved parser.
 
-- [ ] **Step 4: Move the Phase A kernel mechanically**
+- [x] **Step 4: Move the Phase A kernel mechanically**
 
 Move implementations rooted at '_cmd_run', '_cmd_continue', '_cmd_continue_impl', '_cmd_resume', '_cmd_status', '_cmd_rewind', '_cmd_repair_traceability', and '_cmd_repair_traceability_locked', plus their spec-only reachable helpers. Include summary rendering, recovery classification, rewind selection/reset, active-run selection, phase-target resolution, and spec context preservation.
 
 Preserve bodies before correcting imports. Do not combine branches, rename persisted fields, alter state-write order, or change exceptions. Shared generic helpers still used by delivery/RE may remain in 'cli.py'; use narrow local imports and never dispatch back to a removed spec handler.
 
-- [ ] **Step 5: Redirect Typer and 'phase_service'**
+- [x] **Step 5: Redirect Typer and 'phase_service'**
 
 Construct typed requests in 'cli_app.py'. In 'phase_service.py', replace 'from echelon import cli as shared' with explicit imports from 'echelon.spec_service', then call those names directly. Preserve phase replay ordering and authority comparisons.
 
-- [ ] **Step 6: Delete legacy ownership and migrate tests**
+- [x] **Step 6: Delete legacy ownership and migrate tests**
 
 Delete the four remaining '_cmd_spec_*' wrappers, moved core handlers, and helpers now exclusive to 'spec_service.py'. Delete '_installed_extension_or_exit' if no caller remains. The dead '_cmd_spec' dispatcher was already removed in Task 1.
 
@@ -407,7 +407,7 @@ rg -n '_cmd_spec|_cmd_status|_cmd_continue|_cmd_resume|_cmd_rewind|_cmd_repair_t
 
 Move Phase A test imports to 'echelon.spec_service'. Retain 'echelon.cli' imports only for definitions that remain generic and are still owned there. Remove obsolete '_cmd_spec' help/dispatch tests; Typer and boundary tests replace them.
 
-- [ ] **Step 7: Run focused Phase A verification**
+- [x] **Step 7: Run focused Phase A verification**
 
 ~~~bash
 .venv/bin/python -m pytest -q \
@@ -427,7 +427,7 @@ Move Phase A test imports to 'echelon.spec_service'. Retain 'echelon.cli' import
 
 Expected: all selected tests pass. Poll a long-running pytest process instead of restarting it.
 
-- [ ] **Step 8: Run the CLI regression gate**
+- [x] **Step 8: Run the CLI regression gate**
 
 ~~~bash
 .venv/bin/python -m pytest -q \

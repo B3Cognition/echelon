@@ -347,7 +347,7 @@ class RetargetWorkspace:
         crash_after_commit: bool = False,
         forbid_replayed_effects: bool = False,
     ) -> CommandOutcome:
-        from echelon import cli as legacy_cli
+        from echelon import spec_service as spec_commands
 
         match = re.search(r"checkpoint:([^\s]+)", failed.stderr)
         checkpoint_id = match.group(1) if match else self.last_checkpoint_id
@@ -387,7 +387,7 @@ class RetargetWorkspace:
             stack.enter_context(redirect_stdout(stdout))
             stack.enter_context(redirect_stderr(stderr))
             try:
-                legacy_cli._cmd_rewind(
+                spec_commands._cmd_rewind(
                     [f"checkpoint:{checkpoint_id}", "--confirm"],
                     self.root,
                 )

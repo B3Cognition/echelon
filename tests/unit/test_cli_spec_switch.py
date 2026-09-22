@@ -12,7 +12,11 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from echelon.cli import USAGE, _next_continue_phase, _select_squad_dir
+from echelon.spec_service import (
+    _next_continue_phase,
+    _select_squad_dir,
+)
+from echelon.cli import USAGE
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 
 

@@ -2590,7 +2590,11 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_continue, _cmd_resume, _cmd_status
+    from echelon.spec_service import (
+        _cmd_continue,
+        _cmd_resume,
+        _cmd_status,
+    )
 
     _controller_instance, store, provider, decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2646,7 +2650,7 @@ def test_clarification_discards_stale_proportional_quality_candidates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A material clarification cannot reuse quality evidence for old requirements."""
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2735,7 +2739,7 @@ def test_cli_resume_refuses_external_execution_owner_without_mutation(
     lock_type,
     root_selector,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2769,7 +2773,7 @@ def test_concurrent_cli_resume_keeps_decision_and_file_answer_identical(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -4101,7 +4105,10 @@ def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_rewind, _cmd_status
+    from echelon.spec_service import (
+        _cmd_rewind,
+        _cmd_status,
+    )
     from harness.phase_checkpoints import (
         create_phase_checkpoint,
         load_checkpoint_ledger,
@@ -5483,7 +5490,8 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
     evidence: str,
     expected_reason: str,
 ) -> None:
-    from echelon.cli import _active_v2_decision, _classify_run_recovery
+    from echelon.spec_service import _classify_run_recovery
+    from echelon.cli import _active_v2_decision
 
     policy = replace(
         _safeguard_policy(

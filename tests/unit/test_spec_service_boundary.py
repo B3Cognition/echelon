@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import sys
+import ast
+import inspect
+import textwrap
 from pathlib import Path
 from types import ModuleType
 
@@ -10,6 +13,8 @@ from typer.testing import CliRunner
 
 
 def _install_module(monkeypatch, name: str, **members: object) -> ModuleType:
+    import echelon
+
     module = ModuleType(name)
     for member_name, value in members.items():
         setattr(module, member_name, value)
@@ -184,3 +189,128 @@ def test_review_compatibility_uses_shared_typed_dispatch(monkeypatch):
             Path.cwd(),
         )
     ]
+
+
+def test_spec_run_routes_typed_request(monkeypatch):
+    from echelon.spec_service import SpecRunRequest
+
+    calls: list[tuple[Path, SpecRunRequest]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.run_spec",
+        lambda project_root, request: calls.append((project_root, request)),
+        raising=False,
+    )
+    result = _invoke(
+        "spec", "run", "build notes", "--mode", "banzai",
+        "--target", "sources/api", "--input", "requirement:req.md",
+        "--perfectionist",
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(Path.cwd(), SpecRunRequest(
+        description="build notes",
+        mode="banzai",
+        perfectionist=True,
+        targets=("sources/api",),
+        input_values=("requirement:req.md",),
+    ))]
+
+
+def test_spec_recovery_routes_use_typed_service_values(monkeypatch):
+    from echelon.spec_service import SpecRewindRequest
+
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.show_status",
+        lambda project_root: calls.append(("status", project_root)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_service.continue_spec",
+        lambda project_root, **values: calls.append(("continue", project_root, values)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_service.resume_spec",
+        lambda project_root, **values: calls.append(("resume", project_root, values)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_service.rewind_spec",
+        lambda project_root, request: calls.append(("rewind", project_root, request)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_service.repair_traceability",
+        lambda project_root, **values: calls.append(("repair", project_root, values)),
+        raising=False,
+    )
+    results = [
+        _invoke("spec", "status"),
+        _invoke("spec", "continue", "--mode", "guided"),
+        _invoke("spec", "resume", "approved"),
+        _invoke("spec", "rewind", "phase1-what", "--commit", "abc", "--confirm"),
+        _invoke("spec", "repair-traceability", "--confirm"),
+    ]
+
+    assert [result.exit_code for result in results] == [0, 0, 0, 0, 0]
+    assert calls == [
+        ("status", Path.cwd()),
+        ("continue", Path.cwd(), {"mode": "guided", "extra_args": ()}),
+        ("resume", Path.cwd(), {"answer": "approved", "extra_args": ()}),
+        ("rewind", Path.cwd(), SpecRewindRequest(
+            phase_id="phase1-what", checkpoint_commit="abc", confirm=True,
+        )),
+        ("repair", Path.cwd(), {"confirm": True}),
+    ]
+
+
+def test_spec_retarget_routes_typed_request(monkeypatch):
+    from echelon.spec_service import SpecRetargetRequest
+
+    calls: list[tuple[Path, SpecRetargetRequest]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.retarget_spec",
+        lambda project_root, request: calls.append((project_root, request)),
+        raising=False,
+    )
+    result = _invoke(
+        "spec", "retarget", "001-demo", "--target", "sources/api", "--confirm"
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(Path.cwd(), SpecRetargetRequest(
+        spec_id="001-demo", targets=("sources/api",), confirm_count=1,
+    ))]
+
+
+def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
+    import echelon.cli as legacy_cli
+    import echelon.cli_app as cli_app
+    import echelon.phase_service as phase_service
+
+    active = {
+        "spec_run", "spec_retarget", "spec_status", "spec_continue", "spec_resume",
+        "spec_add_input", "spec_resolve", "spec_rewind",
+        "spec_repair_traceability", "spec_drop_target", "spec_targets",
+        "spec_artifacts", "spec_reopen", "spec_bugfix", "spec_change", "spec_amend",
+    }
+    for name in active:
+        source = textwrap.dedent(inspect.getsource(getattr(cli_app, name)))
+        assert "echelon import cli" not in source
+        assert "echelon.cli import" not in source
+    phase_source = inspect.getsource(phase_service)
+    assert "echelon import cli" not in phase_source
+    assert "echelon.cli import" not in phase_source
+
+    forbidden = {
+        "_cmd_spec_run", "_cmd_spec_retarget", "_cmd_spec_continue",
+        "_cmd_spec_resume", "_cmd_status", "_cmd_rewind",
+        "_cmd_repair_traceability",
+    }
+    definitions = {
+        node.name
+        for node in ast.parse(inspect.getsource(legacy_cli)).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert not definitions & forbidden

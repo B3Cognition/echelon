@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from echelon.cli import (
+from echelon.spec_service import (
     _ROADMAP_PHASES,
     _cmd_repair_traceability,
     _cmd_rewind,
@@ -1077,11 +1077,11 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
         lambda *_args: frozenset(),
     )
     monkeypatch.setattr(
-        "echelon.cli._cleanup_rewind_outputs",
+        "echelon.spec_service._cleanup_rewind_outputs",
         lambda *_args: pytest.fail("generic rewind cleanup must not run"),
     )
     monkeypatch.setattr(
-        "echelon.cli._reset_rewind_state",
+        "echelon.spec_service._reset_rewind_state",
         lambda *_args, **_kwargs: pytest.fail("generic state reset must not run"),
     )
 

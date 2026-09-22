@@ -2781,32 +2781,24 @@ def spec_run(
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Run Phase A squad spec authoring."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRunRequest, run_spec
 
-    args: list[str] = []
-    if description is not None:
-        args.append(description)
-    args.extend(list(ctx.args))
-    _extend_option(args, "--mode", mode)
-    if reset:
-        args.append("--reset")
-    if perfectionist:
-        args.append("--perfectionist")
-    if init:
-        args.append("--init")
-    _extend_option(args, "--message", message)
-    _extend_option(args, "--next-phase", next_phase)
-    _extend_repeated_option(args, "--target", target)
-    _extend_repeated_option(args, "--input", input_values)
-    if ignore_re:
-        args.append("--ignore-re")
-    if stash:
-        args.append("--stash")
-    if discard:
-        args.append("--discard")
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_spec_run(args)
+    run_spec(Path.cwd(), SpecRunRequest(
+        description=description,
+        extra_args=tuple(ctx.args),
+        mode=mode,
+        reset=reset,
+        perfectionist=perfectionist,
+        init=init,
+        message=message,
+        next_phase=next_phase,
+        targets=tuple(target or ()),
+        input_values=tuple(input_values or ()),
+        ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("retarget")
@@ -2825,22 +2817,21 @@ def spec_retarget(
     ),
 ) -> None:
     """Destructively replace the active spec's complete target set."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRetargetRequest, retarget_spec
 
-    args = [spec_id]
-    _extend_repeated_option(args, "--target", target)
-    args.extend("--confirm" for _ in range(confirm))
-    legacy_cli._cmd_spec_retarget(args)
+    retarget_spec(Path.cwd(), SpecRetargetRequest(
+        spec_id=spec_id,
+        targets=tuple(target),
+        confirm_count=confirm,
+    ))
 
 
 @spec_app.command("status")
 def spec_status() -> None:
     """Show current spec run state and next action."""
-    from pathlib import Path
+    from echelon.spec_service import show_status
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_status(Path.cwd())
+    show_status(Path.cwd())
 
 
 @spec_app.command(
@@ -2856,11 +2847,9 @@ def spec_continue(
     ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import continue_spec
 
-    args = list(ctx.args)
-    _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
+    continue_spec(Path.cwd(), mode=mode, extra_args=tuple(ctx.args))
 
 
 @spec_app.command(
@@ -2875,13 +2864,9 @@ def spec_resume(
     ),
 ) -> None:
     """Answer escalation questions from a blocked run."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import resume_spec
 
-    args: list[str] = []
-    if answer is not None:
-        args.append(answer)
-    args.extend(list(ctx.args))
-    legacy_cli._cmd_spec_resume(args)
+    resume_spec(Path.cwd(), answer=answer, extra_args=tuple(ctx.args))
 
 
 @spec_app.command("add-input")
@@ -2941,16 +2926,15 @@ def spec_rewind(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
-    from pathlib import Path
+    from echelon.spec_service import SpecRewindRequest, rewind_spec
 
-    from echelon import cli as legacy_cli
-
-    args = [phase_id, *list(ctx.args)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_rewind(args, project_root=Path.cwd())
+    rewind_spec(Path.cwd(), SpecRewindRequest(
+        phase_id=phase_id,
+        extra_args=tuple(ctx.args),
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=checkpoint_next_phase,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("repair-traceability")
@@ -2958,13 +2942,9 @@ def spec_repair_traceability(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the safe traceability repair."),
 ) -> None:
     """Repair safely-prunable product-input task mappings and resume finalization."""
-    from pathlib import Path
+    from echelon.spec_service import repair_traceability
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_repair_traceability(
-        ["--confirm"] if confirm else [], project_root=Path.cwd()
-    )
+    repair_traceability(Path.cwd(), confirm=confirm)
 
 
 @spec_app.command("switch")
