@@ -213,7 +213,7 @@ def test_requirements_clean_removes_miner_drawers(project_alpha, isolated_palace
 def test_provision_wing_full_lifecycle(tmp_path, isolated_palace):
     """_provision_wing writes wing to echelon-config.yml and is idempotent on re-call."""
     from unittest.mock import patch
-    from echelon.cli import _provision_wing
+    from echelon.workspace_service import _provision_wing
 
     echelon_yml = tmp_path / ".echelon" / "config.yml"
     echelon_yml.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +221,7 @@ def test_provision_wing_full_lifecycle(tmp_path, isolated_palace):
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
 
-    with patch("echelon.cli.check_wing_collision", return_value=[]):
+    with patch("echelon.workspace_service.check_wing_collision", return_value=[]):
         with patch("sys.stdin.isatty", return_value=True), patch(
             "builtins.input", return_value="my-project"
         ):

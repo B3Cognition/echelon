@@ -1611,7 +1611,9 @@ def root_cicd(ctx: typer.Context) -> None:
 @app.command("init", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_init() -> None:
     """Compatibility alias for workspace init."""
-    _legacy_cli()._cmd_init(Path.cwd())
+    from echelon.workspace_service import initialize_workspace
+
+    initialize_workspace(Path.cwd())
 
 
 @app.command("artifacts", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1817,36 +1819,64 @@ def workspace_init(
     ),
 ) -> None:
     """One-time project setup."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import (
+        bootstrap_workspace_git,
+        initialize_workspace,
+        wants_unsafe_host_execution_interactively,
+    )
 
-    args = ["init"]
-    _extend_option(args, "--llm", llm)
-    _extend_option(args, "--openai-base-url", openai_base_url)
-    _extend_option(args, "--openai-model", openai_model)
-    _extend_option(args, "--openai-api-key-file", openai_api_key_file)
-    _extend_option(args, "--openai-api-key-env", openai_api_key_env)
-    if allow_unsafe_host_execution is True:
-        args.append("--allow-unsafe-host-execution")
-    elif allow_unsafe_host_execution is False:
-        args.append("--no-unsafe-host-execution")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace init: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    allow_unsafe = (
+        wants_unsafe_host_execution_interactively()
+        if allow_unsafe_host_execution is None
+        else allow_unsafe_host_execution
+    )
+    project_root = Path.cwd()
+    initialize_workspace(
+        project_root,
+        allow_unsafe_host_execution=allow_unsafe,
+        llm_cli=llm,
+        openai_base_url=openai_base_url,
+        openai_model=openai_model,
+        openai_api_key_file=openai_api_key_file,
+        openai_api_key_env=openai_api_key_env,
+    )
+    bootstrap_workspace_git(project_root)
 
 
 @workspace_app.command("doctor")
 def workspace_doctor() -> None:
     """Validate workspace/source/runtime contract."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import inspect_workspace
 
-    legacy_cli._cmd_workspace(["doctor"])
+    result = inspect_workspace(Path.cwd())
+    typer.echo(f"Workspace: {result.workspace_root}")
+    typer.echo(f"Buildable: {'yes' if result.buildable else 'no'}")
+    if not result.findings:
+        typer.echo("Findings: none")
+    else:
+        typer.echo("Findings:")
+        for finding in result.findings:
+            path = f" [{finding.path}]" if finding.path else ""
+            typer.echo(
+                f"  {finding.severity.upper()} {finding.code}{path}: "
+                f"{finding.message}"
+            )
+    if result.has_errors:
+        raise typer.Exit(code=1)
 
 
 @workspace_app.command("migrate-to-prosaic")
 def workspace_migrate_to_prosaic() -> None:
     """Deploy and validate the Prosaic runtime without deleting legacy files."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import migrate_to_prosaic
 
-    legacy_cli._cmd_workspace(["migrate-to-prosaic"])
+    migrate_to_prosaic(Path.cwd())
 
 
 @workspace_app.command("migrate", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1857,16 +1887,28 @@ def workspace_migrate(
     message: Optional[str] = typer.Option(None, "--message", help="Migration commit message."),
 ) -> None:
     """Migrate legacy workspace layout."""
-    legacy_cli = _legacy_cli()
+    import subprocess
 
-    args = ["migrate"]
-    if write:
-        args.append("--write")
-    if commit:
-        args.append("--commit")
-    _extend_option(args, "--message", message)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    from echelon.workspace_git_migration import MigrationError
+    from echelon.workspace_service import migrate_workspace_layout
+
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace migrate: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    try:
+        result = migrate_workspace_layout(
+            Path.cwd(),
+            write=write,
+            commit=commit,
+            commit_message=message or "chore: initialize echelon workspace",
+        )
+    except (MigrationError, subprocess.CalledProcessError) as exc:
+        typer.echo(f"migration failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _render_workspace_migration(result)
 
 
 @workspace_sources_app.command(
@@ -1878,13 +1920,73 @@ def workspace_sources_sync(
     write: bool = typer.Option(False, "--write", help="Write sources to workspace config."),
 ) -> None:
     """Sync configured source roots from the canonical sources/ directory."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import sync_workspace_sources
 
-    args = ["sources", "sync"]
-    if write:
-        args.append("--write")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace sources sync: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    result = sync_workspace_sources(Path.cwd(), write=write)
+
+    def label(values: tuple[str, ...]) -> str:
+        return ", ".join(values) if values else "none"
+
+    typer.echo(f"Config: {result.config_path}")
+    typer.echo(f"Dry run: {'yes' if result.dry_run else 'no'}")
+    typer.echo(f"discovered: {label(result.discovered)}")
+    typer.echo(f"added: {label(result.added)}")
+    typer.echo(f"removed: {label(result.removed)}")
+    typer.echo(f"unchanged: {label(result.unchanged)}")
+    if result.dry_run:
+        typer.echo("Next: echelon workspace sources sync --write")
+    else:
+        typer.echo(f"updated: {'yes' if result.changed else 'no changes'}")
+
+
+def _render_workspace_migration(result) -> None:
+    plan = result.plan
+    typer.echo(f"Workspace: {plan.workspace_root}")
+    typer.echo(f"Git-backed: {'yes' if plan.already_git_backed else 'no'}")
+    typer.echo("Gitignore entries:")
+    for entry in plan.gitignore_entries:
+        typer.echo(f"  {entry}")
+    typer.echo("Stage paths:")
+    for path in plan.stage_paths:
+        typer.echo(f"  {path}")
+    if plan.canonical_config_needed:
+        typer.echo(
+            f"Canonical config: copy {plan.legacy_config} -> {plan.canonical_config}"
+        )
+    if not result.write_requested:
+        typer.echo("Dry-run only. Re-run with --write to apply.")
+    elif not any(
+        (
+            result.git_initialized,
+            result.canonical_config_copied,
+            result.source_roots_scaffolded,
+            result.gitignore_updated,
+            result.untracked_runtime_paths,
+            result.staged_paths,
+            result.committed,
+        )
+    ):
+        typer.echo("No changes needed.")
+    else:
+        typer.echo("Applied:")
+        typer.echo(f"  git_initialized: {result.git_initialized}")
+        typer.echo(f"  canonical_config_copied: {result.canonical_config_copied}")
+        typer.echo(f"  source_roots_scaffolded: {result.source_roots_scaffolded}")
+        typer.echo(f"  gitignore_updated: {result.gitignore_updated}")
+        typer.echo(
+            "  untracked_runtime_paths: "
+            f"{', '.join(result.untracked_runtime_paths) or '(none)'}"
+        )
+        typer.echo(f"  staged_paths: {', '.join(result.staged_paths) or '(none)'}")
+        typer.echo(f"  committed: {result.committed}")
+        if not result.committed:
+            typer.echo("Next: echelon workspace migrate --commit")
 
 
 @phase_app.command("list")

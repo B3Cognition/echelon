@@ -14,8 +14,8 @@ The count treats commands below the hidden `harness` group as compatibility
 routes even though the nested `run` and `land` decorators are not themselves
 marked hidden.
 
-Current S3 progress after the benchmark and stack slices: 63 public commands
-use modular services and 44 still delegate into `echelon.cli`.
+Current S3 progress after the benchmark, stack, and workspace slices: 68 public
+commands use modular services and 39 still delegate into `echelon.cli`.
 
 ## Public modular-service routes
 
@@ -44,8 +44,8 @@ use modular services and 44 still delegate into `echelon.cli`.
 | root | `version` | Active |
 | `benchmark` | `list`, `show`, `run` | Cut over to modular services |
 | `stack` | `list`, `detect`, `preflight`, `provision`, `enable`, `disable`, `select`, `selected` | Cut over to modular services |
-| `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Active |
-| `workspace sources` | `sync` | Active |
+| `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Cut over to modular services |
+| `workspace sources` | `sync` | Cut over to modular services |
 | `phase` | `list`, `run` | Active |
 | `spec` | `run`, `retarget`, `status`, `continue`, `resume`, `add-input`, `resolve`, `rewind`, `repair-traceability`, `drop-target`, `targets`, `artifacts`, `reopen`, `bugfix`, `change`, `amend` | Active |
 | `delivery` | `init`, `target`, `verify-local`, `cleanup-local`, `run`, `resume`, `continue`, `land` | Active |

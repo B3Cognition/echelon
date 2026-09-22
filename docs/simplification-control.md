@@ -15,7 +15,7 @@ starting another.
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 63 now use modular services and 44 still delegate into `cli.py`. The benchmark and stack slices are cut over; next is the five-command `workspace` family. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
+| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 68 now use modular services and 39 still delegate into `cli.py`. The benchmark, stack, and workspace slices are cut over; next are `phase` and `version`. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
 | S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
@@ -54,6 +54,8 @@ starting another.
 | 2026-09-21 | S3 | Benchmark slice repository gates: 9,804 passed and 11,398 deselected on the feature branch in 32m13s and again on merged `main` in 32m36s. S3 remains active; `stack` is the next cutover slice. |
 | 2026-09-22 | S3 | Stack slice implemented: all eight `stack` commands call `echelon.stack_service`, the 586-line private stack handler block is deleted from `cli.py`, 127 focused stack tests pass, and the 1,024-test CLI-focused gate passes. S3 remains active; `workspace` is the next cutover slice. |
 | 2026-09-22 | S3 | Stack slice repository gate: 9,816 passed and 11,398 deselected in 30m00s on the feature branch. |
+| 2026-09-22 | S3 | Workspace slice implemented: all five public `workspace` commands call `echelon.workspace_service`; initialization, doctor, migration, and source synchronization no longer live in `cli.py`; 296 focused workspace tests and the 1,022-test CLI-focused gate pass. S3 remains active; `phase` and `version` are next. |
+| 2026-09-22 | S3 | Workspace slice repository gate: 9,820 passed and 11,394 deselected in 31m58s on the feature branch. |
 
 ## S2 Work Queue
 
@@ -81,7 +83,7 @@ starting another.
 
 - [x] Cut over `benchmark list/show/run` and delete `_cmd_benchmark`.
 - [x] Cut over `stack list/detect/preflight/provision/enable/disable/select/selected`.
-- [ ] Cut over `workspace` initialization, doctor, migration, and source sync.
+- [x] Cut over `workspace` initialization, doctor, migration, and source sync.
 - [ ] Cut over `phase` and `version`.
 - [ ] Delete retired routes and isolate root/`harness` compatibility aliases.
 - [ ] Cut over active `spec` workflows.
