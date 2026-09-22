@@ -2118,13 +2118,31 @@ def stack_list(
     json_output: bool = typer.Option(False, "--json", help="Print stack definitions as JSON."),
 ) -> None:
     """List available Echelon stacks."""
-    legacy_cli = _legacy_cli()
+    from echelon.stack_service import load_stack_catalog, stack_definition_to_dict
 
-    args = ["list"]
+    if ctx.args:
+        typer.echo(f"echelon stack list: unknown argument '{ctx.args[0]}'", err=True)
+        raise typer.Exit(code=1)
+    definitions = load_stack_catalog(Path.cwd())
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "stacks": [
+                        stack_definition_to_dict(definitions[stack_id])
+                        for stack_id in sorted(definitions)
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return
+
+    typer.echo("Available Echelon stacks:")
+    for stack_id in sorted(definitions):
+        stack = definitions[stack_id]
+        archetypes = ", ".join(stack.applies_to_archetypes)
+        typer.echo(f"- {stack.id} ({stack.kind}; {archetypes}) {stack.name}")
 
 
 @stack_app.command("detect", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2145,18 +2163,56 @@ def stack_detect(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Detect source/artifact stack evidence."""
-    legacy_cli = _legacy_cli()
+    from harness.stacks import detection_report_to_yaml, render_detection_markdown
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import detect_stack_candidates
 
-    args = ["detect"]
-    _extend_option(args, "--target", target)
-    _extend_repeated_option(args, "--artifacts", artifacts)
-    if write:
-        args.append("--write")
-    _extend_option(args, "--format", output_format)
-    if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    if ctx.args:
+        typer.echo(f"echelon stack detect: unknown argument '{ctx.args[0]}'", err=True)
+        raise typer.Exit(code=1)
+
+    selected_format = "json" if json_output else (output_format or "text")
+    if selected_format not in {"text", "yaml", "json"}:
+        typer.echo("echelon stack detect: --format must be text or yaml", err=True)
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+
+    def resolve_path(value: str) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else project_root / path
+
+    try:
+        outcome = detect_stack_candidates(
+            project_root,
+            target=resolve_path(target) if target else project_root,
+            artifact_roots=[resolve_path(value) for value in artifacts or []],
+            write_report=write,
+        )
+    except (StackError, FileNotFoundError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if selected_format == "json":
+        typer.echo(json.dumps(outcome.report.to_dict(), indent=2))
+    elif selected_format == "yaml":
+        typer.echo(detection_report_to_yaml(outcome.report).rstrip())
+    else:
+        typer.echo(render_detection_markdown(outcome.report).rstrip())
+        if outcome.written is not None:
+            try:
+                yaml_path = outcome.written.yaml_path.resolve().relative_to(
+                    project_root.resolve()
+                )
+                markdown_path = outcome.written.markdown_path.resolve().relative_to(
+                    project_root.resolve()
+                )
+            except ValueError:
+                yaml_path = outcome.written.yaml_path
+                markdown_path = outcome.written.markdown_path
+            typer.echo()
+            typer.echo(f"Wrote detection report: {yaml_path}")
+            typer.echo(f"Wrote detection summary: {markdown_path}")
 
 
 @stack_app.command("preflight", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2186,19 +2242,82 @@ def stack_preflight(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Check selected stack commands, registries, and tool probes."""
-    legacy_cli = _legacy_cli()
+    import os
 
-    args = ["preflight"]
-    _extend_repeated_option(args, "--stack", stack)
-    _extend_repeated_option(args, "--target-archetype", target_archetype)
-    _extend_option(args, "--from-detect", from_detect)
-    _extend_option(args, "--target", target)
-    if probe_tools:
-        args.append("--probe-tools")
+    from harness.stacks import (
+        preflight_to_dict,
+        render_preflight_markdown,
+        resolved_to_dict,
+    )
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import preflight_stacks
+
+    if ctx.args:
+        typer.echo(
+            f"echelon stack preflight: unknown argument '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+
+    def resolve_path(value: str | None) -> Path | None:
+        if value is None:
+            return None
+        path = Path(value)
+        return path if path.is_absolute() else project_root / path
+
+    try:
+        outcome = preflight_stacks(
+            project_root,
+            selected=stack or [],
+            target_archetypes=target_archetype or [],
+            from_detection=resolve_path(from_detect),
+            target_root=resolve_path(target),
+            probe_tools=probe_tools,
+            environment=os.environ,
+        )
+    except StackError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if outcome.message is not None:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "message": outcome.message,
+                        "selected": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(outcome.message)
+        return
+
+    assert outcome.resolved is not None
+    assert outcome.result is not None
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "resolved": resolved_to_dict(outcome.resolved),
+                    "preflight": preflight_to_dict(outcome.result),
+                },
+                indent=2,
+            )
+        )
+    else:
+        typer.echo("Resolved Echelon stacks:")
+        for stack_id in outcome.resolved.resolved_ids:
+            typer.echo(f"- {stack_id}")
+        typer.echo()
+        typer.echo(render_preflight_markdown(outcome.result).rstrip())
+
+    if outcome.result.has_errors:
+        raise typer.Exit(code=1)
 
 
 @stack_app.command("provision", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2218,17 +2337,95 @@ def stack_provision(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Render verification provisioning files without starting Docker."""
-    legacy_cli = _legacy_cli()
+    import os
 
-    args = ["provision"]
-    _extend_repeated_option(args, "--stack", stack)
-    _extend_option(args, "--target", target)
-    if force:
-        args.append("--force")
+    from harness.stacks import ProvisioningError
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import provision_stacks
+
+    if ctx.args:
+        typer.echo(
+            f"echelon stack provision: unknown argument '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+    target_root = Path(target) if target else project_root
+    if not target_root.is_absolute():
+        target_root = project_root / target_root
+    try:
+        outcome = provision_stacks(
+            project_root,
+            selected=stack or [],
+            target_root=target_root,
+            force=force,
+            environment=os.environ,
+        )
+    except (StackError, ProvisioningError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if outcome.message is not None:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "target": str(outcome.target_root),
+                        "generated": [],
+                        "message": outcome.message,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(outcome.message)
+        return
+
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "target": str(outcome.target_root),
+                    "generated": [str(path) for path in outcome.generated],
+                    "provisioners": [
+                        {
+                            "id": status.provisioner_id,
+                            "stack_id": status.owner_stack_id,
+                            "state": status.state,
+                            "message": status.message,
+                            "path": str(status.path) if status.path is not None else None,
+                        }
+                        for status in outcome.statuses
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    assert outcome.resolved is not None
+    if not outcome.resolved.provisioners:
+        typer.echo("Selected stacks declare no verification provisioners.")
+        return
+    if outcome.generated:
+        typer.echo("Generated verification provisioning files:")
+        for path in outcome.generated:
+            typer.echo(f"- {path}")
+    else:
+        typer.echo("No verification provisioning files were generated.")
+    typer.echo("Echelon did not start Docker. Review the files, then run:")
+    typer.echo("  docker compose -f docker-compose.echelon-verify.yml up -d")
+    typer.echo("  export DATABASE_URL='postgresql://<user>:<password>@<host>/<database>'")
+    typer.echo(
+        "  docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "pg_isready -U echelon -d echelon_verify"
+    )
+    typer.echo(
+        "  docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "psql -U echelon -d echelon_verify"
+    )
+    typer.echo("  docker compose -f docker-compose.echelon-verify.yml down -v")
 
 
 @stack_app.command("enable")
@@ -2237,11 +2434,7 @@ def stack_enable(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Add stacks to the committed project selection."""
-    legacy_cli = _legacy_cli()
-    args = ["enable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("enable", stack_ids, dry_run=dry_run)
 
 
 @stack_app.command("disable")
@@ -2250,11 +2443,7 @@ def stack_disable(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Remove explicitly selected stacks from the committed project config."""
-    legacy_cli = _legacy_cli()
-    args = ["disable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("disable", stack_ids, dry_run=dry_run)
 
 
 @stack_app.command("select")
@@ -2266,11 +2455,7 @@ def stack_select(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Replace the committed project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["select", *(stack_ids or [])]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("select", stack_ids or [], dry_run=dry_run)
 
 
 @stack_app.command("selected")
@@ -2278,11 +2463,65 @@ def stack_selected(
     json_output: bool = typer.Option(False, "--json", help="Print selection as JSON."),
 ) -> None:
     """Show explicit, effective, and implied project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["selected"]
+    from harness.stacks.errors import StackError
+    from echelon.stack_selection import StackSelectionError
+    from echelon.stack_service import read_selected_stacks
+
+    try:
+        selection = read_selected_stacks(Path.cwd())
+    except (StackError, StackSelectionError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     if json_output:
-        args.append("--json")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(json.dumps(selection.__dict__, indent=2))
+        return
+    typer.echo(f"Explicit stacks: {', '.join(selection.explicit) or 'none'}")
+    typer.echo(f"Effective stacks: {', '.join(selection.effective) or 'none'}")
+    typer.echo(f"Resolved stacks: {', '.join(selection.resolved) or 'none'}")
+    if selection.local_override:
+        typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
+
+
+def _change_stack_selection(
+    operation: str,
+    stack_ids: list[str],
+    *,
+    dry_run: bool,
+) -> None:
+    import yaml
+
+    from harness.stacks.errors import StackError
+    from echelon.stack_selection import StackSelectionError
+    from echelon.stack_service import change_selected_stacks
+
+    try:
+        selection = change_selected_stacks(
+            Path.cwd(),
+            stack_ids,
+            operation=operation,
+            dry_run=dry_run,
+        )
+    except (StackError, StackSelectionError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    prefix = "Dry run: " if dry_run else ""
+    label = {"enable": "Enabled", "disable": "Disabled", "select": "Selected"}[
+        operation
+    ]
+    values = ", ".join(
+        stack_ids if operation == "disable" else selection.explicit
+    ) or "none"
+    typer.echo(f"{prefix}{label} stacks: {values}")
+    if dry_run:
+        typer.echo(
+            yaml.safe_dump(
+                {"stacks": {"selected": selection.explicit}},
+                sort_keys=False,
+            ).rstrip()
+        )
+    if selection.local_override:
+        typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
 def _option_pairs(**values: object) -> list[str]:

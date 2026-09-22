@@ -14,6 +14,9 @@ The count treats commands below the hidden `harness` group as compatibility
 routes even though the nested `run` and `land` decorators are not themselves
 marked hidden.
 
+Current S3 progress after the benchmark and stack slices: 63 public commands
+use modular services and 44 still delegate into `echelon.cli`.
+
 ## Public modular-service routes
 
 | Group | Commands |
@@ -34,13 +37,13 @@ marked hidden.
 | `spec` | `switch`, `publish`, `verify`, `reconcile-fulfillment`, `defer`, `defer-runnability`, `plan-runnability`, `plan` |
 | `delivery` | `status` |
 
-## Public routes delegated into `cli.py`
+## Baseline public routes delegated into `cli.py`
 
 | Group | Commands | Classification |
 | --- | --- | --- |
 | root | `version` | Active |
-| `benchmark` | `list`, `show`, `run` | Active; first approved cutover slice |
-| `stack` | `list`, `detect`, `preflight`, `provision`, `enable`, `disable`, `select`, `selected` | Active |
+| `benchmark` | `list`, `show`, `run` | Cut over to modular services |
+| `stack` | `list`, `detect`, `preflight`, `provision`, `enable`, `disable`, `select`, `selected` | Cut over to modular services |
 | `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Active |
 | `workspace sources` | `sync` | Active |
 | `phase` | `list`, `run` | Active |

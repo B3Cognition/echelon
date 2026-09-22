@@ -1352,44 +1352,6 @@ def test_stack_help_declares_detection_and_preflight_options():
 
 
 @pytest.mark.unit
-def test_stack_detect_repeated_artifacts_route_to_legacy_stack(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr(
-        "echelon.cli._cmd_stack",
-        lambda args, **_kwargs: calls.append(args),
-    )
-
-    run([
-        "stack",
-        "detect",
-        "--target",
-        "sources/api",
-        "--artifacts",
-        "specs/001",
-        "--artifacts",
-        "runs/re",
-        "--write",
-        "--format",
-        "yaml",
-    ])
-
-    assert calls == [[
-        "detect",
-        "--target",
-        "sources/api",
-        "--artifacts",
-        "specs/001",
-        "--artifacts",
-        "runs/re",
-        "--write",
-        "--format",
-        "yaml",
-    ]]
-
-
-@pytest.mark.unit
 def test_spec_skill_help_declares_common_arguments():
     verify_help = invoke_help("spec", "verify")
     reopen_help = invoke_help("spec", "reopen")
