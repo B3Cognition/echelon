@@ -233,12 +233,12 @@ def test_delivery_init_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon import delivery_service
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_harness_init([], command_prefix="echelon delivery init")
+        delivery_service.initialize_delivery(tmp_path)
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery init")
@@ -250,12 +250,12 @@ def test_delivery_target_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon import delivery_service
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_delivery_target(["001-demo"])
+        delivery_service.prepare_target(tmp_path, spec_id="001-demo")
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery target")
@@ -284,12 +284,16 @@ def test_delivery_checkpoint_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon import delivery_service
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_delivery_checkpoint(["list", "001-demo"], project_root=tmp_path)
+        delivery_service.list_checkpoints(
+            tmp_path,
+            spec_id="001-demo",
+            strategy=None,
+        )
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery checkpoint")
@@ -387,10 +391,10 @@ def test_delivery_init_routes_to_harness_init(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("sys.argv", ["echelon", "delivery", "init"])
 
-    with patch("echelon.cli._cmd_harness_init") as mock_init:
+    with patch("echelon.delivery_service.initialize_delivery") as mock_init:
         main()
 
-    mock_init.assert_called_once_with([], command_prefix="echelon delivery init")
+    mock_init.assert_called_once_with(Path.cwd(), extra_args=())
 
 
 @pytest.mark.unit

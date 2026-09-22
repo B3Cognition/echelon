@@ -4526,20 +4526,20 @@ def spec_amend(
 )
 def delivery_init(ctx: typer.Context) -> None:
     """Initialize delivery environment: sandbox, mirror, verify."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import initialize_delivery
 
-    legacy_cli._cmd_harness_init(
-        list(ctx.args),
-        command_prefix="echelon delivery init",
+    initialize_delivery(
+        Path.cwd(),
+        extra_args=tuple(ctx.args),
     )
 
 
 @delivery_app.command("target")
 def delivery_target(spec_id: str) -> None:
     """Prepare delivery metadata for a spec's declared target repo."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import prepare_target
 
-    legacy_cli._cmd_delivery_target([spec_id])
+    prepare_target(Path.cwd(), spec_id=spec_id)
 
 
 @delivery_app.command("status")
@@ -4583,15 +4583,18 @@ def delivery_verify_local(
     ),
 ) -> None:
     """Explicit macOS verification; it never changes delivery landing authority."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import LocalVerificationRequest, verify_local
 
     try:
-        legacy_cli._cmd_delivery_verify_local(
-            spec_id,
-            target_id=target,
-            engine=engine,
-            assume_yes=assume_yes,
-            keep_on_failure=keep_on_failure,
+        verify_local(
+            Path.cwd(),
+            LocalVerificationRequest(
+                spec_id=spec_id,
+                target_id=target,
+                engine=engine,
+                assume_yes=assume_yes,
+                keep_on_failure=keep_on_failure,
+            ),
         )
     except ValueError as exc:
         typer.echo(f"✗ {exc}", err=True)
@@ -4603,10 +4606,10 @@ def delivery_cleanup_local(
     local_run_id: str = typer.Argument(..., metavar="LOCAL_RUN_ID", help="Journal-bound run id to recover."),
 ) -> None:
     """Clean one interrupted local verification using its ownership journal."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import cleanup_local
 
     try:
-        legacy_cli._cmd_delivery_cleanup_local(local_run_id)
+        cleanup_local(Path.cwd(), local_run_id=local_run_id)
     except ValueError as exc:
         typer.echo(f"✗ {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -4802,13 +4805,14 @@ def delivery_checkpoint_list(
     strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """List delivery checkpoint and recovery commits for a spec."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import list_checkpoints
 
-    args = ["list", spec_id]
-    if strategy is not None:
-        args.extend(["--strategy", strategy])
-    args.extend(list(ctx.args))
-    legacy_cli._cmd_delivery_checkpoint(args)
+    list_checkpoints(
+        Path.cwd(),
+        spec_id=spec_id,
+        strategy=strategy,
+        extra_args=tuple(ctx.args),
+    )
 
 
 def run(argv: list[str] | None = None) -> int | None:
