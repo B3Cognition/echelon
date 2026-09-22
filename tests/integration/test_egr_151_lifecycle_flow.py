@@ -127,7 +127,7 @@ def _dispatch_delivery(
     spec_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from echelon.cli import _cmd_harness_run
+    from echelon.delivery_service import _run_delivery
 
     config_file = repo / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +149,7 @@ def _dispatch_delivery(
         patch("harness.skills.run_skill.run") as runner,
     ):
         try:
-            _cmd_harness_run([spec_id])
+            _run_delivery(Path.cwd(), [spec_id])
         except SystemExit as exc:
             return runner, exc
         return runner, None

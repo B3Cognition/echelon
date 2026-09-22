@@ -65,7 +65,7 @@ def test_delivery_stack_contract_refreshes_stale_runtime_before_resolving_covera
     tmp_path: Path,
 ) -> None:
     """An upgraded CLI must not let a stale managed runtime suppress required gates."""
-    from echelon import cli
+    from echelon import delivery_service
 
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "game"
@@ -108,7 +108,7 @@ def test_delivery_stack_contract_refreshes_stale_runtime_before_resolving_covera
         deploy_current_bundle,
     )
 
-    resolved = cli._resolve_delivery_stack_contract(workspace, target)
+    resolved = delivery_service._resolve_delivery_stack_contract(workspace, target)
 
     assert {item.observer.id for item in resolved.coverage_observers} == {
         "playwright-e2e",
@@ -216,12 +216,12 @@ def test_delivery_run_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon import delivery_service
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_harness_run(["001-demo"])
+        delivery_service._run_delivery(Path.cwd(), ["001-demo"])
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery run")
@@ -505,16 +505,16 @@ def test_delivery_init_non_git_workspace_fails_before_mirror_clone(
 @pytest.mark.unit
 def test_delivery_run_routes_to_harness_run(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryRunRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "delivery", "run", "001", "strategy=codegen"])
 
-    with patch("echelon.cli._cmd_harness_run") as mock_run:
+    with patch("echelon.delivery_service.run_delivery") as mock_run:
         main()
 
     mock_run.assert_called_once_with(
-        ["001", "strategy=codegen"],
-        command_prefix="echelon delivery run",
-        display_args=["001", "strategy=codegen"],
+        Path.cwd(),
+        DeliveryRunRequest(spec_id="001", extra_args=("strategy=codegen",)),
     )
 
 
@@ -524,7 +524,7 @@ def test_delivery_does_not_construct_provider_when_phase_a_inputs_are_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_harness_run
+    from echelon.delivery_service import _run_delivery
 
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "api"
@@ -537,9 +537,9 @@ def test_delivery_does_not_construct_provider_when_phase_a_inputs_are_missing(
     monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(workspace))
     monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
     monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
-    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr("echelon.delivery_service._sync_polyrepo_runtime_extension", lambda *_args: None)
     monkeypatch.setattr(
-        "echelon.cli._apply_target_verify_command_detection",
+        "echelon.delivery_service._apply_target_verify_command_detection",
         lambda *_args, **_kwargs: None,
     )
 
@@ -548,7 +548,7 @@ def test_delivery_does_not_construct_provider_when_phase_a_inputs_are_missing(
          patch("harness.docker_provider.DockerWorktreeProvider") as provider, \
          patch("harness.skills.run_skill.run") as run_harness:
         with pytest.raises(SystemExit) as exc:
-            _cmd_harness_run(["001-postgres"])
+            _run_delivery(Path.cwd(), ["001-postgres"])
 
     assert exc.value.code == 1
     provider.assert_not_called()
@@ -562,7 +562,7 @@ def test_delivery_provisioning_allows_external_database_url_to_reach_harness_bou
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_harness_run
+    from echelon.delivery_service import _run_delivery
 
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "api"
@@ -576,13 +576,13 @@ def test_delivery_provisioning_allows_external_database_url_to_reach_harness_bou
     monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
     monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
     monkeypatch.setenv("DATABASE_URL", "postgresql://isolated")
-    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr("echelon.delivery_service._sync_polyrepo_runtime_extension", lambda *_args: None)
     monkeypatch.setattr(
-        "echelon.cli._apply_target_verify_command_detection",
+        "echelon.delivery_service._apply_target_verify_command_detection",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr("echelon.cli._block_if_harness_phase_a_not_ready", lambda *_args: None)
-    monkeypatch.setattr("echelon.cli._prepare_delivery_build_state", lambda **_kwargs: "build-test")
+    monkeypatch.setattr("echelon.delivery_service._block_if_harness_phase_a_not_ready", lambda *_args: None)
+    monkeypatch.setattr("echelon.delivery_service._prepare_delivery_build_state", lambda **_kwargs: "build-test")
 
     config = HarnessConfig(
         target_repo=str(target),
@@ -599,7 +599,7 @@ def test_delivery_provisioning_allows_external_database_url_to_reach_harness_bou
          patch("harness.docker_provider.DockerWorktreeProvider", return_value=provider), \
          patch("harness.skills.run_skill._count_tasks", return_value=1), \
          patch("harness.skills.run_skill.run") as run_harness:
-        _cmd_harness_run(["001-postgres"])
+        _run_delivery(Path.cwd(), ["001-postgres"])
 
     run_harness.assert_called_once()
     assert run_harness.call_args.args[1] is provider
@@ -616,7 +616,7 @@ def test_delivery_continue_and_resume_report_missing_state_before_provider_const
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_harness_continue, _cmd_harness_resume
+    from echelon.delivery_service import _run_delivery_continue, _run_delivery_resume
 
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "api"
@@ -630,9 +630,9 @@ def test_delivery_continue_and_resume_report_missing_state_before_provider_const
     monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
     monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr("echelon.delivery_service._sync_polyrepo_runtime_extension", lambda *_args: None)
     monkeypatch.setattr(
-        "echelon.cli._apply_target_verify_command_detection",
+        "echelon.delivery_service._apply_target_verify_command_detection",
         lambda *_args, **_kwargs: None,
     )
 
@@ -641,9 +641,9 @@ def test_delivery_continue_and_resume_report_missing_state_before_provider_const
          patch("harness.skills.run_skill.run") as run_harness:
         with pytest.raises(SystemExit) as exc:
             if command == "continue":
-                _cmd_harness_continue(["001-postgres"])
+                _run_delivery_continue(Path.cwd(), ["001-postgres"])
             else:
-                _cmd_harness_resume(["001-postgres", "continue now"])
+                _run_delivery_resume(Path.cwd(), ["001-postgres", "continue now"])
 
     assert exc.value.code == 1
     gitops.assert_not_called()
@@ -692,25 +692,33 @@ def test_delivery_run_multiple_source_roots_reports_delivery_rerun_command(
 @pytest.mark.unit
 def test_delivery_resume_routes_to_harness_resume(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "delivery", "resume", "001"])
 
-    with patch("echelon.cli._cmd_harness_resume") as mock_resume:
+    with patch("echelon.delivery_service.resume_delivery") as mock_resume:
         main()
 
-    mock_resume.assert_called_once_with(["001"])
+    mock_resume.assert_called_once_with(
+        Path.cwd(),
+        DeliveryRecoveryRequest(spec_id="001"),
+    )
 
 
 @pytest.mark.unit
 def test_delivery_continue_routes_to_harness_continue(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "delivery", "continue", "001"])
 
-    with patch("echelon.cli._cmd_harness_continue") as mock_continue:
+    with patch("echelon.delivery_service.continue_delivery") as mock_continue:
         main()
 
-    mock_continue.assert_called_once_with(["001"])
+    mock_continue.assert_called_once_with(
+        Path.cwd(),
+        DeliveryRecoveryRequest(spec_id="001"),
+    )
 
 
 @pytest.mark.unit
@@ -740,16 +748,16 @@ def test_harness_land_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatc
 @pytest.mark.unit
 def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
+    from echelon.delivery_service import DeliveryRunRequest
 
     monkeypatch.setattr("sys.argv", ["echelon", "harness", "run", "001"])
 
-    with patch("echelon.cli._cmd_harness_run") as mock_run:
+    with patch("echelon.delivery_service.run_delivery") as mock_run:
         main()
 
     mock_run.assert_called_once_with(
-        ["001"],
-        command_prefix="echelon delivery run",
-        display_args=["001"],
+        Path.cwd(),
+        DeliveryRunRequest(spec_id="001"),
     )
 
 

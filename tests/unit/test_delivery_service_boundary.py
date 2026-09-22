@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -91,3 +92,98 @@ def test_delivery_checkpoint_list_routes_typed_values(monkeypatch):
     )
     assert result.exit_code == 0
     assert calls == [(Path.cwd(), "001-demo", "safe", ())]
+
+
+def test_delivery_run_routes_immutable_request(monkeypatch):
+    from echelon.cli_app import app
+    from echelon.delivery_service import DeliveryRunRequest
+
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "delivery", "run", "001-demo", "legacy=value",
+            "--mode", "banzai", "--strategy", "safe",
+            "--max-outer", "4", "--max-inner", "2",
+            "--token-budget", "9000", "--no-auto-merge",
+            "--kill-losers", "--reset",
+        ],
+    )
+    assert result.exit_code == 0
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001-demo",
+            extra_args=("legacy=value",),
+            mode="banzai",
+            strategy="safe",
+            max_outer=4,
+            max_inner=2,
+            token_budget=9000,
+            auto_merge=False,
+            kill_losers=True,
+            reset=True,
+        ),
+    )]
+
+
+def test_delivery_resume_routes_answer_and_options(monkeypatch):
+    from echelon.cli_app import app
+    from echelon.delivery_service import DeliveryRecoveryRequest
+
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.resume_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
+    result = CliRunner().invoke(
+        app,
+        ["delivery", "resume", "001-demo", "Use option 1", "--mode", "semi", "--strategy", "safe"],
+    )
+    assert result.exit_code == 0
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001-demo",
+            answer="Use option 1",
+            mode="semi",
+            strategy="safe",
+        ),
+    )]
+
+
+def test_delivery_continue_routes_answerless_request(monkeypatch):
+    from echelon.cli_app import app
+    from echelon.delivery_service import DeliveryRecoveryRequest
+
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.continue_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
+    result = CliRunner().invoke(
+        app,
+        ["delivery", "continue", "001-demo", "--mode", "banzai"],
+    )
+    assert result.exit_code == 0
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(spec_id="001-demo", mode="banzai"),
+    )]
+
+
+def test_continue_delivery_rejects_answer():
+    from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
+
+    with pytest.raises(
+        ValueError,
+        match="^delivery continue does not accept an answer$",
+    ):
+        continue_delivery(
+            Path.cwd(),
+            DeliveryRecoveryRequest(spec_id="001-demo", answer="Use option 1"),
+        )

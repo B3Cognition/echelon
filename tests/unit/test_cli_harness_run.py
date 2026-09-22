@@ -1,4 +1,4 @@
-"""Tests for _cmd_harness_run argument parsing in cli.py.
+"""Tests for the delivery-service run kernel.
 
 Covers the free-text task description capture introduced to fix the bug
 where 'echelon delivery run 013 strategy=codegen "do X"' silently dropped "do X".
@@ -60,7 +60,7 @@ SPEC_WITH_LOCAL_TARGET = "---\ntargets:\n  - .\n---\n# Spec\n"
 
 
 def test_delivery_outcome_exit_code_reports_blocked_typed_outcome() -> None:
-    from echelon.cli import _delivery_outcome_exit_code
+    from echelon.delivery_service import _delivery_outcome_exit_code
 
     outcome = DeliveryRunOutcome(
         results=(DeliveryResult(
@@ -116,7 +116,7 @@ def _git_backed_workspace(tmp_path: Path) -> None:
 def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
     tmp_path: Path, status: str, expected_phase: str
 ) -> None:
-    from echelon.cli import _mark_current_harness_state_blocked
+    from echelon.delivery_service import _mark_current_harness_state_blocked
 
     store = StateStore(tmp_path / "runs" / "state", "003", "default")
     store.initialize("run-1", "semi", enabled_phases=["implementation", "visual", "review", "finalization"])
@@ -142,7 +142,7 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
 
 @pytest.mark.unit
 def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: Path) -> None:
-    from echelon.cli import _mark_current_harness_state_blocked
+    from echelon.delivery_service import _mark_current_harness_state_blocked
 
     store = StateStore(tmp_path / "runs" / "state", "003", "default")
     store.initialize("run-1", "semi")
@@ -159,7 +159,7 @@ def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: 
 @pytest.mark.unit
 def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp_path: Path) -> None:
     """Target child failures must not overwrite a same-ID source state file."""
-    from echelon.cli import _mark_current_harness_state_blocked
+    from echelon.delivery_service import _mark_current_harness_state_blocked
 
     target_root = tmp_path / "runs" / "targets" / "api"
     target = StateStore(target_root / "runs" / "state", "003", "default")
@@ -179,10 +179,10 @@ def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp
 
 @pytest.mark.unit
 class TestHarnessRunArgParsing:
-    """Verify the user_message built by _cmd_harness_run reaches parse_intent correctly."""
+    """Verify the user_message built by _run_delivery reaches parse_intent correctly."""
 
     def _build_user_message(self, args: list[str]) -> str:
-        """Replicate the user_message construction logic from _cmd_harness_run."""
+        """Replicate the user_message construction logic from _run_delivery."""
         spec_id = args[0]
         kv: dict[str, str] = {}
         free_text: list[str] = []
@@ -252,7 +252,7 @@ class TestHarnessRunTaskFormatErrors:
             encoding="utf-8",
         )
 
-        from echelon.cli import _block_if_spec_task_targets_mismatch
+        from echelon.delivery_service import _block_if_spec_task_targets_mismatch
 
         with pytest.raises(SystemExit) as exc:
             _block_if_spec_task_targets_mismatch(
@@ -283,10 +283,10 @@ class TestHarnessRunTaskFormatErrors:
         (source / "package.json").write_text("{}", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
 
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
 
         with pytest.raises(SystemExit) as exc:
-            _cmd_harness_run(["003", "mode=banzai", "strategy=alternate", "finish slice"])
+            _run_delivery(Path.cwd(), ["003", "mode=banzai", "strategy=alternate", "finish slice"])
 
         assert exc.value.code == 2
         err = capsys.readouterr().err
@@ -309,10 +309,10 @@ class TestHarnessRunTaskFormatErrors:
 
         monkeypatch.chdir(tmp_path)
 
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
 
         with pytest.raises(SystemExit) as exc:
-            _cmd_harness_run(["003"])
+            _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         capsys.readouterr()
@@ -350,10 +350,10 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["003"])
+                _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -390,10 +390,10 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit):
-                _cmd_harness_run(["003", "mode=banzai", "strategy=alternate", "finish slice"])
+                _run_delivery(Path.cwd(), ["003", "mode=banzai", "strategy=alternate", "finish slice"])
 
         mock_run.assert_not_called()
         err = capsys.readouterr().err
@@ -430,10 +430,10 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["003"])
+                _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -474,10 +474,10 @@ class TestHarnessRunTaskFormatErrors:
                 "to the docker API at unix:///Users/me/.docker/run/docker.sock; "
                 "check if the path is correct and if the daemon is running"
             )
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["003"])
+                _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         err = capsys.readouterr().err
@@ -510,9 +510,9 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
-            _cmd_harness_run(["003"])
+            _run_delivery(Path.cwd(), ["003"])
 
         mock_run.assert_called_once()
 
@@ -532,7 +532,7 @@ class TestHarnessRunTaskFormatErrors:
         _write_phase_a_build_inputs(spec_dir)
         monkeypatch.chdir(tmp_path)
 
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
         from echelon.spec_lifecycle import SpecMutationLock
 
         with patch("harness.config.load_config") as mock_cfg, \
@@ -546,7 +546,7 @@ class TestHarnessRunTaskFormatErrors:
             )
             with SpecMutationLock.acquire(tmp_path, "003-test", "retarget-held"):
                 with pytest.raises(SystemExit) as exc:
-                    _cmd_harness_run(["003"])
+                    _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -568,7 +568,7 @@ class TestHarnessRunTaskFormatErrors:
         _write_phase_a_build_inputs(spec_dir)
         monkeypatch.chdir(tmp_path)
 
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
         from echelon.spec_lifecycle import SpecMutationLock
 
         observed_build_ids: list[str] = []
@@ -595,7 +595,7 @@ class TestHarnessRunTaskFormatErrors:
                 buffer_limit_bytes=1024 * 1024,
                 target_repo=".",
             )
-            _cmd_harness_run(["003"])
+            _run_delivery(Path.cwd(), ["003"])
 
         assert len(observed_build_ids) == 1
 
@@ -604,7 +604,7 @@ class TestHarnessRunTaskFormatErrors:
         tmp_path: Path,
         monkeypatch,
     ) -> None:
-        import echelon.cli as cli
+        import echelon.delivery_service as delivery_service
 
         events: list[tuple[str, Path]] = []
         state_path = tmp_path / "runs" / "build-test" / "state.json"
@@ -619,13 +619,13 @@ class TestHarnessRunTaskFormatErrors:
             write_state,
         )
         monkeypatch.setattr(
-            cli,
+            delivery_service,
             "_fsync_directory",
             lambda path: events.append(("fsync", path)),
             raising=False,
         )
 
-        cli._write_delivery_preparation_state(
+        delivery_service._write_delivery_preparation_state(
             state_path,
             {"spec_id": "003-test"},
         )
@@ -661,9 +661,9 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
-            _cmd_harness_run([
+            _run_delivery(Path.cwd(), [
                 "003",
                 "mode=banzai",
                 "strategy=codegen",
@@ -714,10 +714,10 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["003"])
+                _run_delivery(Path.cwd(), ["003"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -764,10 +764,10 @@ class TestHarnessRunTaskFormatErrors:
              patch("harness.docker_provider.DockerWorktreeProvider"), \
              patch("harness.skills.run_skill.run") as mock_run:
             mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["002-unready"])
+                _run_delivery(Path.cwd(), ["002-unready"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -797,7 +797,7 @@ class TestHarnessTargetPreflight:
         )
         (spec_dir / "targets.yml").write_text(contract, encoding="utf-8")
 
-        from echelon.cli import _validate_locked_target_child_contract
+        from echelon.delivery_service import _validate_locked_target_child_contract
         from harness.spec_frontmatter import read_canonical_target_entries
 
         inherited_entries = read_canonical_target_entries(spec_dir)
@@ -829,7 +829,7 @@ class TestHarnessTargetPreflight:
         (source / ".git").mkdir(parents=True)
         (source / "package.json").write_text("{}\n", encoding="utf-8")
 
-        from echelon.cli import _resolve_harness_workspace_target
+        from echelon.delivery_service import _resolve_harness_workspace_target
 
         target = _resolve_harness_workspace_target(tmp_path, explicit_target=None)
 
@@ -860,10 +860,10 @@ class TestHarnessTargetPreflight:
         (target / ".git").mkdir(parents=True)
         monkeypatch.chdir(root)
 
-        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
+        from echelon.delivery_service import HarnessWorkspaceTarget, _run_delivery
 
         monkeypatch.setattr(
-            "echelon.cli._resolve_harness_workspace_target",
+            "echelon.delivery_service._resolve_harness_workspace_target",
             lambda *_args, **_kwargs: HarnessWorkspaceTarget(
                 workspace_root=root.resolve(),
                 workspace_git_role="orchestration",
@@ -874,7 +874,7 @@ class TestHarnessTargetPreflight:
         )
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001"])
+                _run_delivery(Path.cwd(), ["001"])
 
         assert exc.value.code == 0
         mock_run.assert_called_once()
@@ -925,9 +925,9 @@ class TestHarnessTargetPreflight:
             "ECHELON_TARGETS_CONTRACT_JSON",
             json.dumps(inherited_entries, sort_keys=True),
         )
-        monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_: None)
+        monkeypatch.setattr("echelon.delivery_service._sync_polyrepo_runtime_extension", lambda *_: None)
         monkeypatch.setattr(
-            "echelon.cli._apply_target_verify_command_detection",
+            "echelon.delivery_service._apply_target_verify_command_detection",
             lambda *_args, **_kwargs: None,
         )
 
@@ -951,9 +951,9 @@ class TestHarnessTargetPreflight:
                 buffer_limit_bytes=1024 * 1024,
                 target_repo=str(target),
             )
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
-            _cmd_harness_run(["001"])
+            _run_delivery(Path.cwd(), ["001"])
 
         assert len(observed) == 1
         kwargs = mock_run.call_args.kwargs
@@ -1031,9 +1031,9 @@ class TestHarnessTargetPreflight:
             "ECHELON_TARGETS_CONTRACT_JSON",
             json.dumps(inherited_entries, sort_keys=True),
         )
-        monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_: None)
+        monkeypatch.setattr("echelon.delivery_service._sync_polyrepo_runtime_extension", lambda *_: None)
         monkeypatch.setattr(
-            "echelon.cli._apply_target_verify_command_detection",
+            "echelon.delivery_service._apply_target_verify_command_detection",
             lambda *_args, **_kwargs: None,
         )
 
@@ -1061,10 +1061,10 @@ class TestHarnessTargetPreflight:
                 buffer_limit_bytes=1024 * 1024,
                 target_repo=str(target),
             )
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001"])
+                _run_delivery(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -1101,10 +1101,10 @@ class TestHarnessTargetPreflight:
         (other / ".git").mkdir(parents=True)
 
         monkeypatch.chdir(root)
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
 
         with pytest.raises(SystemExit) as exc:
-            _cmd_harness_run(["001", "mode=semi"])
+            _run_delivery(Path.cwd(), ["001", "mode=semi"])
 
         assert exc.value.code == 1
         err = capsys.readouterr().err
@@ -1133,10 +1133,10 @@ class TestHarnessTargetPreflight:
         (target / "package.json").write_text("{}\n", encoding="utf-8")
 
         monkeypatch.chdir(root)
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001", "mode=semi"])
+                _run_delivery(Path.cwd(), ["001", "mode=semi"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -1163,7 +1163,7 @@ class TestHarnessTargetPreflight:
         (target / "package.json").write_text("{}\n", encoding="utf-8")
 
         monkeypatch.chdir(root)
-        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
+        from echelon.delivery_service import HarnessWorkspaceTarget, _run_delivery
         from harness.spec_frontmatter import read_frontmatter
 
         def fake_resolve(project_root, explicit_target, **kwargs):
@@ -1176,10 +1176,10 @@ class TestHarnessTargetPreflight:
                 source_git_role="source",
             )
 
-        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
+        monkeypatch.setattr("echelon.delivery_service._resolve_harness_workspace_target", fake_resolve)
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001", "mode=banzai"])
+                _run_delivery(Path.cwd(), ["001", "mode=banzai"])
 
         assert exc.value.code == 2
         assert read_frontmatter(spec_dir)["targets"] == ["api"]
@@ -1202,11 +1202,11 @@ class TestHarnessTargetPreflight:
         (other / ".git").mkdir(parents=True)
 
         monkeypatch.chdir(root)
-        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
+        from echelon.delivery_service import HarnessWorkspaceTarget, _run_delivery
 
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001", "mode=banzai", "target=api"])
+                _run_delivery(Path.cwd(), ["001", "mode=banzai", "target=api"])
 
         assert exc.value.code == 2
         mock_run.assert_not_called()
@@ -1236,11 +1236,11 @@ class TestHarnessTargetPreflight:
             (source / "package.json").write_text("{}\n", encoding="utf-8")
 
         monkeypatch.chdir(root)
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
 
         with patch("harness.config.load_config") as mock_load_config:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001", "mode=banzai"])
+                _run_delivery(Path.cwd(), ["001", "mode=banzai"])
 
         assert exc.value.code == 1
         mock_load_config.assert_not_called()
@@ -1268,11 +1268,11 @@ class TestHarnessTargetPreflight:
         )
 
         monkeypatch.chdir(root)
-        from echelon.cli import _cmd_harness_run
+        from echelon.delivery_service import _run_delivery
 
         with patch("harness.config.load_config") as mock_load_config:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["001"])
+                _run_delivery(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
         mock_load_config.assert_not_called()
