@@ -2,19 +2,44 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
 
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
+from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.provider_capability import ProviderCapability
 from harness.runtime_surface import prune_delivery_workflow_definition
+
+
+@dataclass(frozen=True)
+class DeliveryRunRequest:
+    spec_id: str
+    extra_args: tuple[str, ...] = ()
+    mode: str | None = None
+    strategy: str | None = None
+    max_outer: int | None = None
+    max_inner: int | None = None
+    token_budget: int | None = None
+    auto_merge: bool | None = None
+    kill_losers: bool = False
+    reset: bool = False
+
+
+@dataclass(frozen=True)
+class DeliveryRecoveryRequest:
+    spec_id: str
+    extra_args: tuple[str, ...] = ()
+    answer: str | None = None
+    mode: str | None = None
+    strategy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +73,21 @@ class HarnessWorkspaceTarget:
     source_root: Path
     source_id: str
     source_git_role: str
+
+
+def _print_missing_spec_target_error(
+    spec_id: str,
+    *,
+    command_prefix: str = "echelon delivery run",
+) -> None:
+    print(
+        f"✗ Spec '{spec_id}' has no implementation target.\n\n"
+        "  Implementation targets are fixed when Phase A begins. Start a new spec run with:\n"
+        "    echelon spec run <description> --target <source-path> "
+        "[--target <source-path> ...]\n\n"
+        f"  Delivery will not infer or mutate targets for spec '{spec_id}'.",
+        file=sys.stderr,
+    )
 
 
 def _block_if_spec_task_targets_mismatch(
@@ -1221,3 +1261,1736 @@ def list_checkpoints(
     print("COMMIT   KIND        PHASE      TASKS                 CONTEXT")
     for commit, kind, phase, tasks, context in rows:
         print(f"{commit:<8} {kind:<11} {phase:<10} {tasks:<21} {context}")
+
+def _option_pairs(**values: object) -> list[str]:
+    pairs: list[str] = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            pairs.append(f"{key}={'true' if value else 'false'}")
+        else:
+            pairs.append(f"{key}={value}")
+    return pairs
+
+
+def _run_args(request: DeliveryRunRequest) -> list[str]:
+    args = [request.spec_id, *request.extra_args]
+    args.extend(
+        _option_pairs(
+            mode=request.mode,
+            strategy=request.strategy,
+            max_outer=request.max_outer,
+            max_inner=request.max_inner,
+            token_budget=request.token_budget,
+            auto_merge=request.auto_merge,
+        )
+    )
+    if request.kill_losers:
+        args.append("kill_losers=true")
+    if request.reset:
+        args.append("--reset")
+    return args
+
+
+def _display_run_args(request: DeliveryRunRequest) -> list[str]:
+    args = [request.spec_id, *request.extra_args]
+    if request.mode is not None:
+        args.append(f"--mode={request.mode}")
+    if request.strategy is not None:
+        args.append(f"--strategy={request.strategy}")
+    if request.max_outer is not None:
+        args.append(f"--max-outer={request.max_outer}")
+    if request.max_inner is not None:
+        args.append(f"--max-inner={request.max_inner}")
+    if request.token_budget is not None:
+        args.append(f"--token-budget={request.token_budget}")
+    if request.auto_merge is not None:
+        args.append("--auto-merge" if request.auto_merge else "--no-auto-merge")
+    if request.kill_losers:
+        args.append("--kill-losers")
+    if request.reset:
+        args.append("--reset")
+    return args
+
+
+def _recovery_args(request: DeliveryRecoveryRequest) -> list[str]:
+    args = [request.spec_id]
+    if request.answer is not None:
+        args.append(request.answer)
+    args.extend(request.extra_args)
+    args.extend(_option_pairs(mode=request.mode, strategy=request.strategy))
+    return args
+
+
+def run_delivery(project_root: Path, request: DeliveryRunRequest) -> None:
+    _run_delivery(
+        project_root,
+        _run_args(request),
+        command_prefix="echelon delivery run",
+        display_args=_display_run_args(request),
+    )
+
+
+def resume_delivery(project_root: Path, request: DeliveryRecoveryRequest) -> None:
+    _run_delivery_resume(project_root, _recovery_args(request))
+
+
+def continue_delivery(
+    project_root: Path,
+    request: DeliveryRecoveryRequest,
+) -> None:
+    if request.answer is not None:
+        raise ValueError("delivery continue does not accept an answer")
+    _run_delivery_continue(project_root, _recovery_args(request))
+
+
+def _delivery_provisioning_blockers(
+    project_root: Path,
+    target_root: Path,
+) -> list[str]:
+    """Return target-local verification provisioning blockers without side effects."""
+    from echelon.cli import _load_stack_definitions_for_project
+    from echelon.stack_selection import StackSelectionError
+    from harness.config import get_full_resolved_config
+    from harness.stacks import provisioning_statuses, resolve_stacks
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    target_config_dir = target_root / ".echelon"
+    # A configured source owns its stack selection. Targets without their own
+    # config keep the historical workspace-root selection for compatibility.
+    target_has_source_config = target_root != project_root and any(
+        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    stack_config_root = target_root if target_has_source_config else project_root
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    target_archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not all(
+        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
+    ):
+        raise StackSelectionError(
+            "stacks.selected must be a list of non-empty stack IDs"
+        )
+    if not isinstance(target_archetypes, list) or not all(
+        isinstance(archetype, str) and archetype.strip()
+        for archetype in target_archetypes
+    ):
+        raise StackSelectionError(
+            "stacks.target_archetypes must be a list of non-empty archetype IDs"
+        )
+    if not selected:
+        return []
+
+    definitions = _load_stack_definitions_for_project(project_root)
+    resolved = resolve_stacks(
+        selected,
+        definitions,
+        target_archetypes=set(target_archetypes) or None,
+    )
+    target = target_root
+    blockers: list[str] = []
+    for status in provisioning_statuses(resolved, target, os.environ):
+        provisioner = next(
+            item.provisioner
+            for item in resolved.provisioners
+            if item.owner_stack_id == status.owner_stack_id
+            and item.provisioner.id == status.provisioner_id
+        )
+        environment = ", ".join(provisioner.required_environment)
+        if status.state == "missing":
+            blockers.append(
+                "STACK_PROVISIONING_MISSING: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "is not configured for this target. Run: "
+                f"echelon stack provision --target {target}"
+            )
+        elif status.state == "prepared":
+            blockers.append(
+                "STACK_PROVISIONING_PREPARED: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "has target-local artifacts, but Echelon did not start the service. "
+                "Start the prepared service manually or configure an external URL via "
+                f"{environment}."
+            )
+    return blockers
+
+
+def _refresh_workspace_runtime_for_delivery(project_root: Path) -> None:
+    """Deploy the installed Echelon-owned bundle before a delivery reads it.
+
+    ``.echelon/runtime`` and ``.echelon/prosaic`` are generated, ignored
+    workspace state.  Delivery must not silently run an older managed bundle
+    after the CLI has been upgraded, because that can remove new stack-owned
+    verification requirements from the resolved contract.
+    """
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    try:
+        install_prosaic_bundle(project_root)
+    except ProsaicBundleInstallError as exc:
+        print(
+            "✗ Could not refresh Echelon's managed runtime before delivery.\n"
+            f"  Workspace: {project_root}\n"
+            f"  Error: {exc}\n"
+            "  Fix: rerun the Echelon installer, then retry this delivery command.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
+def _resolve_delivery_stack_contract(project_root: Path, target_root: Path):
+    """Resolve the current installed stack contract for one delivery target."""
+    from harness.verification_stack_runtime import resolve_verification_stacks
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    _refresh_workspace_runtime_for_delivery(project_root)
+    return resolve_verification_stacks(project_root, target_root)
+
+
+def _resolve_delivery_verification_services(
+    config: object,
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    """Attach target-applicable sandbox services from the stack contract."""
+    resolved = _resolve_delivery_stack_contract(project_root, target_root)
+    config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
+
+
+def _block_if_delivery_provisioning_incomplete(
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    blockers = _delivery_provisioning_blockers(project_root, target_root)
+    if not blockers:
+        return
+    print(
+        "✗ Delivery verification provisioning is not ready for this target.\n"
+        + "".join(f"  - {blocker}\n" for blocker in blockers),
+        file=sys.stderr,
+        end="",
+    )
+    raise SystemExit(1)
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes needed by the delivery safety boundary."""
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_delivery_preparation_state(
+    state_path: Path,
+    payload: Mapping[str, object],
+) -> None:
+    """Atomically write Phase B evidence and persist every new directory entry."""
+    from harness.lexicon_gate_io import write_json_atomic
+
+    write_json_atomic(state_path, payload)
+    _fsync_directory(state_path.parent)
+    _fsync_directory(state_path.parent.parent)
+    _fsync_directory(state_path.parent.parent.parent)
+
+
+def _validate_locked_target_child_contract(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+) -> None:
+    """Fail closed when an orchestrated child's inherited target is stale."""
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    if not target_env:
+        return
+
+    from harness.spec_frontmatter import read_canonical_target_entries
+
+    expected_target_text = os.environ.get("ECHELON_TARGET_CONTRACT_JSON", "")
+    expected_targets_text = os.environ.get("ECHELON_TARGETS_CONTRACT_JSON", "")
+    try:
+        expected_target = json.loads(expected_target_text)
+        expected_targets = json.loads(expected_targets_text)
+    except json.JSONDecodeError:
+        expected_target = None
+        expected_targets = None
+    if not isinstance(expected_target, dict) or not isinstance(expected_targets, list):
+        print(
+            "✗ Target-child delivery is missing its inherited canonical target contract.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    canonical_targets = [
+        dict(entry)
+        for entry in read_canonical_target_entries(spec_dir)
+    ]
+    if canonical_targets != expected_targets or expected_target not in canonical_targets:
+        print(
+            "✗ Target-child delivery contract is stale; the canonical spec targets "
+            "changed after dispatch. Restart delivery from the workspace root.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET", "")
+    if implementation_target != str(expected_target.get("path") or ""):
+        print(
+            "✗ Target-child delivery metadata no longer matches the canonical target set.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    expected_path = (
+        project_root
+        if implementation_target == "."
+        else project_root / implementation_target
+    ).resolve()
+    inherited_path = Path(target_env).resolve()
+    source_root = Path(os.environ.get("ECHELON_SOURCE_ROOT") or target_env).resolve()
+    if inherited_path != expected_path or source_root != expected_path:
+        print(
+            "✗ Target-child repository path no longer matches the canonical target contract.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
+def _prepare_delivery_build_state(
+    *,
+    project_root: Path,
+    harness_base_dir: Path,
+    spec_id: str,
+    spec_dir: Path,
+) -> str:
+    """Create durable Phase B evidence under the per-spec mutation lease."""
+    from harness.paths import build_dir, make_build_id
+    from echelon.spec_lifecycle import (
+        PhaseAExecutionLock,
+        SpecLifecycleLocked,
+        SpecMutationLock,
+    )
+
+    operation_id = f"delivery-{os.getpid()}"
+    try:
+        with SpecMutationLock.acquire(project_root, spec_id, operation_id):
+            with PhaseAExecutionLock.acquire(project_root, operation_id):
+                _validate_locked_target_child_contract(
+                    project_root=project_root,
+                    spec_dir=spec_dir,
+                )
+                _block_if_harness_phase_a_not_ready(spec_dir, spec_id)
+                build_id = make_build_id()
+                _write_delivery_preparation_state(
+                    build_dir(harness_base_dir, build_id) / "state.json",
+                    {
+                        "schema_version": 1,
+                        "spec_id": spec_id,
+                        "build_id": build_id,
+                        "status": "preparing",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                return build_id
+    except SpecLifecycleLocked as exc:
+        print(
+            "✗ Cannot prepare delivery while the spec mutation lease is owned by "
+            f"{exc.operation_id}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
+def _run_delivery(
+    project_root: Path,
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery run",
+    display_args: list[str] | None = None,
+) -> None:
+    import logging
+
+    from echelon.cli import (
+        _banner,
+        _command_display,
+        _print_harness_config_error,
+        _project_echelon_config,
+        _require_provider_capability,
+        _workspace_git_preflight,
+    )
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args:
+        print(f"{command_prefix}: missing spec_id\n", file=sys.stderr)
+        sys.exit(1)
+
+    rerun_command = _command_display(command_prefix, display_args or args)
+    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
+    _workspace_git_preflight(project_root, command_name=rerun_command)
+
+    spec_id = args[0]
+    kv: dict[str, str] = {}
+    free_text: list[str] = []
+    reset = "--reset" in args[1:]
+    for arg in args[1:]:
+        if arg == "--reset":
+            continue
+        if "=" in arg:
+            k, _, v = arg.partition("=")
+            kv[k.strip()] = v.strip()
+        else:
+            free_text.append(arg)
+    strategy = kv.get("strategy", "default")
+    mode = kv.get("mode", "semi")
+    explicit_target = kv.get("target") or kv.get("target_source")
+    if explicit_target:
+        print(
+            f"✗ {command_prefix} no longer accepts a target override.\n"
+            "  Delivery consumes the implementation targets declared when Phase A began.\n"
+            "  Start a new spec with: echelon spec run <description> "
+            "--target <source-path> [--target <source-path> ...]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+    if kv.get("max_outer"):
+        parts.append(f"max {kv['max_outer']} outer iterations")
+    if kv.get("max_inner"):
+        parts.append(f"max {kv['max_inner']} inner iterations")
+    if kv.get("token_budget"):
+        parts.append(f"token_budget={kv['token_budget']}")
+    auto_merge = kv.get("auto_merge")
+    if auto_merge is not None:
+        if auto_merge.lower() in {"0", "false", "no", "off"}:
+            parts.append("no_auto_merge")
+        else:
+            parts.append("auto_merge")
+    kill_losers = kv.get("kill_losers")
+    if kill_losers is not None and kill_losers.lower() not in {"0", "false", "no", "off"}:
+        parts.append("kill_losers")
+    if free_text:
+        parts.append(f"task: {' '.join(free_text)}")
+    if reset:
+        parts.append("--reset")
+    user_message = " ".join(parts)
+
+    # Orchestrator mode: spec targets take priority over local echelon-config.yml.
+    # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
+    # deploy) doesn't silently bypass target validation and run against the wrong repo.
+    from harness.spec_frontmatter import (
+        find_spec_dir,
+        read_targets,
+        write_status as _write_spec_status,
+    )
+    from harness.spec_snapshot import snapshot_spec_dir
+    from echelon.orchestrator import (
+        run_multi_target,
+        validate_single_target,
+        validate_targets,
+    )
+
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    direct_target_path: Path | None = None
+    spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else project_root
+    harness_base_dir = project_root
+    config_root = project_root
+    if target_env and polyrepo_env:
+        config_root = Path(polyrepo_env).resolve()
+        harness_base_dir = (
+            config_root
+            / "runs"
+            / "targets"
+            / (target_name_env or Path(target_env).resolve().name)
+        )
+        _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
+    spec_dir = find_spec_dir(spec_id, spec_search_root)
+    if spec_dir is not None:
+        resolved_spec_id = spec_dir.name
+        polyrepo_root = spec_dir.parent.parent
+        try:
+            snapshot_spec_dir(spec_dir, polyrepo_root)
+        except OSError as e:
+            print(
+                "✗ Could not preserve spec artifacts before harness run.\n"
+                f"  Error: {e}\n"
+                "  Refusing to continue because untracked spec work could be lost.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        targets_rel: list[str] = read_targets(spec_dir)
+        if targets_rel and not target_env:
+            _block_if_spec_task_targets_mismatch(
+                spec_dir,
+                targets_rel,
+                resolved_spec_id,
+            )
+            if len(targets_rel) == 1:
+                workspace_target = _resolve_harness_workspace_target(
+                    polyrepo_root,
+                    targets_rel[0],
+                    spec_dir=spec_dir,
+                    spec_id=resolved_spec_id,
+                    rerun_command=rerun_command,
+                )
+                target_rel = (
+                    "."
+                    if workspace_target.source_root == workspace_target.workspace_root
+                    else workspace_target.source_root.relative_to(workspace_target.workspace_root).as_posix()
+                )
+                if target_rel != targets_rel[0]:
+                    print(
+                        "✗ Declared implementation target is not a canonical workspace source path.\n"
+                        f"  declared: {targets_rel[0]}\n"
+                        f"  resolved: {target_rel}\n"
+                        "  Delivery will not rewrite Phase A target metadata; regenerate the spec "
+                        "with the resolved --target path.",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(2)
+                if workspace_target.source_root == workspace_target.workspace_root:
+                    direct_target_path = workspace_target.source_root
+                else:
+                    target = validate_single_target([target_rel], polyrepo_root)
+                    sys.exit(run_multi_target(
+                        spec_id,
+                        [target],
+                        args[1:],
+                        **_workspace_target_dispatch_metadata(workspace_target),
+                    ))
+
+            else:
+                # A spec may declare multiple targets. run_multi_target assigns
+                # canonical task ownership and serializes cross-target dependency
+                # order so shared progress writes cannot race.
+                targets = validate_targets(targets_rel, polyrepo_root)
+                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
+                source_ids: dict[str, str] = {}
+                source_git_roles: dict[str, str] = {}
+                for target in targets:
+                    target_metadata = _source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=None,
+                    )
+                    source_ids.update(target_metadata["source_ids"])
+                    source_git_roles.update(target_metadata["source_git_roles"])
+                dispatch_metadata: dict[str, object] = {
+                    "workspace_root": polyrepo_root.resolve(),
+                    "workspace_git_role": "orchestration",
+                    "source_ids": source_ids,
+                    "source_git_roles": source_git_roles,
+                }
+                sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
+
+        if not target_env and direct_target_path is None:
+            _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+            sys.exit(1)
+
+    if not target_env and direct_target_path is None:
+        _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+        sys.exit(1)
+
+    # Validate authored build inputs before Phase A readiness.  A malformed
+    # published task/plan needs its migration guidance, while a well-formed but
+    # incomplete spec needs the Phase A recovery guidance.  Both checks happen
+    # before creating Git or sandbox resources.
+    from harness.skills.run_skill import _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError
+
+    try:
+        task_count = _count_tasks(spec_id, str(spec_search_root))
+    except TaskValidationError as e:
+        tasks_path = (
+            spec_dir / "tasks.md"
+            if spec_dir is not None
+            else Path("specs") / spec_id / "tasks.md"
+        )
+        print(
+            "✗ tasks.md is not in canonical format.\n"
+            f"  Error: {e}\n"
+            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
+            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
+            f"  Then rerun:        {rerun_command}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if spec_dir is not None and (spec_dir / "plan.md").exists():
+        try:
+            validate_plan_file(spec_dir / "plan.md")
+        except PlanValidationError as e:
+            plan_path = spec_dir / "plan.md"
+            print(
+                "✗ plan.md is not in canonical format.\n"
+                f"  Error: {e}\n"
+                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
+                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
+                f"  Then rerun:        {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if spec_dir is not None:
+        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.skills.run_skill import run
+
+    # Single-repo mode: require local Echelon harness config.
+    echelon_yml = _project_echelon_config(config_root)
+    if not echelon_yml.exists():
+        print(
+            "✗ Harness not initialised for this project.\n"
+            f"  Expected: {echelon_yml}\n"
+            "  Fix: run 'echelon delivery init' first, or add 'targets:' to your spec.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from harness.paths import mirror_path as _mirror_path_fn
+    mirror_path = _mirror_path_fn(harness_base_dir)
+    if not mirror_path.exists() and not target_env:
+        print(
+            "✗ Harness mirror not initialised for this project.\n"
+            f"  Expected: {mirror_path}\n"
+            "  Fix: run 'echelon delivery init' to create the mirror.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_config(project_root=config_root, squad_only=bool(target_env))
+    except HarnessValidationError as e:
+        _print_harness_config_error(e)
+        sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
+    if direct_target_path is not None:
+        config.target_repo = str(direct_target_path.resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=direct_target_path.resolve(),
+            spec_id=spec_id,
+        )
+    elif target_env:
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=target_repo_path,
+            spec_id=spec_id,
+        )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
+    if target_env and not mirror_path.exists():
+        gitops.clone_mirror(config.target_repo)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=_container_runtime_cli(config),
+    )
+
+    assert spec_dir is not None
+    delivery_build_id = _prepare_delivery_build_state(
+        project_root=spec_dir.parent.parent,
+        harness_base_dir=harness_base_dir,
+        spec_id=spec_dir.name,
+        spec_dir=spec_dir,
+    )
+
+    target_display = str(getattr(config, "target_repo", None) or "local")
+    _banner("HARNESS RUN", [
+        ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
+        ("Mode", mode),
+        ("Strategy", strategy),
+        ("Target", target_display),
+    ])
+
+    if spec_dir is not None:
+        _write_spec_status(spec_dir, "in_progress")
+
+    try:
+        outcome = run(
+            user_message,
+            provider,
+            gitops,
+            base_dir=str(harness_base_dir),
+            config=config,
+            resume_build_id=delivery_build_id,
+            orchestration_root=spec_search_root,
+            summary_command=command_prefix,
+        )
+        # A child target process is the authority for its own delivery outcome.
+        # Multi-target orchestration must never infer success from rendered text.
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
+    except Exception as exc:
+        if _is_docker_unavailable_error(exc):
+            _mark_current_harness_state_blocked(
+                harness_base_dir,
+                spec_id,
+                strategy,
+                "docker_unavailable",
+            )
+            print(
+                f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                f"  Error: {exc}\n"
+                f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                f"       {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _print_harness_error_and_exit(
+            project_root=harness_base_dir,
+            spec_id=spec_id,
+            strategy=strategy,
+            command=rerun_command,
+            exc=exc,
+        )
+
+
+def _delivery_outcome_exit_code(outcome: object) -> int:
+    """Return a process outcome from typed delivery state, never rendered text."""
+    from harness.delivery_results import DeliveryRunOutcome
+
+    if not isinstance(outcome, DeliveryRunOutcome):
+        # Keeps CLI adapters compatible with legacy/mocked run adapters. The
+        # production run skill always returns a typed DeliveryRunOutcome.
+        return 0
+    if outcome.landing.status == "blocked":
+        return 1
+    return 0 if any(result.status == "converged" for result in outcome.results) else 1
+
+
+def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
+    """Fail before build LLM dispatch when published Phase A inputs are invalid."""
+    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    if readiness.ready:
+        return
+
+    blockers = "\n".join(f"  - {blocker}" for blocker in readiness.blockers)
+    print(
+        "✗ Phase A build inputs are not ready.\n"
+        f"  Spec dir: {spec_dir}\n"
+        "  Blockers:\n"
+        f"{blockers}\n"
+        "  Fix: run 'echelon spec continue' to republish Phase A artifacts, then rerun:\n"
+        f"       echelon delivery run {spec_id}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _is_docker_unavailable_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        ("docker" in message or "podman" in message)
+        and (
+            "daemon is running" in message
+            or "docker api" in message
+            or "docker.sock" in message
+            or "podman.sock" in message
+            or "cannot connect to the docker daemon" in message
+            or "failed to connect" in message
+            or "connection refused" in message
+        )
+    )
+
+
+def _container_runtime_fix(container_cli: str) -> str:
+    if container_cli == "podman":
+        return "start the Podman machine (`podman machine start`) and wait until it reports running"
+    return "start Docker Desktop and wait until it reports running"
+
+
+def _container_runtime_cli(config: object) -> str:
+    cli = getattr(config, "container_cli", "docker")
+    if cli not in {"docker", "podman"}:
+        return "docker"
+    return cli
+
+
+def _container_runtime_display(config: object) -> str:
+    cli = _container_runtime_cli(config)
+    return "Docker" if cli == "docker" else "Podman"
+
+
+def _mark_current_harness_state_blocked(
+    project_root: Path,
+    spec_id: str,
+    strategy: str,
+    reason: str,
+    error: str = "",
+) -> None:
+    try:
+        from harness.paths import build_dir, current_build_marker, runs_dir
+        from harness.state import DELIVERY_STATE_VERSION, StateStore
+
+        marker = current_build_marker(project_root, spec_id)
+        if marker.exists():
+            state_dir = build_dir(project_root, marker.read_text().strip()) / "state"
+        else:
+            state_dir = runs_dir(project_root) / "state"
+        state_store = StateStore(state_dir, spec_id, strategy)
+        data = state_store.read()
+        if not data:
+            return
+        status = data.get("status")
+        if status in {"converged", "failed", "cancelled_by_coordinator"}:
+            return
+        if data.get("delivery_state_version") == DELIVERY_STATE_VERSION:
+            if status == "blocked":
+                phase = data.get("blocked_phase")
+            elif status == "running":
+                phase = "implementation"
+            elif status == "validating":
+                phase = "visual"
+            elif status == "reviewing":
+                phase = "review"
+            elif status == "finalizing":
+                phase = "finalization"
+            elif status == "verified":
+                phases = data.get("enabled_phases")
+                completed = data.get("last_completed_phase")
+                phase = "finalization"
+                if isinstance(phases, list) and completed in phases:
+                    index = phases.index(completed)
+                    if index + 1 < len(phases):
+                        phase = phases[index + 1]
+            else:
+                phase = "implementation"
+            if phase not in {"implementation", "visual", "review", "finalization"}:
+                phase = "implementation"
+            updates = {"blocked_phase": phase, "termination_reason": reason}
+            if error:
+                updates["harness_error"] = error
+            state_store.transition("blocked", updates=updates)
+            return
+
+        # Legacy state remains V1. The coordinator is the only component that
+        # can select and snapshot its V2 phase plan from the active config.
+        data["status"] = "blocked"
+        data["termination_reason"] = reason
+        if error:
+            data["harness_error"] = error
+        state_store.write(data)
+    except Exception:
+        pass
+
+
+def _print_harness_error_and_exit(
+    *,
+    project_root: Path,
+    spec_id: str,
+    strategy: str,
+    command: str,
+    exc: Exception,
+) -> None:
+    _mark_current_harness_state_blocked(
+        project_root,
+        spec_id,
+        strategy,
+        "harness_error",
+        str(exc),
+    )
+    print(
+        "✗ Harness run failed before completion.\n"
+        f"  Error: {exc}\n"
+        "  State was marked blocked instead of left running.\n"
+        f"  Next:  {command if spec_id in command else f'{command} {spec_id}'}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _refresh_harness_state_spec_paths(
+    *,
+    project_root: Path,
+    spec_id: str,
+    state: dict,
+    state_store: object,
+) -> tuple[dict, Path | None, bool]:
+    """Refresh persisted harness artifact paths from the current project.
+
+    Older or failed runs can retain stale paths in state. Resume must not trust
+    those paths when the project has a resolvable current spec directory.
+    """
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_dir = find_spec_dir(spec_id, project_root)
+    if spec_dir is None:
+        return state, None, False
+
+    updates = {
+        "spec_dir": str(spec_dir),
+        "spec_file": str(spec_dir / "spec.md"),
+        "tasks_file": str(spec_dir / "tasks.md"),
+    }
+    refreshed = dict(state)
+    changed = any(str(refreshed.get(key) or "") != value for key, value in updates.items())
+    if not changed:
+        return state, spec_dir, False
+
+    refreshed.update(updates)
+    state_store.write(refreshed)  # type: ignore[attr-defined]
+    return refreshed, spec_dir, True
+
+
+def _harness_error_resume_blockers(*, project_root: Path, spec_id: str, spec_dir: Path | None) -> list[str]:
+    """Return blockers that make a previous harness_error unsafe to retry."""
+    if spec_dir is None:
+        return [f"no spec directory found for {spec_id!r}"]
+
+    blockers: list[str] = []
+    from harness.task_validation import TaskValidationError, count_tasks_for_spec
+
+    try:
+        task_count = count_tasks_for_spec(spec_id, project_root)
+    except TaskValidationError as exc:
+        task_count = 0
+        blockers.append(f"tasks.md is not canonical: {exc}")
+    if task_count <= 0 and not any("tasks.md" in blocker for blocker in blockers):
+        blockers.append("tasks.md has no canonical task rows")
+
+    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    if not readiness.ready:
+        blockers.extend(readiness.blockers or ["Phase A build inputs are not ready"])
+    return blockers
+
+
+def _is_docs_report_only_containment_violation(state: dict) -> bool:
+    """Return True for legacy containment blocks caused only by docs reports."""
+    if state.get("termination_reason") != "containment_violation":
+        return False
+
+    violation = state.get("containment_violation")
+    if not isinstance(violation, dict):
+        return False
+
+    changed_status = violation.get("changed_status")
+    if not isinstance(changed_status, list) or not changed_status:
+        return False
+
+    return all(
+        _is_allowed_external_documentation_status(str(line))
+        for line in changed_status
+    )
+
+
+def _is_allowed_external_documentation_status(status_line: str) -> bool:
+    path = _status_path(status_line)
+    if not path.startswith("specs/"):
+        return False
+    return PurePosixPath(path).name in {
+        "documentation-impact-report.md",
+        "docs-verification-report.md",
+    }
+
+
+def _status_path(status_line: str) -> str:
+    line = status_line.strip()
+    if not line:
+        return ""
+    path = status_line[3:].strip() if len(status_line) >= 4 else line
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip('"').replace("\\", "/")
+
+
+def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
+    """Return True when build_incomplete should retry without git recovery."""
+    if state.get("termination_reason") != "build_incomplete":
+        return False
+    if state.get("salvage_commit") or state.get("target_commit"):
+        return False
+    checkpoint_commits = state.get("checkpoint_commits")
+    if isinstance(checkpoint_commits, list) and checkpoint_commits:
+        return False
+
+    build_status = str(state.get("build_status") or "").strip()
+    build_reason = str(state.get("build_reason") or "")
+    return (
+        build_status == "phase_a_not_ready"
+        or "Phase A artifacts are not build-ready" in build_reason
+        or "constitution.md contains unresolved template markers" in build_reason
+    )
+
+
+def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], str]:
+    spec_id = args[0]
+    kv: dict[str, str] = {}
+    answer_parts: list[str] = []
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg in {"--mode", "--strategy"} and i + 1 < len(args):
+            kv[arg.removeprefix("--")] = args[i + 1].strip()
+            i += 2
+            continue
+        if arg.startswith("--mode="):
+            kv["mode"] = arg.partition("=")[2].strip()
+        elif arg.startswith("--strategy="):
+            kv["strategy"] = arg.partition("=")[2].strip()
+        elif "=" in arg:
+            key, _, value = arg.partition("=")
+            key = key.strip()
+            if key in {"mode", "strategy"}:
+                kv[key] = value.strip()
+            elif key == "answer":
+                answer_parts.append(value.strip())
+            else:
+                answer_parts.append(arg)
+        else:
+            answer_parts.append(arg)
+        i += 1
+    return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
+
+
+def _run_delivery_resume(
+    project_root: Path,
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery resume",
+    display_args: list[str] | None = None,
+    require_answer: bool = True,
+) -> None:
+    import logging
+
+    from echelon.cli import (
+        _banner,
+        _command_display,
+        _outer_cap_delivery_action,
+        _print_harness_config_error,
+        _print_legacy_branchless_recovery_notice,
+        _project_echelon_config,
+        _require_provider_capability,
+        _workspace_git_preflight,
+        _workspace_git_present,
+    )
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
+            "Resume or continue a blocked delivery run.\n"
+            "Supports blocker_escalation, verify_command_needed,\n"
+                "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+                "verification-infrastructure retries,\n"
+            "downstream visual/review/finalization failures, and recovery from\n"
+            "build_incomplete/publish_failed committed work.\n\n"
+            "Steps:\n"
+            "  1. Fix the blocker shown by the previous delivery output.\n"
+            "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
+            "     For verify_command_needed: add verify_command to echelon-config.yml\n"
+            "     (or re-run 'echelon delivery init' to auto-detect high-confidence commands).\n"
+            "  2. Run: echelon delivery continue <spec_id> when no answer is needed.\n",
+        )
+        return
+
+    rerun_command = _command_display(command_prefix, display_args or args)
+    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
+    spec_id, kv, resume_answer = _parse_harness_resume_args(args)
+    strategy = kv.get("strategy", "default")
+    mode = kv.get("mode", "semi")
+    target_resume_command = "resume" if require_answer else "continue"
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.paths import build_dir, current_build_marker, runs_dir
+    from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.state import StateStore
+
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    direct_target_path: Path | None = None
+    cwd = project_root
+    spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else cwd
+    harness_base_dir = cwd
+    config_root = cwd
+    if target_env and polyrepo_env:
+        config_root = Path(polyrepo_env).resolve()
+        harness_base_dir = (
+            config_root
+            / "runs"
+            / "targets"
+            / (target_name_env or Path(target_env).resolve().name)
+        )
+        _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
+
+    spec_dir = find_spec_dir(spec_id, spec_search_root)
+    if spec_dir is not None and not target_env:
+        from echelon.orchestrator import (
+            run_multi_target,
+            validate_single_target,
+            validate_targets,
+        )
+
+        resolved_spec_id = spec_dir.name
+        polyrepo_root = spec_dir.parent.parent
+        targets_rel: list[str] = read_targets(spec_dir)
+        if targets_rel:
+            _block_if_spec_task_targets_mismatch(
+                spec_dir,
+                targets_rel,
+                resolved_spec_id,
+            )
+            if len(targets_rel) == 1:
+                workspace_target = _resolve_harness_workspace_target(
+                    polyrepo_root,
+                    targets_rel[0],
+                    spec_dir=spec_dir,
+                    spec_id=resolved_spec_id,
+                    rerun_command=rerun_command,
+                )
+                target_rel = (
+                    "."
+                    if workspace_target.source_root == workspace_target.workspace_root
+                    else workspace_target.source_root.relative_to(
+                        workspace_target.workspace_root
+                    ).as_posix()
+                )
+                if workspace_target.source_root == workspace_target.workspace_root:
+                    direct_target_path = workspace_target.source_root
+                else:
+                    target = validate_single_target([target_rel], polyrepo_root)
+                    sys.exit(
+                        run_multi_target(
+                            spec_id,
+                            [target],
+                            args[1:],
+                            command=target_resume_command,
+                            **_workspace_target_dispatch_metadata(workspace_target),
+                        )
+                    )
+
+            else:
+                targets = validate_targets(targets_rel, polyrepo_root)
+                source_ids: dict[str, str] = {}
+                source_git_roles: dict[str, str] = {}
+                for target in targets:
+                    target_metadata = _source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=None,
+                    )
+                    source_ids.update(target_metadata["source_ids"])
+                    source_git_roles.update(target_metadata["source_git_roles"])
+                    sys.exit(
+                        run_multi_target(
+                            spec_id,
+                            targets,
+                            args[1:],
+                            workspace_root=polyrepo_root.resolve(),
+                            workspace_git_role="orchestration",
+                            source_ids=source_ids,
+                            source_git_roles=source_git_roles,
+                            command=target_resume_command,
+                        )
+                    )
+
+            if direct_target_path is None:
+                _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+                sys.exit(1)
+
+    if not target_env and direct_target_path is None:
+        _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+        sys.exit(1)
+
+    echelon_yml = _project_echelon_config(config_root)
+    if not echelon_yml.exists():
+        print(
+            "✗ Harness not initialised for this project.\n"
+            f"  Expected: {echelon_yml}\n"
+            "  Fix: run 'echelon delivery init' first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_config(project_root=config_root, squad_only=bool(target_env))
+    except HarnessValidationError as e:
+        _print_harness_config_error(e)
+        sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
+    if direct_target_path is not None:
+        config.target_repo = str(direct_target_path.resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=direct_target_path.resolve(),
+            spec_id=spec_id,
+        )
+    elif target_env:
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=target_repo_path,
+            spec_id=spec_id,
+        )
+
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+
+    # Resolve state_dir from the current-build marker; fall back to runs/state/
+    # for runs that pre-date build_id or were started without one.
+    marker = current_build_marker(harness_base_dir, spec_id)
+    build_id = marker.read_text().strip() if marker.exists() else ""
+    if marker.exists():
+        state_dir = build_dir(harness_base_dir, build_id) / "state"
+    else:
+        state_dir = runs_dir(harness_base_dir) / "state"
+    state_store = StateStore(state_dir, spec_id, strategy)
+    state = state_store.read()
+    if not _workspace_git_present(cwd):
+        if state:
+            _print_legacy_branchless_recovery_notice(
+                rerun_command
+            )
+        else:
+            _workspace_git_preflight(
+                cwd,
+                command_name=rerun_command,
+            )
+
+    if not state:
+        print(
+            f"✗ No harness state found for spec {spec_id!r} (strategy={strategy!r}).\n"
+            "  Run 'echelon delivery run <spec_id>' to start a new run.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    state, resolved_spec_dir, spec_paths_refreshed = _refresh_harness_state_spec_paths(
+        project_root=spec_search_root,
+        spec_id=spec_id,
+        state=state,
+        state_store=state_store,
+    )
+
+    current_status = state.get("status", "unknown")
+    termination_reason = state.get("termination_reason", "")
+    if (
+        state.get("build_status") == "provider_session_limit"
+        and termination_reason in {"build_incomplete", "publish_failed"}
+    ):
+        state["termination_reason"] = "provider_session_limit"
+        state_store.write(state)
+        termination_reason = "provider_session_limit"
+    recoverable_reasons = {"build_incomplete", "publish_failed"}
+    continuation_reasons = {
+        "blocker_escalation",
+        "delivery_prompt_invalid",
+        "checkpoint_outer_cap",
+        "docker_unavailable",
+        "convergence_stalled",
+        "no_progress",
+            "provider_session_limit",
+            "target_merge_failed",
+            # This may be a repaired harness classifier or a repaired sandbox
+            # prerequisite. Retrying preserves the checkpoint and lets the
+            # current verifier acquire fresh evidence; it does not accept the
+            # old infrastructure failure as success.
+            "verification_infrastructure",
+            "sandbox_verification_unavailable",
+        }
+    downstream_continuation_reasons = {
+        "visual": {
+            "app_runtime_failed",
+            "missing_registered_worktree",
+            "verified_provenance_mismatch",
+            "visual_failed",
+            "visual_feedback_failed",
+        },
+        "review": {
+            "missing_pr_url",
+            "review_boundary_failed",
+            "review_provider_failed",
+            "review_reentry_checkpoint_failed",
+            "review_side_effects_pending",
+            "review_staging_failed",
+        },
+        "finalization": {
+            "finalization_write_failed",
+            "lifecycle_status_conflict",
+            "target_merge_failed",
+            "verified_provenance_mismatch",
+        },
+    }
+    blocked_phase = str(state.get("blocked_phase") or "")
+    if termination_reason in downstream_continuation_reasons.get(
+        blocked_phase, set()
+    ):
+        continuation_reasons.add(termination_reason)
+    if _is_docs_report_only_containment_violation(state):
+        continuation_reasons.add("containment_violation")
+    retryable_error_reasons = {"harness_error"}
+
+    resumable_statuses = {
+        "blocked",
+        "running",
+        "interrupted",
+        "verified",
+        "validating",
+        "reviewing",
+        "finalizing",
+    }
+    if (
+        current_status not in resumable_statuses
+        and termination_reason not in recoverable_reasons
+    ):
+        print(
+            f"✗ Spec {spec_id!r} has no resumable delivery checkpoint "
+            f"(status={current_status!r}).\n"
+            "  Use 'echelon delivery run <spec_id>' to start a new run.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if current_status == "blocked" and termination_reason not in {
+        "verify_command_needed",
+        *recoverable_reasons,
+        *continuation_reasons,
+        *retryable_error_reasons,
+    }:
+        if termination_reason == "outer_cap":
+            next_command, next_explanation = _outer_cap_delivery_action(
+                spec_id, state.get("max_outer")
+            )
+            print(
+                f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
+                f"  Next: {next_command}\n"
+                f"  {next_explanation}\n"
+                "  Destructive alternative: "
+                f"echelon delivery run {spec_id} --reset discards the blocked delivery checkpoints.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if termination_reason == "build_blocked":
+            build_reason = str(state.get("build_reason") or "the build agent reported a blocker")
+            print(
+                f"✗ Spec {spec_id!r} is blocked by the build agent.\n"
+                f"  Blocker: {build_reason}\n"
+                "  Resolve the blocker; do not retry delivery until it is resolved.\n"
+                f"  For a spec decision: echelon spec reopen {spec_id}\n"
+                f"  Then start a new delivery run: echelon delivery run {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"✗ Spec {spec_id!r} is blocked for unsupported resume reason: {termination_reason!r}.\n"
+            f"  This is delivery state, not spec-planning state.\n"
+            f"  State file: {state_store.state_file}\n"
+            f"  After fixing the blocker, retry: echelon delivery resume {spec_id}\n"
+            f"  To discard this blocked delivery state and start fresh: echelon delivery run {spec_id} --reset",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
+    escalation_file = state.get("escalation_file")
+    if resume_answer and escalation_file:
+        from harness.escalation import EscalationHandler
+
+        EscalationHandler(str(build_dir(harness_base_dir, build_id))).resume(
+            str(escalation_file),
+            resume_answer,
+        )
+    elif require_answer and escalation_file:
+        print(
+            f"✗ Spec {spec_id!r} is waiting for a delivery answer.\n"
+            f"  Escalation file: {escalation_file}\n"
+            f"  Answer with: echelon delivery resume {spec_id} \"<answer>\"\n"
+            f"  If no answer is needed, continue with: echelon delivery continue {spec_id}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    elif require_answer and not resume_answer:
+        print(
+            "delivery resume without an answer is deprecated; "
+            f"use echelon delivery continue {spec_id} when no answer is needed.",
+            file=sys.stderr,
+        )
+
+    if _is_phase_a_build_incomplete_retry(state):
+        blockers = _harness_error_resume_blockers(
+            project_root=spec_search_root,
+            spec_id=spec_id,
+            spec_dir=resolved_spec_dir,
+        )
+        if blockers:
+            print(
+                f"✗ Spec {spec_id!r} is still blocked after Phase A repair.\n"
+                "  Resume preflight failed:\n"
+                + "".join(f"  - {blocker}\n" for blocker in blockers)
+                + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        fields = [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", "phase_a_repaired"),
+        ]
+        if resolved_spec_dir is not None:
+            fields.append(("Spec dir", str(resolved_spec_dir)))
+        if spec_paths_refreshed:
+            fields.append(("State", "refreshed stale spec artifact paths"))
+        _banner("HARNESS RESUME — RETRYING", fields)
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        try:
+            outcome = run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(harness_base_dir),
+                config=config,
+                resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
+                summary_command=command_prefix,
+            )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    harness_base_dir,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                    f"       echelon delivery continue {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=harness_base_dir,
+                spec_id=spec_id,
+                strategy=strategy,
+                command=rerun_command,
+                exc=exc,
+            )
+        _exit_if_provider_session_limited(state_store)
+        return
+
+    if termination_reason in retryable_error_reasons:
+        blockers = _harness_error_resume_blockers(
+            project_root=spec_search_root,
+            spec_id=spec_id,
+            spec_dir=resolved_spec_dir,
+        )
+        if blockers:
+            print(
+                f"✗ Spec {spec_id!r} is still blocked after the previous harness error.\n"
+                "  Resume preflight failed:\n"
+                + "".join(f"  - {blocker}\n" for blocker in blockers)
+                + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        fields = [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", termination_reason),
+        ]
+        if resolved_spec_dir is not None:
+            fields.append(("Spec dir", str(resolved_spec_dir)))
+        if spec_paths_refreshed:
+            fields.append(("State", "refreshed stale spec artifact paths"))
+        _banner("HARNESS RESUME — RETRYING", fields)
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        try:
+            outcome = run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(harness_base_dir),
+                config=config,
+                resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
+                summary_command=command_prefix,
+            )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    harness_base_dir,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                    f"       echelon delivery continue {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=harness_base_dir,
+                spec_id=spec_id,
+                strategy=strategy,
+                command=rerun_command,
+                exc=exc,
+            )
+        _exit_if_provider_session_limited(state_store)
+        return
+
+    if termination_reason in recoverable_reasons:
+        from harness.recovery import HarnessRecoveryError, recover_blocked_run
+
+        recovery_project_dir = Path(
+            str(
+                state.get("target_repo_path")
+                or state.get("target_path")
+                or state.get("source_root")
+                or config.target_repo
+                or harness_base_dir
+            )
+        )
+        if not recovery_project_dir.is_absolute():
+            recovery_project_dir = (config_root / recovery_project_dir).resolve()
+
+        try:
+            recovered = recover_blocked_run(
+                project_dir=recovery_project_dir,
+                spec_id=spec_id,
+                strategy_id=strategy,
+                state=state,
+                gitops=gitops,
+                build_id=build_id,
+            )
+        except HarnessRecoveryError as e:
+            print(
+                f"✗ Harness recovery failed for spec {spec_id!r}: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        action = "applied" if recovered.applied else "already present"
+        fields = [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", termination_reason),
+            ("Source", recovered.source),
+            ("Commit", recovered.commit[:12]),
+            ("Branch", recovered.target_branch),
+            ("Status", action),
+        ]
+        if recovered.backed_up_untracked:
+            fields.append(("Untracked backups", str(len(recovered.backed_up_untracked))))
+            fields.append(("Backup dir", recovered.backup_dir))
+        _banner("HARNESS RESUME — RECOVERED", fields)
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        try:
+            outcome = run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(harness_base_dir),
+                config=config,
+                resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
+                summary_command=command_prefix,
+            )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    harness_base_dir,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                    f"       echelon delivery continue {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=harness_base_dir,
+                spec_id=spec_id,
+                strategy=strategy,
+                command=rerun_command,
+                exc=exc,
+            )
+        _exit_if_provider_session_limited(state_store)
+        return
+
+    if not config.verify_command:
+        print(
+            _format_missing_verify_command_resume_message(echelon_yml, spec_id),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    _banner("HARNESS RESUME", [
+        ("Spec", spec_id),
+        ("Strategy", strategy),
+        ("Verify", config.verify_command),
+    ])
+
+    from harness.skills.run_skill import run
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=_container_runtime_cli(config),
+    )
+    user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+    try:
+        outcome = run(
+            user_message,
+            provider,
+            gitops,
+            base_dir=str(harness_base_dir),
+            config=config,
+            resume_build_id=build_id or None,
+            orchestration_root=spec_search_root,
+            summary_command=command_prefix,
+        )
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
+    except Exception as exc:
+        if _is_docker_unavailable_error(exc):
+            _mark_current_harness_state_blocked(
+                harness_base_dir,
+                spec_id,
+                strategy,
+                "docker_unavailable",
+            )
+            print(
+                f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                f"  Error: {exc}\n"
+                f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                f"       echelon delivery continue {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _print_harness_error_and_exit(
+            project_root=harness_base_dir,
+            spec_id=spec_id,
+            strategy=strategy,
+            command=rerun_command,
+            exc=exc,
+        )
+    _exit_if_provider_session_limited(state_store)
+
+
+def _run_delivery_continue(
+    project_root: Path,
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery continue",
+    display_args: list[str] | None = None,
+) -> None:
+    _run_delivery_resume(
+        project_root,
+        args,
+        command_prefix=command_prefix,
+        display_args=display_args,
+        require_answer=False,
+    )
+
+
+def _exit_if_provider_session_limited(state_store: object) -> None:
+    """Return a nonzero target status for a resumable provider-exhaustion block."""
+    read = getattr(state_store, "read", None)
+    state = read() if callable(read) else {}
+    if (
+        isinstance(state, dict)
+        and state.get("status") == "blocked"
+        and state.get("termination_reason") == "provider_session_limit"
+        and state.get("build_status") == "provider_session_limit"
+    ):
+        raise SystemExit(2)

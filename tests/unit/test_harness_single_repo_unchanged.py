@@ -93,7 +93,7 @@ class TestSingleRepoPathUnchanged:
         (tmp_path / ".git").mkdir()
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
-        from echelon.cli import _resolve_harness_workspace_target
+        from echelon.delivery_service import _resolve_harness_workspace_target
 
         target = _resolve_harness_workspace_target(tmp_path, explicit_target=None)
 
@@ -123,9 +123,9 @@ class TestSingleRepoPathUnchanged:
                             orig = os.getcwd()
                             try:
                                 os.chdir(tmp_path)
-                                from echelon.cli import _cmd_harness_run
+                                from echelon.delivery_service import _run_delivery
                                 try:
-                                    _cmd_harness_run(["024"])
+                                    _run_delivery(Path.cwd(), ["024"])
                                 except SystemExit:
                                     pass
                             finally:
@@ -158,10 +158,10 @@ class TestSingleRepoPathUnchanged:
         orig = os.getcwd()
         try:
             os.chdir(tmp_path)
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
             with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
                 with pytest.raises(SystemExit) as exc:
-                    _cmd_harness_run(["024"])
+                    _run_delivery(Path.cwd(), ["024"])
             assert exc.value.code == 0
             mock_run.assert_called_once()
             assert mock_run.call_args.args[1] == [target.resolve()]
@@ -208,7 +208,7 @@ class TestSingleRepoPathUnchanged:
         orig = os.getcwd()
         try:
             os.chdir(target)
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
             with patch("echelon.orchestrator.run_multi_target") as mock_orch:
                 with patch("harness.config.load_config") as mock_cfg:
                     mock_cfg.return_value = MagicMock(
@@ -221,7 +221,7 @@ class TestSingleRepoPathUnchanged:
                         MockGitOps.return_value = mock_gitops
                         with patch("harness.docker_provider.DockerWorktreeProvider"):
                             with patch("harness.skills.run_skill.run") as mock_run:
-                                _cmd_harness_run(["024-test"])
+                                _run_delivery(Path.cwd(), ["024-test"])
         finally:
             os.chdir(orig)
 
@@ -286,14 +286,14 @@ class TestSingleRepoPathUnchanged:
         orig = os.getcwd()
         try:
             os.chdir(target)
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
             with patch("harness.config.load_config", side_effect=fake_load_config) as mock_cfg:
                 with patch("harness.gitops.GitOpsManager") as MockGitOps:
                     mock_gitops = MagicMock()
                     MockGitOps.return_value = mock_gitops
                     with patch("harness.docker_provider.DockerWorktreeProvider"):
                         with patch("harness.skills.run_skill.run") as mock_run:
-                            _cmd_harness_run(["001-prose-distribution-engine", "mode=banzai"])
+                            _run_delivery(Path.cwd(), ["001-prose-distribution-engine", "mode=banzai"])
         finally:
             os.chdir(orig)
 
@@ -325,11 +325,11 @@ class TestSingleRepoPathUnchanged:
         )
 
         monkeypatch.chdir(tmp_path)
-        from echelon.cli import _cmd_harness_resume
+        from echelon.delivery_service import _run_delivery_resume
 
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_orch:
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001-prose-distribution-engine", "mode=banzai"])
+                _run_delivery_resume(Path.cwd(), ["001-prose-distribution-engine", "mode=banzai"])
 
         assert exc.value.code == 0
         mock_orch.assert_called_once()
@@ -393,7 +393,7 @@ class TestSingleRepoPathUnchanged:
             )
 
         monkeypatch.chdir(target)
-        from echelon.cli import _cmd_harness_resume
+        from echelon.delivery_service import _run_delivery_resume
 
         with patch("harness.config.load_config", side_effect=fake_load_config) as mock_cfg:
             with patch("harness.gitops.GitOpsManager") as MockGitOps:
@@ -401,7 +401,7 @@ class TestSingleRepoPathUnchanged:
                 MockGitOps.return_value = mock_gitops
                 with patch("harness.docker_provider.DockerWorktreeProvider"):
                     with patch("harness.skills.run_skill.run") as mock_run:
-                        _cmd_harness_resume(["001-prose-distribution-engine", "mode=banzai"])
+                        _run_delivery_resume(Path.cwd(), ["001-prose-distribution-engine", "mode=banzai"])
 
         mock_cfg.assert_called_once()
         assert mock_cfg.call_args.kwargs["project_root"] == polyrepo
@@ -430,9 +430,9 @@ class TestSingleRepoPathUnchanged:
         orig = os.getcwd()
         try:
             os.chdir(tmp_path)
-            from echelon.cli import _cmd_harness_run
+            from echelon.delivery_service import _run_delivery
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["024"])
+                _run_delivery(Path.cwd(), ["024"])
             assert exc.value.code == 1
         finally:
             os.chdir(orig)

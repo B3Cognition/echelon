@@ -2630,96 +2630,6 @@ def _change_stack_selection(
         typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
-def _option_pairs(**values: object) -> list[str]:
-    pairs: list[str] = []
-    for key, value in values.items():
-        if value is None:
-            continue
-        if isinstance(value, bool):
-            pairs.append(f"{key}={'true' if value else 'false'}")
-        else:
-            pairs.append(f"{key}={value}")
-    return pairs
-
-
-def _merge_run_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    mode: str | None,
-    strategy: str | None,
-    max_outer: int | None,
-    max_inner: int | None,
-    token_budget: int | None,
-    auto_merge: bool | None,
-    kill_losers: bool,
-    reset: bool,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    args.extend(
-        _option_pairs(
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-        )
-    )
-    if kill_losers:
-        args.append("kill_losers=true")
-    if reset:
-        args.append("--reset")
-    return args
-
-
-def _display_run_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    mode: str | None,
-    strategy: str | None,
-    max_outer: int | None,
-    max_inner: int | None,
-    token_budget: int | None,
-    auto_merge: bool | None,
-    kill_losers: bool,
-    reset: bool,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    if mode is not None:
-        args.append(f"--mode={mode}")
-    if strategy is not None:
-        args.append(f"--strategy={strategy}")
-    if max_outer is not None:
-        args.append(f"--max-outer={max_outer}")
-    if max_inner is not None:
-        args.append(f"--max-inner={max_inner}")
-    if token_budget is not None:
-        args.append(f"--token-budget={token_budget}")
-    if auto_merge is not None:
-        args.append("--auto-merge" if auto_merge else "--no-auto-merge")
-    if kill_losers:
-        args.append("--kill-losers")
-    if reset:
-        args.append("--reset")
-    return args
-
-
-def _merge_resume_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    mode: str | None,
-    strategy: str | None,
-) -> list[str]:
-    return [
-        spec_id,
-        *(legacy_args or []),
-        *_option_pairs(mode=mode, strategy=strategy),
-    ]
-
-
 def _merge_land_args(
     spec_id: str,
     legacy_args: list[str] | None,
@@ -4664,25 +4574,13 @@ def delivery_run(
     ),
 ) -> None:
     """Run build, verification, review, and PR loop for a spec."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRunRequest, run_delivery
 
-    legacy_cli._cmd_harness_run(
-        _merge_run_args(
+    run_delivery(
+        Path.cwd(),
+        DeliveryRunRequest(
             spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-        command_prefix="echelon delivery run",
-        display_args=_display_run_args(
-            spec_id,
-            list(ctx.args),
+            extra_args=tuple(ctx.args),
             mode=mode,
             strategy=strategy,
             max_outer=max_outer,
@@ -4707,19 +4605,17 @@ def delivery_resume(
     strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """Resume a blocked delivery run with a human answer."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRecoveryRequest, resume_delivery
 
-    legacy_args: list[str] = []
-    if answer is not None:
-        legacy_args.append(answer)
-    legacy_args.extend(list(ctx.args))
-    legacy_cli._cmd_harness_resume(
-        _merge_resume_args(
-            spec_id,
-            legacy_args,
+    resume_delivery(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id=spec_id,
+            extra_args=tuple(ctx.args),
+            answer=answer,
             mode=mode,
             strategy=strategy,
-        )
+        ),
     )
 
 
@@ -4734,15 +4630,16 @@ def delivery_continue(
     strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
 
-    legacy_cli._cmd_harness_continue(
-        _merge_resume_args(
-            spec_id,
-            list(ctx.args),
+    continue_delivery(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id=spec_id,
+            extra_args=tuple(ctx.args),
             mode=mode,
             strategy=strategy,
-        )
+        ),
     )
 
 
