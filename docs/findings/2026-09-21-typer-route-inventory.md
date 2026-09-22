@@ -18,6 +18,12 @@ Current S3 progress after the benchmark, stack, workspace, and phase/version
 slices: 71 public commands use modular services and 36 still delegate into
 `echelon.cli`.
 
+The compatibility cleanup removed the hidden retired `build` and `cicd`
+routes. Retained root and hidden `harness` aliases now call their canonical
+Typer commands rather than duplicating private-handler argument translation;
+the unmatched hidden `review` alias is contained behind one explicitly named
+compatibility adapter.
+
 ## Public modular-service routes
 
 | Group | Commands |
@@ -58,9 +64,8 @@ slices: 71 public commands use modular services and 36 still delegate into
 
 | Route | Classification |
 | --- | --- |
-| `cicd`, `build` | Retired error-only paths; delete after compatibility coverage is explicit |
-| root `init`, `artifacts`, `status`, `land`, `continue`, `rewind`, `resume`, `run`, `review`, `verify-spec`, `reopen`, `bugfix`, `change` | Compatibility aliases |
-| `harness continue`, `harness resume` | Compatibility aliases |
+| root `init`, `artifacts`, `status`, `land`, `continue`, `rewind`, `resume`, `run`, `review`, `verify-spec`, `reopen`, `bugfix`, `change` | Compatibility aliases; canonical forwarding is isolated from active route implementations |
+| `harness run`, `harness land`, `harness continue`, `harness resume` | Compatibility aliases forwarding to canonical `delivery` commands |
 | `re execute-run`, `re check-domain` | Active internal workflow entry points |
 | `re analyze`, `spec analyze` | Modular diagnostic entry points |
 | `spec target` | Compatibility route |
@@ -72,8 +77,9 @@ slices: 71 public commands use modular services and 36 still delegate into
 3. `workspace`: move initialization, doctor, migration, and source sync behind a
    workspace service boundary.
 4. `phase` and `version`: small remaining general-purpose routes.
-5. Compatibility and retired routes: delete error-only commands and make aliases
-   call current services rather than private handlers.
+5. Compatibility and retired routes: completed; error-only commands are deleted
+   and aliases call canonical commands rather than duplicating private-handler
+   dispatch.
 6. `spec`: move the 16 active delegations behind the Phase A service boundary.
 7. `delivery`: move the nine active delegations behind the controlled-delivery
    service boundary without changing its state contract.

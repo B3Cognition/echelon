@@ -15,7 +15,7 @@ starting another.
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 71 now use modular services and 36 still delegate into `cli.py`. The benchmark, stack, workspace, and phase/version slices are cut over; compatibility and retired routes are next. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
+| S3 | ACTIVE | Complete the Typer CLI cutover. | Of 107 public commands, 71 now use modular services and 36 still delegate into `cli.py`. Benchmark, stack, workspace, and phase/version are cut over; retired routes are deleted and compatibility aliases are isolated. Active spec workflows are next. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
 | S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
@@ -58,6 +58,8 @@ starting another.
 | 2026-09-22 | S3 | Workspace slice repository gate: 9,820 passed and 11,394 deselected in 31m58s on the feature branch. |
 | 2026-09-22 | S3 | Phase/version slice implemented: `phase list/run` call `echelon.phase_service`, `_cmd_phase` is deleted, version output uses `echelon.version`, release tooling updates the new canonical version file, 109 focused tests and the 1,026-test CLI gate pass. Shared phase replay helpers remain in `cli.py` until the active spec slice. S3 remains active; compatibility and retired routes are next. |
 | 2026-09-22 | S3 | Phase/version slice repository gate: 9,822 passed and 11,396 deselected in 31m32s on the feature branch. |
+| 2026-09-22 | S3 | Compatibility cleanup implemented: hidden retired `build` and `cicd` routes and their private handler branches are deleted; root and hidden `harness` aliases forward through canonical commands, with only `review` retained behind an explicit compatibility adapter. The 90-test Typer contract suite and 1,093-test CLI regression gate pass. S3 remains active; `spec` is next. |
+| 2026-09-22 | S3 | Compatibility cleanup repository gate: 9,822 passed and 11,409 deselected in 34m14s on the feature branch. |
 
 ## S2 Work Queue
 
@@ -77,7 +79,7 @@ starting another.
 - [x] Classify each route as typed service, compatibility alias, or dead path.
 - [x] Define and approve the minimum cutover boundary before editing behavior.
 - [ ] Move active command workflows behind typed application services.
-- [ ] Isolate compatibility aliases from active routing.
+- [x] Isolate compatibility aliases from active routing.
 - [ ] Run focused CLI verification.
 - [ ] Run the repository verification gate and record its result.
 
@@ -87,7 +89,7 @@ starting another.
 - [x] Cut over `stack list/detect/preflight/provision/enable/disable/select/selected`.
 - [x] Cut over `workspace` initialization, doctor, migration, and source sync.
 - [x] Cut over `phase` and `version`.
-- [ ] Delete retired routes and isolate root/`harness` compatibility aliases.
+- [x] Delete retired routes and isolate root/`harness` compatibility aliases.
 - [ ] Cut over active `spec` workflows.
 - [ ] Cut over active `delivery` workflows without changing the state contract.
 - [ ] Put active `re` workflows behind a typed facade; leave protocol consolidation to S6.

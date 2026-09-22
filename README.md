@@ -1247,7 +1247,6 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | Prepare an isolated product-input amendment for an unbuilt spec |
 | `echelon spec retarget <id> --target <source-path>... [--confirm]` | Preview or confirm a destructive complete target-set replacement for an unimplemented spec; confirmation creates the mandatory recovery checkpoint and rebuilds Phase A on the same branch |
 | `echelon spec repair-traceability [--confirm]` | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
-| `echelon cicd` | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon spec publish <numeric-id>` | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
 | `echelon spec publish <canonical-branch>` | Publish one exact canonical local spec branch by full name without merging implementation history |

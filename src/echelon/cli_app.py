@@ -233,17 +233,17 @@ def harness_run(
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode."),
 ) -> None:
     """Compatibility alias for ``echelon delivery run``."""
-    args = [spec_id]
-    if mode:
-        args.append(f"mode={mode}")
-    args.extend(_ctx_args(ctx))
-    display_args = [spec_id]
-    if mode:
-        display_args.append(f"mode={mode}")
-    _legacy_cli()._cmd_harness_run(
-        args,
-        command_prefix="echelon delivery run",
-        display_args=display_args,
+    delivery_run(
+        ctx,
+        spec_id,
+        mode=mode,
+        strategy=None,
+        max_outer=None,
+        max_inner=None,
+        token_budget=None,
+        auto_merge=None,
+        kill_losers=False,
+        reset=False,
     )
 
 
@@ -257,16 +257,20 @@ def harness_land(
     continue_landing: bool = typer.Option(False, "--continue", help="Resume landing."),
 ) -> None:
     """Compatibility alias for ``echelon delivery land``."""
-    args = [spec_id]
-    if continue_landing:
-        args.append("--continue")
-    args.extend(_ctx_args(ctx))
-    _legacy_cli()._cmd_land(args)
+    delivery_land(
+        ctx,
+        spec_id,
+        continue_=continue_landing,
+        prepare_only=False,
+        no_autoresolve=False,
+        allow_fulfillment_gaps=False,
+        strategy=None,
+    )
 
 
 @harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def harness_continue(ctx: typer.Context, spec_id: str = typer.Argument(...)) -> None:
-    _legacy_cli()._cmd_harness_continue([spec_id, *_ctx_args(ctx)])
+    delivery_continue(ctx, spec_id, mode=None, strategy=None)
 
 
 @harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -275,9 +279,7 @@ def harness_resume(
     spec_id: str = typer.Argument(...),
     answer: Optional[str] = typer.Argument(None),
 ) -> None:
-    _legacy_cli()._cmd_harness_resume(
-        [spec_id, *([answer] if answer else []), *_ctx_args(ctx)]
-    )
+    delivery_resume(ctx, spec_id, answer=answer, mode=None, strategy=None)
 
 
 class TopologyDirection(str, Enum):
@@ -1588,12 +1590,6 @@ def re_check_domain(
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
 
 
-@app.command("cicd", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_cicd(ctx: typer.Context) -> None:
-    """Retired CI/CD compatibility command."""
-    _legacy_cli()._cmd_cicd(_ctx_args(ctx))
-
-
 @app.command("init", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_init() -> None:
     """Compatibility alias for workspace init."""
@@ -1608,13 +1604,13 @@ def root_artifacts(
     spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to index."),
 ) -> None:
     """Compatibility alias for spec artifact indexing."""
-    _legacy_cli()._cmd_artifacts([spec_id, *_ctx_args(ctx)])
+    spec_artifacts(ctx, spec_id)
 
 
 @app.command("status", hidden=True)
 def root_status() -> None:
     """Compatibility alias for spec status."""
-    _legacy_cli()._cmd_status(Path.cwd())
+    spec_status()
 
 
 @app.command("land", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1628,11 +1624,15 @@ def root_land(
     strategy: Optional[str] = typer.Option(None, "--strategy", help="Landing strategy, usually merge or rebase."),
 ) -> None:
     """Compatibility alias for delivery land."""
-    _legacy_cli()._cmd_land(_merge_land_args(
-        spec_id, _ctx_args(ctx), continue_=continue_, prepare_only=prepare_only,
-        no_autoresolve=no_autoresolve, allow_fulfillment_gaps=allow_fulfillment_gaps,
+    delivery_land(
+        ctx,
+        spec_id,
+        continue_=continue_,
+        prepare_only=prepare_only,
+        no_autoresolve=no_autoresolve,
+        allow_fulfillment_gaps=allow_fulfillment_gaps,
         strategy=strategy,
-    ))
+    )
 
 
 @app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1641,9 +1641,7 @@ def root_continue(
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override for legacy runs."),
 ) -> None:
     """Compatibility alias for spec continue."""
-    args = _ctx_args(ctx)
-    _extend_option(args, "--mode", mode)
-    _legacy_cli()._cmd_spec_continue(args)
+    spec_continue(ctx, mode=mode)
 
 
 @app.command("rewind", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1655,12 +1653,13 @@ def root_rewind(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
-    args = [phase_id, *_ctx_args(ctx)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
-    if confirm:
-        args.append("--confirm")
-    _legacy_cli()._cmd_rewind(args, project_root=Path.cwd())
+    spec_rewind(
+        ctx,
+        phase_id,
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=checkpoint_next_phase,
+        confirm=confirm,
+    )
 
 
 @app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1669,8 +1668,7 @@ def root_resume(
     answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for an awaiting-human Phase A decision."),
 ) -> None:
     """Compatibility alias for spec resume."""
-    args = ([answer] if answer is not None else []) + _ctx_args(ctx)
-    _legacy_cli()._cmd_spec_resume(args)
+    spec_resume(ctx, answer=answer)
 
 
 @app.command("run", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1689,30 +1687,27 @@ def root_run(
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Compatibility alias for spec run."""
-    spec_run(ctx, description=description, mode=mode, reset=reset, init=init,
-             message=message, next_phase=next_phase, target=target, input_values=None,
-             ignore_re=ignore_re, stash=stash, discard=discard, confirm=confirm)
+    spec_run(
+        ctx,
+        description=description,
+        mode=mode,
+        reset=reset,
+        perfectionist=False,
+        init=init,
+        message=message,
+        next_phase=next_phase,
+        target=target,
+        input_values=None,
+        ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
+    )
 
 
-def _dispatch_compatibility_skill(command: str, args: list[str]) -> None:
-    _legacy_cli()._dispatch_skill_command(command, args)
-
-
-@app.command("build", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_build(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build."),
-    fix: bool = typer.Option(False, "--fix", help="Run build as a targeted fix pass."),
-    failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
-    context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
-) -> None:
-    """Retired compatibility alias that directs callers to controlled delivery."""
-    args = ([spec_id] if spec_id else [])
-    if fix:
-        args.append("--fix")
-    _extend_option(args, "--failures", failures)
-    _extend_option(args, "--context", context)
-    _dispatch_compatibility_skill("build", args + _ctx_args(ctx))
+def _dispatch_review_compatibility(args: list[str]) -> None:
+    """Keep the unmatched review alias behind one explicit legacy boundary."""
+    _legacy_cli()._dispatch_skill_command("review", args)
 
 
 @app.command("review", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1724,7 +1719,7 @@ def root_review(
     """Compatibility alias for the review skill command."""
     args = ([spec_id] if spec_id else [])
     _extend_option(args, "--pr-url", pr_url)
-    _dispatch_compatibility_skill("review", args + _ctx_args(ctx))
+    _dispatch_review_compatibility(args + _ctx_args(ctx))
 
 
 @app.command("verify-spec", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1735,8 +1730,7 @@ def root_verify_spec(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
 ) -> None:
     """Compatibility alias for spec verify."""
-    _reject_spec_verify_extra_args(ctx)
-    _run_spec_verify(Path.cwd(), spec_id, reconcile=reconcile, dry_run=dry_run)
+    spec_verify(ctx, spec_id, reconcile=reconcile, dry_run=dry_run)
 
 
 @app.command("reopen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1746,7 +1740,7 @@ def root_reopen(
     report: Optional[str] = typer.Argument(None, help="Optional from=<report> fulfillment report selector."),
 ) -> None:
     """Compatibility alias for spec reopen."""
-    _dispatch_compatibility_skill("reopen", [spec_id, *([report] if report else []), *_ctx_args(ctx)])
+    spec_reopen(ctx, spec_id, report=report)
 
 
 @app.command("bugfix", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1756,7 +1750,7 @@ def root_bugfix(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
 ) -> None:
     """Compatibility alias for spec bugfix."""
-    _dispatch_compatibility_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
+    spec_bugfix(ctx, spec_id, description)
 
 
 @app.command("change", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1766,7 +1760,7 @@ def root_change(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
 ) -> None:
     """Compatibility alias for spec change."""
-    _dispatch_compatibility_skill("change", [spec_id, description, *_ctx_args(ctx)])
+    spec_change(ctx, spec_id, description)
 
 
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

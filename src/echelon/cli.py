@@ -1293,24 +1293,6 @@ def _apply_target_verify_command_detection(
             return
 
 
-def _cmd_cicd(args: list[str]) -> None:
-    """Retired CI/CD auto-generation command."""
-    print(
-        "✗ echelon cicd is retired.\n\n"
-        "  The old command launched a full LLM squad and could create new specs or\n"
-        "  mutate Docker/deploy/CI files when the harness only needed verification.\n\n"
-        "  For delivery verification, run:\n"
-        "    echelon delivery init\n\n"
-        "  If auto-detection cannot make a high-confidence choice, add a top-level\n"
-        "  verify_command to .echelon/config.yml, for example:\n"
-        "    verify_command: pytest\n"
-        "    verify_command: npm test\n"
-        "    verify_command: go test ./...",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-
 def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path) -> None:
     """Copy deployed Prosaic and runtime bundles into a target harness base."""
     prose_source = polyrepo_root / ".echelon" / "prosaic"
@@ -12213,17 +12195,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         print(f"echelon {command}: missing arguments\n", file=sys.stderr)
         print(USAGE)
         sys.exit(1)
-
-    if command == "build":
-        spec_id = args[0]
-        print(
-            "echelon build: delivery is controller-owned.\n"
-            f"Use echelon delivery run {spec_id} for task selection, reviews, "
-            "verification and recovery. Raw --fix/--failures invocations are "
-            "not accepted; the delivery controller owns repair scope and evidence.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
 
     skill_base = SKILL_MAP[command]
 

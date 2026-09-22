@@ -830,9 +830,7 @@ def test_typer_front_door_declares_all_top_level_commands():
         "artifacts",
         "benchmark",
         "bugfix",
-        "build",
         "change",
-        "cicd",
         "continue",
         "delivery",
         "harness",
@@ -853,6 +851,8 @@ def test_typer_front_door_declares_all_top_level_commands():
         "wiki",
         "workspace",
     }.issubset(command.commands)
+    assert "build" not in command.commands
+    assert "cicd" not in command.commands
 
 
 @pytest.mark.unit
@@ -927,27 +927,175 @@ def test_root_help_hides_compatibility_aliases():
         "rewind",
         "resume",
         "run",
-        "build",
         "review",
         "verify-spec",
         "reopen",
         "bugfix",
         "change",
-        "cicd",
     ):
         assert command.commands[alias].hidden
+    assert "build" not in command.commands
+    assert "cicd" not in command.commands
 
 
 @pytest.mark.unit
-def test_hidden_top_level_alias_still_routes(monkeypatch):
-    from echelon.cli_app import run
+@pytest.mark.parametrize(
+    ("argv", "target", "expected_args", "expected_kwargs"),
+    (
+        (
+            ["harness", "run", "001", "--mode", "banzai"],
+            "delivery_run",
+            ("001",),
+            {
+                "mode": "banzai",
+                "strategy": None,
+                "max_outer": None,
+                "max_inner": None,
+                "token_budget": None,
+                "auto_merge": None,
+                "kill_losers": False,
+                "reset": False,
+            },
+        ),
+        (
+            ["harness", "land", "001", "--continue"],
+            "delivery_land",
+            ("001",),
+            {
+                "continue_": True,
+                "prepare_only": False,
+                "no_autoresolve": False,
+                "allow_fulfillment_gaps": False,
+                "strategy": None,
+            },
+        ),
+        (
+            ["harness", "continue", "001"],
+            "delivery_continue",
+            ("001",),
+            {"mode": None, "strategy": None},
+        ),
+        (
+            ["harness", "resume", "001", "go"],
+            "delivery_resume",
+            ("001",),
+            {"answer": "go", "mode": None, "strategy": None},
+        ),
+    ),
+)
+def test_harness_aliases_route_through_canonical_delivery_commands(
+    monkeypatch, argv, target, expected_args, expected_kwargs
+):
+    from echelon import cli_app
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args, **_kwargs: calls.append(args))
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    run(["harness", "run", "001", "--mode", "banzai"])
+    def canonical(_ctx, *args, **kwargs):
+        calls.append((args, kwargs))
 
-    assert calls == [["001", "mode=banzai"]]
+    monkeypatch.setattr(cli_app, target, canonical)
+    monkeypatch.setattr(
+        cli_app,
+        "_legacy_cli",
+        lambda: (_ for _ in ()).throw(AssertionError("alias loaded legacy CLI")),
+    )
+
+    result = CliRunner().invoke(cli_app.app, argv)
+
+    assert result.exit_code == 0
+    assert calls == [(expected_args, expected_kwargs)]
+
+
+@pytest.mark.parametrize("command", ("build", "cicd"))
+def test_retired_top_level_routes_are_absent(command):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, [command])
+
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+@pytest.mark.parametrize(
+    ("argv", "target", "expected_args", "expected_kwargs"),
+    (
+        (["artifacts", "001"], "spec_artifacts", ("001",), {}),
+        (["status"], "spec_status", (), {}),
+        (
+            ["land", "001", "--continue", "--strategy", "merge"],
+            "delivery_land",
+            ("001",),
+            {
+                "continue_": True,
+                "prepare_only": False,
+                "no_autoresolve": False,
+                "allow_fulfillment_gaps": False,
+                "strategy": "merge",
+            },
+        ),
+        (["continue", "--mode", "banzai"], "spec_continue", (), {"mode": "banzai"}),
+        (
+            ["rewind", "phase-2", "--commit", "abc", "--next-phase", "phase-3", "--confirm"],
+            "spec_rewind",
+            ("phase-2",),
+            {"checkpoint_commit": "abc", "checkpoint_next_phase": "phase-3", "confirm": True},
+        ),
+        (["resume", "approved"], "spec_resume", (), {"answer": "approved"}),
+        (
+            ["run", "Write it", "--mode", "semi"],
+            "spec_run",
+            (),
+            {
+                "description": "Write it",
+                "mode": "semi",
+                "reset": False,
+                "perfectionist": False,
+                "init": False,
+                "message": None,
+                "next_phase": None,
+                "target": None,
+                "input_values": None,
+                "ignore_re": False,
+                "stash": False,
+                "discard": False,
+                "confirm": False,
+            },
+        ),
+        (
+            ["verify-spec", "001", "--reconcile", "--dry-run"],
+            "spec_verify",
+            ("001",),
+            {"reconcile": True, "dry_run": True},
+        ),
+        (["reopen", "001", "from=report.json"], "spec_reopen", ("001",), {"report": "from=report.json"}),
+        (["bugfix", "001", "Broken"], "spec_bugfix", ("001", "Broken"), {}),
+        (["change", "001", "Different"], "spec_change", ("001", "Different"), {}),
+    ),
+)
+def test_root_aliases_route_through_canonical_commands(
+    monkeypatch, argv, target, expected_args, expected_kwargs
+):
+    from click import Context
+    from echelon import cli_app
+
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def canonical(*args, **kwargs):
+        if args and isinstance(args[0], Context):
+            args = args[1:]
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(cli_app, target, canonical)
+    monkeypatch.setattr(
+        cli_app,
+        "_legacy_cli",
+        lambda: (_ for _ in ()).throw(AssertionError("alias loaded legacy CLI")),
+    )
+
+    result = CliRunner().invoke(cli_app.app, argv)
+
+    assert result.exit_code == 0
+    assert calls == [(expected_args, expected_kwargs)]
 
 
 @pytest.mark.unit
@@ -1424,18 +1572,12 @@ def test_spec_verify_rejects_dry_run_without_reconcile(
 
 @pytest.mark.unit
 def test_top_level_skill_aliases_declare_common_arguments():
-    build_help = invoke_help("build")
     review_help = invoke_help("review")
     verify_help = invoke_help("verify-spec")
     reopen_help = invoke_help("reopen")
     bugfix_help = invoke_help("bugfix")
     change_help = invoke_help("change")
 
-    assert build_help.exit_code == 0
-    assert "SPEC_ID" in build_help.output
-    assert "--fix" in build_help.output
-    assert "--failures" in build_help.output
-    assert "--context" in build_help.output
     assert review_help.exit_code == 0
     assert "SPEC_ID" in review_help.output
     assert "--pr-url" in review_help.output

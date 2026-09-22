@@ -39,7 +39,6 @@ Echelon's supported dual-artifact contract is:
 | Pipeline | Trigger | Build engine | Consumes | Current status |
 |---|---|---|---|---|
 | Default delivery strategy | `echelon delivery run <id>` | Echelon squad build via `echelon.build` | Published Phase A artifacts under `specs/<id>-*/` | Primary supported path |
-| Direct build command | `echelon build <id>` | Echelon build skill outside harness | Phase A artifacts | Advanced/manual |
 
 Build execution consumes the published `spec.md`, `plan.md`, `research.md`,
 `data-model.md`, and `tasks.md` files without changing the Phase A contract.
