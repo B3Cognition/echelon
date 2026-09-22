@@ -2630,30 +2630,6 @@ def _change_stack_selection(
         typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
-def _merge_land_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    continue_: bool,
-    prepare_only: bool,
-    no_autoresolve: bool,
-    allow_fulfillment_gaps: bool,
-    strategy: str | None,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    if continue_:
-        args.append("--continue")
-    if prepare_only:
-        args.append("--prepare-only")
-    if no_autoresolve:
-        args.append("--no-autoresolve")
-    if allow_fulfillment_gaps:
-        args.append("--allow-fulfillment-gaps")
-    if strategy is not None:
-        args.extend(["--strategy", strategy])
-    return args
-
-
 @spec_app.command(
     "run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -4677,18 +4653,19 @@ def delivery_land(
     ),
 ) -> None:
     """Land a spec by merging PR/branch and cleaning up."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryLandRequest, land_delivery
 
-    legacy_cli._cmd_land(
-        _merge_land_args(
+    land_delivery(
+        Path.cwd(),
+        DeliveryLandRequest(
             spec_id,
-            list(ctx.args),
-            continue_=continue_,
+            extra_args=tuple(ctx.args),
+            continue_existing=continue_,
             prepare_only=prepare_only,
-            no_autoresolve=no_autoresolve,
+            autoresolve=not no_autoresolve,
             allow_fulfillment_gaps=allow_fulfillment_gaps,
             strategy=strategy,
-        )
+        ),
     )
 
 

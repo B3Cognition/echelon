@@ -637,11 +637,12 @@ def test_spec_amend_preparation_does_not_advertise_an_unimplemented_approval_act
 @pytest.mark.unit
 def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
     run([
@@ -663,55 +664,77 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "--reset",
     ])
 
-    assert calls == [[
-        "001",
-        "mode=banzai",
-        "strategy=alternate",
-        "max_outer=3",
-        "max_inner=2",
-        "token_budget=1000",
-        "auto_merge=false",
-        "kill_losers=true",
-        "--reset",
-    ]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            mode="banzai",
+            strategy="alternate",
+            max_outer=3,
+            max_inner=2,
+            token_budget=1000,
+            auto_merge=False,
+            kill_losers=True,
+            reset=True,
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_run_legacy_key_value_args_still_route(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
     run(["delivery", "run", "001", "mode=banzai", "strategy=alternate", "max_outer=3"])
 
-    assert calls == [["001", "mode=banzai", "strategy=alternate", "max_outer=3"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            extra_args=("mode=banzai", "strategy=alternate", "max_outer=3"),
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_run_canonical_flags_take_precedence_over_legacy_args(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
     run(["delivery", "run", "001", "mode=semi", "--mode", "banzai"])
 
-    assert calls == [["001", "mode=semi", "mode=banzai"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            extra_args=("mode=semi",),
+            mode="banzai",
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_resume", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.resume_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
     run([
         "delivery",
@@ -724,7 +747,15 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
         "alternate",
     ])
 
-    assert calls == [["001", "Use the direct mapping", "mode=banzai", "strategy=alternate"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001",
+            answer="Use the direct mapping",
+            mode="banzai",
+            strategy="alternate",
+        ),
+    )]
 
 
 @pytest.mark.unit
@@ -741,13 +772,24 @@ def test_delivery_resume_help_declares_answer_argument():
 @pytest.mark.unit
 def test_delivery_continue_canonical_flags_route_to_harness_continue(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_continue", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.continue_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
     run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "alternate"])
 
-    assert calls == [["001", "mode=banzai", "strategy=alternate"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001",
+            mode="banzai",
+            strategy="alternate",
+        ),
+    )]
 
 
 @pytest.mark.unit
@@ -809,9 +851,13 @@ def test_delivery_land_declares_canonical_flags():
 @pytest.mark.unit
 def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryLandRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_land", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.land_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
     run([
         "delivery",
@@ -825,15 +871,17 @@ def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
         "rebase",
     ])
 
-    assert calls == [[
-        "001",
-        "--continue",
-        "--prepare-only",
-        "--no-autoresolve",
-        "--allow-fulfillment-gaps",
-        "--strategy",
-        "rebase",
-    ]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryLandRequest(
+            spec_id="001",
+            continue_existing=True,
+            prepare_only=True,
+            autoresolve=False,
+            allow_fulfillment_gaps=True,
+            strategy="rebase",
+        ),
+    )]
 
 
 @pytest.mark.unit
