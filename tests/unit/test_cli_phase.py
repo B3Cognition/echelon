@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+from contextlib import chdir
 from pathlib import Path
 import shutil
 import subprocess
 
 import pytest
+from typer.testing import CliRunner
 
 from tests.support.temp_storage import copy_package_build_tree
 
-from echelon.cli import _cmd_continue, _cmd_phase, _cmd_run
+from echelon.cli import _cmd_continue, _cmd_run
+from echelon.phase_service import list_phases, run_phase
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
@@ -23,11 +26,33 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 EXT_DIR = ROOT / "runtime"
 
 
+def _invoke_phase(project_root: Path, args: list[str]):
+    from echelon.cli_app import app
+
+    config = project_root / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    if not config.exists():
+        config.write_text("deploy:\n  enabled: false\n  type: cli\n", encoding="utf-8")
+    with chdir(project_root):
+        return CliRunner().invoke(app, ["phase", *args])
+
+
+def _reject_legacy_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_legacy_cli():
+        raise AssertionError("phase commands must not use the legacy CLI dispatcher")
+
+    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+
+
 @pytest.fixture(autouse=True)
 def _deploy_workspace_bundles(tmp_path: Path) -> None:
     echelon_dir = tmp_path / ".echelon"
     copy_package_build_tree(ROOT / "runtime", echelon_dir / "runtime")
     shutil.copytree(ROOT / "prosaic", echelon_dir / "prosaic")
+    (echelon_dir / "config.yml").write_text(
+        "deploy:\n  enabled: false\n  type: cli\n",
+        encoding="utf-8",
+    )
 
 
 def _initialize_active_run(project_root: Path) -> Path:
@@ -47,7 +72,11 @@ def _initialize_active_run(project_root: Path) -> Path:
         "/runs/\n/.echelon/prosaic/\n/.echelon/runtime/\n",
         encoding="utf-8",
     )
-    subprocess.run(["git", "add", ".gitignore"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "add", ".gitignore", ".echelon/config.yml"],
+        cwd=project_root,
+        check=True,
+    )
     subprocess.run(
         ["git", "commit", "-m", "base"], cwd=project_root, check=True, capture_output=True
     )
@@ -167,20 +196,43 @@ def _seal_pending_v2_decision(
     store._path.write_text(json.dumps(state), encoding="utf-8")
 
 
-def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
-    _cmd_phase(["list"], project_root=tmp_path, ext_dir=EXT_DIR)
+def test_phase_list_returns_workflow_phases(tmp_path: Path) -> None:
+    phases = {phase.phase_id for phase in list_phases(tmp_path)}
 
-    out = capsys.readouterr().out
-    assert "PHASES" in out
-    assert "phase1-constitution" in out
-    assert "phase3-plan" in out
-    assert "phase3-tasks-lexicon" in out
-    assert "phase3-consensus-tasks-lexicon" in out
+    assert "phase1-constitution" in phases
+    assert "phase3-plan" in phases
+    assert "phase3-tasks-lexicon" in phases
+    assert "phase3-consensus-tasks-lexicon" in phases
+
+
+def test_typer_phase_list_bypasses_legacy_dispatcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reject_legacy_cli(monkeypatch)
+
+    result = _invoke_phase(tmp_path, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "PHASES" in result.output
+    assert "phase1-constitution" in result.output
+
+
+def test_typer_phase_run_validation_bypasses_legacy_dispatcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reject_legacy_cli(monkeypatch)
+
+    result = _invoke_phase(tmp_path, ["run", "phase-does-not-exist"])
+
+    assert result.exit_code == 1
+    assert "Unknown phase id" in result.output
+    assert "phase1-constitution" in result.output
 
 
 def test_phase_list_does_not_require_dispatch_config_compatibility(
     tmp_path: Path,
-    capsys,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_if_called(_project_root: Path) -> None:
@@ -188,14 +240,14 @@ def test_phase_list_does_not_require_dispatch_config_compatibility(
 
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
 
-    _cmd_phase(["list"], project_root=tmp_path, ext_dir=EXT_DIR)
+    phases = list_phases(tmp_path)
 
-    assert "phase1-constitution" in capsys.readouterr().out
+    assert any(phase.phase_id == "phase1-constitution" for phase in phases)
 
 
 def test_phase_run_rejects_unknown_phase(tmp_path: Path, capsys) -> None:
     with pytest.raises(SystemExit) as exc:
-        _cmd_phase(["run", "phase-does-not-exist"], project_root=tmp_path, ext_dir=EXT_DIR)
+        run_phase(tmp_path, "phase-does-not-exist")
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
@@ -237,11 +289,7 @@ def test_cli_bypass_entrypoints_reject_unresolved_v2_decisions(
             )
         assert exc.value.code == 1
     else:
-        _cmd_phase(
-            ["run", "phase1-tracker"],
-            project_root=tmp_path,
-            ext_dir=EXT_DIR,
-        )
+        run_phase(tmp_path, "phase1-tracker")
 
     assert (run_dir / "state.json").read_bytes() == before
 
@@ -401,11 +449,7 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
-    _cmd_phase(
-        ["run", "phase1-constitution", "--spec", "001"],
-        project_root=tmp_path,
-        ext_dir=EXT_DIR,
-    )
+    run_phase(tmp_path, "phase1-constitution", spec_id="001")
 
     assert (spec_dir / "constitution.md").exists()
 
@@ -420,7 +464,7 @@ def test_phase_run_plan_enforces_task_lexicon_config(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", blocked)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_phase(["run", "phase3-plan"], project_root=tmp_path, ext_dir=EXT_DIR)
+        run_phase(tmp_path, "phase3-plan")
 
     assert exc.value.code == 7
 
@@ -464,11 +508,7 @@ def test_phase_run_tasks_lexicon_nodes_use_single_phase_controller(
         ),
     )
 
-    _cmd_phase(
-        ["run", phase_id, "--spec", "001", "--mode", "banzai"],
-        project_root=tmp_path,
-        ext_dir=EXT_DIR,
-    )
+    run_phase(tmp_path, phase_id, spec_id="001", mode="banzai")
 
     assert compatibility_checks == [tmp_path]
     assert calls == [(phase_id, "validate tasks", "banzai")]
@@ -527,11 +567,7 @@ def test_phase_run_blocked_spec_lexicon_gate_prints_repair_guidance(
         fake_run_single_phase,
     )
 
-    _cmd_phase(
-        ["run", "phase1-lexicon", "--spec", "001"],
-        project_root=tmp_path,
-        ext_dir=EXT_DIR,
-    )
+    run_phase(tmp_path, "phase1-lexicon", spec_id="001")
 
     output = capsys.readouterr().out
     assert "repair requirements.lexicon.md" in output
@@ -579,11 +615,7 @@ def test_successful_manual_lexicon_derivation_points_to_deterministic_gate(
         fake_run_single_phase,
     )
 
-    _cmd_phase(
-        ["run", "phase1-lexicon-derive", "--spec", "001"],
-        project_root=tmp_path,
-        ext_dir=EXT_DIR,
-    )
+    run_phase(tmp_path, "phase1-lexicon-derive", spec_id="001")
 
     output = capsys.readouterr().out
     assert "echelon phase run phase1-lexicon\n" in output
@@ -627,11 +659,7 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
-    _cmd_phase(
-        ["run", "phase1-constitution", "--spec", "001"],
-        project_root=tmp_path,
-        ext_dir=EXT_DIR,
-    )
+    run_phase(tmp_path, "phase1-constitution", spec_id="001")
 
     run_dir = tmp_path / "runs"
     current = (run_dir / ".current").read_text(encoding="utf-8").strip()
@@ -709,7 +737,7 @@ def test_phase_run_experimental_artifact_quality_phases(
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
-    _cmd_phase(["run", phase_id, "--spec", "001"], project_root=tmp_path, ext_dir=EXT_DIR)
+    run_phase(tmp_path, phase_id, spec_id="001")
 
     current = (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip()
     state = json.loads((tmp_path / "runs" / current / "state.json").read_text(encoding="utf-8"))

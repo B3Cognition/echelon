@@ -952,12 +952,27 @@ def test_hidden_top_level_alias_still_routes(monkeypatch):
 
 @pytest.mark.unit
 def test_typer_run_prints_version_without_subcommand(capsys):
-    from echelon.cli import CLI_VERSION
+    from echelon.version import CLI_VERSION
     from echelon.cli_app import run
 
     run(["--version"])
 
     assert capsys.readouterr().out.strip() == f"echelon {CLI_VERSION}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("args", (["--version"], ["version"]))
+def test_version_commands_bypass_legacy_cli(monkeypatch, capsys, args):
+    from echelon.cli_app import run
+
+    def fail_legacy_cli():
+        raise AssertionError("version commands must not load echelon.cli")
+
+    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+
+    run(args)
+
+    assert capsys.readouterr().out.strip() == "echelon 4.1.1"
 
 
 @pytest.mark.unit

@@ -14,8 +14,9 @@ The count treats commands below the hidden `harness` group as compatibility
 routes even though the nested `run` and `land` decorators are not themselves
 marked hidden.
 
-Current S3 progress after the benchmark, stack, and workspace slices: 68 public
-commands use modular services and 39 still delegate into `echelon.cli`.
+Current S3 progress after the benchmark, stack, workspace, and phase/version
+slices: 71 public commands use modular services and 36 still delegate into
+`echelon.cli`.
 
 ## Public modular-service routes
 
@@ -41,12 +42,12 @@ commands use modular services and 39 still delegate into `echelon.cli`.
 
 | Group | Commands | Classification |
 | --- | --- | --- |
-| root | `version` | Active |
+| root | `version` | Cut over to `echelon.version` |
 | `benchmark` | `list`, `show`, `run` | Cut over to modular services |
 | `stack` | `list`, `detect`, `preflight`, `provision`, `enable`, `disable`, `select`, `selected` | Cut over to modular services |
 | `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Cut over to modular services |
 | `workspace sources` | `sync` | Cut over to modular services |
-| `phase` | `list`, `run` | Active |
+| `phase` | `list`, `run` | Cut over to `echelon.phase_service`; replay temporarily reuses shared spec/recovery helpers in `cli.py` pending the spec slice |
 | `spec` | `run`, `retarget`, `status`, `continue`, `resume`, `add-input`, `resolve`, `rewind`, `repair-traceability`, `drop-target`, `targets`, `artifacts`, `reopen`, `bugfix`, `change`, `amend` | Active |
 | `delivery` | `init`, `target`, `verify-local`, `cleanup-local`, `run`, `resume`, `continue`, `land` | Active |
 | `delivery checkpoint` | `list` | Active |

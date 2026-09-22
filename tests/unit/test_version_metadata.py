@@ -1,7 +1,7 @@
 from pathlib import Path
 import tomllib
 
-from echelon.cli import CLI_VERSION
+from echelon.version import CLI_VERSION
 
 
 ROOT = Path(__file__).resolve().parents[2]

@@ -10245,7 +10245,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from echelon.cli import _cmd_phase, _cmd_status
+        from echelon.cli import _cmd_status
+        from echelon.phase_service import run_phase
 
         invalid = SquadAgentResult(
             exit_code=0,
@@ -10346,10 +10347,9 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             "harness.squad_provider.SquadCliProvider",
             lambda _config: ctrl._provider,
         )
-        _cmd_phase(
-            displayed_argv[2:],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
+        run_phase(
+            tmp_path,
+            displayed_argv[3],
         )
 
         state = store.load()

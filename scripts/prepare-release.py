@@ -131,7 +131,7 @@ def _surfaces(old_version: str, new_version: str) -> tuple[VersionSurface, ...]:
             validation_pattern=rf"\*\*Version {re.escape(new_version)}\*\*",
         ),
         VersionSurface(
-            path=Path("src/echelon/cli.py"),
+            path=Path("src/echelon/version.py"),
             pattern=re.compile(rf'(?m)^(CLI_VERSION = "){old}(")$'),
             replacement=rf"\g<1>{new_version}\2",
             validation_pattern=rf'(?m)^CLI_VERSION = "{re.escape(new_version)}"$',

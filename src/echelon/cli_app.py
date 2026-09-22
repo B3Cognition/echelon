@@ -738,21 +738,6 @@ def _render_memory_audit_markdown(
     return "\n".join(lines) + "\n"
 
 
-def _dispatch_phase(args: list[str]) -> None:
-    legacy_cli = _legacy_cli()
-    project_root = Path.cwd()
-    ext_dir = legacy_cli._installed_phase_runtime_or_exit(project_root)
-    cfg_file = legacy_cli._project_echelon_config(project_root)
-    if not cfg_file.exists():
-        typer.echo(
-            f"✗ Project not initialized — config not found: {cfg_file}\n"
-            "  Run: echelon workspace init",
-            err=True,
-        )
-        raise typer.Exit(1)
-    legacy_cli._cmd_phase(args, project_root=project_root, ext_dir=ext_dir)
-
-
 @app.callback()
 def root(
     version: Optional[bool] = typer.Option(
@@ -769,8 +754,9 @@ def root(
 ) -> None:
     """Echelon CLI."""
     if version:
-        legacy_cli = _legacy_cli()
-        typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+        from echelon.version import CLI_VERSION
+
+        typer.echo(f"echelon {CLI_VERSION}")
         raise typer.Exit()
 
 
@@ -896,9 +882,9 @@ def llm_smoke_openai_compatible(
 @app.command("version")
 def version_command() -> None:
     """Print the Echelon CLI version."""
-    legacy_cli = _legacy_cli()
+    from echelon.version import CLI_VERSION
 
-    typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+    typer.echo(f"echelon {CLI_VERSION}")
 
 
 @re_app.command("run")
@@ -1992,7 +1978,18 @@ def _render_workspace_migration(result) -> None:
 @phase_app.command("list")
 def phase_list() -> None:
     """List workflow phases available for manual replay."""
-    _dispatch_phase(["list"])
+    from echelon.phase_service import list_phases
+    from echelon.ui import banner
+
+    phases = list_phases(Path.cwd())
+    banner(
+        "PHASES",
+        [
+            (phase.phase_id, f"{phase.label}  [{phase.phase_type}]")
+            for phase in phases
+        ],
+        subtitle="Workflow phases available for manual replay",
+    )
 
 
 @phase_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2004,12 +2001,23 @@ def phase_run(
     message: Optional[str] = typer.Option(None, "--message", help="Additional phase replay context."),
 ) -> None:
     """Run one explicit phase through COMMANDER contracts."""
-    args = ["run", phase_id]
-    _extend_option(args, "--spec", spec)
-    _extend_option(args, "--mode", mode)
-    _extend_option(args, "--message", message)
-    args.extend(_ctx_args(ctx))
-    _dispatch_phase(args)
+    from echelon.phase_service import run_phase
+
+    if ctx.args:
+        typer.echo(f"✗ Unknown phase run argument: {ctx.args[0]}", err=True)
+        typer.echo(
+            "  Usage: echelon phase run <phase-id> [--spec <id>] "
+            "[--mode semi|banzai|guided] [--message <text>]",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    run_phase(
+        Path.cwd(),
+        phase_id,
+        spec_id=spec,
+        mode=mode,
+        message=message,
+    )
 
 
 @benchmark_app.command("list")
@@ -4828,8 +4836,9 @@ def run(argv: list[str] | None = None) -> int | None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
     args, quiet = _extract_quiet_option(argv)
     if args in (["-v"], ["--version"], ["version"]):
-        legacy_cli = _legacy_cli()
-        typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+        from echelon.version import CLI_VERSION
+
+        typer.echo(f"echelon {CLI_VERSION}")
         return
     from echelon.wiki import service as wiki_service
 
