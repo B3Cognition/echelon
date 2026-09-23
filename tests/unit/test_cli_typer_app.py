@@ -32,10 +32,14 @@ def test_re_publish_routes_explicit_flags(monkeypatch):
 @pytest.mark.unit
 def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     from echelon.cli_app import app, run
+    from echelon.re_service import ReRunRequest
 
     help_result = invoke_help("re", "run")
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+    calls: list[ReRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.run_re",
+        lambda request: calls.append(request),
+    )
 
     run(["re", "run", "--engine", "v2", "--shadow"])
     invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
@@ -43,25 +47,24 @@ def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     assert help_result.exit_code == 0
     assert "--engine" not in help_result.output
     assert "--shadow" not in help_result.output
-    assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
+    assert calls == [ReRunRequest(engine="v2", shadow=True)]
     assert invalid.exit_code == 2
 
 
 @pytest.mark.unit
 def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch):
     from echelon.cli_app import app, run
+    from echelon.re_service import ReRefreshRequest, ReRunRequest
 
-    run_calls: list[list[str]] = []
-    refresh_calls: list[list[str]] = []
+    run_calls: list[ReRunRequest] = []
+    refresh_calls: list[ReRefreshRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_run",
-        lambda args: run_calls.append(args),
-        raising=False,
+        "echelon.re_service.run_re",
+        lambda request: run_calls.append(request),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_refresh",
-        lambda args: refresh_calls.append(args),
-        raising=False,
+        "echelon.re_service.refresh_re",
+        lambda request: refresh_calls.append(request),
     )
 
     run_help = CliRunner().invoke(app, ["re", "run", "--help"])
@@ -87,9 +90,9 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     assert "deep" in run_help.output
     assert "--source" in refresh_help.output
     assert "--depth" in refresh_help.output
-    assert run_calls == [["--depth", "deep"]]
+    assert run_calls == [ReRunRequest(depth="deep")]
     assert refresh_calls == [
-        ["--source", "api", "--source", "worker", "--depth", "quick"]
+        ReRefreshRequest(sources=("api", "worker"), depth="quick")
     ]
 
 
@@ -98,14 +101,12 @@ def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch)
     from echelon.cli_app import app
 
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_run",
-        lambda _args: pytest.fail("invalid depth dispatched"),
-        raising=False,
+        "echelon.re_service.run_re",
+        lambda _request: pytest.fail("invalid depth dispatched"),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_refresh",
-        lambda _args: pytest.fail("invalid depth dispatched"),
-        raising=False,
+        "echelon.re_service.refresh_re",
+        lambda _request: pytest.fail("invalid depth dispatched"),
     )
     runner = CliRunner()
 
@@ -120,14 +121,18 @@ def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch)
 @pytest.mark.unit
 def test_re_status_json_option_routes_without_changing_default(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReStatusRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_status", lambda args: calls.append(args))
+    calls: list[ReStatusRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.show_re_status",
+        lambda request: calls.append(request),
+    )
 
     run(["re", "status"])
     run(["re", "status", "--json"])
 
-    assert calls == [[], ["--json"]]
+    assert calls == [ReStatusRequest(), ReStatusRequest(as_json=True)]
 
 
 @pytest.mark.unit
@@ -216,7 +221,8 @@ def test_provider_diagnostics_are_enabled_by_default(monkeypatch):
 
     observed: list[bool] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_status", lambda args: observed.append(is_verbose())
+        "echelon.re_service.show_re_status",
+        lambda _request: observed.append(is_verbose()),
     )
 
     run(["re", "status"])

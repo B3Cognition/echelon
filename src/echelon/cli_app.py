@@ -964,6 +964,8 @@ def re_run(
     ),
 ) -> None:
     """Analyze the workspace and publish one validated knowledge generation."""
+    from echelon.re_service import ReRunRequest, run_re
+
     legacy = bool(
         engine is not None
         or shadow
@@ -983,30 +985,21 @@ def re_run(
         raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
     if goal and engine is not ReEngine.V2:
         raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
-    if not legacy:
-        args: list[str] = []
-        if depth is not None:
-            args.extend(["--depth", depth.value])
-        _extend_option(args, "--re-token-limit", re_token_limit)
-        _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-        _legacy_cli()._cmd_re_knowledge_run(args)
-        return
-    args = ["--re-policy", re_policy]
-    _extend_option(args, "--profile", profile)
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    if reset:
-        args.append("--reset")
-    if no_reuse:
-        args.append("--no-reuse")
-    if engine is not None:
-        args.extend(["--engine", engine.value])
-    if goal:
-        args.extend(["--goal", goal[0].value])
-    if shadow:
-        args.append("--shadow")
-    _legacy_cli()._cmd_re_run(args)
+    run_re(
+        ReRunRequest(
+            depth=depth.value if depth is not None else None,
+            re_policy=re_policy,
+            re_max_inner=re_max_inner,
+            profile=profile,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            reset=reset,
+            no_reuse=no_reuse,
+            engine=engine.value if engine is not None else None,
+            shadow=shadow,
+            goals=tuple(item.value for item in goal),
+        )
+    )
 
 
 @re_app.command("refresh")
@@ -1038,14 +1031,16 @@ def re_refresh(
     ),
 ) -> None:
     """Check selected sources and atomically publish affected knowledge."""
-    args: list[str] = []
-    for source_id in source:
-        args.extend(["--source", source_id])
-    if depth is not None:
-        args.extend(["--depth", depth.value])
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _legacy_cli()._cmd_re_knowledge_refresh(args)
+    from echelon.re_service import ReRefreshRequest, refresh_re
+
+    refresh_re(
+        ReRefreshRequest(
+            sources=tuple(source),
+            depth=depth.value if depth is not None else None,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+        )
+    )
 
 
 @re_app.command("deepen")
@@ -1117,6 +1112,8 @@ def re_deepen(
     prerequisite pauses, run the copy-paste continuation command shown in the
     status output, then rerun the same deepen command after L3 completes.
     """
+    from echelon.re_service import ReDeepenRequest, deepen_re
+
     if all_sources and (source or domain):
         raise typer.BadParameter(
             "--all cannot be combined with --source or --domain",
@@ -1148,23 +1145,21 @@ def re_deepen(
             "L4 --shadow cannot be combined with resource authorization",
             param_hint="--shadow",
         )
-    args = ["--to", target_layer.value]
-    if all_sources:
-        args.append("--all")
-    for source_id in source:
-        args.extend(["--source", source_id])
-    for domain_id in domain:
-        args.extend(["--domain", domain_id])
-    _extend_option(args, "--from-run", from_run)
-    _extend_option(args, "--token-limit", token_limit)
-    _extend_option(args, "--active-ms-limit", active_ms_limit)
-    _extend_option(args, "--semantic-token-limit", semantic_token_limit)
-    _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
-    if new_audit_epoch:
-        args.append("--new-audit-epoch")
-    if shadow:
-        args.append("--shadow")
-    _legacy_cli()._cmd_re_deepen(args)
+    deepen_re(
+        ReDeepenRequest(
+            target_layer=target_layer.value,
+            all_sources=all_sources,
+            sources=tuple(source),
+            domains=tuple(domain),
+            from_run=from_run,
+            token_limit=token_limit,
+            active_ms_limit=active_ms_limit,
+            semantic_token_limit=semantic_token_limit,
+            semantic_active_ms_limit=semantic_active_ms_limit,
+            new_audit_epoch=new_audit_epoch,
+            shadow=shadow,
+        )
+    )
 
 
 @re_app.command("status")
@@ -1180,10 +1175,9 @@ def re_status(
     ),
 ) -> None:
     """Show live RE state, source quality, debt, and the next safe action."""
-    args: list[str] = [run_id] if run_id else []
-    if as_json:
-        args.append("--json")
-    _legacy_cli()._cmd_re_status(args)
+    from echelon.re_service import ReStatusRequest, show_re_status
+
+    show_re_status(ReStatusRequest(run_id=run_id, as_json=as_json))
 
 
 @re_app.command("continue")
