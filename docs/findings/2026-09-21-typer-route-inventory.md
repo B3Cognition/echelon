@@ -24,10 +24,10 @@ Delivery cutover verification used merge base `3abca341`: the structural
 ownership search returned no legacy `cli.py` definitions and the boundary suite
 passed 13 tests. The broader focused Delivery suite passed 287 tests; the CLI
 regression gate recorded 1,672 passes and one known pre-existing failure. The
-repository gate recorded 9,821 passed, 0 skipped, 11,434 deselected, and one
-ownership-validator failure in 29m32.63s: the validator still expects the
-pre-cutover `cli.py` state write. Receipt:
-`tests/reports/merge-verification/receipt-bc64acae6239-be8583363d484eb19e91136bc30f3a43.json`.
+repository gate recorded 9,822 passed, 0 skipped, 11,434 deselected, and 0
+failures in 29m34.11s after its ownership validator moved with the service.
+Receipt:
+`tests/reports/merge-verification/receipt-0741dd4c9f62-d59ac9b2a44647fa8e97504443ecff94.json`.
 
 The compatibility cleanup removed the hidden retired `build` and `cicd`
 routes. Retained root and hidden `harness` aliases now call their canonical
