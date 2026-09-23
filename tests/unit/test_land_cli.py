@@ -501,7 +501,10 @@ class TestCmdLand:
         with pytest.raises(SystemExit):
             _cmd_land(["099"])
 
-        mock_gitops_cls.assert_called_once_with(mock_config)
+        mock_gitops_cls.assert_called_once_with(
+            mock_config,
+            base_dir=str(Path.cwd()),
+        )
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")

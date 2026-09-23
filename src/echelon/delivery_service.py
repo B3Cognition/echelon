@@ -166,13 +166,30 @@ def _iter_delivery_states(project_root: Path) -> list[dict]:
     return _iter_harness_build_states(project_root)
 
 
+def _outer_cap_delivery_action(
+    spec_id: str,
+    current_ceiling: object = None,
+) -> tuple[str, str]:
+    """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    from harness.convergence import DEFAULT_MAX_OUTER
+
+    try:
+        current = max(1, int(current_ceiling or DEFAULT_MAX_OUTER))
+    except (TypeError, ValueError):
+        current = DEFAULT_MAX_OUTER
+    extended = current + DEFAULT_MAX_OUTER
+    return (
+        f"echelon delivery run {spec_id} --max-outer {extended}",
+        "Extends the meaningful-attempt ceiling from the latest durable checkpoint "
+        "while preserving the convergence lease.",
+    )
+
+
 def _delivery_status_next_step(
     state: dict,
     spec_id: str,
     escalation: dict[str, object] | None = None,
 ) -> str:
-    from echelon.cli import _outer_cap_delivery_action
-
     status = str(state.get("status") or "unknown")
     termination_reason = str(state.get("termination_reason") or "")
     effective_spec = spec_id or str(state.get("spec_id") or "<spec_id>")
@@ -1109,7 +1126,7 @@ def _cmd_land(
         config = (
             load_config(project_root=config_root, squad_only=True)
             if target_env
-            else load_config()
+            else load_config(project_root=config_root)
         )
     except HarnessValidationError as e:
         _print_harness_config_error(e)
@@ -1121,11 +1138,7 @@ def _cmd_land(
             config.target_default_branch = "main"
         if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
             config.provider = "docker"
-    gitops = (
-        GitOpsManager(config, base_dir=str(harness_base_dir))
-        if target_env
-        else GitOpsManager(config)
-    )
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not _mirror_path_fn(harness_base_dir).exists():
         gitops.clone_mirror(config.target_repo)
 
@@ -3454,7 +3467,6 @@ def _run_delivery_resume(
     from echelon.cli import (
         _banner,
         _command_display,
-        _outer_cap_delivery_action,
         _print_harness_config_error,
         _print_legacy_branchless_recovery_notice,
         _project_echelon_config,

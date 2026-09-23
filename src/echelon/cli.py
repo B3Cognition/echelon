@@ -297,25 +297,6 @@ from echelon.delivery_service import (
 )
 
 
-def _outer_cap_delivery_action(
-    spec_id: str,
-    current_ceiling: object = None,
-) -> tuple[str, str]:
-    """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
-    from harness.convergence import DEFAULT_MAX_OUTER
-
-    try:
-        current = max(1, int(current_ceiling or DEFAULT_MAX_OUTER))
-    except (TypeError, ValueError):
-        current = DEFAULT_MAX_OUTER
-    extended = current + DEFAULT_MAX_OUTER
-    return (
-        f"echelon delivery run {spec_id} --max-outer {extended}",
-        "Extends the meaningful-attempt ceiling from the latest durable checkpoint "
-        "while preserving the convergence lease.",
-    )
-
-
 _RUNS_GITIGNORE_PATTERNS = (
     "**/.echelon/checkpoints.json",
     "**/.echelon/checkpoints.lock",
