@@ -1,7 +1,6 @@
 """Run skill orchestration entry point.
 
-Per T043: wires RunIntent parsing -> StrategyCoordinator -> terminal output.
-Acquires lock, runs GC, launches coordinator, prints results.
+Wires RunIntent parsing to the single DeliveryController and terminal output.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Mapping
 
 from harness.config import load_config
-from harness.coordinator import StrategyCoordinator
+from harness.delivery_controller import DeliveryController
 from harness.gc import run_gc
 from harness.harness_run_history import append_run, summarize_history
 from harness.delivery_results import DeliveryRunOutcome, LandingOutcome
@@ -97,11 +96,11 @@ def _resolve_run_roots(
     return harness_root, workspace_root
 
 
-def _fresh_delivery_baselines(
+def _fresh_delivery_baseline(
     harness_root: Path,
     intent: Any,
     gitops: Any | None = None,
-) -> dict[str, str]:
+) -> str | None:
     """Return checkpoint commits a new delivery budget may safely retain.
 
     A normal fresh delivery intentionally restarts from the target default branch.
@@ -113,7 +112,7 @@ def _fresh_delivery_baselines(
     the only recoverable candidate branch.
     """
     if getattr(intent, "reset", False) or getattr(intent, "resume", False):
-        return {}
+        return None
     marker = current_build_marker(harness_root, intent.spec_id)
     try:
         marked_build_id = marker.read_text(encoding="utf-8").strip()
@@ -131,97 +130,84 @@ def _fresh_delivery_baselines(
         if path.is_dir() and path.name != marked_build_id
     )
 
-    baselines: dict[str, str] = {}
-    for strategy_id in intent.strategies:
-        for prior_build_id in build_ids:
-            state_path = runs_dir(harness_root) / prior_build_id / "state" / f"{strategy_id}.json"
-            try:
-                state = json.loads(state_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(state, dict) or state.get("spec_id") != intent.spec_id:
-                continue
-            status = str(state.get("status") or "")
-            if status == "running" and state_lock_owner_is_alive(state_path):
-                raise RunContextError(
-                    "delivery is already active for "
-                    f"{intent.spec_id}/{strategy_id} in {prior_build_id}"
-                )
-            recoverable = (
-                status in {"interrupted", "running"}
-                or (
-                    status == "blocked"
-                    and state.get("termination_reason")
-                    in _RECOVERABLE_BASELINE_REASONS
-                )
+    for prior_build_id in build_ids:
+        state_path = runs_dir(harness_root) / prior_build_id / "state" / "default.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or state.get("spec_id") != intent.spec_id:
+            continue
+        status = str(state.get("status") or "")
+        if status == "running" and state_lock_owner_is_alive(state_path):
+            raise RunContextError(
+                f"delivery is already active for {intent.spec_id} in {prior_build_id}"
             )
-            if not recoverable:
+        recoverable = (
+            status in {"interrupted", "running"}
+            or (
+                status == "blocked"
+                and state.get("termination_reason")
+                in _RECOVERABLE_BASELINE_REASONS
+            )
+        )
+        if not recoverable:
+            continue
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            continue
+        for checkpoint in reversed(checkpoints):
+            if not isinstance(checkpoint, dict):
                 continue
-            checkpoints = state.get("checkpoint_commits")
-            if not isinstance(checkpoints, list):
-                continue
-            for checkpoint in reversed(checkpoints):
-                if not isinstance(checkpoint, dict):
-                    continue
-                commit = checkpoint.get("commit")
-                if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
-                    if _checkpoint_is_landed(gitops, commit):
-                        logger.info(
-                            "Latest checkpoint %s for %s is already contained in "
-                            "the target default branch; starting fresh",
-                            commit[:12],
-                            strategy_id,
-                        )
-                        # A newer durable checkpoint supersedes every older run.
-                        # Once it has landed, an old abandoned candidate must not
-                        # be revived merely because its state still says running.
-                        return baselines
-                    baselines[strategy_id] = commit
-                    break
-            if strategy_id in baselines:
-                break
-    return baselines
+            commit = checkpoint.get("commit")
+            if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
+                if _checkpoint_is_landed(gitops, commit):
+                    logger.info(
+                        "Latest checkpoint %s is already contained in the target "
+                        "default branch; starting fresh",
+                        commit[:12],
+                    )
+                    # A newer durable checkpoint supersedes every older run.
+                    # Once it has landed, an old abandoned candidate must not
+                    # be revived merely because its state still says running.
+                    return None
+                return commit
+    return None
 
 
 def _fresh_delivery_completed_tasks(
     harness_root: Path,
     intent: Any,
-    baselines: Mapping[str, str],
+    baseline: str | None,
     gitops: Any | None = None,
     *,
     spec_dir: Path | None = None,
-) -> dict[str, tuple[str, ...]]:
-    """Recover Python-checkpointed task progress on each retained lineage.
+) -> tuple[str, ...]:
+    """Recover Python-checkpointed task progress on the retained lineage.
 
     Provider task results are intentionally insufficient: a process can exit
     after writing its status marker but before Ralph commits the corresponding
     checkpoint.  Only task IDs recorded on checkpoint commits that are
     ancestors of the selected baseline are inherited by a fresh budget.
     """
-    if not baselines or gitops is None:
-        return {}
+    if baseline is None or gitops is None:
+        return ()
     from harness.task_progress import checkpoint_input_hash
 
     current_input_hash = checkpoint_input_hash(spec_dir)
     if current_input_hash is None:
-        return {}
+        return ()
     ancestry = getattr(gitops, "commit_is_ancestor", None)
     if not callable(ancestry):
-        return {}
+        return ()
 
-    recovered: dict[str, set[str]] = {
-        strategy_id: set() for strategy_id in baselines
-    }
-    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/*.json")):
+    recovered: set[str] = set()
+    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/default.json")):
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if str(state.get("spec_id") or "") != str(intent.spec_id):
-            continue
-        strategy_id = str(state.get("strategy_id") or state_path.stem)
-        baseline = baselines.get(strategy_id)
-        if baseline is None:
             continue
         checkpoints = state.get("checkpoint_commits")
         if not isinstance(checkpoints, list):
@@ -245,17 +231,13 @@ def _fresh_delivery_completed_tasks(
                 retained = False
             if not retained:
                 continue
-            recovered[strategy_id].update(
+            recovered.update(
                 task_id.strip()
                 for task_id in task_ids
                 if isinstance(task_id, str)
                 and re.fullmatch(r"T-\d+", task_id.strip())
             )
-    return {
-        strategy_id: tuple(sorted(task_ids))
-        for strategy_id, task_ids in recovered.items()
-        if task_ids
-    }
+    return tuple(sorted(recovered))
 
 
 def _checkpoint_is_landed(gitops: Any | None, commit: str) -> bool:
@@ -909,13 +891,13 @@ def _append_harness_history(
     mode: str,
     result_map: Dict[str, Any],
     comparison: Dict[str, Any],
-    coordinator: StrategyCoordinator,
+    controller: DeliveryController,
 ) -> None:
     if spec_dir is None:
         return
     for sid, result in result_map.items():
         info = comparison.get("strategies", {}).get(sid, {})
-        state = coordinator.status().get("strategies", {}).get(sid, {})
+        state = controller.state()
         append_run(
             spec_dir,
             spec_id=spec_id,
@@ -945,15 +927,15 @@ def _execute_delivery_run(
     # The CLI reserves a new build directory before this adapter runs and passes
     # that ID here.  A build ID therefore does not itself mean "resume"; intent
     # is the authority for whether a prior checkpoint must be retained.
-    fresh_branch_bases = (
-        {}
+    fresh_branch_base = (
+        None
         if getattr(intent, "resume", False)
-        else _fresh_delivery_baselines(harness_root, intent, gitops)
+        else _fresh_delivery_baseline(harness_root, intent, gitops)
     )
     fresh_completed_task_ids = _fresh_delivery_completed_tasks(
         harness_root,
         intent,
-        fresh_branch_bases,
+        fresh_branch_base,
         gitops,
         spec_dir=spec_dir,
     )
@@ -963,20 +945,20 @@ def _execute_delivery_run(
     current_build_marker(harness_root, intent.spec_id).write_text(build_id)
     logger.info("Build ID: %s", build_id)
 
-    coordinator = StrategyCoordinator(
+    controller = DeliveryController(
         provider=provider,
         gitops=gitops,
         config=config,
         base_dir=harness_root,
         build_id=build_id,
         orchestration_root=workspace_root,
-        fresh_branch_bases=fresh_branch_bases,
+        fresh_branch_base=fresh_branch_base,
         fresh_completed_task_ids=fresh_completed_task_ids,
     )
-    if fresh_branch_bases:
+    if fresh_branch_base:
         logger.info(
-            "Starting new delivery budget from checkpointed candidate(s): %s",
-            ", ".join(f"{strategy}={commit[:12]}" for strategy, commit in fresh_branch_bases.items()),
+            "Starting new delivery budget from checkpointed candidate: %s",
+            fresh_branch_base[:12],
         )
     try:
         run_gc(config, base_dir=str(harness_root))
@@ -984,9 +966,28 @@ def _execute_delivery_run(
         logger.warning("GC failed (continuing): %s", exc)
 
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
-    results = coordinator.start(intent)
-    result_map = dict(zip(intent.strategies, results))
-    comparison = coordinator.compare_results(result_map)
+    result = controller.run(intent)
+    result_map = {"default": result}
+    comparison = {
+        "strategies": {
+            "default": {
+                "status": result.status,
+                "termination_reason": result.termination_reason,
+                "outer_iterations": result.outer_iterations,
+                "inner_iterations": result.inner_iterations,
+                "tokens_used": result.tokens_used,
+                "pr_url": result.pr_url,
+                "branch": result.branch,
+                "converged": result.status == "converged",
+                **controller.state(),
+            }
+        },
+        "summary": {
+            "converged": 1 if result.status == "converged" else 0,
+            "failed": 0 if result.status == "converged" else 1,
+            "total_tokens": result.tokens_used,
+        },
+    }
     _append_harness_history(
         spec_dir=spec_dir,
         spec_id=intent.spec_id,
@@ -994,7 +995,7 @@ def _execute_delivery_run(
         mode=intent.mode,
         result_map=result_map,
         comparison=comparison,
-        coordinator=coordinator,
+        controller=controller,
     )
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
 
@@ -1047,7 +1048,7 @@ def _execute_delivery_run(
         landing,
         summary_command,
     )
-    return DeliveryRunOutcome(results=tuple(results), landing=landing)
+    return DeliveryRunOutcome(results=(result,), landing=landing)
 
 
 def run(

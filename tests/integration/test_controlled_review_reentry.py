@@ -10,7 +10,7 @@ import pytest
 
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig
-from harness.coordinator import StrategyCoordinator
+from harness.delivery_controller import DeliveryController
 from harness.escalation import EscalationHandler
 from harness.llm_provider import AICodingCliProvider
 from harness.mode import ModeController
@@ -18,8 +18,7 @@ from harness.ralph import RalphController
 from harness.review_loop import ApprovalState, ReviewComment, ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.state import StateStore
-from harness.strategy_loader import StrategySpec
-from tests.unit.test_coordinator import MockProvider, _initialize_git_worktree
+from tests.unit.test_delivery_controller import MockProvider, _initialize_git_worktree
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
 
@@ -90,7 +89,7 @@ def review_handoff(slice_project, monkeypatch, request):
         result._backend = ExternalBackend()
         return result
 
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", provider)
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", provider)
     monkeypatch.setattr("harness.review_loop.AICodingCliProvider", provider)
     monkeypatch.setattr("harness.llm_provider.host_workspace_synthesis_boundary_available", lambda: True)
     comment = ReviewComment("c1", "app.py", 1, "Must preserve greeting", "reviewer", datetime.now(timezone.utc), True)
@@ -101,7 +100,7 @@ def review_handoff(slice_project, monkeypatch, request):
     monkeypatch.setattr(ReviewLoopController, "_request_review", lambda *args: effects.append("request"))
 
     def coordinator():
-        return StrategyCoordinator(MockProvider(), gitops, config, base_dir=str(root.parent / "control"),
+        return DeliveryController(MockProvider(), gitops, config, base_dir=str(root.parent / "control"),
                                    orchestration_root=root, build_id="review-acceptance")
 
     store = StateStore(coordinator()._state_dir, "001", "default")
@@ -146,11 +145,11 @@ def test_published_review_reentry_resumes_real_gates_without_widening_scope(revi
         with monkeypatch.context() as patch:
             _crash_after_receipt(patch, 2)
             with pytest.raises(ProcessLost):
-                coordinator()._run_strategy(intent, "default", 10000, StrategySpec())
+                coordinator()._run_delivery(intent, budget=10000)
         assert [call[0]["step"] for call in executor.calls] == ["implementer", "spec_guard"]
         assert store.read()["tokens_used"] == 108
         assert not effects
-    result = coordinator()._run_strategy(intent, "default", 10000, StrategySpec())
+    result = coordinator()._run_delivery(intent, budget=10000)
     pending = store.read()["pending_review_reentry"]
     assert pending["artifact_paths"] == [str(spec / "review-fix-2.md")]
     assert len(pending["task_ids"]) == 3
@@ -182,7 +181,7 @@ def test_accepted_review_slice_reaches_verification_and_replays_without_dispatch
     monkeypatch.setattr(RalphController, "_exec_verify", stop_at_verification)
     for _ in range(2):
         with pytest.raises(ProcessLost):
-            coordinator()._run_strategy(intent, "default", 10000, StrategySpec())
+            coordinator()._run_delivery(intent, budget=10000)
     pending = store.read()["pending_review_reentry"]
     assert len(verification_calls) == 2
     assert len(triage_calls) == 4
@@ -199,8 +198,8 @@ def test_accepted_review_slice_reaches_verification_and_replays_without_dispatch
 def test_review_usage_counts_toward_repair_admission_budget(review_handoff, cli):
     coordinator, store, executor, triage_calls, effects, spec, config = review_handoff
     config.llm.cli = cli
-    result = coordinator()._run_strategy(
-        RunIntent("001", mode="banzai", max_outer=4, resume=True), "default", 110, StrategySpec(),
+    result = coordinator()._run_delivery(
+        RunIntent("001", mode="banzai", max_outer=4, resume=True), budget=110,
     )
     assert result.status == "blocked" and result.termination_reason == "budget_exhausted"
     assert result.tokens_used == store.read()["tokens_used"] == 108

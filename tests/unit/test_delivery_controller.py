@@ -1,4 +1,4 @@
-"""Tests for StrategyCoordinator.
+"""Tests for DeliveryController.
 
 Per T040 task specification:
 - Single strategy passthrough
@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, LlmConfig
-from harness.coordinator import StrategyCoordinator
+from harness.delivery_controller import DeliveryController
 from harness.exec_result import ExecResult
 from harness.delivery_results import DeliveryResult, ImplementationResult, VisualResult
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -56,7 +56,7 @@ def test_fresh_checkpoint_progress_is_restored_before_provider_dispatch(
     store.initialize(run_id="run-1", mode="semi")
     store.transition("running")
 
-    StrategyCoordinator._inherit_fresh_task_progress(
+    DeliveryController._inherit_fresh_task_progress(
         state_store=store,
         tasks_file=tasks_file,
         task_ids=("T-001", "T-999"),
@@ -102,7 +102,7 @@ def _initialize_git_worktree(path: Path) -> Path:
     return path
 
 
-def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoordinator:
+def _make_controller(tmp_path: Path, should_pass: bool = True) -> DeliveryController:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
@@ -119,7 +119,7 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
     strat_dir = tmp_path / "runs" / "strategies" / "spec-001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
-    return StrategyCoordinator(
+    return DeliveryController(
         provider=MockProvider(should_pass=should_pass),
         gitops=gitops,
         config=config,
@@ -148,7 +148,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A later local verifier must not re-resolve mutable project stacks."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         resolved = ResolvedStacks(
             selected_ids=["browser-3d-game"],
             resolved_ids=["browser-3d-game", "game-persistence-postgres"],
@@ -172,12 +172,12 @@ class TestSingleStrategy:
         coord._config.resolved_stacks = resolved
 
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(),
         ):
-            result = coord.start(
+            result = coord.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         assert result.status == "converged"
         state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
@@ -197,7 +197,7 @@ class TestSingleStrategy:
             "ECHELON_TARGET_REPO_PATH", "ECHELON_TARGET_REPO_NAME",
         ):
             monkeypatch.delenv(name, raising=False)
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-direct"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -217,9 +217,9 @@ class TestSingleStrategy:
             VerifyResult(passed=True, duration_s=0.5, token_usage=2), branch="direct"
         )
 
-        with patch("harness.coordinator.RalphController") as ralph:
+        with patch("harness.delivery_controller.RalphController") as ralph:
             ralph.return_value.run_loop.return_value = verified
-            result = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+            result = coord.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
         assert result.status == "converged"
         assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
@@ -231,37 +231,35 @@ class TestSingleStrategy:
         assert state["last_verify_result"] == {
             "passed": True, "failures": [], "duration_s": 0.5, "token_usage": 2,
         }
-        resumed = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+        resumed = coord.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
         assert (resumed.outer_iterations, resumed.inner_iterations, resumed.tokens_used) == (1, 1, 7)
         assert resumed.final_verify is not None and resumed.final_verify.passed
 
     def test_single_strategy_converges(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1)
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(),
         ):
-            results = coord.start(intent)
-        assert len(results) == 1
-        assert results[0].status == "converged"
+            result = coord.run(intent)
+        assert result.status == "converged"
 
     def test_single_strategy_fails(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path, should_pass=False)
+        coord = _make_controller(tmp_path, should_pass=False)
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(verified=False),
         ):
-            results = coord.start(intent)
-        assert len(results) == 1
-        assert results[0].status == "blocked"
-        assert results[0].blocked_phase == "implementation"
+            result = coord.run(intent)
+        assert result.status == "blocked"
+        assert result.blocked_phase == "implementation"
 
     def test_verified_publish_resume_skips_ralph_build_dispatch(
         self, tmp_path: Path
     ) -> None:
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("run-1", "semi")
         store.transition("running")
@@ -287,16 +285,16 @@ class TestSingleStrategy:
             branch="feature",
         )
 
-        with patch("harness.coordinator.RalphController") as ralph:
+        with patch("harness.delivery_controller.RalphController") as ralph:
             ralph.return_value.resume_verified_publication.return_value = verified
-            result = coord.start(
+            result = coord.run(
                 RunIntent(
                     spec_id="spec-001",
                     max_outer=2,
                     max_inner=1,
                     resume=True,
                 )
-            )[0]
+            )
 
         ralph.return_value.resume_verified_publication.assert_called_once_with()
         ralph.return_value.run_loop.assert_not_called()
@@ -306,9 +304,9 @@ class TestSingleStrategy:
         """Finalization provenance is read from the delivery worktree, not harness cwd."""
         worktree = tmp_path / "worktree"
         worktree.mkdir()
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
 
-        with patch("harness.coordinator.subprocess.run") as run:
+        with patch("harness.delivery_controller.subprocess.run") as run:
             run.return_value = MagicMock(returncode=0, stdout="abc123\n", stderr="")
             assert coord._worktree_head(worktree) == "abc123"
 
@@ -316,7 +314,7 @@ class TestSingleStrategy:
 
     def test_run_enabled_phases_uses_persisted_plan_order(self, tmp_path: Path) -> None:
         """The explicit phase runner starts at the supplied persisted checkpoint."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
 
         assert coord._run_enabled_phases(
             ["implementation", "visual", "review", "finalization"], "review"
@@ -324,7 +322,7 @@ class TestSingleStrategy:
 
     def test_run_enabled_phases_rejects_absent_resume_phase(self, tmp_path: Path) -> None:
         """Corrupt phase checkpoints may not silently restart implementation."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
 
         assert coord._run_enabled_phases(
             ["implementation", "finalization"], "review"
@@ -332,7 +330,7 @@ class TestSingleStrategy:
 
     def test_persist_phase_block_refreshes_an_existing_block(self, tmp_path: Path) -> None:
         """An invalid resume records its exact replacement reason atomically."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("run-1", "semi")
         store.transition("running")
@@ -377,7 +375,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A stale checkpoint commit cannot be replaced by later report provenance."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
@@ -395,8 +393,8 @@ class TestSingleStrategy:
         implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
 
         with patch.object(coord, "_worktree_head", return_value="report-commit"), \
-             patch("harness.coordinator.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
-             patch("harness.coordinator.read_fulfillment_metadata", return_value={"verified_commit": "report-commit"}):
+             patch("harness.delivery_controller.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
+             patch("harness.delivery_controller.read_fulfillment_metadata", return_value={"verified_commit": "report-commit"}):
             result = coord._finalize_delivery(
                 store,
                 spec_dir=spec_dir,
@@ -415,7 +413,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """Ignored verification output may be committed after host verification."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         worktree = _initialize_git_worktree(tmp_path / "worktree")
         (worktree / "app.txt").write_text("verified product\n", encoding="utf-8")
         subprocess.run(["git", "add", "app.txt"], cwd=worktree, check=True)
@@ -493,7 +491,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """The coordinator owns publication after every enabled gate has passed."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         worktree = tmp_path
         verified_commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
@@ -545,9 +543,9 @@ class TestSingleStrategy:
 
         with (
             patch.object(coord, "_worktree_head", return_value=verified_commit),
-            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch("harness.delivery_controller.latest_fulfillment_report", return_value=report),
             patch(
-                "harness.coordinator.read_fulfillment_metadata",
+                "harness.delivery_controller.read_fulfillment_metadata",
                 return_value={"verified_commit": verified_commit},
             ),
         ):
@@ -573,7 +571,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A downstream-gated delivery cannot converge without final publication."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         verified_commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
@@ -605,9 +603,9 @@ class TestSingleStrategy:
 
         with (
             patch.object(coord, "_worktree_head", return_value=verified_commit),
-            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch("harness.delivery_controller.latest_fulfillment_report", return_value=report),
             patch(
-                "harness.coordinator.read_fulfillment_metadata",
+                "harness.delivery_controller.read_fulfillment_metadata",
                 return_value={"verified_commit": verified_commit},
             ),
         ):
@@ -630,7 +628,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """Per-target publication is not skipped for a polyrepo specification."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("run-1", "semi")
         store.transition("running")
@@ -691,7 +689,7 @@ class TestSingleStrategy:
             },
         }
 
-        restored = _make_coordinator(tmp_path)._implementation_from_state(state)
+        restored = _make_controller(tmp_path)._implementation_from_state(state)
 
         assert restored.final_verify is not None
         assert restored.final_verify.passed is True
@@ -699,7 +697,7 @@ class TestSingleStrategy:
 
     def test_finalization_blocks_when_fulfillment_discovery_raises(self, tmp_path: Path) -> None:
         """Fulfillment I/O failures are recoverable finalization blocks."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
@@ -716,7 +714,7 @@ class TestSingleStrategy:
         implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
 
         with patch.object(coord, "_worktree_head", return_value="verified-head"), \
-             patch("harness.coordinator.latest_fulfillment_report", side_effect=OSError("disk offline")):
+             patch("harness.delivery_controller.latest_fulfillment_report", side_effect=OSError("disk offline")):
             result = coord._finalize_delivery(
                 store,
                 spec_dir=spec_dir,
@@ -743,7 +741,7 @@ class TestSingleStrategy:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -757,7 +755,7 @@ class TestSingleStrategy:
         with patch.object(coordinator, "_worktree_head", return_value=head), \
              patch.object(RalphController, "run_loop", return_value=verified), \
              patch.object(VisualRalphController, "run_loop") as visual:
-            result = coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+            result = coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
         assert result.status == "blocked"
         assert result.blocked_phase == "implementation"
@@ -776,7 +774,7 @@ class TestSingleStrategy:
         verified_commit: str | None,
     ) -> None:
         """Finalization rejects legacy path and report-only provenance."""
-        coord = _make_coordinator(tmp_path)
+        coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
@@ -797,8 +795,8 @@ class TestSingleStrategy:
         implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
 
         with patch.object(coord, "_worktree_head", return_value="verified-head"), \
-             patch("harness.coordinator.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
-             patch("harness.coordinator.read_fulfillment_metadata", return_value={"verified_commit": "verified-head"}):
+             patch("harness.delivery_controller.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
+             patch("harness.delivery_controller.read_fulfillment_metadata", return_value={"verified_commit": "verified-head"}):
             result = coord._finalize_delivery(
                 store,
                 spec_dir=spec_dir,
@@ -814,23 +812,6 @@ class TestSingleStrategy:
         assert result.termination_reason == "verified_provenance_mismatch"
 
 
-@pytest.mark.unit
-class TestStatusAggregation:
-    """Test status method."""
-
-    def test_no_active_loops(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path)
-        status = coord.status()
-        assert status["active_loops"] == 0
-
-    def test_status_after_run(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path, should_pass=True)
-        intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1)
-        coord.start(intent)
-        status = coord.status()
-        assert "strategies" in status
-
-
 class TestDeliveryStateMigration:
     def test_visual_phase_is_required_with_llm_coding_provider(
         self, tmp_path: Path
@@ -838,7 +819,7 @@ class TestDeliveryStateMigration:
         """Codex implementation does not replace harness-owned browser evidence."""
         from harness.config import VisualTestsConfig
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
 
         assert coordinator._enabled_phases(MagicMock()) == [
@@ -850,7 +831,7 @@ class TestDeliveryStateMigration:
     def test_legacy_block_without_phase_migrates_to_implementation(
         self, tmp_path: Path
     ) -> None:
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         legacy = store.initialize("run-1", "semi")
         legacy.pop("delivery_state_version")
@@ -873,7 +854,7 @@ class TestDeliveryStateMigration:
         assert migrated["enabled_phases"] == ["implementation", "finalization"]
 
     def test_terminal_legacy_convergence_is_not_migrated(self, tmp_path: Path) -> None:
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("run-1", "semi")
         store.transition("running")
@@ -892,7 +873,7 @@ class TestDeliveryStateMigration:
         """Only the configured coordinator chooses a legacy run's V2 phases."""
         from harness.config import ReviewLoopConfig, VisualTestsConfig
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
         coordinator._config.pr_host = "github"
@@ -912,7 +893,7 @@ class TestDeliveryStateMigration:
     def test_phase_snapshot_does_not_follow_later_config_changes(
         self, tmp_path: Path
     ) -> None:
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize(
             "run-1", "semi", enabled_phases=coordinator._enabled_phases(None)
@@ -931,7 +912,7 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize(
@@ -956,9 +937,9 @@ class TestDeliveryStateMigration:
             "run_loop",
             return_value=VisualResult("passed", "converged", 1, 0, None),
         ) as visual:
-            result = coordinator.start(
+            result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         implementation.assert_not_called()
         visual.assert_called_once()
@@ -972,7 +953,7 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize(
@@ -1012,7 +993,7 @@ class TestDeliveryStateMigration:
         with (
             patch.object(coordinator, "_worktree_head", return_value="verified-head"),
             patch(
-                "harness.coordinator.product_evidence_fingerprint",
+                "harness.delivery_controller.product_evidence_fingerprint",
                 return_value="after-repair",
             ),
             patch.object(RalphController, "run_loop", return_value=reverified) as implementation,
@@ -1022,14 +1003,14 @@ class TestDeliveryStateMigration:
                 return_value=VisualResult("passed", "converged", 1, 0, None),
             ) as visual,
         ):
-            result = coordinator.start(
+            result = coordinator.run(
                 RunIntent(
                     spec_id="spec-001",
                     max_outer=1,
                     max_inner=1,
                     resume=True,
                 )
-            )[0]
+            )
 
         assert result.status == "converged"
         implementation.assert_called_once()
@@ -1058,7 +1039,7 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -1076,9 +1057,9 @@ class TestDeliveryStateMigration:
         with patch.object(coordinator, "_worktree_head", return_value=head), \
              patch.object(RalphController, "run_loop") as implementation, \
              patch.object(VisualRalphController, "run_loop") as visual:
-            result = coordinator.start(
+            result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         assert result.status == "blocked"
         assert result.blocked_phase == "visual"
@@ -1094,12 +1075,12 @@ class TestDeliveryStateMigration:
         """Phase 1's verified checkpoint records both immutable provenance fields."""
         from harness.ralph import RalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._gitops.get_latest_worktree.return_value = str(tmp_path)
         verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
         with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
              patch.object(RalphController, "run_loop", return_value=verified):
-            coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+            coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
         state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
         assert state["registered_worktree"] == str(tmp_path)
@@ -1108,7 +1089,7 @@ class TestDeliveryStateMigration:
     def test_publish_recovery_keeps_its_exact_registered_worktree(
         self, tmp_path: Path
     ) -> None:
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         recovered_worktree = tmp_path / "recovered-worktree"
         recovered_worktree.mkdir()
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
@@ -1149,7 +1130,7 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.review_loop import ReviewLoopController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         coordinator._config.pr_host = "github"
         coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
@@ -1165,9 +1146,9 @@ class TestDeliveryStateMigration:
 
         with patch.object(RalphController, "run_loop") as implementation, \
              patch.object(ReviewLoopController, "run_loop") as review:
-            result = coordinator.start(
+            result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         assert result.status == "blocked"
         assert result.blocked_phase == "review"
@@ -1182,7 +1163,7 @@ class TestDeliveryStateMigration:
         """A corrupted review checkpoint is never routed through implementation."""
         from harness.ralph import RalphController
 
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize(
             "run-1", "semi", enabled_phases=["implementation", "finalization"]
@@ -1192,9 +1173,9 @@ class TestDeliveryStateMigration:
         store.transition("reviewing")
 
         with patch.object(RalphController, "run_loop") as implementation:
-            result = coordinator.start(
+            result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         assert result.status == "blocked"
         assert result.blocked_phase == "review"
@@ -1216,7 +1197,7 @@ class TestDeliveryStateMigration:
         terminal_status: str,
         delivery_status: str,
     ) -> None:
-        coordinator = _make_coordinator(tmp_path)
+        coordinator = _make_controller(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("terminal-run", "semi")
         store.transition("running")
@@ -1238,10 +1219,10 @@ class TestDeliveryStateMigration:
         store.write(state)
         persisted = store.read()
 
-        with patch("harness.coordinator.RalphController") as implementation:
-            result = coordinator.start(
+        with patch("harness.delivery_controller.RalphController") as implementation:
+            result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            )[0]
+            )
 
         implementation.assert_not_called()
         assert store.read() == persisted
@@ -1255,397 +1236,6 @@ class TestDeliveryStateMigration:
         assert result.blocked_phase is None
 
 
-@pytest.mark.unit
-class TestCompareResults:
-    """Test results comparison."""
-
-    def test_compare_mixed_results(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path)
-        results = {
-            "fast": DeliveryResult(
-                status="converged", termination_reason="converged",
-                outer_iterations=2, inner_iterations=3,
-                pr_url="https://github.com/t/r/pull/1", tokens_used=50000,
-                final_verify=None,
-                blocked_phase=None,
-            ),
-            "safe": DeliveryResult(
-                status="blocked", termination_reason="outer_cap",
-                outer_iterations=5, inner_iterations=15,
-                pr_url=None, tokens_used=80000,
-                final_verify=None,
-                blocked_phase="implementation",
-            ),
-        }
-        comparison = coord.compare_results(results)
-        assert comparison["strategy_count"] == 2
-        assert comparison["strategies"]["fast"]["converged"] is True
-        assert comparison["strategies"]["safe"]["converged"] is False
-        assert comparison["summary"]["converged"] == 1
-        assert comparison["summary"]["failed"] == 1
-        assert comparison["summary"]["total_tokens"] == 130000
-
-    def test_compare_results_includes_escalation_file_from_state(self, tmp_path: Path) -> None:
-        coord = _make_coordinator(tmp_path)
-        state_store = StateStore(tmp_path / "runs" / "build-test" / "state", "001", "default")
-        state_store.initialize("run-1", "semi")
-        coord._state_stores["default"] = state_store
-        state = state_store.read()
-        state["escalation_file"] = "/tmp/escalations/001-default.md"
-        state_store.write(state)
-        results = {
-            "default": DeliveryResult(
-                status="blocked",
-                termination_reason="blocker_escalation",
-                outer_iterations=1,
-                inner_iterations=3,
-                pr_url=None,
-                tokens_used=100,
-                final_verify=None,
-                blocked_phase="implementation",
-            )
-        }
-
-        comparison = coord.compare_results(results)
-
-        assert (
-            comparison["strategies"]["default"]["escalation_file"]
-            == "/tmp/escalations/001-default.md"
-        )
-
-    def test_compare_results_includes_fulfillment_refresh_from_state(
-        self, tmp_path: Path
-    ) -> None:
-        coord = _make_coordinator(tmp_path)
-        state_store = StateStore(tmp_path / "runs" / "build-test" / "state", "001", "default")
-        state_store.initialize("run-1", "semi")
-        coord._state_stores["default"] = state_store
-        state = state_store.read()
-        state["fulfillment_refresh"] = {
-            "status": "cached",
-            "verified_ledger": {
-                "reused": 70,
-                "rechecked": 5,
-                "invalidated": 1,
-                "unresolved": 2,
-            },
-        }
-        state_store.write(state)
-        results = {
-            "default": DeliveryResult(
-                status="blocked",
-                termination_reason="outer_cap",
-                outer_iterations=1,
-                inner_iterations=3,
-                pr_url=None,
-                tokens_used=100,
-                final_verify=None,
-                blocked_phase="implementation",
-            )
-        }
-
-        comparison = coord.compare_results(results)
-
-        assert comparison["strategies"]["default"]["fulfillment_refresh"] == {
-            "status": "cached",
-            "verified_ledger": {
-                "reused": 70,
-                "rechecked": 5,
-                "invalidated": 1,
-                "unresolved": 2,
-            },
-        }
-
-
-from harness.ralph import RalphController
-
-
-def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
-    """StrategyCoordinator triggers visual loop when Phase 1 converges and visual_tests.enabled."""
-    from harness.config import VisualTestsConfig
-    from harness.visual_ralph import VisualRalphController
-
-    config = HarnessConfig(
-        target_repo="git@example.com:t/r.git",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(enabled=True),
-    )
-    config.visual_tests = VisualTestsConfig(
-        enabled=True,
-        max_iterations=1,
-        test_command="npx playwright test --reporter=json",
-        serve_command="npm run preview",
-        timeout_ms=60_000,
-        screenshot_dir="playwright-report",
-    )
-
-    # Phase 1 converges immediately
-    phase1_result = ImplementationResult(
-        status="verified",
-        termination_reason="converged",
-        outer_iterations=1,
-        inner_iterations=0,
-        pr_url=None,
-        tokens_used=50,
-        final_verify=None,
-    )
-
-    # Phase 2 also converges
-    phase2_result = VisualResult(
-        status="passed",
-        termination_reason="converged",
-        iterations=1,
-        tokens_used=30,
-        final_verify=None,
-        evidence=VisualEvidenceRef(
-            path=(tmp_path / "visual.json").resolve(),
-            receipt_sha256="receipt",
-            evidence_sha256="evidence",
-            candidate_commit="candidate",
-            candidate_fingerprint="fingerprint",
-            passed=True,
-            artifact_count=2,
-        ),
-    )
-
-    # Create strategy dir
-    strat_dir = tmp_path / "runs" / "strategies" / "001"
-    strat_dir.mkdir(parents=True, exist_ok=True)
-
-    gitops = MagicMock()
-    gitops.create_worktree.return_value = str(tmp_path / "worktree")
-    gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
-    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
-
-    with patch.object(RalphController, "run_loop", return_value=phase1_result), \
-         patch.object(VisualRalphController, "run_loop", return_value=phase2_result) as mock_visual:
-        coordinator = StrategyCoordinator(
-            provider=MockProvider(should_pass=True),
-            gitops=gitops,
-            config=config,
-            base_dir=str(tmp_path),
-        )
-        intent = RunIntent(spec_id="001", strategies=["default"], mode="banzai",
-                           max_outer=3, max_inner=2, token_budget=None, kill_losers=False)
-        results = coordinator.start(intent)
-
-    assert mock_visual.called, "VisualRalphController.run_loop must be called"
-    assert results[0].status == "converged"
-    assert results[0].outer_iterations == 2   # 1 (phase1) + 1 (phase2)
-    assert results[0].tokens_used == 80       # 50 (phase1) + 30 (phase2)
-    assert results[0].inner_iterations == 0   # preserved from phase1
-    assert results[0].pr_url is None          # preserved from phase1
-    state = StateStore(tmp_path / "runs" / "state", "001", "default").read()
-    assert state["visual_evidence"]["artifact_count"] == 2
-    assert state["last_completed_phase"] == "visual"
-
-
-def test_required_browser_stack_enables_visual_phase_even_when_config_omits_it(
-    tmp_path,
-):
-    config = HarnessConfig(
-        target_repo="git@example.com:t/r.git",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(enabled=True),
-    )
-    config.resolved_runnability = ResolvedRunnability(
-        classification="user_facing",
-        policy="required",
-        runner="linux_container",
-        required_observations=("browser_dom",),
-        sources=("browser-3d-game",),
-    )
-    coordinator = StrategyCoordinator(
-        provider=MockProvider(),
-        gitops=MagicMock(),
-        config=config,
-        base_dir=str(tmp_path),
-    )
-
-    assert config.visual_tests.enabled is False
-    assert coordinator._enabled_phases(None) == [
-        "implementation",
-        "visual",
-        "finalization",
-    ]
-
-
-def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_path):
-    """A visual fix must receive fresh Phase 1 verification before it can pass."""
-    from harness.config import VisualTestsConfig
-    from harness.visual_ralph import VisualRalphController
-
-    config = HarnessConfig(
-        target_repo="git@example.com:t/r.git",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(enabled=True),
-        visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
-    )
-    gitops = MagicMock()
-    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
-    initial = ImplementationResult("verified", "converged", 1, 0, None, 10, None)
-    reverified = ImplementationResult("verified", "converged", 1, 0, None, 11, None)
-    applied = VisualResult("fix_applied", "fix_applied", 1, 2, None)
-    latest_evidence = VisualResult("passed", "converged", 1, 3, None)
-
-    with patch.object(RalphController, "run_loop", side_effect=[initial, reverified]) as phase1, \
-         patch.object(RalphController, "reuse_worktree_on_next_run") as reuse, \
-         patch.object(VisualRalphController, "run_loop", side_effect=[applied, latest_evidence]) as visual:
-        result = StrategyCoordinator(
-            provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
-        ).start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
-
-    assert result.status == "converged"
-    assert phase1.call_count == 2
-    assert visual.call_count == 2
-    reuse.assert_called_once_with(str(tmp_path / "worktree"))
-    assert result.tokens_used == 26
-
-
-def test_visual_fix_reentry_stops_at_configured_visual_cap(tmp_path):
-    """Repeated visual fixes cannot keep the coordinator re-entering Phase 1."""
-    from harness.config import VisualTestsConfig
-    from harness.visual_ralph import VisualRalphController
-
-    config = HarnessConfig(
-        target_repo="git@example.com:t/r.git",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(enabled=True),
-        visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
-    )
-    gitops = MagicMock()
-    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
-    verified = ImplementationResult("verified", "converged", 1, 0, None, 1, None)
-    applied = VisualResult("fix_applied", "fix_applied", 1, 1, None)
-
-    with patch.object(RalphController, "run_loop", return_value=verified) as phase1, \
-         patch.object(VisualRalphController, "run_loop", return_value=applied) as visual:
-        result = StrategyCoordinator(
-            provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
-        ).start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
-
-    assert result.status == "blocked"
-    assert result.blocked_phase == "visual"
-    assert result.termination_reason == "visual_failed"
-    assert visual.call_count == 2
-    assert phase1.call_count == 3  # initial verification plus one per applied fix
-
-
-def test_visual_fix_reentry_persists_implementation_provenance_block(tmp_path):
-    """A repaired visual failure cannot continue without a fresh verified checkpoint."""
-    from harness.config import VisualTestsConfig
-    from harness.visual_ralph import VisualRalphController
-
-    coordinator = _make_coordinator(tmp_path)
-    coordinator._config.visual_tests = VisualTestsConfig(enabled=True, max_iterations=2)
-    coordinator._gitops.get_latest_worktree.side_effect = [str(tmp_path), None]
-    initial_verified = ImplementationResult("verified", "verified", 2, 0, None, 11, None)
-    reentry_verified = ImplementationResult("verified", "verified", 7, 0, None, 13, None)
-    fix_applied = VisualResult("fix_applied", "fix_applied", 3, 5, None)
-
-    with patch.object(RalphController, "run_loop", side_effect=[initial_verified, reentry_verified]) as implementation, \
-         patch.object(VisualRalphController, "run_loop", return_value=fix_applied) as visual, \
-         patch.object(coordinator, "_finalize_delivery") as finalization:
-        result = coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
-
-    state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
-    assert result.status == "blocked"
-    assert result.blocked_phase == "implementation"
-    assert result.termination_reason == "verified_provenance_unavailable"
-    assert state["status"] == "blocked"
-    assert state["blocked_phase"] == "implementation"
-    assert state["termination_reason"] == "verified_provenance_unavailable"
-    assert result.outer_iterations == 12
-    assert result.tokens_used == 29
-    assert state["outer_iter"] == 12
-    assert state["tokens_used"] == 29
-    assert implementation.call_count == 2
-    assert visual.call_count == 1
-    finalization.assert_not_called()
-
-
-def test_checkpoint_verified_result_returns_durable_implementation_block(tmp_path):
-    """The shared verified-checkpoint gate is usable by every Phase 1 entry path."""
-    coordinator = _make_coordinator(tmp_path)
-    coordinator._gitops.get_latest_worktree.return_value = None
-    store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
-    store.initialize("run-1", "semi")
-    store.transition("running")
-    verified = ImplementationResult("verified", "verified", 2, 1, None, 7, None)
-
-    result = coordinator._checkpoint_verified_result(
-        store,
-        spec_id="spec-001",
-        strategy_id="default",
-        implementation=verified,
-        outer_iterations=2,
-        tokens_used=7,
-    )
-
-    assert result is not None
-    assert result.status == "blocked"
-    assert result.blocked_phase == "implementation"
-    assert store.read()["status"] == "blocked"
-
-
-def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
-    """Visual loop must NOT be triggered when Phase 1 fails, even if visual_tests.enabled."""
-    from harness.config import VisualTestsConfig
-    from harness.visual_ralph import VisualRalphController
-
-    config = HarnessConfig(
-        target_repo="git@example.com:t/r.git",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(enabled=True),
-    )
-    config.visual_tests = VisualTestsConfig(
-        enabled=True,
-        max_iterations=1,
-        test_command="npx playwright test --reporter=json",
-        serve_command="npm run preview",
-        timeout_ms=60_000,
-        screenshot_dir="playwright-report",
-    )
-
-    phase1_fail = ImplementationResult(
-        status="failed",
-        termination_reason="outer_cap",
-        outer_iterations=3,
-        inner_iterations=0,
-        pr_url=None,
-        tokens_used=50,
-        final_verify=None,
-    )
-
-    strat_dir = tmp_path / "runs" / "strategies" / "001"
-    strat_dir.mkdir(parents=True, exist_ok=True)
-
-    gitops = MagicMock()
-    gitops.create_worktree.return_value = str(tmp_path / "worktree")
-    gitops.create_draft_pr.return_value = ""
-    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
-
-    with patch.object(RalphController, "run_loop", return_value=phase1_fail), \
-         patch.object(VisualRalphController, "run_loop") as mock_visual:
-        coordinator = StrategyCoordinator(
-            provider=MockProvider(should_pass=False),
-            gitops=gitops,
-            config=config,
-            base_dir=str(tmp_path),
-        )
-        intent = RunIntent(spec_id="001", strategies=["default"], mode="banzai",
-                           max_outer=3, max_inner=2, token_budget=None, kill_losers=False)
-        results = coordinator.start(intent)
-
-    mock_visual.assert_not_called()
-    assert results[0].status == "blocked"
-    assert results[0].blocked_phase == "implementation"
-
 
 @pytest.mark.unit
 class TestTaskDescriptionInBuildPrompt:
@@ -1655,7 +1245,7 @@ class TestTaskDescriptionInBuildPrompt:
         """task_description is appended to build_prompt so the LLM receives the full task."""
         captured: dict = {}
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -1670,14 +1260,14 @@ class TestTaskDescriptionInBuildPrompt:
 
             mock_controller.run_loop.side_effect = capture_run_loop
 
-            coord = _make_coordinator(tmp_path, should_pass=True)
+            coord = _make_controller(tmp_path, should_pass=True)
             intent = RunIntent(
                 spec_id="spec-001",
                 max_outer=1,
                 max_inner=1,
                 task_description="fix the bug in bugfix-1.md",
             )
-            coord.start(intent)
+            coord.run(intent)
 
         assert "fix the bug in bugfix-1.md" in captured["build_prompt"]
 
@@ -1685,7 +1275,7 @@ class TestTaskDescriptionInBuildPrompt:
         """Empty task_description does not add a trailing newline to build_prompt."""
         captured: dict = {}
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -1700,11 +1290,11 @@ class TestTaskDescriptionInBuildPrompt:
 
             mock_controller.run_loop.side_effect = capture_run_loop
 
-            coord = _make_coordinator(tmp_path, should_pass=True)
+            coord = _make_controller(tmp_path, should_pass=True)
             intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
-            coord.start(intent)
+            coord.run(intent)
 
-        assert captured["build_prompt"] == "spec spec-001 strategy=default semi mode"
+        assert captured["build_prompt"] == "spec spec-001 semi mode"
 
 
 @pytest.mark.unit
@@ -1749,11 +1339,11 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=False)
 
         with pytest.raises(RuntimeError, match="escalation pending"):
-            coord.start(intent)
+            coord.run(intent)
 
     def test_sticky_escalation_block_allows_with_reset(self, tmp_path: Path) -> None:
         """If reset=True, the blocked state is wiped and the run proceeds normally."""
@@ -1764,15 +1354,15 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=True)
 
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(),
         ):
-            results = coord.start(intent)
-        assert results[0].status == "converged"
+            result = coord.run(intent)
+        assert result.status == "converged"
 
     def test_sticky_escalation_block_passes_when_answered(self, tmp_path: Path) -> None:
         """If a ## Answer section exists in the escalation file, the guard passes."""
@@ -1788,16 +1378,16 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=False)
 
         # Should NOT raise — the answer is present
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(),
         ):
-            results = coord.start(intent)
-        assert results[0].status == "converged"
+            result = coord.run(intent)
+        assert result.status == "converged"
 
     def test_sticky_escalation_block_allows_explicit_continue_intent(
         self, tmp_path: Path
@@ -1808,7 +1398,7 @@ class TestStickyEscalationBlock:
         esc_path.write_text("# Escalation\n", encoding="utf-8")
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(
             spec_id="spec-001",
             max_outer=3,
@@ -1818,12 +1408,12 @@ class TestStickyEscalationBlock:
         )
 
         with patch(
-            "harness.coordinator.RalphController.run_loop",
+            "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(),
         ):
-            results = coord.start(intent)
+            result = coord.run(intent)
 
-        assert results[0].status == "converged"
+        assert result.status == "converged"
 
 
 @pytest.mark.unit
@@ -1918,16 +1508,16 @@ class TestSmartResumeDetection:
                 f"got True"
             )
 
-    # --- Integration-style tests via StrategyCoordinator ---
+    # --- Integration-style tests via DeliveryController ---
 
     def test_interrupted_state_resumes_and_converges(self, tmp_path: Path) -> None:
         """A pre-existing interrupted state is resumed (not wiped) and the run converges."""
         self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False)
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -1936,9 +1526,9 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            results = coord.start(intent)
+            result = coord.run(intent)
 
-        assert results[0].status == "converged"
+        assert result.status == "converged"
         # The state should have been transitioned to running (not re-initialized);
         # verify by checking the state file still exists and was NOT wiped to outer_iter=0.
         from harness.state import StateStore
@@ -1955,10 +1545,10 @@ class TestSmartResumeDetection:
         """With reset=True, an existing interrupted state is wiped and starts fresh."""
         self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -1967,9 +1557,9 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            results = coord.start(intent)
+            result = coord.run(intent)
 
-        assert results[0].status == "converged"
+        assert result.status == "converged"
         # State was re-initialized, then terminal convergence persisted the
         # successful run's own counter rather than stale prior progress.
         from harness.state import StateStore
@@ -1992,10 +1582,10 @@ class TestSmartResumeDetection:
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/rbf-opta-points,sources/api")
         monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-011,T-012")
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -2004,7 +1594,7 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            coord.start(intent)
+            coord.run(intent)
 
         from harness.state import StateStore
         state_dir = tmp_path / "runs" / "state"
@@ -2039,10 +1629,10 @@ class TestSmartResumeDetection:
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/prosaic")
         monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -2051,7 +1641,7 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            coord.start(intent)
+            coord.run(intent)
 
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         assert store.read()["target_task_ids"] == ["T-001", "T-002"]
@@ -2065,10 +1655,10 @@ class TestSmartResumeDetection:
         spec_file.write_text("# Spec\n", encoding="utf-8")
         tasks_file.write_text("# Tasks\n", encoding="utf-8")
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -2077,7 +1667,7 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            coord.start(intent)
+            coord.run(intent)
 
         from harness.state import StateStore
 
@@ -2105,7 +1695,7 @@ class TestSmartResumeDetection:
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", target.name)
 
-        coord = _make_coordinator(target, should_pass=True)
+        coord = _make_controller(target, should_pass=True)
         intent = RunIntent(
             spec_id="002-law-sddp-snapshot-fix",
             max_outer=5,
@@ -2113,7 +1703,7 @@ class TestSmartResumeDetection:
             reset=True,
         )
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -2122,7 +1712,7 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            coord.start(intent)
+            coord.run(intent)
 
         from harness.state import StateStore
 
@@ -2192,7 +1782,7 @@ class TestSmartResumeDetection:
             provider="docker",
             llm=LlmConfig(enabled=True),
         )
-        coordinator = StrategyCoordinator(
+        coordinator = DeliveryController(
             provider=MockProvider(should_pass=True),
             gitops=MagicMock(),
             config=config,
@@ -2201,7 +1791,7 @@ class TestSmartResumeDetection:
         )
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=True)
 
-        with patch("harness.coordinator.RalphController") as mock_ralph_cls:
+        with patch("harness.delivery_controller.RalphController") as mock_ralph_cls:
             mock_ralph_cls.return_value.run_loop.return_value = ImplementationResult(
                 status="verified",
                 termination_reason="converged",
@@ -2211,7 +1801,7 @@ class TestSmartResumeDetection:
                 tokens_used=0,
                 final_verify=None,
             )
-            coordinator.start(intent)
+            coordinator.run(intent)
 
         state = StateStore(
             harness_root / "runs" / "state",
@@ -2305,7 +1895,7 @@ class TestSmartResumeDetection:
             provider="docker",
             llm=LlmConfig(enabled=True),
         )
-        coordinator = StrategyCoordinator(
+        coordinator = DeliveryController(
             provider=MockProvider(should_pass=True),
             gitops=MagicMock(),
             config=config,
@@ -2322,7 +1912,7 @@ class TestSmartResumeDetection:
         )
         ralph_visible_state: dict[str, Any] = {}
 
-        with patch("harness.coordinator.RalphController") as mock_ralph_cls:
+        with patch("harness.delivery_controller.RalphController") as mock_ralph_cls:
             def run_loop(**_kwargs: Any) -> ImplementationResult:
                 ralph_visible_state.update(store.read())
                 return ImplementationResult(
@@ -2336,7 +1926,7 @@ class TestSmartResumeDetection:
                 )
 
             mock_ralph_cls.return_value.run_loop.side_effect = run_loop
-            coordinator.start(intent)
+            coordinator.run(intent)
 
         final_state = store.read()
         for state in (ralph_visible_state, final_state):
@@ -2352,12 +1942,12 @@ class TestSmartResumeDetection:
         """Explicit resume leaves blocked state intact for Ralph's blocked-resume handler."""
         self._make_state_file(tmp_path, status="blocked", outer_iter=1)
 
-        coord = _make_coordinator(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True)
         # No escalation_file in state, so the pre-flight guard passes
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False, resume=True)
         seen: dict[str, Any] = {}
 
-        with patch("harness.coordinator.RalphController") as MockRalph:
+        with patch("harness.delivery_controller.RalphController") as MockRalph:
             mock_controller = MagicMock()
             mock_controller.run_loop.return_value = ImplementationResult(
                 status="verified", termination_reason="converged",
@@ -2365,15 +1955,15 @@ class TestSmartResumeDetection:
                 pr_url=None, tokens_used=0, final_verify=None,
             )
 
-            def _make_controller(**kwargs: Any) -> MagicMock:
+            def make_ralph(**kwargs: Any) -> MagicMock:
                 seen["status_at_controller"] = kwargs["state_store"].read().get("status")
                 seen["outer_iter_at_controller"] = kwargs["state_store"].read().get("outer_iter")
                 return mock_controller
 
-            MockRalph.side_effect = _make_controller
+            MockRalph.side_effect = make_ralph
 
-            results = coord.start(intent)
+            result = coord.run(intent)
 
-        assert results[0].status == "converged"
+        assert result.status == "converged"
         assert seen["status_at_controller"] == "running"
         assert seen["outer_iter_at_controller"] == 1

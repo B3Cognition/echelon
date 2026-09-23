@@ -10,7 +10,7 @@ from tests.unit.test_delivery_documentation import (
     documentation_project, IMPACT, review_report, ProcessLost,
 )
 from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 
 
 def _failure(*ids):
