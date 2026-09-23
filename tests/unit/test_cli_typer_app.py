@@ -184,21 +184,28 @@ def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
         ["re", "resume", "--recommended", "--banzai"],
     ),
 )
-def test_re_resume_rejects_missing_or_conflicting_modes_before_routing(
-    monkeypatch,
-    args,
-):
+def test_re_resume_preserves_kernel_error_for_malformed_modes(args):
     from echelon.cli_app import app
-
-    monkeypatch.setattr(
-        "echelon.re_service.resume_re",
-        lambda _request: pytest.fail("invalid resume mode dispatched"),
-    )
 
     result = CliRunner().invoke(app, args, env={"COLUMNS": "200"})
 
     assert result.exit_code == 2
-    assert "exactly one resume mode is required" in " ".join(result.output.split())
+    assert result.output == (
+        "\n"
+        "╭─ ✈ echelon · RE v2 · ERROR ──────────────────────────────────────────────────╮\n"
+        "│  ✗ COMMAND FAILED                                                            │\n"
+        "╰──────────────────────────────────────────────────────────────────────────────╯\n"
+        "\n"
+        "  command\n"
+        "  ───────\n"
+        "  echelon re resume\n"
+        "\n"
+        "  error\n"
+        "  ─────\n"
+        '  exactly one resume mode is required: "<guidance>", '
+        "--recommended, or --banzai\n"
+        "\n"
+    )
 
 
 @pytest.mark.unit
