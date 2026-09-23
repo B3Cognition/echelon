@@ -4,19 +4,24 @@ Baseline: `60e91d91` (`main` after S2)
 
 ## Summary
 
-- Public Typer commands: 107
-- Public commands already using modular services: 96
-- Public commands delegating into `echelon.cli`: 11
-- Hidden commands: 22
-- Hidden commands delegating into `echelon.cli`: 18
+- Public Typer commands: 104
+- Public commands already using modular services: 95
+- Public commands delegating into `echelon.cli`: 9
+- Hidden commands: 23
+- Hidden commands directly consuming `_legacy_cli()`: 2
 
-The count treats commands below the hidden `harness` group as compatibility
-routes even though the nested `run` and `land` decorators are not themselves
-marked hidden.
+The executable `typer.main.get_command(app)` tree was recounted on 2026-09-23:
+walk `click.Group.commands` recursively, count leaf commands, and inherit each
+parent's `hidden` flag. This treats all commands below hidden `harness` and
+`admin` groups as hidden, even when their own decorators are not hidden.
+Inspect each unwrapped leaf callback for `_legacy_cli()` consumption; the nine
+public consumers are the active RE routes below, and the two hidden consumers
+are `re execute-run` and `re check-domain`. Compatibility aliases can still
+reach legacy RE code indirectly through their canonical routes.
 
 Current S3 progress after the benchmark, stack, workspace, phase/version,
-compatibility, spec, and Delivery slices: 96 public commands use modular
-services and 11 still delegate into `echelon.cli`. The active RE facade is the
+compatibility, spec, and Delivery slices: 95 public commands use modular
+services and 9 still delegate into `echelon.cli`. The active RE facade is the
 next and final Typer cutover slice; RE protocol consolidation remains owned by
 S6.
 
@@ -39,7 +44,12 @@ compatibility adapter.
 
 | Group | Commands |
 | --- | --- |
-| `admin` | `commands` |
+| root | `version` |
+| `benchmark` | `list`, `show`, `run` |
+| `stack` | `list`, `detect`, `preflight`, `provision`, `enable`, `disable`, `select`, `selected` |
+| `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` |
+| `workspace sources` | `sync` |
+| `phase` | `list`, `run` |
 | `topology` | `audit`, `list-sources`, `search`, `explain`, `neighbors`, `impact` |
 | `wiki` | `build`, `status`, `clean` |
 | `kb` | `validate`, `apply` |
@@ -79,6 +89,7 @@ compatibility adapter.
 | `re execute-run`, `re check-domain` | Active internal workflow entry points |
 | `re analyze`, `spec analyze` | Modular diagnostic entry points |
 | `spec target` | Retired mutation guard isolated in `echelon.spec_service`; no `cli.py` delegation |
+| `admin commands` | Modular command inventory below the hidden `admin` group |
 
 ## Recommended cutover order
 

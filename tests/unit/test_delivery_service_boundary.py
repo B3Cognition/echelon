@@ -325,3 +325,56 @@ def test_continue_delivery_rejects_answer():
             Path.cwd(),
             DeliveryRecoveryRequest(spec_id="001-demo", answer="Use option 1"),
         )
+
+
+@pytest.mark.parametrize("entry_point", ["run_delivery", "resume_delivery", "continue_delivery"])
+def test_execution_capability_gate_uses_supplied_project_root(
+    monkeypatch, tmp_path, entry_point,
+):
+    from echelon import delivery_service
+    from harness.provider_capability import ProviderCapability
+
+    project_root = tmp_path / "project"
+    other_root = tmp_path / "other"
+    project_root.mkdir()
+    other_root.mkdir()
+    monkeypatch.chdir(other_root)
+    calls = []
+
+    class CapabilityGateReached(Exception):
+        pass
+
+    def capability_gate(command_name, required, *, project_dir=None):
+        calls.append((command_name, required, project_dir))
+        raise CapabilityGateReached
+
+    monkeypatch.setattr("echelon.cli._require_provider_capability", capability_gate)
+    request_type = (
+        delivery_service.DeliveryRunRequest
+        if entry_point == "run_delivery"
+        else delivery_service.DeliveryRecoveryRequest
+    )
+    with pytest.raises(CapabilityGateReached):
+        getattr(delivery_service, entry_point)(
+            project_root, request_type(spec_id="001-demo"),
+        )
+
+    command = entry_point.removesuffix("_delivery")
+    assert calls == [(f"echelon delivery {command}", ProviderCapability.BUILD, project_root)]
+
+
+def test_legacy_cli_does_not_retain_delivery_only_helpers():
+    from echelon import cli
+
+    moved_helpers = {
+        "_print_harness_config_error",
+        "HarnessWorkspaceTarget",
+        "_apply_target_verify_command_detection",
+        "_block_if_spec_task_targets_mismatch",
+        "_format_missing_verify_command_resume_message",
+        "_resolve_harness_workspace_target",
+        "_source_dispatch_metadata",
+        "_sync_polyrepo_runtime_extension",
+        "_workspace_target_dispatch_metadata",
+    }
+    assert moved_helpers.isdisjoint(vars(cli))
