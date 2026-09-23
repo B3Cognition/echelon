@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -173,6 +173,42 @@ def _derive_target_task_ids(
     return list(result.target_tasks.get(target, ()))
 
 
+@dataclass(frozen=True)
+class DeliveryRunContext:
+    """Immutable workspace and source identity for one Delivery run."""
+
+    spec_search_root: Path
+    workspace_root: str
+    source_root: str
+    source_id: str
+    workspace_git_role: str
+    source_git_role: str
+    implementation_target: str | None
+    declared_targets: tuple[str, ...]
+    target_task_ids: tuple[str, ...]
+    spec_dir: Path | None
+    spec_file: Path | None
+    tasks_file: Path | None
+    target_repo_name: str | None
+    target_repo_path: str | None
+
+
+@dataclass(frozen=True)
+class DeliveryResumePlan:
+    """Exact persisted phase selected for a Delivery resume."""
+
+    resume: bool
+    phase: str
+    status: str
+    pending_effects_only: bool
+    resume_verified_publication: bool
+    resume_running: bool
+    resume_blocked: bool
+    persisted_phase: str
+    error_reason: str | None
+    candidate_changed: bool
+
+
 
 class DeliveryController:
     """Own one durable Delivery run and its phase transitions."""
@@ -234,6 +270,144 @@ class DeliveryController:
         return self._state_store.read() if self._state_store is not None else {}
 
     # === Private methods ===
+
+    def _resolve_run_context(self, intent: RunIntent) -> DeliveryRunContext:
+        """Resolve immutable workspace/source/spec context for one run."""
+        target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
+        target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
+        environment_workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT")
+        workspace_git_role = os.environ.get("ECHELON_WORKSPACE_GIT_ROLE")
+        source_root = os.environ.get("ECHELON_SOURCE_ROOT")
+        source_id = os.environ.get("ECHELON_SOURCE_ID")
+        source_git_role = os.environ.get("ECHELON_SOURCE_GIT_ROLE")
+        implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET")
+        declared_targets = _split_env_list(
+            os.environ.get("ECHELON_DECLARED_TARGETS")
+        )
+        target_task_ids = _split_env_list(
+            os.environ.get("ECHELON_TARGET_TASK_IDS")
+        )
+        if self._orchestration_root is not None:
+            spec_search_root = self._orchestration_root
+            workspace_root = str(self._orchestration_root)
+        else:
+            spec_search_root = Path(
+                os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir
+            ).resolve()
+            workspace_root = environment_workspace_root or str(spec_search_root)
+        source_root = (
+            source_root
+            or target_repo_path
+            or str(Path(self._base_dir).resolve())
+        )
+        source_id = source_id or target_repo_name or Path(source_root).name
+        if workspace_git_role is None:
+            workspace_git_role = "orchestration" if target_repo_path else "source"
+        if source_git_role is None:
+            source_git_role = "source"
+        spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
+        spec_file = spec_dir / "spec.md" if spec_dir is not None else None
+        tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
+        if not declared_targets and spec_dir is not None:
+            declared_targets = read_targets(spec_dir)
+        return DeliveryRunContext(
+            spec_search_root=spec_search_root,
+            workspace_root=workspace_root,
+            source_root=source_root,
+            source_id=source_id,
+            workspace_git_role=workspace_git_role,
+            source_git_role=source_git_role,
+            implementation_target=implementation_target,
+            declared_targets=tuple(declared_targets),
+            target_task_ids=tuple(target_task_ids),
+            spec_dir=spec_dir,
+            spec_file=spec_file,
+            tasks_file=tasks_file,
+            target_repo_name=target_repo_name,
+            target_repo_path=target_repo_path,
+        )
+
+    def _plan_delivery_resume(
+        self,
+        intent: RunIntent,
+        state_store: StateStore,
+        existing: dict[str, Any],
+    ) -> DeliveryResumePlan:
+        """Validate persisted phase state and select the exact resume point."""
+        del state_store
+        existing_status = str(existing.get("status") or "")
+        pending_reentry = _pending_review_reentry(
+            existing.get("pending_review_reentry")
+        )
+        pending_effects_only = (
+            not intent.reset
+            and pending_reentry is not None
+            and bool(pending_reentry.get("phase1_verified"))
+        )
+        resume_running = (
+            not intent.reset
+            and not pending_effects_only
+            and existing_status
+            in {
+                "running",
+                "interrupted",
+                "verified",
+                "validating",
+                "reviewing",
+                "finalizing",
+            }
+        )
+        resume_blocked = (
+            not intent.reset
+            and intent.resume
+            and existing_status == "blocked"
+            and not pending_effects_only
+        )
+        resume_verified_publication = (
+            resume_blocked
+            and existing.get("termination_reason")
+            in {"publish_failed", "target_merge_failed"}
+            and isinstance(existing.get("verified_publish_checkpoint"), dict)
+        )
+        persisted_phase = (
+            "review"
+            if pending_effects_only
+            else self._resume_phase(existing)
+            if resume_running or resume_blocked
+            else "implementation"
+        )
+        error_reason: str | None = None
+        candidate_changed = False
+        if resume_running or resume_blocked:
+            enabled_phases = existing.get("enabled_phases")
+            if (
+                not isinstance(enabled_phases, list)
+                or persisted_phase not in enabled_phases
+            ):
+                error_reason = "invalid_resume_phase"
+            elif persisted_phase in {"visual", "review"}:
+                error_reason = self._downstream_resume_error(existing)
+                if error_reason is None:
+                    candidate_changed = self._downstream_candidate_changed(existing)
+        phase = "implementation" if candidate_changed else persisted_phase
+        status = {
+            "implementation": "running",
+            "visual": "validating",
+            "review": "reviewing",
+            "finalization": "finalizing",
+        }[phase]
+        return DeliveryResumePlan(
+            resume=resume_running or resume_blocked or pending_effects_only,
+            phase=phase,
+            status=status,
+            pending_effects_only=pending_effects_only,
+            resume_verified_publication=resume_verified_publication,
+            resume_running=resume_running,
+            resume_blocked=resume_blocked,
+            persisted_phase=persisted_phase,
+            error_reason=error_reason,
+            candidate_changed=candidate_changed,
+        )
 
     @staticmethod
     def _inherit_fresh_task_progress(
@@ -893,35 +1067,20 @@ class DeliveryController:
         # Initialize state
         import uuid
         run_id = str(uuid.uuid4())
-        target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
-        target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
-        environment_workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT")
-        workspace_git_role = os.environ.get("ECHELON_WORKSPACE_GIT_ROLE")
-        source_root = os.environ.get("ECHELON_SOURCE_ROOT")
-        source_id = os.environ.get("ECHELON_SOURCE_ID")
-        source_git_role = os.environ.get("ECHELON_SOURCE_GIT_ROLE")
-        implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET")
-        declared_targets = _split_env_list(os.environ.get("ECHELON_DECLARED_TARGETS"))
-        target_task_ids = _split_env_list(os.environ.get("ECHELON_TARGET_TASK_IDS"))
-        if self._orchestration_root is not None:
-            spec_search_root = self._orchestration_root
-            workspace_root = str(self._orchestration_root)
-        else:
-            spec_search_root = Path(
-                os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir
-            ).resolve()
-            workspace_root = environment_workspace_root or str(spec_search_root)
-        source_root = source_root or target_repo_path or str(Path(self._base_dir).resolve())
-        source_id = source_id or target_repo_name or Path(source_root).name
-        if workspace_git_role is None:
-            workspace_git_role = "orchestration" if target_repo_path else "source"
-        if source_git_role is None:
-            source_git_role = "source"
-        spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
-        spec_file = spec_dir / "spec.md" if spec_dir is not None else None
-        tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
-        if not declared_targets and spec_dir is not None:
-            declared_targets = read_targets(spec_dir)
+        context = self._resolve_run_context(intent)
+        target_repo_name = context.target_repo_name
+        target_repo_path = context.target_repo_path
+        workspace_root = context.workspace_root
+        workspace_git_role = context.workspace_git_role
+        source_root = context.source_root
+        source_id = context.source_id
+        source_git_role = context.source_git_role
+        implementation_target = context.implementation_target
+        declared_targets = list(context.declared_targets)
+        target_task_ids = list(context.target_task_ids)
+        spec_dir = context.spec_dir
+        spec_file = context.spec_file
+        tasks_file = context.tasks_file
         state_store.acquire_lock(run_id)
 
         try:
@@ -938,7 +1097,6 @@ class DeliveryController:
                 else None
             )
             existing = self._migrate_delivery_state(state_store, llm_provider)
-            existing_status = existing.get("status")
             raw_pending_reentry = existing.get("pending_review_reentry")
             if (
                 raw_pending_reentry is not None
@@ -956,30 +1114,17 @@ class DeliveryController:
             pending_reentry = _pending_review_reentry(
                 existing.get("pending_review_reentry")
             )
-            pending_effects_only_resume = (
-                not intent.reset
-                and pending_reentry is not None
-                and bool(pending_reentry.get("phase1_verified"))
+            resume_plan = self._plan_delivery_resume(
+                intent,
+                state_store,
+                existing,
             )
-            should_resume_running = (
-                not intent.reset
-                and not pending_effects_only_resume
-                and existing_status in {
-                    "running", "interrupted", "verified", "validating",
-                    "reviewing", "finalizing",
-                }
-            )
-            should_resume_blocked = (
-                not intent.reset
-                and intent.resume
-                and existing_status == "blocked"
-                and not pending_effects_only_resume
-            )
+            existing_status = existing.get("status")
+            pending_effects_only_resume = resume_plan.pending_effects_only
+            should_resume_running = resume_plan.resume_running
+            should_resume_blocked = resume_plan.resume_blocked
             should_resume_verified_publication = (
-                should_resume_blocked
-                and existing.get("termination_reason")
-                in {"publish_failed", "target_merge_failed"}
-                and isinstance(existing.get("verified_publish_checkpoint"), dict)
+                resume_plan.resume_verified_publication
             )
             if should_resume_running or should_resume_blocked or pending_effects_only_resume:
                 persisted_target = existing.get("implementation_target")
@@ -1041,39 +1186,26 @@ class DeliveryController:
                     existing_status,
                     existing.get("outer_iter", 0),
                 )
-                resume_phase = self._resume_phase(existing)
+                resume_phase = resume_plan.phase
                 resume_updates: dict[str, object] = {}
                 implementation = self._implementation_from_state(existing)
-                enabled_phases = existing.get("enabled_phases")
-                if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
+                if resume_plan.error_reason is not None:
                     return self._persist_phase_block(
                         state_store,
-                        phase=resume_phase,
-                        reason="invalid_resume_phase",
+                        phase=resume_plan.persisted_phase,
+                        reason=resume_plan.error_reason,
                         implementation=implementation,
                         outer_iterations=implementation.outer_iterations,
                         tokens_used=implementation.tokens_used,
                     )
-                if resume_phase in {"visual", "review"}:
-                    reason = self._downstream_resume_error(existing)
-                    if reason is not None:
-                        return self._persist_phase_block(
-                            state_store,
-                            phase=resume_phase,
-                            reason=reason,
-                            implementation=implementation,
-                            outer_iterations=implementation.outer_iterations,
-                            tokens_used=implementation.tokens_used,
-                        )
-                    if self._downstream_candidate_changed(existing):
-                        resume_phase = "implementation"
-                        resume_updates["downstream_reentry"] = {
-                            "from_phase": self._resume_phase(existing),
-                            "reason": "candidate_changed_after_checkpoint",
-                        }
-                        existing = dict(existing)
-                        existing["status"] = "running"
-                        existing["blocked_phase"] = None
+                if resume_plan.candidate_changed:
+                    resume_updates["downstream_reentry"] = {
+                        "from_phase": resume_plan.persisted_phase,
+                        "reason": "candidate_changed_after_checkpoint",
+                    }
+                    existing = dict(existing)
+                    existing["status"] = "running"
+                    existing["blocked_phase"] = None
                 resume_status = {
                     "implementation": "running",
                     "visual": "validating",
@@ -1088,52 +1220,39 @@ class DeliveryController:
                     intent.spec_id,
                     existing.get("outer_iter", 0),
                 )
-                resume_phase = self._resume_phase(existing)
+                resume_phase = resume_plan.phase
                 resume_updates = {}
                 transitioned_for_reentry = False
                 implementation = self._implementation_from_state(existing)
-                enabled_phases = existing.get("enabled_phases")
-                if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
+                if resume_plan.error_reason is not None:
                     return self._persist_phase_block(
                         state_store,
-                        phase=resume_phase,
-                        reason="invalid_resume_phase",
+                        phase=resume_plan.persisted_phase,
+                        reason=resume_plan.error_reason,
                         implementation=implementation,
                         outer_iterations=implementation.outer_iterations,
                         tokens_used=implementation.tokens_used,
                     )
-                if resume_phase in {"visual", "review"}:
-                    reason = self._downstream_resume_error(existing)
-                    if reason is not None:
-                        return self._persist_phase_block(
-                            state_store,
-                            phase=resume_phase,
-                            reason=reason,
-                            implementation=implementation,
-                            outer_iterations=implementation.outer_iterations,
-                            tokens_used=implementation.tokens_used,
-                        )
-                    if self._downstream_candidate_changed(existing):
-                        downstream_phase = resume_phase
-                        resume_phase = "implementation"
-                        resume_updates["downstream_reentry"] = {
-                            "from_phase": downstream_phase,
-                            "reason": "candidate_changed_after_checkpoint",
-                        }
-                        state_store.transition(
-                            {
-                                "visual": "validating",
-                                "review": "reviewing",
-                            }[downstream_phase],
-                            updates=resume_updates,
-                        )
-                        state_store.transition(
-                            "running", updates={"blocked_phase": None}
-                        )
-                        transitioned_for_reentry = True
-                        existing = dict(existing)
-                        existing["status"] = "running"
-                        existing["blocked_phase"] = None
+                if resume_plan.candidate_changed:
+                    downstream_phase = resume_plan.persisted_phase
+                    resume_updates["downstream_reentry"] = {
+                        "from_phase": downstream_phase,
+                        "reason": "candidate_changed_after_checkpoint",
+                    }
+                    state_store.transition(
+                        {
+                            "visual": "validating",
+                            "review": "reviewing",
+                        }[downstream_phase],
+                        updates=resume_updates,
+                    )
+                    state_store.transition(
+                        "running", updates={"blocked_phase": None}
+                    )
+                    transitioned_for_reentry = True
+                    existing = dict(existing)
+                    existing["status"] = "running"
+                    existing["blocked_phase"] = None
                 if not transitioned_for_reentry:
                     state_store.transition({
                         "implementation": "running",

@@ -807,7 +807,7 @@ git commit -m "refactor: flatten Ralph outer loop"
 - Consumes: `RunIntent`, current `StateStore`, environment/source roots, and persisted phase state.
 - Produces: `DeliveryRunContext`, `DeliveryResumePlan`, `_resolve_run_context(...)`, and `_plan_delivery_resume(...)` for Tasks 8-9.
 
-- [ ] **Step 1: Add failing context and resume-plan tests**
+- [x] **Step 1: Add failing context and resume-plan tests**
 
 ```python
 def test_plan_delivery_resume_returns_exact_persisted_phase(tmp_path: Path) -> None:
@@ -841,7 +841,7 @@ def test_resolve_run_context_uses_explicit_orchestration_root(tmp_path: Path) ->
     assert context.spec_search_root == tmp_path
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -853,7 +853,7 @@ Run:
 
 Expected: FAIL because the typed context/plan seams do not exist.
 
-- [ ] **Step 3: Add immutable Delivery context and resume types**
+- [x] **Step 3: Add immutable Delivery context and resume types**
 
 Add module-level dataclasses with explicit fields:
 
@@ -903,7 +903,7 @@ classification, downstream-candidate-change handling, and phase transition
 planning. Preserve existing migration and error payloads. `_run_delivery`
 continues acquiring/releasing the state lock in its outer `try/finally`.
 
-- [ ] **Step 4: Run Delivery resume/state verification**
+- [x] **Step 4: Run Delivery resume/state verification**
 
 Run:
 
@@ -917,7 +917,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/delivery_controller.py tests/unit/test_delivery_controller.py tests/unit/test_cli_harness_resume.py
