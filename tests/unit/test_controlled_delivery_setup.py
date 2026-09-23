@@ -14,6 +14,7 @@ def test_delivery_without_llm_provider_blocks_before_ralph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     coordinator = _make_coordinator(tmp_path)
+    coordinator._config.llm.enabled = False
     constructed: list[bool] = []
 
     class UnexpectedRalph:
