@@ -37,7 +37,7 @@ def _make_ralph(tmp_path, spec_id="001-feature", strategy_id="default"):
     esc_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
     esc_dir.mkdir(parents=True, exist_ok=True)
 
-    state_store = StateStore(state_dir, spec_id, strategy_id)
+    state_store = StateStore(state_dir, spec_id)
     mode = ModeController("banzai")
     esc_handler = EscalationHandler(str(esc_dir.parent))
     gitops = MagicMock()

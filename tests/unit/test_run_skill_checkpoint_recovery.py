@@ -32,7 +32,7 @@ def _write_state(
     }
     if checkpoint is not None:
         payload["checkpoint_commits"] = [{"commit": checkpoint}]
-    path = state_dir / "default.json"
+    path = state_dir / "delivery.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -40,7 +40,6 @@ def _write_state(
 def _intent() -> SimpleNamespace:
     return SimpleNamespace(
         spec_id="012",
-        strategies=["default"],
         reset=False,
         resume=False,
     )

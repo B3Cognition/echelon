@@ -564,14 +564,15 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
             state_dir = build / "state"
             if not state_dir.exists():
                 continue
-            for state_file in sorted(state_dir.glob("*.json")):
+            for state_file in (state_dir / "delivery.json",):
+                if not state_file.is_file():
+                    continue
                 try:
                     data = _json.loads(state_file.read_text(encoding="utf-8"))
                 except Exception:
                     continue
                 if isinstance(data, dict):
                     data.setdefault("build_id", build.name)
-                    data.setdefault("strategy_id", state_file.stem)
                     data.setdefault("state_file", str(state_file))
                     if target_id:
                         data.setdefault("target_id", target_id)

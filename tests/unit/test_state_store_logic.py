@@ -24,7 +24,7 @@ class TestStateStoreInvariants:
     """Test StateStore invariant enforcement."""
 
     def _make_store(self, tmp_path: Path) -> StateStore:
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.initialize("run-1", "semi")
         return store
 
@@ -120,7 +120,7 @@ class TestStateStoreInvariants:
         assert bak_file.exists()
 
     def test_initialize_records_target_metadata(self, tmp_path: Path) -> None:
-        store = StateStore(tmp_path, "001", "default")
+        store = StateStore(tmp_path, "001")
         state = store.initialize(
             run_id="run-1",
             mode="banzai",
@@ -171,7 +171,7 @@ class TestStateStoreInvariants:
         self, tmp_path: Path
     ) -> None:
         """Only the coordinator may choose a V1 delivery phase plan."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.state_file.write_text('{"status": "blocked"}', encoding="utf-8")
         store.write(store.read())
         legacy = store.read()

@@ -62,7 +62,7 @@ def _make_controller(tmp_path, verify_results, mode="semi"):
     gitops = MagicMock()
     gitops.create_worktree.return_value = "/tmp/wt"
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    state_store = StateStore(tmp_path, "spec-001")
     mode_ctrl = ModeController(mode)
     escalation = EscalationHandler(str(tmp_path / "harness"))
     state_store.initialize("run-1", mode)

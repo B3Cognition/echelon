@@ -52,7 +52,7 @@ def test_fresh_checkpoint_progress_is_restored_before_provider_dispatch(
         "\n  **Acceptance Criteria:**\n  - [ ] implemented\n",
         encoding="utf-8",
     )
-    store = StateStore(tmp_path / "state", "007", "default")
+    store = StateStore(tmp_path / "state", "007")
     store.initialize(run_id="run-1", mode="semi")
     store.transition("running")
 
@@ -180,7 +180,7 @@ class TestSingleStrategy:
             )
 
         assert result.status == "converged"
-        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
         assert state["delivery_stack_snapshot"] == {
             "schema_version": 1,
             "resolved": resolved_to_dict(resolved),
@@ -223,7 +223,7 @@ class TestSingleStrategy:
 
         assert result.status == "converged"
         assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
-        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
         assert state["declared_targets"] == ["."]
         assert state["status"] == "converged"
         assert (state["outer_iter"], state["inner_iter"], state["tokens_used"]) == (1, 1, 7)
@@ -260,7 +260,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition(
@@ -331,7 +331,7 @@ class TestSingleStrategy:
     def test_persist_phase_block_refreshes_an_existing_block(self, tmp_path: Path) -> None:
         """An invalid resume records its exact replacement reason atomically."""
         coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition("blocked", updates={"blocked_phase": "visual"})
@@ -379,7 +379,7 @@ class TestSingleStrategy:
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi", declared_targets=["sources/api"])
         store.transition("running")
         store.transition("verified")
@@ -458,7 +458,7 @@ class TestSingleStrategy:
             f"---\nverified_commit: {evidence_commit}\n---\n# Fulfillment\n",
             encoding="utf-8",
         )
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi", declared_targets=["sources/api"])
         store.transition("running")
         coord._gitops.get_latest_worktree.return_value = str(worktree)
@@ -507,7 +507,7 @@ class TestSingleStrategy:
             f"---\nverified_commit: {verified_commit}\n---\n# Fulfillment\n",
             encoding="utf-8",
         )
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1",
             "semi",
@@ -583,7 +583,7 @@ class TestSingleStrategy:
         )
         report = spec_dir / "fulfillment-report.md"
         report.write_text("# Fulfillment\n", encoding="utf-8")
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition(
@@ -629,7 +629,7 @@ class TestSingleStrategy:
     ) -> None:
         """Per-target publication is not skipped for a polyrepo specification."""
         coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition(
@@ -700,7 +700,7 @@ class TestSingleStrategy:
         coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi", declared_targets=["sources/api"])
         store.transition("running")
         store.transition(
@@ -760,7 +760,7 @@ class TestSingleStrategy:
         assert result.status == "blocked"
         assert result.blocked_phase == "implementation"
         assert result.termination_reason == "verified_provenance_unavailable"
-        assert StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()["status"] == "blocked"
+        assert StateStore(tmp_path / "runs" / "state", "spec-001").read()["status"] == "blocked"
         visual.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -780,7 +780,7 @@ class TestSingleStrategy:
         (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
         worktree = tmp_path / "worktree"
         worktree.mkdir()
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi", declared_targets=["sources/api"])
         store.transition("running")
         store.transition("verified")
@@ -832,7 +832,7 @@ class TestDeliveryStateMigration:
         self, tmp_path: Path
     ) -> None:
         coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         legacy = store.initialize("run-1", "semi")
         legacy.pop("delivery_state_version")
         legacy.pop("enabled_phases")
@@ -855,7 +855,7 @@ class TestDeliveryStateMigration:
 
     def test_terminal_legacy_convergence_is_not_migrated(self, tmp_path: Path) -> None:
         coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition("verified")
@@ -877,7 +877,7 @@ class TestDeliveryStateMigration:
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
         coordinator._config.pr_host = "github"
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.state_file.parent.mkdir(parents=True, exist_ok=True)
         store.state_file.write_text(
             json.dumps({"status": "blocked", "outer_iter": 1}), encoding="utf-8"
@@ -894,7 +894,7 @@ class TestDeliveryStateMigration:
         self, tmp_path: Path
     ) -> None:
         coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1", "semi", enabled_phases=coordinator._enabled_phases(None)
         )
@@ -914,7 +914,7 @@ class TestDeliveryStateMigration:
 
         coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1",
             "semi",
@@ -955,7 +955,7 @@ class TestDeliveryStateMigration:
 
         coordinator = _make_controller(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1",
             "semi",
@@ -1043,7 +1043,7 @@ class TestDeliveryStateMigration:
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         worktree = tmp_path / "worktree"
         worktree.mkdir()
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1", "semi", enabled_phases=["implementation", "visual", "finalization"]
         )
@@ -1082,7 +1082,7 @@ class TestDeliveryStateMigration:
              patch.object(RalphController, "run_loop", return_value=verified):
             coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
-        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
         assert state["registered_worktree"] == str(tmp_path)
         assert state["verified_commit"] == "verified-head"
 
@@ -1092,7 +1092,7 @@ class TestDeliveryStateMigration:
         coordinator = _make_controller(tmp_path)
         recovered_worktree = tmp_path / "recovered-worktree"
         recovered_worktree.mkdir()
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("run-1", "semi")
         store.transition(
             "running",
@@ -1133,7 +1133,7 @@ class TestDeliveryStateMigration:
         coordinator = _make_controller(tmp_path)
         coordinator._config.pr_host = "github"
         coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1", "semi", enabled_phases=["implementation", "review", "finalization"]
         )
@@ -1164,7 +1164,7 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
 
         coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize(
             "run-1", "semi", enabled_phases=["implementation", "finalization"]
         )
@@ -1198,7 +1198,7 @@ class TestDeliveryStateMigration:
         delivery_status: str,
     ) -> None:
         coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         store.initialize("terminal-run", "semi")
         store.transition("running")
         if terminal_status == "converged":
@@ -1307,7 +1307,6 @@ class TestStickyEscalationBlock:
         state_dir.mkdir(parents=True, exist_ok=True)
         state = {
             "spec_id": "spec-001",
-            "strategy_id": "default",
             "run_id": "old-run",
             "status": "blocked",
             "mode": "semi",
@@ -1327,7 +1326,7 @@ class TestStickyEscalationBlock:
             "started_at": "2026-01-01T00:00:00+00:00",
             "updated_at": "2026-01-01T00:00:00+00:00",
         }
-        state_file = state_dir / "default.json"
+        state_file = state_dir / "delivery.json"
         state_file.write_text(json.dumps(state), encoding="utf-8")
 
     def test_sticky_escalation_block_refuses_without_reset(self, tmp_path: Path) -> None:
@@ -1431,14 +1430,12 @@ class TestSmartResumeDetection:
         status: str,
         outer_iter: int = 2,
         spec_id: str = "spec-001",
-        strategy_id: str = "default",
     ) -> None:
         """Write a state.json with the given status and outer_iter."""
         state_dir = tmp_path / "runs" / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
         state = {
             "spec_id": spec_id,
-            "strategy_id": strategy_id,
             "run_id": "prior-run-id",
             "status": status,
             "mode": "semi",
@@ -1458,7 +1455,7 @@ class TestSmartResumeDetection:
             "started_at": "2026-01-01T00:00:00+00:00",
             "updated_at": "2026-01-01T00:00:00+00:00",
         }
-        state_file = state_dir / f"{strategy_id}.json"
+        state_file = state_dir / "delivery.json"
         state_file.write_text(json.dumps(state), encoding="utf-8")
 
     # --- should_resume condition unit tests ---
@@ -1533,7 +1530,7 @@ class TestSmartResumeDetection:
         # verify by checking the state file still exists and was NOT wiped to outer_iter=0.
         from harness.state import StateStore
         state_dir = tmp_path / "runs" / "state"
-        store = StateStore(state_dir, "spec-001", "default")
+        store = StateStore(state_dir, "spec-001")
         final_state = store.read()
         # outer_iter is preserved from the interrupted state (not reset to 0)
         assert final_state.get("outer_iter", 0) >= 2, (
@@ -1564,7 +1561,7 @@ class TestSmartResumeDetection:
         # successful run's own counter rather than stale prior progress.
         from harness.state import StateStore
         state_dir = tmp_path / "runs" / "state"
-        store = StateStore(state_dir, "spec-001", "default")
+        store = StateStore(state_dir, "spec-001")
         final_state = store.read()
         assert final_state.get("outer_iter") == 1, (
             f"outer_iter should reflect the fresh run, got {final_state.get('outer_iter')}"
@@ -1598,7 +1595,7 @@ class TestSmartResumeDetection:
 
         from harness.state import StateStore
         state_dir = tmp_path / "runs" / "state"
-        store = StateStore(state_dir, "spec-001", "default")
+        store = StateStore(state_dir, "spec-001")
         final_state = store.read()
         assert final_state["target_repo"] == "rbf-opta-points"
         assert final_state["target_path"] == str(target)
@@ -1643,7 +1640,7 @@ class TestSmartResumeDetection:
 
             coord.run(intent)
 
-        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
         assert store.read()["target_task_ids"] == ["T-001", "T-002"]
 
     def test_spec_artifact_paths_are_recorded_in_state(self, tmp_path: Path) -> None:
@@ -1672,7 +1669,7 @@ class TestSmartResumeDetection:
         from harness.state import StateStore
 
         state_dir = tmp_path / "runs" / "state"
-        store = StateStore(state_dir, "spec-001", "default")
+        store = StateStore(state_dir, "spec-001")
         final_state = store.read()
         assert final_state["spec_dir"] == str(spec_dir)
         assert final_state["spec_file"] == str(spec_file)
@@ -1717,7 +1714,7 @@ class TestSmartResumeDetection:
         from harness.state import StateStore
 
         state_dir = target / "runs" / "state"
-        store = StateStore(state_dir, "002-law-sddp-snapshot-fix", "default")
+        store = StateStore(state_dir, "002-law-sddp-snapshot-fix")
         final_state = store.read()
         assert final_state["target_repo"] == target.name
         assert final_state["target_path"] == str(target)
@@ -1806,7 +1803,6 @@ class TestSmartResumeDetection:
         state = StateStore(
             harness_root / "runs" / "state",
             "spec-001",
-            "default",
         ).read()
         assert state["workspace_root"] == str(workspace.resolve())
         assert state["spec_dir"] == str(spec_dir.resolve())
@@ -1861,7 +1857,6 @@ class TestSmartResumeDetection:
         store = StateStore(
             harness_root / "runs" / "state",
             "spec-001",
-            "default",
         )
         store.initialize(
             run_id="stale-run",

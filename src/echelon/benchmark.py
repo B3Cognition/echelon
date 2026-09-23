@@ -293,10 +293,7 @@ def _delivery_state(project_root: Path, spec_id: str) -> tuple[Path | None, dict
     if not build_id:
         return None, {}
     state_dir = project_root / "runs" / build_id / "state"
-    state_file = state_dir / "default.json"
-    if not state_file.exists():
-        candidates = sorted(state_dir.glob("*.json"))
-        state_file = candidates[0] if candidates else state_file
+    state_file = state_dir / "delivery.json"
     return project_root / "runs" / build_id, _read_json(state_file)
 
 

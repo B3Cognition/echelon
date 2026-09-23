@@ -130,7 +130,7 @@ def _fresh_delivery_baseline(
     )
 
     for prior_build_id in build_ids:
-        state_path = runs_dir(harness_root) / prior_build_id / "state" / "default.json"
+        state_path = runs_dir(harness_root) / prior_build_id / "state" / "delivery.json"
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -201,7 +201,7 @@ def _fresh_delivery_completed_tasks(
         return ()
 
     recovered: set[str] = set()
-    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/default.json")):
+    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/delivery.json")):
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -678,7 +678,7 @@ def _print_delivery_exception_summary(
             harness_root,
             str(intent.spec_id),
         ).read_text(encoding="utf-8").strip()
-        state_path = runs_dir(harness_root) / build_id / "state" / "default.json"
+        state_path = runs_dir(harness_root) / build_id / "state" / "delivery.json"
         value = json.loads(state_path.read_text(encoding="utf-8"))
         if isinstance(value, dict):
             state = value

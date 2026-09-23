@@ -207,7 +207,7 @@ class DeliveryController:
 
     def run(self, intent: RunIntent) -> DeliveryResult:
         """Run the one supported Delivery execution."""
-        store = StateStore(self._state_dir, intent.spec_id, "default")
+        store = StateStore(self._state_dir, intent.spec_id)
         existing = store.read()
         if (
             existing.get("status") == "blocked"
@@ -888,7 +888,7 @@ class DeliveryController:
     ) -> DeliveryResult:
         """Run the single durable Delivery loop."""
         strategy_id = "default"
-        state_store = StateStore(self._state_dir, intent.spec_id, strategy_id)
+        state_store = StateStore(self._state_dir, intent.spec_id)
         self._state_store = state_store
 
         mode_controller = ModeController(intent.mode)

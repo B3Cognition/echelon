@@ -14,6 +14,22 @@ import pytest
 from harness.state import InvalidTransitionError, StateStore
 
 
+def test_state_store_has_one_delivery_identity(tmp_path: Path) -> None:
+    store = StateStore(tmp_path, "001")
+    store.initialize(run_id="run-1", mode="semi")
+
+    assert store.state_file == tmp_path / "delivery.json"
+    assert store.lock_file == tmp_path / "delivery.lock"
+    assert "strategy_id" not in store.read()
+    assert not (tmp_path / "default.json").exists()
+
+
+def test_state_store_ignores_historical_default_state(tmp_path: Path) -> None:
+    (tmp_path / "default.json").write_text('{"status":"blocked"}')
+
+    assert StateStore(tmp_path, "001").read() == {}
+
+
 @pytest.mark.parametrize("path", [
     ["running", "verified", "finalizing", "converged"],
     ["running", "verified", "validating", "finalizing", "converged"],
@@ -21,7 +37,7 @@ from harness.state import InvalidTransitionError, StateStore
     ["running", "verified", "validating", "reviewing", "finalizing", "converged"],
 ])
 def test_delivery_state_paths(tmp_path: Path, path: list[str]) -> None:
-    store = StateStore(tmp_path, "042", "default")
+    store = StateStore(tmp_path, "042")
     store.initialize("run-1", "semi")
     for status in path:
         store.transition(status)
@@ -29,7 +45,7 @@ def test_delivery_state_paths(tmp_path: Path, path: list[str]) -> None:
 
 
 def test_converged_cannot_reopen(tmp_path: Path) -> None:
-    store = StateStore(tmp_path, "042", "default")
+    store = StateStore(tmp_path, "042")
     store.initialize("run-1", "semi")
     for status in ("running", "verified", "finalizing", "converged"):
         store.transition(status)
@@ -42,7 +58,7 @@ class TestValidTransitions:
     """Test all valid state transitions per data-model."""
 
     def _make_store(self, tmp_path: Path) -> StateStore:
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         return store
 
     def test_initialized_to_running(self, tmp_path: Path) -> None:
@@ -114,7 +130,7 @@ class TestInvalidTransitions:
     """Test invalid state transition rejection."""
 
     def _make_store(self, tmp_path: Path) -> StateStore:
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         return store
 
     def test_initialized_to_converged_rejected(self, tmp_path: Path) -> None:

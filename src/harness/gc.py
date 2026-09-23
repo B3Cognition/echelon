@@ -136,38 +136,39 @@ def _get_stale_worktrees(
 
 
 def _get_protected_worktrees(build_dir: Path) -> set[Path]:
-    """Return the one checkout each resumable strategy may still require."""
+    """Return the one checkout a resumable delivery may still require."""
     worktree_base = build_dir / "worktrees"
     state_base = build_dir / "state"
     if not worktree_base.is_dir() or not state_base.is_dir():
         return set()
 
     protected: set[Path] = set()
-    for state_file in sorted(state_base.glob("*.json")):
+    state_file = state_base / "delivery.json"
+    if not state_file.is_file():
+        return protected
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {"status": "interrupted"}
+
+    if state.get("status") not in _RESUMABLE_DELIVERY_STATUSES:
+        return protected
+
+    registered = state.get("registered_worktree")
+    if isinstance(registered, str) and registered:
+        registered_path = Path(registered).expanduser().resolve()
         try:
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            state = {"status": "interrupted", "strategy_id": state_file.stem}
+            registered_path.relative_to(worktree_base.resolve())
+        except ValueError:
+            return protected
+        if registered_path.is_dir():
+            protected.add(registered_path)
+            return protected
 
-        if state.get("status") not in _RESUMABLE_DELIVERY_STATUSES:
-            continue
-
-        registered = state.get("registered_worktree")
-        if isinstance(registered, str) and registered:
-            registered_path = Path(registered).expanduser().resolve()
-            try:
-                registered_path.relative_to(worktree_base.resolve())
-            except ValueError:
-                continue
-            if registered_path.is_dir():
-                protected.add(registered_path)
-                continue
-
-        strategy_id = str(state.get("strategy_id") or state_file.stem)
-        strategy_dir = worktree_base / strategy_id
-        candidates = [path for path in strategy_dir.glob("iter-*") if path.is_dir()]
-        if candidates:
-            protected.add(max(candidates, key=_iteration_order).resolve())
+    strategy_dir = worktree_base / "default"
+    candidates = [path for path in strategy_dir.glob("iter-*") if path.is_dir()]
+    if candidates:
+        protected.add(max(candidates, key=_iteration_order).resolve())
 
     return protected
 

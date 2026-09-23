@@ -66,7 +66,7 @@ class TestCoordinatorReviewReentry:
         )
         worktree = tmp_path / "worktree"
         worktree.mkdir()
-        store = StateStore(tmp_path / "runs" / "state", "005", "default")
+        store = StateStore(tmp_path / "runs" / "state", "005")
         store.initialize(
             "run-1", "semi", implementation_target="persisted-target",
             declared_targets=["persisted-target"],
@@ -330,7 +330,6 @@ class TestCoordinatorReviewReentry:
         intent = RunIntent(
             spec_id="005",
             mode="semi",
-            strategies=["default"],
             max_outer=1,
             max_inner=1,
         )

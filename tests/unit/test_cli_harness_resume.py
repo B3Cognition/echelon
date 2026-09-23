@@ -15,8 +15,8 @@ _TEST_BUILD_ID = "build-test"
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, state: dict) -> None:
-    """Write a fake harness state file (new layout: state_dir/{strategy}.json, no spec_id subdir)."""
-    path = state_dir / f"{strategy}.json"
+    """Write the fixed run-scoped delivery state file."""
+    path = state_dir / "delivery.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state))
 
@@ -126,7 +126,7 @@ def test_refreshing_v1_spec_paths_keeps_delivery_state_v1(tmp_path: Path) -> Non
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    state_store = StateStore(tmp_path / "runs" / "state", "001", "default")
+    state_store = StateStore(tmp_path / "runs" / "state", "001")
     state_store.state_file.parent.mkdir(parents=True, exist_ok=True)
     state_store.state_file.write_text(
         json.dumps({"status": "blocked", "legacy": True}), encoding="utf-8"
@@ -611,7 +611,7 @@ class TestCmdHarnessResume:
         run.assert_called_once()
         assert run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert "resume" in run.call_args.args[0]
-        persisted = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        persisted = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert persisted["blocked_phase"] == phase
 
     def test_verification_infrastructure_retries_after_harness_update(
@@ -815,7 +815,7 @@ class TestCmdHarnessResume:
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["spec_dir"] == str(spec_dir)
         assert state["spec_file"] == str(spec_dir / "spec.md")
         assert state["tasks_file"] == str(spec_dir / "tasks.md")
@@ -847,7 +847,7 @@ class TestCmdHarnessResume:
         err = capsys.readouterr().err
         assert "Resume preflight failed" in err
         assert "tasks.md is not canonical" in err
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "harness_error"
 
     def test_phase_a_build_incomplete_retries_without_git_recovery(
@@ -1018,7 +1018,7 @@ class TestCmdHarnessResume:
         assert exc.value.code == 2
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "provider_session_limit"
 
     def test_converged_resume_ignores_historical_provider_limit_status(
@@ -1034,7 +1034,7 @@ class TestCmdHarnessResume:
         })
 
         def converge(*_args, **_kwargs) -> None:
-            state_path = sd / "default.json"
+            state_path = sd / "delivery.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state.update({"status": "converged", "termination_reason": "converged"})
             state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -1223,7 +1223,7 @@ class TestCmdHarnessResume:
                 _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
         assert state["termination_reason"] == "docker_unavailable"
         err = capsys.readouterr().err
@@ -1279,7 +1279,7 @@ class TestCmdHarnessResume:
                 _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
         assert state["termination_reason"] == "harness_error"
         assert "fatal: invalid reference" in state["harness_error"]

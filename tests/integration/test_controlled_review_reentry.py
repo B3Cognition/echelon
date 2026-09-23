@@ -103,7 +103,7 @@ def review_handoff(slice_project, monkeypatch, request):
         return DeliveryController(MockProvider(), gitops, config, base_dir=str(root.parent / "control"),
                                    orchestration_root=root, build_id="review-acceptance")
 
-    store = StateStore(coordinator()._state_dir, "001", "default")
+    store = StateStore(coordinator()._state_dir, "001")
     mode = request.node.callspec.params.get("mode", "banzai")
     store.initialize("review-acceptance", mode, enabled_phases=["implementation", "review", "finalization"],
                      target_task_ids=["T-001"], spec_dir=str(spec), tasks_file=str(tasks), spec_file=str(spec / "spec.md"))

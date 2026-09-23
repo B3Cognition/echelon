@@ -23,7 +23,7 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
     gitops = MagicMock()
     gitops.base_dir = str(project)
     gitops.create_worktree.return_value = str(project)
-    store = StateStore(tmp_path / "state", "001", "default")
+    store = StateStore(tmp_path / "state", "001")
     store.initialize("test-run", mode)
     store.transition("running")
     controller = RalphController(
@@ -160,7 +160,7 @@ def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project,
 def _reconstruct(controller, store, executor):
     return RalphController(
         provider=controller._provider, gitops=controller._gitops,
-        state_store=StateStore(store.state_dir, "001", "default"),
+        state_store=StateStore(store.state_dir, "001"),
         mode_controller=ModeController(store.read()["mode"]),
         escalation_handler=EscalationHandler(str(store.state_dir / "escalation")),
         spec_id="001", strategy_id="default", config=controller._config, llm_provider=executor,
