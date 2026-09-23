@@ -392,7 +392,7 @@ class RalphController:
         max_inner: int = 3,
         token_budget: Optional[int] = None,
         build_command: str = "echelon build",
-        strategy_context: str = "",
+        delivery_context: str = "",
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Execute the ralph-loop until a termination condition.
@@ -401,10 +401,10 @@ class RalphController:
             max_outer: Maximum outer iterations.
             max_inner: Maximum inner iterations per outer.
             token_budget: Total token budget (None = unlimited).
-            build_command: Validated strategy identifier. The controller never
+            build_command: Validated internal build command. The controller never
                 executes it; controlled delivery currently requires
                 ``echelon build``.
-            strategy_context: Additional context from strategy file body.
+            delivery_context: Additional context from delivery configuration.
 
         Returns:
             ImplementationResult with termination details.
@@ -417,7 +417,7 @@ class RalphController:
                 max_inner=max_inner,
                 token_budget=token_budget,
                 build_command=build_command,
-                strategy_context=strategy_context,
+                delivery_context=delivery_context,
                 build_prompt=build_prompt,
             )
         finally:
@@ -429,7 +429,7 @@ class RalphController:
         max_inner: int,
         token_budget: Optional[int],
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Inner implementation of run_loop (signal handlers installed)."""
@@ -440,7 +440,7 @@ class RalphController:
         # Handle resume from blocked/interrupted state
         current_status = state.get("status", "initialized")
         if current_status == "blocked":
-            return self._handle_blocked_resume(state, max_outer, max_inner, token_budget, build_command, strategy_context, build_prompt)
+            return self._handle_blocked_resume(state, max_outer, max_inner, token_budget, build_command, delivery_context, build_prompt)
         if current_status == "interrupted":
             # Resume from interrupted: restart from current counters
             logger.info("Resuming from interrupted state")
@@ -616,7 +616,7 @@ class RalphController:
                         token_budget * 0.95 - tokens_used if token_budget and token_budget > 0 else None
                     )
                     build_result = self._exec_build(
-                        handle, build_command, strategy_context,
+                        handle, build_command, delivery_context,
                         worktree_path=worktree_path,
                         prompt=iter_prompt,
                     )
@@ -1114,7 +1114,7 @@ class RalphController:
                         token_budget=token_budget,
                         state=state,
                         build_command=build_command,
-                        strategy_context=strategy_context,
+                        delivery_context=delivery_context,
                         worktree_path=worktree_path,
                         build_prompt=build_prompt,
                     )
@@ -1428,7 +1428,7 @@ class RalphController:
         token_budget: Optional[int],
         state: Dict[str, Any],
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         worktree_path: str = "",
         build_prompt: str = "",
     ) -> Dict[str, Any]:
@@ -1558,7 +1558,7 @@ class RalphController:
                 token_budget * 0.95 - tokens_used if token_budget and token_budget > 0 else None
             )
             fix_result = self._exec_feedback(
-                handle, current_verify, build_command, strategy_context,
+                handle, current_verify, build_command, delivery_context,
                 worktree_path=worktree_path,
                 prompt=feedback_prompt,
                 repair_context={"base_prompt": build_prompt, "phase": "inner",
@@ -2039,12 +2039,12 @@ class RalphController:
         self,
         handle: Optional[SandboxHandle],
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         worktree_path: str = "",
         prompt: str = "",
     ) -> Dict[str, Any]:
         """Execute one controller-selected delivery slice."""
-        del handle, build_command, strategy_context
+        del handle, build_command, delivery_context
         return self._exec_controlled_slice(worktree_path, prompt, repair=False)
 
     def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
@@ -4264,7 +4264,7 @@ class RalphController:
         worktree_path: str,
         verify_result: VerifyResult,
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         build_prompt: str,
         phase: str,
         evidence_paths: tuple[str, ...] = (),
@@ -4275,7 +4275,7 @@ class RalphController:
         state = self._state_store.read()
         # Downstream entry may reconstruct Ralph without running either build
         # loop. Recompute its allowance, including caller-owned gate usage that
-        # has not reached strategy state yet; never reuse a prior slice's value.
+        # has not reached delivery state yet; never reuse a prior slice's value.
         ceilings = [value for value in (token_budget, state.get("token_budget"))
                     if value is not None and value > 0]
         used = max(tokens_used, state.get("tokens_used", 0))
@@ -4298,7 +4298,7 @@ class RalphController:
             handle,
             verify_result,
             build_command,
-            strategy_context,
+            delivery_context,
             worktree_path=worktree_path,
             prompt=prompt,
             repair_context={"base_prompt": build_prompt, "phase": phase,
@@ -4310,7 +4310,7 @@ class RalphController:
         handle: SandboxHandle,
         verify_result: VerifyResult,
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         worktree_path: str = "",
         prompt: str = "",
         repair_context: Mapping[str, object] | None = None,
@@ -4332,7 +4332,7 @@ class RalphController:
                 "base_prompt": prompt, "phase": "inner",
                 "inner_iteration": 0, "evidence_paths": [],
             }
-            context["strategy_context"] = strategy_context
+            context["delivery_context"] = delivery_context
             prompt = json.dumps({
                 "feedback_kind": "controlled_source_repair_v1",
                 "context": context,
@@ -6890,7 +6890,7 @@ class RalphController:
         max_inner: int,
         token_budget: Optional[int],
         build_command: str,
-        strategy_context: str,
+        delivery_context: str,
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Handle resume from blocked state."""
@@ -6909,7 +6909,7 @@ class RalphController:
                     max_inner=max_inner,
                     token_budget=token_budget,
                     build_command=build_command,
-                    strategy_context=strategy_context,
+                    delivery_context=delivery_context,
                     build_prompt=build_prompt,
                 )
             else:
@@ -6943,7 +6943,7 @@ class RalphController:
                     max_inner=max_inner,
                     token_budget=token_budget,
                     build_command=build_command,
-                    strategy_context=strategy_context,
+                    delivery_context=delivery_context,
                     build_prompt=build_prompt,
                 )
             else:
@@ -6972,14 +6972,14 @@ class RalphController:
             if answer:
                 # Resume with answer
                 self._state_store.transition("running")
-                # Inject answer into strategy context
-                augmented_context = f"RESUME ANSWER: {answer}\n\n{strategy_context}"
+                # Inject answer into delivery context
+                augmented_context = f"RESUME ANSWER: {answer}\n\n{delivery_context}"
                 return self._run_loop_inner(
                     max_outer=max_outer,
                     max_inner=max_inner,
                     token_budget=token_budget,
                     build_command=build_command,
-                    strategy_context=augmented_context,
+                    delivery_context=augmented_context,
                     build_prompt=build_prompt,
                 )
             else:
@@ -6996,7 +6996,7 @@ class RalphController:
                     max_inner=max_inner,
                     token_budget=token_budget,
                     build_command=build_command,
-                    strategy_context=strategy_context,
+                    delivery_context=delivery_context,
                     build_prompt=build_prompt,
                 )
         else:
@@ -7007,7 +7007,7 @@ class RalphController:
                 max_inner=max_inner,
                 token_budget=token_budget,
                 build_command=build_command,
-                strategy_context=strategy_context,
+                delivery_context=delivery_context,
                 build_prompt=build_prompt,
             )
 
@@ -7017,7 +7017,7 @@ class RalphController:
         """Install SIGTERM/SIGINT handlers for graceful interruption.
 
         Signal handlers can only be installed from the main thread.
-        When running in a worker thread (e.g., via StrategyCoordinator's
+        When running in a worker thread (e.g., via DeliveryController's
         ThreadPoolExecutor), skip signal installation. The controller
         will rely on cancel_requested checks via state file instead.
         """

@@ -59,7 +59,7 @@ When debugging, first determine whether the failure is bundle installation, Pros
 ## Phase A / Phase B split
 
 - **Phase A — spec authoring.** `echelon spec run` / `echelon spec bugfix` / `echelon spec change`. The squad publishes under `specs/{NNN-slug}/`; durable controller state stays under `runs/spec-*`. The Echelon constitution is `.echelon/constitution.md`.
-- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. The default squad delivery loop is the supported strategy. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
+- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. One `DeliveryController` owns each run. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
 
 `echelon land <id>` and `echelon spec target …` are pure-Python (no LLM); `_cmd_init`, `_cmd_land`, `_cmd_harness_init`, `_cmd_harness_run` in `src/echelon/cli.py` are the dispatch points.
 
@@ -111,7 +111,7 @@ The canonical set of valid journal entry types lives in `runtime/workflow/journa
 src/
   echelon/           CLI entrypoint (cli.py main → SKILL_MAP, harness, spec, land subcommands)
   harness/           Delivery harness library — invoked via `echelon delivery`
-    coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
+    delivery_controller.py DeliveryController — owns the single Phase 1→3 run
     ralph.py           RalphController — controlled delivery outer/inner loop
     visual_ralph.py    VisualRalphController — Phase 2 (Playwright, off by default)
     review_loop.py     ReviewLoopController — Phase 3 PR review cycle
@@ -119,7 +119,7 @@ src/
     llm_provider.py    Abstract provider contract and concrete CLI/API adapters
     skill_loader.py    Skill resolution + preamble injection (terminal CLI path)
     gitops.py          Mirror, worktrees, push, PR creation
-    state.py           Per-strategy state JSON (atomic writes)
+    state.py           Run-scoped `delivery.json` state (atomic writes)
     config.py          4-level config cascade (defaults → repo → env → CLI args)
     spec_frontmatter.py  Polyrepo `targets:` read/write
   codegen/           Shared MemPalace, KB-validation, and secret-scrubbing utilities.

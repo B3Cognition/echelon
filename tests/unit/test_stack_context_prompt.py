@@ -227,7 +227,7 @@ def test_controller_passes_resolved_stack_context_to_controlled_delivery(
         )
 
         def capture_run_loop(**kwargs):
-            captured["stack_context"] = kwargs.get("strategy_context", "")
+            captured["stack_context"] = kwargs.get("delivery_context", "")
             captured["build_prompt"] = kwargs.get("build_prompt", "")
             return mock_controller.run_loop.return_value
 

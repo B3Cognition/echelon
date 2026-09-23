@@ -987,24 +987,16 @@ wiki:
 
 **Two-repo (advanced):** A dedicated control-plane repo manages one or more target repos. Useful when build infrastructure should be separate from product code, or when managing multiple products from one place.
 
-### Build Strategies
-
-`echelon delivery run` accepts `--strategy` to choose the build engine used in
-Phase 1:
-
-| Strategy | Build engine | When to use |
-| -------- | ------------ | ----------- |
-| `default` (omit) | Python-controlled delivery roles | General use |
+### Delivery Loop
 
 ```bash
-echelon delivery run 001                    # default — echelon squad build
+echelon delivery run 001
+echelon delivery continue 001
+echelon delivery resume 001 "<answer>"
 ```
 
-The default strategy uses the controlled slice → verification → feedback →
-commit/PR loop. Its persisted `echelon build` value is an internal strategy
-identifier, not a CLI command.
-See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
-spec-format/build-strategy combinations.
+Delivery uses one controlled slice → verification → feedback → commit/PR loop.
+See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported flow.
 
 ### Review Loop (Phase 3)
 
@@ -1028,7 +1020,7 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 +-------------------------------+       +---------------------------+
 |        HOST (LLM side)        |       |    DOCKER SANDBOX         |
 |                               |       |                           |
-|  StrategyCoordinator          |       |  deterministic execution  |
+|  DeliveryController           |       |  deterministic execution  |
 |    |                          |       |    - build (fallback)     |
 |    ├── Phase 1: RalphController|       |    - test                 |
 |    │     ├── ClaudeCliProvider |------>|    - verify               |
@@ -1332,11 +1324,10 @@ independently rather than allowing either one to hide the other.
 | -------- | ------- |
 | `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
-| `echelon delivery run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> --strategy codegen` | Disabled; use the default delivery strategy |
+| `echelon delivery run <id>` | Build → Docker verify → PR; validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
 | `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
-| `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery status [<id>]` | Show the active delivery state, iterations, cost, and PR context |
 | `echelon delivery verify-local <id> [--target <target-id>] [--engine auto\|docker\|podman]` | Explicit macOS-only local browser verification in a managed worktree; records separate local evidence and never changes landing authority |
 | `echelon delivery cleanup-local <local-run-id>` | Safely recover only resources and the candidate worktree recorded in one interrupted local-run journal |
 | `echelon delivery checkpoint list <id>` | List delivery checkpoints and recovery commits for a spec |
@@ -1652,12 +1643,12 @@ src/
     ├── llm_provider.py    ClaudeCliProvider — claude -p subprocess for LLM build
     ├── build_prompt.py    BuildPromptBuilder — self-contained prompt construction
     ├── gitops.py          GitOpsManager — mirror, worktrees, push, PR creation
-    ├── state.py           State store (per-strategy JSON, atomic writes)
+    ├── state.py           Run-scoped `delivery.json` state store (atomic writes)
     ├── config.py          Configuration (4-level cascade)
     ├── ralph.py           RalphController — Phase 1 outer/inner loop
     ├── visual_ralph.py    VisualRalphController — Phase 2 Playwright loop
     ├── review_loop.py     ReviewLoopController — Phase 3 PR review cycle
-    ├── coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
+    ├── delivery_controller.py DeliveryController — owns the single Phase 1→3 run
     └── skills/            CLI skill entry points
 network/
 ├── generate-squid-conf.sh   # Generate Squid proxy config for sandbox network policy

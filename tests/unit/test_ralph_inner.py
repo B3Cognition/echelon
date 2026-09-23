@@ -136,7 +136,7 @@ class TestInnerLoopConvergence:
             token_budget=None,
             state=ctrl._state_store.read(),
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path=str(worktree),
             build_prompt="repair product",
         )
@@ -194,7 +194,7 @@ class TestInnerLoopConvergence:
             token_budget=None,
             state=ctrl._state_store.read(),
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path=str(worktree),
             build_prompt="repair fulfillment",
         )
@@ -258,7 +258,7 @@ class TestInnerLoopConvergence:
             token_budget=None,
             state=ctrl._state_store.read(),
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path=str(worktree),
             build_prompt="repair fulfillment",
         )
@@ -421,7 +421,7 @@ class TestInnerLoopDeferredFulfillment:
             token_budget=None,
             state=state,
             build_command="build",
-            strategy_context="",
+            delivery_context="",
             worktree_path="/tmp/wt",
             build_prompt="build the next task",
         )
@@ -509,7 +509,7 @@ class TestInnerLoopTaskProgress:
             token_budget=None,
             state=ctrl._state_store.read(),
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path="/tmp/wt",
             build_prompt="build the next task",
         )
@@ -560,7 +560,7 @@ class TestInnerLoopTaskProgress:
             token_budget=None,
             state=ctrl._state_store.read(),
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path="/tmp/wt",
             build_prompt="build the next task",
         )

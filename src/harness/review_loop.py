@@ -6,7 +6,7 @@ threads after each fix, and re-requests review. Merges when the PR is
 APPROVED or the silence window (merge_timeout_hours) elapses with no new
 comments.
 
-Wired in by StrategyCoordinator._run_strategy() after Phase 1 (and
+Wired in by DeliveryController._run_delivery() after Phase 1 (and
 optionally Phase 2) converge, gated on config.review_loop.enabled and
 config.pr_host != "none".
 """

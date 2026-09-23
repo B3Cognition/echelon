@@ -212,7 +212,7 @@ def test_scoped_target_refresh_preserves_target_policy_and_charges(runner_contex
 
 
 def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner_context, tmp_path):
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult
     from harness.fulfillment_runner import _current_git_commit
     from harness.verification_evidence import write_verification_receipt, VerificationStage
@@ -231,7 +231,7 @@ def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner
                                                   str(context.project_root))
     assert result.passed, result.failures
     implementation = ImplementationResult("verified", "converged", 1, 0, None, 7, result)
-    coordinator = StrategyCoordinator(provider=controller._provider, gitops=controller._gitops,
+    coordinator = DeliveryController(provider=controller._provider, gitops=controller._gitops,
         config=controller._config, base_dir=str(context.workspace_root), orchestration_root=context.workspace_root)
     updates = coordinator._verified_evidence_updates(spec_id=context.spec_id, implementation=implementation,
         worktree_path=context.project_root, verified_commit=_current_git_commit(context.project_root))
@@ -246,7 +246,7 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
 ):
     from dataclasses import replace
     import yaml
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.review_loop import ReviewLoopController
     from harness.review_artifacts import ReviewArtifactPublisher
     from tests.unit.test_review_artifacts import _stage_one_group
@@ -308,15 +308,15 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     assert result.passed is passing, result.failures
     assert executor.dispatch_count == 3
     if passing:
-        StrategyCoordinator._mark_review_reentry_phase_verified(store, pending)
+        DeliveryController._mark_review_reentry_phase_verified(store, pending)
         pending = store.read()["pending_review_reentry"]
-    completed = StrategyCoordinator._complete_verified_review_reentry(store, review,
+    completed = DeliveryController._complete_verified_review_reentry(store, review,
         pr_url="https://github.com/example/game/pull/1", pending_reentry=pending)
     assert completed is passing
     assert effects == (["resolve", "request"] if passing else [])
     if passing:
         assert store.read()["pending_review_reentry"] is None
-        assert StrategyCoordinator._complete_verified_review_reentry(store, review,
+        assert DeliveryController._complete_verified_review_reentry(store, review,
             pr_url="https://github.com/example/game/pull/1", pending_reentry=pending)
         assert effects == ["resolve", "request"]
     else:

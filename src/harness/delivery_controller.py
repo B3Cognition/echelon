@@ -219,7 +219,7 @@ class DeliveryController:
             escalation_file = str(existing["escalation_file"])
             if escalation_handler.check_resume(escalation_file) is None:
                 print_escalation_sticky_banner(
-                    intent.spec_id, "default", escalation_file
+                    intent.spec_id, escalation_file
                 )
                 raise RuntimeError(
                     "delivery blocked — escalation pending. "
@@ -1174,7 +1174,7 @@ class DeliveryController:
                 )
 
             stack_context = self._build_stack_context(spec_dir)
-            strategy_context = stack_context
+            delivery_context = stack_context
 
             if llm_provider is None:
                 raise DeliveryConfigurationError(
@@ -1183,8 +1183,8 @@ class DeliveryController:
             arguments = f"spec {intent.spec_id} {intent.mode} mode"
             if intent.task_description:
                 arguments += f"\n\n{intent.task_description}"
-            if strategy_context:
-                arguments += f"\n\n{strategy_context}"
+            if delivery_context:
+                arguments += f"\n\n{delivery_context}"
 
             build_prompt: str | None = None
             initial_review_artifacts: tuple[Path, ...] = ()
@@ -1298,7 +1298,7 @@ class DeliveryController:
                         max_inner=intent.max_inner,
                         token_budget=budget,
                         build_command="echelon build",
-                        strategy_context=strategy_context,
+                        delivery_context=delivery_context,
                         build_prompt=get_build_prompt(),
                     )
             else:
@@ -1367,7 +1367,7 @@ class DeliveryController:
                             worktree_path=worktree,
                             verify_result=verify,
                             build_command="echelon build",
-                            strategy_context=strategy_context,
+                            delivery_context=delivery_context,
                             build_prompt=get_build_prompt(),
                             phase="visual",
                             evidence_paths=tuple(evidence_paths),
@@ -1439,7 +1439,7 @@ class DeliveryController:
                         max_inner=intent.max_inner,
                         token_budget=budget,
                         build_command="echelon build",
-                        strategy_context=strategy_context,
+                        delivery_context=delivery_context,
                         build_prompt=get_build_prompt(),
                     )
                     implementation_outer_iterations += implementation_result.outer_iterations
@@ -1654,7 +1654,7 @@ class DeliveryController:
                             max_inner=intent.max_inner,
                             token_budget=budget,
                             build_command="echelon build",
-                            strategy_context=strategy_context,
+                            delivery_context=delivery_context,
                             build_prompt=reentry_prompt,
                         )
                         implementation_outer_iterations += (

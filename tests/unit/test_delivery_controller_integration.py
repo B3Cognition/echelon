@@ -195,7 +195,7 @@ def test_downstream_repair_uses_current_durable_budget(
     result = controller.run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
         verify_result=VerifyResult(False), build_command="echelon build",
-        strategy_context="", build_prompt="build", phase="visual",
+        delivery_context="", build_prompt="build", phase="visual",
     )
 
     assert not result["passed"], result
@@ -207,7 +207,7 @@ def test_downstream_repair_uses_current_durable_budget(
     again = _reconstruct(controller, store, resumed).run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
         verify_result=VerifyResult(False), build_command="echelon build",
-        strategy_context="", build_prompt="build", phase="visual",
+        delivery_context="", build_prompt="build", phase="visual",
     )
     assert not again["passed"] and not resumed.calls
     assert store.read()["tokens_used"] == 95
@@ -455,7 +455,7 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
             return VisualResult("passed", "converged", 1, 0, None)
         result = implementations[-1].run_downstream_feedback(
             handle=None, worktree_path=str(slice_project[0]), verify_result=VerifyResult(False),
-            build_command="echelon build", strategy_context="", build_prompt="build", phase="visual")
+            build_command="echelon build", delivery_context="", build_prompt="build", phase="visual")
         assert result["passed"] and result["tokens"] == 28, result
         return VisualResult("fix_applied", "fix_applied", 1, result["tokens"], None)
     monkeypatch.setattr(RalphController, "run_loop", implementation)
