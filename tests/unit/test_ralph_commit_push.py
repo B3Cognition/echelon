@@ -26,7 +26,7 @@ from harness.state import StateStore
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_ralph(tmp_path, spec_id="001-feature", strategy_id="default"):
+def _make_ralph(tmp_path, spec_id="001-feature"):
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -44,13 +44,13 @@ def _make_ralph(tmp_path, spec_id="001-feature", strategy_id="default"):
 
     ralph = RalphController(
         spec_id=spec_id,
-        strategy_id=strategy_id,
-        state_store=state_store,
+                state_store=state_store,
         mode_controller=mode,
         escalation_handler=esc_handler,
         provider=MagicMock(),
         gitops=gitops,
         config=config,
+        build_id="build-1",
     )
     return ralph, gitops
 
@@ -61,11 +61,12 @@ def _assert_harness_commit_message(gitops, worktree_path: str) -> None:
     assert commit_args[0] == worktree_path
 
     message = commit_args[1]
-    assert message.startswith("harness: 001-feature/default iter-0")
+    assert message.startswith("harness: 001-feature/build-1 iter-0")
     assert "Echelon-Origin: delivery" in message
     assert "Echelon-Action: commit" in message
     assert "Echelon-Spec: 001-feature" in message
-    assert "Echelon-Strategy: default" in message
+    assert "Echelon-Run: build-1" in message
+    assert "Echelon-Strategy:" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +102,7 @@ class TestCommitAndPushBranchDetection:
 
     def test_feature_branch_push_not_hardcoded_harness_name(self, tmp_path):
         """Regression: push must NOT use hardcoded 'harness/{spec}/{strategy}/iter-N'."""
-        ralph, gitops = _make_ralph(tmp_path, spec_id="042-payment-flow",
-                                    strategy_id="codegen")
+        ralph, gitops = _make_ralph(tmp_path, spec_id="042-payment-flow")
 
         with patch("harness.gitops._run_git") as mock_run_git:
             mock_run_git.return_value = MagicMock(
@@ -122,7 +122,7 @@ class TestCommitAndPushBranchDetection:
 
     def test_detached_head_falls_back_to_legacy_name(self, tmp_path):
         """Detached HEAD (no branch) falls back to legacy harness/* name gracefully."""
-        ralph, gitops = _make_ralph(tmp_path, spec_id="007-spec", strategy_id="alpha")
+        ralph, gitops = _make_ralph(tmp_path, spec_id="007-spec")
 
         with patch("harness.gitops._run_git") as mock_run_git:
             mock_run_git.return_value = MagicMock(stdout="", returncode=0)
@@ -130,7 +130,7 @@ class TestCommitAndPushBranchDetection:
 
         pushed_branch = gitops.push.call_args[0][1]
         assert "007-spec" in pushed_branch
-        assert "alpha" in pushed_branch
+        assert "build-1" in pushed_branch
 
     def test_commit_failure_blocks_convergence(self, tmp_path):
         """Commit failure raises so run_loop cannot report converged work as landed."""

@@ -8,9 +8,9 @@ Usage (via __main__.py):
 
 Subcommands:
   find-branch <spec_id>
-  create-worktree <spec_id> <strategy> <outer_iter> [--base-branch <branch>]
+  create-worktree <spec_id> <build_id> <outer_iter> [--base-branch <branch>]
   commit-push <worktree_path> <push_branch> <message>
-  open-pr <push_branch> <spec_id> <strategy> <spec_name>
+  open-pr <push_branch> <spec_id> <spec_name>
   merge-pr <pr_url>
   local-merge <push_branch> <spec_id> <spec_name>
 """
@@ -41,8 +41,8 @@ def cmd_create_worktree(args: argparse.Namespace) -> int:
     base_branch = args.base_branch if args.base_branch else None
     path = gitops.create_worktree(
         args.spec_id,
-        args.strategy,
         args.outer_iter,
+        build_id=args.build_id,
         base_branch=base_branch,
     )
     print(path)
@@ -62,7 +62,7 @@ def cmd_open_pr(args: argparse.Namespace) -> int:
     pr_url = gitops.find_existing_pr(args.push_branch)
     if not pr_url:
         pr_url = gitops.create_draft_pr(
-            args.push_branch, args.spec_id, args.strategy, args.spec_name,
+            args.push_branch, args.spec_id, args.spec_name,
         )
         gitops.promote_pr_ready(pr_url)
     print("pr_url:", pr_url)
@@ -95,7 +95,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("create-worktree", help="Create worktree from mirror")
     p.add_argument("spec_id")
-    p.add_argument("strategy")
+    p.add_argument("build_id")
     p.add_argument("outer_iter", type=int)
     p.add_argument("--base-branch", default="")
 
@@ -107,7 +107,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("open-pr", help="Find or create and promote a PR")
     p.add_argument("push_branch")
     p.add_argument("spec_id")
-    p.add_argument("strategy")
     p.add_argument("spec_name")
 
     p = sub.add_parser("merge-pr", help="Merge a PR")

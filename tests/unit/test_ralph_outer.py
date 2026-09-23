@@ -102,7 +102,7 @@ def test_raw_outer_ordinal_does_not_exhaust_meaningful_attempt_budget(
 
     assert result.status == "verified"
     gitops.create_worktree.assert_called_once()
-    assert gitops.create_worktree.call_args.args[2] == 5
+    assert gitops.create_worktree.call_args.args[1] == 5
     assert provider.create_count == 0
 
 
@@ -491,10 +491,10 @@ def _make_controller(
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id="spec-001",
-        strategy_id="default",
-        config=config,
+                config=config,
         llm_provider=llm_provider,
         fulfillment_runner=fulfillment_runner,
+        build_id="build-1",
         fresh_delivery=fresh_delivery,
         defer_target_merge=defer_target_merge,
         resume_worktree_path=resume_worktree_path,
@@ -755,8 +755,7 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
         evidence_dir=evidence_dir / "verification",
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         candidate_commit="a" * 40,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -1867,7 +1866,7 @@ class TestOuterLoopConvergence:
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
         )
-        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
         spec_dir = orchestration_root / "specs" / "spec-001-demo"
@@ -2280,7 +2279,7 @@ class TestOuterLoopConvergence:
         }
         state_store.write(state)
 
-        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
         spec_dir = orchestration_root / "specs" / "spec-001-demo"
@@ -2322,7 +2321,7 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
         gitops.local_merge.assert_called_once_with(
-            "harness/spec-001-default-iter-0",
+            "harness/spec-001/build-1/iter-0",
             "spec-001",
         )
         gitops.destroy_worktree.assert_not_called()
@@ -2353,7 +2352,7 @@ class TestOuterLoopConvergence:
         assert result.status == "blocked"
         assert result.termination_reason == "target_merge_failed"
         gitops.local_merge.assert_called_once_with(
-            "harness/spec-001-default-iter-0",
+            "harness/spec-001/build-1/iter-0",
             "spec-001",
         )
         gitops.promote_pr_ready.assert_not_called()
@@ -2384,7 +2383,7 @@ class TestOuterLoopConvergence:
 
         published = controller._merge_verified_branch(
             str(tmp_path / "worktree"),
-            "harness/spec-001/default/iter-0",
+            "harness/spec-001/build-1/iter-0",
             VerifyResult(passed=True, failures=[]),
             force=True,
         )
@@ -2523,7 +2522,7 @@ class TestOuterLoopConvergence:
         self, tmp_path: Path
     ) -> None:
         """Polyrepo Phase 1 does not update orchestration delivery status."""
-        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
         _init_git_repo(orchestration_root)
@@ -2567,7 +2566,7 @@ class TestOuterLoopConvergence:
         self, tmp_path: Path
     ) -> None:
         """Polyrepo Phase 1 commits artifacts without moving delivery state."""
-        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
         _init_git_repo(orchestration_root)
@@ -2653,7 +2652,7 @@ class TestOuterLoopConvergence:
         controller, _provider, gitops, state_store = _make_controller(tmp_path)
         workspace = tmp_path / "workspace"
         runtime_root = workspace / "runs" / "targets" / "prosaic"
-        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "iter-0"
         spec_dir = workspace / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         worktree.mkdir(parents=True)
@@ -2835,20 +2834,20 @@ class TestOuterLoopConvergence:
 
         assert result.status == "blocked"
         assert result.termination_reason == "publish_failed"
-        assert result.branch == "harness/spec-001-default-iter-0"
+        assert result.branch == "harness/spec-001/build-1/iter-0"
         gitops.promote_pr_ready.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
         state = state_store.read()
         assert state["status"] == "running"
         assert state["termination_reason"] == "publish_failed"
-        assert state["branch"] == "harness/spec-001-default-iter-0"
+        assert state["branch"] == "harness/spec-001/build-1/iter-0"
         assert state["verified_publish_checkpoint"]["stage"] == "push"
         assert state["verified_publish_checkpoint"]["commit"] == "verified-head"
         assert state["publication_failure"] == {
             "stage": "push",
             "error": "Push failed: network error",
-            "branch": "harness/spec-001-default-iter-0",
+            "branch": "harness/spec-001/build-1/iter-0",
             "worktree_path": state["verified_publish_checkpoint"]["worktree_path"],
         }
 
@@ -2872,7 +2871,7 @@ class TestOuterLoopConvergence:
                     "schema_version": 1,
                     "stage": "push",
                     "worktree_path": str(worktree),
-                    "branch": "harness/spec-001-default-iter-0",
+                    "branch": "harness/spec-001/build-1/iter-0",
                     "commit": "verified-head",
                     "product_evidence_fingerprint": "product-fingerprint",
                 },
@@ -2895,7 +2894,7 @@ class TestOuterLoopConvergence:
         assert result.status == "verified"
         assert result.termination_reason == "converged"
         gitops.push.assert_called_once_with(
-            str(worktree), "harness/spec-001-default-iter-0"
+            str(worktree), "harness/spec-001/build-1/iter-0"
         )
         gitops.local_merge.assert_called_once()
         assert provider._exec_count == 0
@@ -3041,7 +3040,7 @@ class TestOuterLoopConvergence:
         assert state["checkpoint_commits"][0]["completed_tasks_after"] == 24
         gitops.push.assert_called_once_with(
             "/tmp/worktree",
-            "harness/spec-001/default/iter-2",
+            "harness/spec-001/build-1/iter-2",
         )
 
     def test_checkpoint_commit_skips_dirty_attempt_without_task_progress_by_default(
@@ -3824,7 +3823,7 @@ class TestVerifyCommandNeeded:
         """Configured verification must exercise the candidate worktree."""
         controller, _, gitops, _ = _make_controller(tmp_path)
         workspace = tmp_path / "workspace"
-        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "iter-0"
         workspace.mkdir()
         script = worktree / "scripts" / "verify-cwd.sh"
         script.parent.mkdir(parents=True)

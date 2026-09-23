@@ -206,8 +206,7 @@ class TestReviewLoopInvocation:
                 "harness.ai_cli_backends.claude_triage.sys.platform", "darwin"
             )
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(cli=cli), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(cli=cli), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src/app.py", line=1, body="must fix",
@@ -286,8 +285,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", ScriptedProvider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src/app.py", line=1, body="must fix",
@@ -350,8 +348,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
 
         result = controller._invoke_review_skill(
@@ -384,8 +381,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src.py", line=1, body="must fix",
@@ -412,8 +408,7 @@ class TestReviewLoopInvocation:
             reviewer="reviewer", created_at=datetime.now(tz=timezone.utc), is_inline=True,
         )
         first = ReviewLoopController(
-            gitops=gitops, config=config, spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1",
+            gitops=gitops, config=config, spec_id="005",             base_dir=str(tmp_path), build_id="build-1",
         )
         monkeypatch.setattr(first, "_fetch_unresolved_comments", MagicMock(return_value=[comment]))
         monkeypatch.setattr(first, "_fetch_approval_state", MagicMock(return_value=ApprovalState.PENDING))
@@ -421,8 +416,7 @@ class TestReviewLoopInvocation:
         assert first.run_loop("https://github.com/org/repo/pull/1", str(tmp_path)).status == "review_fix_queued"
 
         restarted = ReviewLoopController(
-            gitops=gitops, config=config, spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1",
+            gitops=gitops, config=config, spec_id="005",             base_dir=str(tmp_path), build_id="build-1",
         )
         monkeypatch.setattr(restarted, "_fetch_unresolved_comments", MagicMock(return_value=[]))
         monkeypatch.setattr(restarted, "_fetch_approval_state", MagicMock(return_value=ApprovalState.PENDING))
@@ -440,8 +434,7 @@ class TestReviewLoopInvocation:
             gitops=MagicMock(),
             config=_config(),
             spec_id="005",
-            strategy_id="default",
-            base_dir=str(tmp_path),
+                        base_dir=str(tmp_path),
             build_id="build-1",
         )
         comment = ReviewComment(
@@ -501,8 +494,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src/app.py", line=10, body="must fix",
@@ -570,8 +562,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src/app.py", line=1, body="must fix",
@@ -629,8 +620,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src.py", line=1, body="must fix",
@@ -681,8 +671,7 @@ class TestReviewLoopInvocation:
         monkeypatch.setattr("harness.review_loop.time.monotonic", lambda: now[0])
         monkeypatch.setattr("harness.review_loop.load_review_prose", load_prose)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src.py", line=1, body="must fix",
@@ -728,8 +717,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         monkeypatch.setattr(
             controller,
@@ -776,8 +764,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.AICodingCliProvider", Provider)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         comment = ReviewComment(
             comment_id="c1", path="src.py", line=1, body="must fix",
@@ -822,8 +809,7 @@ class TestReviewLoopInvocation:
 
         monkeypatch.setattr("harness.review_loop.ReviewArtifactPublisher", FakePublisher)
         controller = ReviewLoopController(
-            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
-            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+            gitops=MagicMock(), config=_config(), spec_id="005",             base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
         )
         controller._record_pending_batch(batch)
         resolve = MagicMock(return_value=False)
@@ -852,8 +838,7 @@ class TestReviewLoopInvocation:
             gitops=MagicMock(),
             config=_config(),
             spec_id="005",
-            strategy_id="default",
-            base_dir=str(tmp_path),
+                        base_dir=str(tmp_path),
             build_id="build-1",
         )
         comment = ReviewComment(
@@ -889,8 +874,7 @@ class TestReviewLoopInvocation:
             gitops=gitops,
             config=_config(),
             spec_id="005",
-            strategy_id="default",
-            base_dir=str(tmp_path),
+                        base_dir=str(tmp_path),
             build_id="build-1",
         )
         monkeypatch.setattr(
@@ -931,8 +915,7 @@ class TestReviewLoopInvocation:
             gitops=MagicMock(),
             config=_config(),
             spec_id="005",
-            strategy_id="default",
-            base_dir=str(tmp_path),
+                        base_dir=str(tmp_path),
             build_id="build-1",
         )
         _scaffold_prosaic_review_bundle(tmp_path)
@@ -994,8 +977,7 @@ class TestReviewLoopInvocation:
             gitops=MagicMock(),
             config=_config(cli="codex", tool_policy=policy),
             spec_id="005",
-            strategy_id="default",
-            base_dir=str(tmp_path),
+                        base_dir=str(tmp_path),
             build_id="build-1",
         )
         _scaffold_prosaic_review_bundle(tmp_path)

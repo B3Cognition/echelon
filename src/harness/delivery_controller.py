@@ -543,12 +543,11 @@ class DeliveryController:
         self,
         *,
         spec_id: str,
-        strategy_id: str,
         implementation: ImplementationResult,
     ) -> Dict[str, Any] | None:
         """Capture mandatory immutable worktree provenance with Phase 1 verification."""
         registered_worktree = self._gitops.get_latest_worktree(
-            spec_id, strategy_id, build_id=self._build_id
+            spec_id, build_id=self._build_id
         )
         worktree_path = (
             Path(registered_worktree)
@@ -614,7 +613,6 @@ class DeliveryController:
         state_store: StateStore,
         *,
         spec_id: str,
-        strategy_id: str,
         implementation: ImplementationResult,
         outer_iterations: int,
         tokens_used: int,
@@ -642,7 +640,6 @@ class DeliveryController:
         else:
             checkpoint_updates = self._verified_checkpoint_updates(
                 spec_id=spec_id,
-                strategy_id=strategy_id,
                 implementation=implementation,
             )
         if checkpoint_updates is None:
@@ -887,7 +884,6 @@ class DeliveryController:
         budget: Optional[int],
     ) -> DeliveryResult:
         """Run the single durable Delivery loop."""
-        strategy_id = "default"
         state_store = StateStore(self._state_dir, intent.spec_id)
         self._state_store = state_store
 
@@ -1040,8 +1036,8 @@ class DeliveryController:
 
             if should_resume_running:
                 logger.info(
-                    "[%s/%s] Resuming from %s state (outer=%s)",
-                    intent.spec_id, strategy_id,
+                    "[%s] Resuming from %s state (outer=%s)",
+                    intent.spec_id,
                     existing_status,
                     existing.get("outer_iter", 0),
                 )
@@ -1088,8 +1084,8 @@ class DeliveryController:
                     state_store.transition(resume_status, updates=resume_updates)
             elif should_resume_blocked:
                 logger.info(
-                    "[%s/%s] Resuming from blocked state (outer=%s)",
-                    intent.spec_id, strategy_id,
+                    "[%s] Resuming from blocked state (outer=%s)",
+                    intent.spec_id,
                     existing.get("outer_iter", 0),
                 )
                 resume_phase = self._resume_phase(existing)
@@ -1223,7 +1219,6 @@ class DeliveryController:
                 mode_controller=mode_controller,
                 escalation_handler=escalation_handler,
                 spec_id=intent.spec_id,
-                strategy_id=strategy_id,
                 config=self._config,
                 llm_provider=llm_provider,
                 build_id=self._build_id,
@@ -1248,7 +1243,6 @@ class DeliveryController:
                     gitops=self._gitops,
                     config=self._config,
                     spec_id=intent.spec_id,
-                    strategy_id=strategy_id,
                     base_dir=str(self._base_dir),
                     build_id=self._build_id,
                     spec_dir=spec_dir,
@@ -1315,7 +1309,6 @@ class DeliveryController:
                 checkpoint_block = self._checkpoint_verified_result(
                     state_store,
                     spec_id=intent.spec_id,
-                    strategy_id=strategy_id,
                     implementation=implementation_result,
                     outer_iterations=implementation_outer_iterations,
                     tokens_used=implementation_tokens,
@@ -1332,7 +1325,6 @@ class DeliveryController:
                         gitops=self._gitops,
                         config=self._config,
                         spec_id=intent.spec_id,
-                        strategy_id=strategy_id,
                         base_dir=str(self._base_dir),
                         build_id=self._build_id,
                         spec_dir=spec_dir,
@@ -1364,7 +1356,6 @@ class DeliveryController:
                     provider=self._provider,
                     config=self._config,
                     spec_id=intent.spec_id,
-                    strategy_id=strategy_id,
                     base_dir=self._base_dir,
                     build_id=self._build_id,
                     sandbox_spec_factory=lambda worktree: controller._build_sandbox_spec(
@@ -1397,7 +1388,7 @@ class DeliveryController:
                 if should_resume_running or should_resume_blocked:
                     return ""
                 discovered = self._gitops.get_latest_worktree(
-                    intent.spec_id, strategy_id, build_id=self._build_id
+                    intent.spec_id, build_id=self._build_id
                 )
                 return discovered if isinstance(discovered, str) else ""
 
@@ -1457,7 +1448,6 @@ class DeliveryController:
                         visual_reentry_block = self._checkpoint_verified_result(
                             state_store,
                             spec_id=intent.spec_id,
-                            strategy_id=strategy_id,
                             implementation=implementation_result,
                             outer_iterations=(
                                 implementation_outer_iterations + visual_iterations
@@ -1521,8 +1511,8 @@ class DeliveryController:
                 if not pr_url:
                     logger.warning(
                         "review_loop enabled but Phase 1 produced no pr_url "
-                        "for %s/%s — skipping Phase 3",
-                        intent.spec_id, strategy_id,
+                        "for %s — skipping Phase 3",
+                        intent.spec_id,
                     )
                     review_result = ReviewResult(
                         status="blocked",
@@ -1536,7 +1526,6 @@ class DeliveryController:
                         gitops=self._gitops,
                         config=self._config,
                         spec_id=intent.spec_id,
-                        strategy_id=strategy_id,
                         base_dir=str(self._base_dir),
                         build_id=self._build_id,
                         spec_dir=spec_dir,
@@ -1675,7 +1664,6 @@ class DeliveryController:
                         if implementation_result.status == "verified":
                             checkpoint_updates = self._verified_checkpoint_updates(
                                 spec_id=intent.spec_id,
-                                strategy_id=strategy_id,
                                 implementation=implementation_result,
                             )
                             if checkpoint_updates is None:

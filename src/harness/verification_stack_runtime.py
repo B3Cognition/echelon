@@ -82,7 +82,6 @@ def build_verification_sandbox_spec(
     *,
     worktree: Path,
     spec_id: str,
-    strategy_id: str,
     run_id: str,
 ) -> SandboxSpec:
     """Build the common isolated sandbox contract used by every verifier."""
@@ -119,7 +118,6 @@ def build_verification_sandbox_spec(
         post_create_command=None,
         forward_ports=[],
         labels={
-            "strategy_id": strategy_id,
             "spec_id": spec_id,
             "run_id": run_id,
         },

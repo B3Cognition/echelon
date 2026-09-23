@@ -25,7 +25,7 @@ class TestStaleWorktreeDetection:
     def test_old_worktree_detected(self, tmp_path):
         """Worktrees older than threshold identified for removal."""
         wt_base = tmp_path / "worktrees"
-        wt_dir = wt_base / "default" / "iter-1"
+        wt_dir = wt_base / "iter-1"
         wt_dir.mkdir(parents=True)
         (wt_dir / "README.md").write_text("test")
 
@@ -40,7 +40,7 @@ class TestStaleWorktreeDetection:
     def test_fresh_worktree_not_detected(self, tmp_path):
         """Worktrees newer than threshold NOT identified."""
         wt_base = tmp_path / "worktrees"
-        wt_dir = wt_base / "default" / "iter-1"
+        wt_dir = wt_base / "iter-1"
         wt_dir.mkdir(parents=True)
         (wt_dir / "README.md").write_text("test")
 
@@ -50,8 +50,8 @@ class TestStaleWorktreeDetection:
 
     def test_latest_blocked_worktree_is_protected_from_age_gc(self, tmp_path):
         build_dir = tmp_path / "runs" / "build-1"
-        older = build_dir / "worktrees" / "default" / "iter-0"
-        latest = build_dir / "worktrees" / "default" / "iter-1"
+        older = build_dir / "worktrees" / "iter-0"
+        latest = build_dir / "worktrees" / "iter-1"
         older.mkdir(parents=True)
         latest.mkdir(parents=True)
         state_dir = build_dir / "state"
@@ -77,7 +77,7 @@ class TestStaleWorktreeDetection:
     @pytest.mark.parametrize("status", ["converged", "failed", "cancelled_by_coordinator"])
     def test_terminal_worktrees_are_not_protected(self, tmp_path, status):
         build_dir = tmp_path / "runs" / "build-1"
-        worktree = build_dir / "worktrees" / "default" / "iter-0"
+        worktree = build_dir / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         state_dir = build_dir / "state"
         state_dir.mkdir()

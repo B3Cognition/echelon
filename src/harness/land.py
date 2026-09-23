@@ -453,24 +453,22 @@ def _autoresolve_gitignore(project_dir: Path) -> bool:
 
 
 def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
-    """Return the first PR URL found in any strategy state file for spec_id.
+    """Return the PR URL from the delivery state file for spec_id.
 
     When state_dir is given, scans it directly.
     When state_dir is the runs/ root (no spec_id subdir), delegates to
     _find_pr_url_all_builds which scans all build dirs.
     """
-    # Direct scan: state files are at state_dir/*.json (no spec_id subdir)
-    if state_dir.exists():
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = json.loads(state_file.read_text(encoding="utf-8"))
-                if data.get("pr_url") and _spec_id_matches(
-                    str(data.get("spec_id") or ""),
-                    spec_id,
-                ):
-                    return data["pr_url"]
-            except (json.JSONDecodeError, OSError):
-                continue
+    state_file = state_dir / "delivery.json"
+    if state_file.is_file():
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            if data.get("pr_url") and _spec_id_matches(
+                str(data.get("spec_id") or ""), spec_id
+            ):
+                return data["pr_url"]
+        except (json.JSONDecodeError, OSError):
+            pass
     return None
 
 
@@ -528,7 +526,7 @@ def read_landed_candidate_commit(
 def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     """Return the unambiguous newest legacy harness iteration for a spec.
 
-    Legacy delivery runs commit to ``harness/<spec>/<strategy>/iter-N`` rather
+    Delivery runs commit to ``harness/<spec>/<build>/iter-N`` rather
     than a conventional feature branch.  Landing must either merge that branch
     or stop; treating it as absent would silently discard verified work.
     """
@@ -636,7 +634,7 @@ def _find_current_build_harness_branch(
 ) -> str | None:
     """Return the current build's verified legacy harness branch, if present.
 
-    A current-build marker is positive provenance for one converged strategy.
+    A current-build marker is positive provenance for one converged delivery.
     Once present, incomplete or ambiguous provenance must block landing instead
     of falling back to the numerically latest legacy branch.
     """
@@ -657,36 +655,22 @@ def _find_current_build_harness_branch(
     if not build_id:
         raise RuntimeError("current-build marker lacks a build identity")
 
-    candidates: list[dict[str, Any]] = []
     state_root = build_dir(harness_root, build_id) / "state"
+    state_file = state_root / "delivery.json"
     try:
-        state_files = sorted(state_root.glob("*.json"))
-    except OSError as exc:
-        raise RuntimeError("could not read current-build state") from exc
-    for state_file in state_files:
-        try:
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("current-build state is unreadable or invalid") from exc
-        if not isinstance(state, dict):
-            raise RuntimeError("current-build state is unreadable or invalid")
-        if state.get("status") == "converged" and _spec_id_matches(
-            str(state.get("spec_id") or ""), spec_id
-        ):
-            candidates.append(state)
-    if len(candidates) != 1:
-        raise RuntimeError("current build must contain exactly one converged strategy")
-
-    state = candidates[0]
-    strategy = str(state.get("strategy_id") or "")
-    if not strategy:
-        raise RuntimeError("converged current build lacks branch identity")
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("current-build state is unreadable or invalid") from exc
+    if not isinstance(state, dict) or state.get("status") != "converged" or not _spec_id_matches(
+        str(state.get("spec_id") or ""), spec_id
+    ):
+        raise RuntimeError("current build must contain one converged delivery")
 
     recorded_branch = str(state.get("branch") or state.get("branch_name") or "").strip()
     if recorded_branch:
         valid_recorded_branch = any(
             re.fullmatch(
-                rf"harness/{re.escape(alias)}/{re.escape(strategy)}/iter-\d+",
+                rf"harness/{re.escape(alias)}/{re.escape(build_id)}/iter-\d+",
                 recorded_branch,
             )
             for alias in spec_identity_aliases(spec_id)
@@ -718,7 +702,7 @@ def _find_current_build_harness_branch(
 
     branches: list[str] = []
     for alias in spec_identity_aliases(spec_id):
-        branch = f"harness/{alias}/{strategy}/iter-{iteration}"
+        branch = f"harness/{alias}/{build_id}/iter-{iteration}"
         branch_ref = f"refs/heads/{branch}"
         exists = _run_git(
             ["rev-parse", "--verify", "--quiet", branch_ref],
@@ -1910,26 +1894,19 @@ def _authoritative_delivery_verify_before_land(
         return False, "current delivery build marker has no build identity"
 
     state_root = build_dir(root, build_id) / "state"
-    matching: list[dict[str, Any]] = []
+    state_file = state_root / "delivery.json"
     try:
-        state_files = sorted(state_root.glob("*.json"))
-    except OSError:
-        return False, "current delivery state is unreadable"
-    for state_file in state_files:
-        try:
-            payload = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return False, "current delivery state is unreadable or invalid"
-        if (
-            isinstance(payload, dict)
-            and payload.get("status") == "converged"
-            and _spec_id_matches(str(payload.get("spec_id") or ""), spec_id)
-        ):
-            matching.append(payload)
-    if len(matching) != 1:
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False, "current delivery state is unreadable or invalid"
+    if not (
+        isinstance(payload, dict)
+        and payload.get("status") == "converged"
+        and _spec_id_matches(str(payload.get("spec_id") or ""), spec_id)
+    ):
         return None, "current build has no single converged delivery receipt"
 
-    state = matching[0]
+    state = payload
     raw_evidence = state.get("verified_evidence")
     expected_fingerprint = str(state.get("verified_product_fingerprint") or "")
     if not isinstance(raw_evidence, dict) or not expected_fingerprint:
@@ -2703,27 +2680,21 @@ def _cleanup_worktrees(spec_id: str, harness_root: Path, gitops: Any) -> None:
         worktree_base = build / "worktrees"
         if not worktree_base.exists():
             continue
-        for strategy_dir in sorted(worktree_base.iterdir()):
-            if not strategy_dir.is_dir():
-                continue
-            for iter_dir in sorted(strategy_dir.iterdir()):
-                if iter_dir.is_dir():
-                    try:
-                        gitops.destroy_worktree(iter_dir, keep_branch=True)
-                        logger.info("land: removed worktree %s", iter_dir)
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
+        for iter_dir in sorted(worktree_base.glob("iter-*")):
+            if iter_dir.is_dir():
+                try:
+                    gitops.destroy_worktree(iter_dir, keep_branch=True)
+                    logger.info("land: removed worktree %s", iter_dir)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
 
 
 def _build_state_matches_spec(state_dir: Path, spec_id: str) -> bool:
-    for state_file in sorted(state_dir.glob("*.json")):
-        try:
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if _spec_id_matches(str(state.get("spec_id") or ""), spec_id):
-            return True
-    return False
+    try:
+        state = json.loads((state_dir / "delivery.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _spec_id_matches(str(state.get("spec_id") or ""), spec_id)
 
 
 def _delete_local_branch(branch: str, project_dir: str) -> None:

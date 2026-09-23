@@ -82,7 +82,6 @@ def test_legacy_resume_renders_invalid_orchestration_context(
         json.dumps(
             {
                 "spec_id": spec_id,
-                "strategy_id": "default",
                 "status": "blocked",
                 "mode": "semi",
                 "termination_reason": "blocker_escalation",

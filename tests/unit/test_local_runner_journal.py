@@ -132,7 +132,7 @@ def test_baseline_check_accepts_preexisting_dirty_state_but_rejects_new_change(
 def test_workspace_baseline_ignores_only_this_local_runs_owned_artifacts() -> None:
     """The runner's journal and downloads are not user-checkout mutations."""
     baseline = (
-        "?? runs/targets/game/runs/build-1/state/default.json\n"
+        "?? runs/targets/game/runs/build-1/state/delivery.json\n"
         " M README.md\n"
     )
     after = baseline + (

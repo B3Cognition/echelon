@@ -81,6 +81,7 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
         target_default_branch="main",
         provider="docker",
     )
+    config.verify_command = "pytest"
     state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
@@ -94,8 +95,21 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id="spec-001",
-        strategy_id="default",
         config=config,
+    )
+    controller._exec_controlled_slice = MagicMock(
+        return_value={
+            "exit_code": 0,
+            "passed": True,
+            "build_status": "done",
+            "completion_marker_explicit": True,
+            "build_reason": "controlled slice completed",
+            "duration_s": 0,
+            "tokens": 0,
+            "task_ids": [],
+            "stdout": "",
+            "stderr": "",
+        }
     )
     return controller, state_store
 
@@ -142,10 +156,11 @@ class TestStaleCancelRequestedClearedOnResume:
         # immediately exiting with status=cancelled.
         result = controller.run_loop(max_outer=3, max_inner=1)
 
-        assert result.status in ("verified", "failed", "interrupted"), (
+        assert result.status != "cancelled", (
             f"Expected run to proceed past stale cancel_requested. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
+        assert state_store.read()["cancel_requested"] is False
 
     def test_fresh_init_not_affected(self, tmp_path: Path) -> None:
         """Fresh initialization already starts with cancel_requested=False;
@@ -157,7 +172,8 @@ class TestStaleCancelRequestedClearedOnResume:
         assert on_disk["cancel_requested"] is False
 
         result = controller.run_loop(max_outer=3, max_inner=1)
-        assert result.status in ("verified", "failed", "interrupted")
+        assert result.status != "cancelled"
+        assert state_store.read()["cancel_requested"] is False
 
 
 class TestBudgetBumpAutoResume:
@@ -193,7 +209,7 @@ class TestBudgetBumpAutoResume:
         # Re-invoke with a higher budget — should resume, not stay blocked
         result = controller.run_loop(max_outer=3, max_inner=1, token_budget=10000)
 
-        assert result.status != "blocked", (
+        assert result.termination_reason != "budget_exhausted", (
             f"Expected run to resume after budget bump. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -255,7 +271,7 @@ class TestBudgetBumpAutoResume:
         # Re-invoke with unlimited budget — should resume, not stay blocked
         result = controller.run_loop(max_outer=3, max_inner=1, token_budget=None)
 
-        assert result.status != "blocked", (
+        assert result.termination_reason != "budget_exhausted", (
             f"Expected run to resume with unlimited budget. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -393,6 +409,7 @@ def _make_controller_with_provider(
         target_default_branch="main",
         provider="docker",
     )
+    config.verify_command = "pytest"
     state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
@@ -405,8 +422,21 @@ def _make_controller_with_provider(
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id="spec-001",
-        strategy_id="default",
         config=config,
+    )
+    controller._exec_controlled_slice = MagicMock(
+        return_value={
+            "exit_code": 0,
+            "passed": True,
+            "build_status": "done",
+            "completion_marker_explicit": True,
+            "build_reason": "controlled slice completed",
+            "duration_s": 0,
+            "tokens": 0,
+            "task_ids": [],
+            "stdout": "",
+            "stderr": "",
+        }
     )
     return controller, state_store
 

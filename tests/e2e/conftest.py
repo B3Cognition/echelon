@@ -84,11 +84,11 @@ class MockGitOps:
         self.pr_merged = False
         self.pr_url: Optional[str] = None
         self._default_branch = "main"
-        self._latest_worktrees: dict[tuple[str, str, str], str] = {}
+        self._latest_worktrees: dict[tuple[str, str], str] = {}
 
     def create_worktree(
-        self, spec_id: str, strategy_id: str, outer_iter: int,
-        base_branch: str | None = None, build_id: str = "",
+        self, spec_id: str, outer_iter: int, *, build_id: str,
+        base_branch: str | None = None,
         prepare_codegraph: bool = False,
         fresh_branch: bool = False,
         fresh_branch_base: str | None = None,
@@ -97,7 +97,7 @@ class MockGitOps:
         _has_file_changes works correctly (avoids false no-progress escalation).
         """
         import subprocess as _sp
-        wt_path = self._tmp_dir / "runs" / "worktrees" / f"{spec_id}-{strategy_id}-{outer_iter}"
+        wt_path = self._tmp_dir / "runs" / build_id / "worktrees" / f"iter-{outer_iter}"
         wt_path.mkdir(parents=True, exist_ok=True)
         # Initialize a real committed checkout so coordinator provenance reads
         # a valid HEAD exactly as it would from a delivery worktree.
@@ -117,7 +117,7 @@ class MockGitOps:
         except Exception:
             pass
         self.worktrees_created.append(str(wt_path))
-        self._latest_worktrees[(spec_id, strategy_id, build_id)] = str(wt_path)
+        self._latest_worktrees[(spec_id, build_id)] = str(wt_path)
         return str(wt_path)
 
     def find_feature_branch(self, spec_id: str) -> None:
@@ -143,18 +143,9 @@ class MockGitOps:
             cwd=worktree_path, capture_output=True, check=False,
         )
 
-    def get_latest_worktree(
-        self, spec_id: str, strategy_id: str, *, build_id: str = ""
-    ) -> str | None:
+    def get_latest_worktree(self, spec_id: str, *, build_id: str) -> str | None:
         """Return the exact latest worktree registered for delivery provenance."""
-        exact = self._latest_worktrees.get((spec_id, strategy_id, build_id))
-        if exact is not None:
-            return exact
-        matches = [
-            path for (known_spec, known_strategy, _), path in self._latest_worktrees.items()
-            if known_spec == spec_id and known_strategy == strategy_id
-        ]
-        return matches[-1] if matches else None
+        return self._latest_worktrees.get((spec_id, build_id))
 
     def push(self, worktree_path: str, branch: str) -> None:
         """Record push."""
@@ -170,7 +161,7 @@ class MockGitOps:
         })
 
     def create_draft_pr(
-        self, branch: str, spec_id: str, strategy_id: str,
+        self, branch: str, spec_id: str, spec_name: str = "",
     ) -> Optional[str]:
         """Create a fake draft PR."""
         self.pr_created = True
@@ -204,7 +195,6 @@ def make_ralph_controller(
     harness_config: HarnessConfig,
     mode: str = "semi",
     spec_id: str = "test-spec",
-    strategy_id: str = "default",
     mock_gitops: Optional[MockGitOps] = None,
 ) -> tuple:
     """Factory for creating a configured RalphController with all dependencies.
@@ -231,8 +221,8 @@ def make_ralph_controller(
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id=spec_id,
-        strategy_id=strategy_id,
         config=harness_config,
+        build_id="build-test",
     )
 
     return controller, state_store, mock_gitops, stub_provider, escalation_handler

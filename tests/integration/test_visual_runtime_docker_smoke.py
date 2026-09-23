@@ -78,8 +78,7 @@ server.listen(4173, '127.0.0.1');
         provider=provider,
         config=config,
         spec_id="smoke",
-        strategy_id="docker",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-smoke",
     )
 

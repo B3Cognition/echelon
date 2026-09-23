@@ -46,33 +46,33 @@ class TestFindBranch:
 class TestCreateWorktree:
     def test_with_base_branch(self, capsys):
         gitops = _mock_gitops()
-        gitops.create_worktree.return_value = "/tmp/worktree/001/default/iter-0"
+        gitops.create_worktree.return_value = "/tmp/worktree/build-1/iter-0"
         with patch("harness.skills.gitops_skill._make_gitops", return_value=gitops):
-            rc = main(["create-worktree", "001", "default", "0", "--base-branch", "001-feature"])
+            rc = main(["create-worktree", "001", "build-1", "0", "--base-branch", "001-feature"])
         assert rc == 0
         assert "/tmp/worktree" in capsys.readouterr().out
         gitops.create_worktree.assert_called_once_with(
-            "001", "default", 0, base_branch="001-feature"
+            "001", 0, build_id="build-1", base_branch="001-feature"
         )
 
     def test_without_base_branch_passes_none(self, capsys):
         gitops = _mock_gitops()
-        gitops.create_worktree.return_value = "/tmp/worktree/001/default/iter-0"
+        gitops.create_worktree.return_value = "/tmp/worktree/build-1/iter-0"
         with patch("harness.skills.gitops_skill._make_gitops", return_value=gitops):
-            rc = main(["create-worktree", "001", "default", "0"])
+            rc = main(["create-worktree", "001", "build-1", "0"])
         assert rc == 0
         gitops.create_worktree.assert_called_once_with(
-            "001", "default", 0, base_branch=None
+            "001", 0, build_id="build-1", base_branch=None
         )
 
     def test_empty_base_branch_passes_none(self, capsys):
         gitops = _mock_gitops()
         gitops.create_worktree.return_value = "/tmp/worktree"
         with patch("harness.skills.gitops_skill._make_gitops", return_value=gitops):
-            rc = main(["create-worktree", "001", "default", "0", "--base-branch", ""])
+            rc = main(["create-worktree", "001", "build-1", "0", "--base-branch", ""])
         assert rc == 0
         gitops.create_worktree.assert_called_once_with(
-            "001", "default", 0, base_branch=None
+            "001", 0, build_id="build-1", base_branch=None
         )
 
 
@@ -94,7 +94,7 @@ class TestOpenPr:
         gitops = _mock_gitops()
         gitops.find_existing_pr.return_value = "https://github.com/org/repo/pull/7"
         with patch("harness.skills.gitops_skill._make_gitops", return_value=gitops):
-            rc = main(["open-pr", "001-feature", "001", "default", "my-feature"])
+            rc = main(["open-pr", "001-feature", "001", "my-feature"])
         assert rc == 0
         assert "https://github.com/org/repo/pull/7" in capsys.readouterr().out
         gitops.create_draft_pr.assert_not_called()
@@ -105,12 +105,12 @@ class TestOpenPr:
         gitops.find_existing_pr.return_value = None
         gitops.create_draft_pr.return_value = "https://github.com/org/repo/pull/8"
         with patch("harness.skills.gitops_skill._make_gitops", return_value=gitops):
-            rc = main(["open-pr", "001-feature", "001", "default", "my-feature"])
+            rc = main(["open-pr", "001-feature", "001", "my-feature"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "https://github.com/org/repo/pull/8" in out
         gitops.create_draft_pr.assert_called_once_with(
-            "001-feature", "001", "default", "my-feature"
+            "001-feature", "001", "my-feature"
         )
         gitops.promote_pr_ready.assert_called_once_with("https://github.com/org/repo/pull/8")
 

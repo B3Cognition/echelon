@@ -83,8 +83,7 @@ def _write_passing_fulfillment_receipt(
     return write_verification_receipt(
         evidence_dir=root / "runs" / "build-1" / "evidence" / "default",
         spec_id="spec-001",
-        strategy_id="default",
-        build_id="build-1",
+                build_id="build-1",
         candidate_commit="abc123",
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -634,7 +633,7 @@ class TestFulfillmentRunner:
     ):
         workspace = tmp_path / "workspace"
         runtime_root = workspace / "runs" / "targets" / "prosaic"
-        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "iter-0"
         spec_dir = workspace / "specs" / "spec-001-demo"
         _write_verify_skill(worktree)
         _write_spec_inputs(spec_dir)
@@ -1144,7 +1143,7 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report)["verified_commit"] == "abc123"
 
     def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
-        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "iter-0"
         skill_dir = worktree / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
         (skill_dir / "echelon.verify-spec.md").write_text(

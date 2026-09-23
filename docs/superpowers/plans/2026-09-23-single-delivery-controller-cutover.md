@@ -647,7 +647,7 @@ git commit -m "refactor: use one delivery state file"
 - Consumes: `spec_id`, `build_id`, fixed `StateStore`, and existing typed result/evidence objects.
 - Produces: active Delivery constructors and receipt schemas with no `strategy_id`; branch/worktree/artifact identity derives from `spec_id` plus `build_id` where uniqueness is required.
 
-- [ ] **Step 1: Write failing artifact identity tests**
+- [x] **Step 1: Write failing artifact identity tests**
 
 Add structural and behavioral assertions:
 
@@ -672,7 +672,7 @@ Add matching tests for visual/runnability receipts, review state paths
 (`evidence/visual/attempts` with no strategy segment), escalation metadata, recovery,
 and branch naming (`harness/001/build-1/iter-2`).
 
-- [ ] **Step 2: Run the artifact/recovery partition and verify RED**
+- [x] **Step 2: Run the artifact/recovery partition and verify RED**
 
 Run:
 
@@ -695,7 +695,7 @@ Run:
 Expected: constructor/signature, path, and receipt-schema failures expose the
 remaining strategy identity.
 
-- [ ] **Step 3: Change Git/recovery identity to spec plus build**
+- [x] **Step 3: Change Git/recovery identity to spec plus build**
 
 Remove the strategy parameter from these public signatures:
 
@@ -731,7 +731,7 @@ Create worktrees under `runs/<build_id>/worktrees/iter-<N>` and branches under
 strategy-based commit detection; use the exact spec/build branch prefix during
 recovery.
 
-- [ ] **Step 4: Remove strategy fields and path segments from collaborators**
+- [x] **Step 4: Remove strategy fields and path segments from collaborators**
 
 Remove `strategy_id` parameters, attributes, JSON fields, validator requirements,
 status text, and path components from Ralph, escalation, review, visual,
@@ -760,7 +760,7 @@ RalphController(provider=provider, gitops=gitops, state_store=state_store,
 Do not alter slice dispatch, journal ordering, retries, verification, or
 publication logic while removing the identity parameter.
 
-- [ ] **Step 5: Run the artifact/recovery partition and verify GREEN**
+- [x] **Step 5: Run the artifact/recovery partition and verify GREEN**
 
 Run the command from Step 2, plus:
 
@@ -774,7 +774,7 @@ Run the command from Step 2, plus:
 Expected: PASS with receipt validation and interruption recovery unchanged apart
 from the removed identity field.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/ralph.py src/harness/gitops.py src/harness/recovery.py \

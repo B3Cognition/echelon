@@ -42,7 +42,6 @@ class VisualRalphController:
         provider: SandboxProvider,
         config: HarnessConfig,
         spec_id: str,
-        strategy_id: str,
         base_dir: str = ".",
         build_id: str = "",
         sandbox_spec_factory: Callable[[str], SandboxSpec] | None = None,
@@ -54,7 +53,6 @@ class VisualRalphController:
         self._provider = provider
         self._config = config
         self._spec_id = spec_id
-        self._strategy_id = strategy_id
         self._base_dir = base_dir
         self._build_id = build_id or "unscoped"
         self._vc = config.visual_tests
@@ -75,9 +73,9 @@ class VisualRalphController:
 
         for iteration in range(self._vc.max_iterations):
             logger.info(
-                "Visual loop iteration %d/%d for %s/%s",
+                "Visual loop iteration %d/%d for %s",
                 iteration + 1, self._vc.max_iterations,
-                self._spec_id, self._strategy_id,
+                self._spec_id,
             )
 
             sandbox_spec = self._build_sandbox_spec(worktree_path)
@@ -494,7 +492,6 @@ class VisualRalphController:
             / self._build_id
             / "evidence"
             / "visual"
-            / self._strategy_id
         )
 
     def _next_visual_attempt_sequence(self) -> int:
@@ -519,7 +516,6 @@ class VisualRalphController:
         return write_visual_receipt(
             evidence_dir=self._visual_evidence_dir(),
             spec_id=self._spec_id,
-            strategy_id=self._strategy_id,
             build_id=self._build_id,
             candidate_commit=self._worktree_head(worktree_path),
             candidate_fingerprint=fingerprint,
@@ -639,7 +635,6 @@ class VisualRalphController:
                     **dict(spec.labels),
                     "phase": "visual",
                     "spec_id": self._spec_id,
-                    "strategy_id": self._strategy_id,
                 },
             )
 
@@ -665,7 +660,6 @@ class VisualRalphController:
             labels={
                 "phase": "visual",
                 "spec_id": self._spec_id,
-                "strategy_id": self._strategy_id,
             },
         )
 

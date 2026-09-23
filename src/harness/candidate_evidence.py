@@ -131,7 +131,6 @@ class CandidateEvidenceRunner:
         evidence_root: Path,
         spec_id: str,
         target_id: str,
-        strategy_id: str,
         build_id: str,
         runtime_root: Path | None = None,
         sensitive_environment: Mapping[str, str] | None = None,
@@ -142,7 +141,6 @@ class CandidateEvidenceRunner:
         self._evidence_root = Path(evidence_root)
         self._spec_id = spec_id
         self._target_id = target_id
-        self._strategy_id = strategy_id
         self._build_id = build_id
         self._runtime_root = Path(runtime_root).resolve() if runtime_root else None
         self._sensitive_environment = sensitive_environment or os.environ
@@ -543,7 +541,6 @@ class CandidateEvidenceRunner:
             sandbox_spec_factory=self._sandbox_spec_factory,
             spec_id=self._spec_id,
             target_id=self._target_id,
-            strategy_id=self._strategy_id,
             build_id=self._build_id,
             browser_helper=self._browser_helper(worktree),
         ).run(
@@ -790,7 +787,6 @@ class CandidateEvidenceRunner:
             evidence_dir=evidence_dir,
             spec_id=self._spec_id,
             target_id=self._target_id,
-            strategy_id=self._strategy_id,
             build_id=self._build_id,
             sensitive_environment=self._sensitive_environment,
         )
@@ -1007,13 +1003,12 @@ class CandidateEvidenceRunner:
                     error="sandbox verification changed bounded candidate content",
                 )
             )
-        evidence_dir = self._evidence_root / self._strategy_id / "verification"
+        evidence_dir = self._evidence_root / "verification"
         try:
             ref = write_verification_receipt(
                 evidence_dir=evidence_dir,
                 spec_id=self._spec_id,
                 target_id=self._target_id,
-                strategy_id=self._strategy_id,
                 build_id=self._build_id,
                 candidate_commit=candidate_commit,
                 fingerprint_before=fingerprint_before,

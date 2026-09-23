@@ -70,7 +70,6 @@ def run_coverage_observers(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageVerificationBundle:
@@ -137,7 +136,6 @@ def run_coverage_observers(
                 evidence_dir=Path(evidence_dir),
                 spec_id=spec_id,
                 target_id=target_id,
-                strategy_id=strategy_id,
                 build_id=build_id,
                 sensitive_environment=sensitive_environment,
             )
@@ -159,7 +157,6 @@ def _run_observer(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageObserverRun:
@@ -183,7 +180,6 @@ def _run_observer(
         evidence_dir=evidence_dir,
         spec_id=spec_id,
         target_id=target_id,
-        strategy_id=strategy_id,
         build_id=build_id,
         sensitive_environment=sensitive_environment,
     )
@@ -265,7 +261,6 @@ def _run_isolated_observer_once(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageObserverRun:
@@ -355,7 +350,6 @@ def _run_isolated_observer_once(
         observer_id=observer.id,
         spec_id=spec_id,
         target_id=target_id,
-        strategy_id=strategy_id,
         build_id=build_id,
         candidate_commit=candidate_commit,
         candidate_fingerprint=candidate_fingerprint,
@@ -432,7 +426,6 @@ def _write_observer_receipt(
     observer_id: str,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     candidate_commit: str,
     candidate_fingerprint: str,
@@ -449,7 +442,6 @@ def _write_observer_receipt(
             evidence_dir=root,
             spec_id=spec_id,
             target_id=target_id,
-            strategy_id=strategy_id,
             build_id=build_id,
             candidate_commit=candidate_commit,
             fingerprint_before=candidate_fingerprint,

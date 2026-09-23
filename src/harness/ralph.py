@@ -320,9 +320,9 @@ class _DocumentationBuildResult(dict):
 
 
 class RalphController:
-    """Orchestrates the ralph-loop for one strategy.
+    """Orchestrates the single delivery implementation loop.
 
-    Per-strategy loop controller. Manages the outer/inner iteration loop,
+    Manages the outer/inner iteration loop,
     state transitions, termination conditions, and escalation.
     """
 
@@ -334,7 +334,6 @@ class RalphController:
         mode_controller: ModeController,
         escalation_handler: EscalationHandler,
         spec_id: str,
-        strategy_id: str,
         config: HarnessConfig,
         llm_provider: Optional[AICodingCliProvider] = None,
         fulfillment_runner: Optional[FulfillmentRunner] = None,
@@ -350,7 +349,6 @@ class RalphController:
         self._mode = mode_controller
         self._escalation = escalation_handler
         self._spec_id = spec_id
-        self._strategy_id = strategy_id
         self._config = config
         self._llm_provider = llm_provider
         self._controlled_slice_budget: float | None = None
@@ -374,7 +372,6 @@ class RalphController:
             evidence_root=self._state_store.state_dir.parent / "evidence",
             spec_id=self._spec_id,
             target_id=_runnability_target_id(self._config.target_repo),
-            strategy_id=self._strategy_id,
             build_id=self._build_id
             or str(self._state_store.read().get("run_id") or "run"),
         )
@@ -557,9 +554,9 @@ class RalphController:
                 )
             else:
                 worktree_path = self._gitops.create_worktree(
-                    self._spec_id, self._strategy_id, outer_iter,
-                    base_branch=feature_branch,
+                    self._spec_id, outer_iter,
                     build_id=self._build_id,
+                    base_branch=feature_branch,
                     prepare_codegraph=True,
                     fresh_branch=self._fresh_delivery and outer_iter == start_outer,
                     fresh_branch_base=(
@@ -632,7 +629,6 @@ class RalphController:
                         preserve_worktree = True
                         _print_source_root_containment_violation_banner(
                             self._spec_id,
-                            self._strategy_id,
                             source_root_violation,
                         )
                         return self._finalize(
@@ -655,7 +651,6 @@ class RalphController:
                         preserve_worktree = True
                         _print_harness_source_containment_violation_banner(
                             self._spec_id,
-                            self._strategy_id,
                             harness_source_violation,
                         )
                         return self._finalize(
@@ -678,7 +673,6 @@ class RalphController:
                         preserve_worktree = True
                         _print_containment_violation_banner(
                             self._spec_id,
-                            self._strategy_id,
                             containment_violation,
                         )
                         return self._finalize(
@@ -817,7 +811,7 @@ class RalphController:
                             salvage = _salvage_build_worktree(
                                 worktree_path=worktree_path,
                                 spec_id=self._spec_id,
-                                strategy_id=self._strategy_id,
+                                build_id=self._build_id,
                                 outer_iter=outer_iter,
                             )
                             from echelon.ui import banner as _ui_banner
@@ -845,7 +839,6 @@ class RalphController:
                                 )
                             fields = [
                                 ("spec", self._spec_id),
-                                ("strategy", self._strategy_id),
                                 ("why", why),
                             ]
                             if build_reason:
@@ -927,7 +920,6 @@ class RalphController:
                         preserve_worktree = True
                         _print_verify_spec_provider_session_limit_banner(
                             self._spec_id,
-                            self._strategy_id,
                             verify_result,
                         )
                         return self._finalize(
@@ -951,7 +943,7 @@ class RalphController:
                     # Block immediately and ask the human to configure verify_command.
                     if any(f.id == "local-verify-skipped" for f in verify_result.failures):
                         preserve_worktree = True
-                        _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                        _print_verify_command_needed_banner(self._spec_id)
                         return self._finalize(
                             status="blocked",
                             reason="verify_command_needed",
@@ -1134,7 +1126,6 @@ class RalphController:
                         preserve_worktree = True
                         _print_verify_spec_provider_session_limit_banner(
                             self._spec_id,
-                            self._strategy_id,
                             final_verify,
                         )
                         return self._finalize(
@@ -1522,7 +1513,6 @@ class RalphController:
                     )
                     escalation_file = self._escalation.escalate(
                         spec_id=self._spec_id,
-                        strategy_id=self._strategy_id,
                         category="same_failure_repeat",
                         context=(
                             f"Same failure detected {repeat_count} consecutive time(s) "
@@ -1783,7 +1773,6 @@ class RalphController:
             ):
                 escalation_file = self._escalation.escalate(
                     spec_id=self._spec_id,
-                    strategy_id=self._strategy_id,
                     category="no_progress",
                     context=(
                         "## Fulfillment Repair Made No Progress\n\n"
@@ -2471,7 +2460,6 @@ class RalphController:
         return (
             self._state_store.state_dir.parent
             / "evidence"
-            / self._strategy_id
         )
 
     @staticmethod
@@ -2756,7 +2744,7 @@ class RalphController:
     def _delivery_operation_evidence_root(self) -> Path:
         state = self._state_store.read()
         return self._state_store.state_dir / "delivery-slices" / hashlib.sha256(
-            f"{self._strategy_id}:{state.get('run_id', '')}".encode()).hexdigest()
+            f"{self._build_id}:{state.get('run_id', '')}".encode()).hexdigest()
 
     def _refresh_documentation_runnability(self, worktree: Path) -> RunnabilityEvidenceRef:
         """Execute the existing runnability owner at the journaled author checkpoint."""
@@ -2877,7 +2865,6 @@ class RalphController:
             "HARNESS — RALPH-OWNED SPEC ARTIFACT MISSING",
             [
                 ("spec", self._spec_id),
-                ("strategy", self._strategy_id),
                 (
                     "why",
                     "Ralph-owned external spec artifact is missing or invalid",
@@ -3582,7 +3569,6 @@ class RalphController:
                 "event_time": datetime.now(timezone.utc).isoformat(),
                 "run_id": state.get("run_id") or self._build_id,
                 "spec_id": self._spec_id,
-                "strategy_id": self._strategy_id,
                 "outcome": observation.outcome,
                 "reason_code": observation.reason_code,
                 "should_stop": observation.should_stop,
@@ -3964,7 +3950,6 @@ class RalphController:
         evidence_dir = (
             self._state_store.state_dir.parent
             / "evidence"
-            / self._strategy_id
             / "verification"
         )
         sequence = self._next_host_verification_attempt(evidence_dir)
@@ -3972,7 +3957,6 @@ class RalphController:
             ref = write_verification_receipt(
                 evidence_dir=evidence_dir,
                 spec_id=self._spec_id,
-                strategy_id=self._strategy_id,
                 build_id=self._build_id
                 or str(self._state_store.read().get("run_id") or ""),
                 target_id=str(
@@ -4472,7 +4456,7 @@ class RalphController:
         """Write bounded build context for LLM build and feedback turns."""
         context_dir = self._state_store.state_dir.parent / "context"
         context_dir.mkdir(parents=True, exist_ok=True)
-        context_file = context_dir / f"{self._strategy_id}-build-slice-context.md"
+        context_file = context_dir / "build-slice-context.md"
         lines = [
             "# Build Slice Context",
             "",
@@ -4576,7 +4560,6 @@ class RalphController:
             json.dumps(
                 {
                     "version": 1,
-                    "strategy": self._strategy_id,
                     "markdown_path": str(context_file),
                     "spec_dir": spec_dir_text,
                     "spec_file": spec_file_text,
@@ -5749,7 +5732,7 @@ class RalphController:
         if self._has_non_verify_worktree_changes(worktree_path):
             message = build_echelon_commit_message(
                 (
-                    f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+                    f"harness-checkpoint: {self._spec_id}/{self._build_id} "
                     f"iter-{outer_iter} {phase} verification-deferred"
                 ),
                 EchelonCommitMetadata(
@@ -5758,7 +5741,6 @@ class RalphController:
                     spec_id=self._spec_id,
                     run_id=self._build_id,
                     phase=phase,
-                    strategy=self._strategy_id,
                 ),
             )
             reported_commit = self._gitops.commit(
@@ -5868,7 +5850,7 @@ class RalphController:
             label = f"{phase_group} tasks-unknown"
         message = build_echelon_commit_message(
             (
-                f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+                f"harness-checkpoint: {self._spec_id}/{self._build_id} "
                 f"iter-{outer_iter} {phase} {label}"
             ),
             EchelonCommitMetadata(
@@ -5877,7 +5859,6 @@ class RalphController:
                 spec_id=self._spec_id,
                 run_id=self._build_id,
                 phase=phase,
-                strategy=self._strategy_id,
             ),
         )
         commit = self._gitops.commit(
@@ -5914,7 +5895,7 @@ class RalphController:
 
     def _checkpoint_branch(self, worktree_path: str, outer_iter: int) -> str:
         fallback = (
-            f"harness/{self._spec_id}/{self._strategy_id}/iter-{outer_iter}"
+            f"harness/{self._spec_id}/{self._build_id}/iter-{outer_iter}"
         )
         try:
             result = subprocess.run(
@@ -6014,16 +5995,15 @@ class RalphController:
         checked out on the echelon feature branch (e.g. '001-weather-dashboard'),
         not on a harness/* branch — pushing the wrong name silently fails.
         """
-        fallback = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
+        fallback = f"harness/{self._spec_id}/{self._build_id}/iter-{outer_iter}"
         branch = fallback
         message = build_echelon_commit_message(
-            f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}",
+            f"harness: {self._spec_id}/{self._build_id} iter-{outer_iter}",
             EchelonCommitMetadata(
                 origin="delivery",
                 action="commit",
                 spec_id=self._spec_id,
                 run_id=self._build_id,
-                strategy=self._strategy_id,
             ),
         )
         adjudication = adjudicate_dirty_worktree(
@@ -6117,7 +6097,6 @@ class RalphController:
             if isinstance(trace_id, str) and trace_id:
                 enriched["trace_id"] = trace_id
             enriched["spec_id"] = self._spec_id
-            enriched["strategy_id"] = self._strategy_id
             enriched["run_id"] = state.get("run_id") or self._build_id
             with (telemetry_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(enriched, sort_keys=True, separators=(",", ":")))
@@ -6315,7 +6294,6 @@ class RalphController:
                     action="workspace-spec-convergence",
                     spec_id=self._spec_id,
                     run_id=self._build_id,
-                    strategy=self._strategy_id,
                 ),
             )
             subprocess.run(
@@ -6353,7 +6331,7 @@ class RalphController:
         if pr_url is None:
             # First iteration: create draft PR
             pr_url = self._gitops.create_draft_pr(
-                branch, self._spec_id, self._strategy_id,
+                branch, self._spec_id,
             ) or None
 
         if converged and pr_url:
@@ -6373,7 +6351,6 @@ class RalphController:
             self._config,
             worktree=Path(worktree_path),
             spec_id=self._spec_id,
-            strategy_id=self._strategy_id,
             run_id=str(outer_iter),
         )
 
@@ -6554,7 +6531,6 @@ class RalphController:
                 "event_time": datetime.now(timezone.utc).isoformat(),
                 "run_id": state.get("run_id") or self._build_id,
                 "spec_id": self._spec_id,
-                "strategy_id": self._strategy_id,
                 "phase": phase,
                 "invocation_index": invocation_index,
                 **invocation,
@@ -6937,7 +6913,7 @@ class RalphController:
                     build_prompt=build_prompt,
                 )
             else:
-                _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                _print_verify_command_needed_banner(self._spec_id)
                 return ImplementationResult(
                     status="blocked",
                     termination_reason="verify_command_needed",
@@ -7099,14 +7075,13 @@ def _consecutive_failure_repeat_count(
     return max_count
 
 
-def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
+def _print_verify_command_needed_banner(spec_id: str) -> None:
     """Print a formatted banner when verify_command is missing."""
     from echelon.ui import banner as _banner
     _banner(
         "HARNESS — TEST RUNNER MISSING",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("problem",
              "The harness could not detect a test runner in the built worktree.\n"
              "Run 'echelon delivery init' to auto-detect high-confidence verification, or add\n"
@@ -7121,14 +7096,13 @@ def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
     )
 
 
-def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
+def _print_blocked_banner(spec_id: str, escalation_file: str) -> None:
     """Print a formatted blocked banner to stderr."""
     from echelon.ui import banner as _banner
     _banner(
         "HARNESS — ESCALATION PENDING",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("file", escalation_file),
             ("answer with", f'echelon delivery resume {spec_id} "<answer>"'),
             ("continue without answer", f"echelon delivery continue {spec_id}"),
@@ -7368,7 +7342,6 @@ def _provider_session_limit_failure_text(verify_result: VerifyResult) -> str:
 
 def _print_verify_spec_provider_session_limit_banner(
     spec_id: str,
-    strategy_id: str,
     verify_result: VerifyResult,
 ) -> None:
     from echelon.ui import banner as _ui_banner
@@ -7378,7 +7351,6 @@ def _print_verify_spec_provider_session_limit_banner(
         "HARNESS — PROVIDER SESSION LIMIT",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("why", "LLM provider session limit reached during verify-spec fulfillment refresh"),
             ("provider", message),
             (
@@ -7966,7 +7938,6 @@ def _forbidden_harness_source_roots(worktree: Path) -> list[str]:
 
 def _print_harness_source_containment_violation_banner(
     spec_id: str,
-    strategy_id: str,
     violation: Dict[str, str],
 ) -> None:
     from echelon.ui import banner as _ui_banner
@@ -7975,7 +7946,6 @@ def _print_harness_source_containment_violation_banner(
         "HARNESS — HARNESS SOURCE CONTAINMENT VIOLATION",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("worktree", violation.get("worktree", "")),
             ("forbidden_root", violation.get("forbidden_root", "")),
             (
@@ -7994,7 +7964,6 @@ def _print_harness_source_containment_violation_banner(
 
 def _print_source_root_containment_violation_banner(
     spec_id: str,
-    strategy_id: str,
     violation: Dict[str, str],
 ) -> None:
     from echelon.ui import banner as _ui_banner
@@ -8003,7 +7972,6 @@ def _print_source_root_containment_violation_banner(
         "HARNESS — SOURCE ROOT CONTAINMENT VIOLATION",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("source_root", violation.get("source_root", "")),
             ("forbidden_root", violation.get("forbidden_root", "")),
             (
@@ -8022,7 +7990,6 @@ def _print_source_root_containment_violation_banner(
 
 def _print_containment_violation_banner(
     spec_id: str,
-    strategy_id: str,
     violation: Dict[str, Any],
 ) -> None:
     from echelon.ui import banner as _ui_banner
@@ -8034,7 +8001,6 @@ def _print_containment_violation_banner(
         "HARNESS — CONTAINMENT VIOLATION",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("project", str(violation.get("project_dir") or "")),
             ("worktree", str(violation.get("worktree_path") or "")),
             (
@@ -8055,7 +8021,7 @@ def _salvage_build_worktree(
     *,
     worktree_path: str,
     spec_id: str,
-    strategy_id: str,
+    build_id: str,
     outer_iter: int,
 ) -> Optional[Dict[str, str]]:
     """Commit dirty harness worktree output before blocking on build_incomplete."""
@@ -8080,12 +8046,12 @@ def _salvage_build_worktree(
             check=True,
         )
         message = build_echelon_commit_message(
-            f"harness-salvage: {spec_id} {strategy_id} iter-{outer_iter}",
+            f"harness-salvage: {spec_id}/{build_id} iter-{outer_iter}",
             EchelonCommitMetadata(
                 origin="delivery",
                 action="salvage",
                 spec_id=spec_id,
-                strategy=strategy_id,
+                run_id=build_id,
             ),
         )
         subprocess.run(
@@ -8561,10 +8527,9 @@ def _write_build_agent_context_files(
 ) -> dict[str, str]:
     context_files: dict[str, str] = {}
     context_dir = context_file.parent
-    strategy_prefix = context_file.name.removesuffix("-build-slice-context.md")
     for agent_name, sections in agent_sections.items():
         agent_slug = agent_name.lower().replace("_", "-")
-        agent_context_file = context_dir / f"{strategy_prefix}-{agent_slug}-context.md"
+        agent_context_file = context_dir / f"{agent_slug}-context.md"
         lines = [
             f"# {agent_name} Context Pack",
             "",
