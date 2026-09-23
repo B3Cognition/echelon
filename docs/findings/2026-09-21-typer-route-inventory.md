@@ -5,8 +5,8 @@ Baseline: `60e91d91` (`main` after S2)
 ## Summary
 
 - Public Typer commands: 107
-- Public commands already using modular services: 52
-- Public commands delegating into `echelon.cli`: 55
+- Public commands already using modular services: 96
+- Public commands delegating into `echelon.cli`: 11
 - Hidden commands: 22
 - Hidden commands delegating into `echelon.cli`: 18
 
@@ -15,8 +15,19 @@ routes even though the nested `run` and `land` decorators are not themselves
 marked hidden.
 
 Current S3 progress after the benchmark, stack, workspace, phase/version,
-compatibility, and spec slices: 87 public commands use modular services and 20
-still delegate into `echelon.cli`.
+compatibility, spec, and Delivery slices: 96 public commands use modular
+services and 11 still delegate into `echelon.cli`. The active RE facade is the
+next and final Typer cutover slice; RE protocol consolidation remains owned by
+S6.
+
+Delivery cutover verification used merge base `3abca341`: the structural
+ownership search returned no legacy `cli.py` definitions and the boundary suite
+passed 13 tests. The broader focused Delivery suite passed 287 tests; the CLI
+regression gate recorded 1,672 passes and one known pre-existing failure. The
+repository gate recorded 9,821 passed, 0 skipped, 11,434 deselected, and one
+ownership-validator failure in 29m32.63s: the validator still expects the
+pre-cutover `cli.py` state write. Receipt:
+`tests/reports/merge-verification/receipt-bc64acae6239-be8583363d484eb19e91136bc30f3a43.json`.
 
 The compatibility cleanup removed the hidden retired `build` and `cicd`
 routes. Retained root and hidden `harness` aliases now call their canonical
@@ -42,7 +53,9 @@ compatibility adapter.
 | `spec evidence` | `publish` |
 | `spec evidence memory` | `refresh`, `audit` |
 | `spec` | `run`, `retarget`, `status`, `continue`, `resume`, `add-input`, `resolve`, `rewind`, `repair-traceability`, `drop-target`, `targets`, `artifacts`, `reopen`, `bugfix`, `change`, `amend`, `switch`, `publish`, `verify`, `reconcile-fulfillment`, `defer`, `defer-runnability`, `plan-runnability`, `plan` |
-| `delivery` | `status` |
+| `delivery` | `init`, `target`, `verify-local`, `cleanup-local`, `run`, `resume`, `continue`, `land` |
+| `delivery checkpoint` | `list` |
+| `delivery` | `status` (`echelon.delivery_status` public facade; its status kernel belongs to `echelon.delivery_service`) |
 
 ## Baseline public routes delegated into `cli.py`
 
@@ -54,8 +67,6 @@ compatibility adapter.
 | `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Cut over to modular services |
 | `workspace sources` | `sync` | Cut over to modular services |
 | `phase` | `list`, `run` | Cut over to `echelon.phase_service`; replay temporarily reuses shared spec/recovery helpers in `cli.py` pending the spec slice |
-| `delivery` | `init`, `target`, `verify-local`, `cleanup-local`, `run`, `resume`, `continue`, `land` | Active |
-| `delivery checkpoint` | `list` | Active |
 | `re` | `run`, `refresh`, `deepen`, `status`, `continue`, `resume`, `publish`, `finalize`, `synthesize` | Active; keep protocol consolidation in S6 |
 | hidden `harness` group | `run`, `land` | Compatibility aliases |
 
