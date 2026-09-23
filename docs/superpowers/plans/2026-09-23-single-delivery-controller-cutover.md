@@ -898,7 +898,7 @@ git add -A
 git commit -m "refactor: retire multi-strategy delivery"
 ```
 
-- [ ] **Step 7: Run the repository verification gate**
+- [x] **Step 7: Run the repository verification gate**
 
 Run the repository gate against the approved S4 design commit:
 
