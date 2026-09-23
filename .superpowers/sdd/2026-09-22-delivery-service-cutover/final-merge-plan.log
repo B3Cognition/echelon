@@ -1,0 +1,40 @@
+{
+  "base_commit": "3abca341ae0d84623d74387e112d9662e8d723f6",
+  "candidate_commit": "cdb1a4d310ed7bf39358ee71284ebedf5a8f465a",
+  "candidate_tree": "b2b80184eab739396535ae402d800dc8985e8eb2",
+  "changed_paths": [
+    "docs/findings/2026-09-21-typer-route-inventory.md",
+    "docs/simplification-control.md",
+    "docs/superpowers/plans/2026-09-22-delivery-service-cutover.md",
+    "src/echelon/cli.py",
+    "src/echelon/cli_app.py",
+    "src/echelon/delivery_service.py",
+    "src/echelon/delivery_status.py",
+    "tests/echelon-validation/test_spec_completion.py",
+    "tests/integration/test_codegraph_delivery_runtime.py",
+    "tests/integration/test_egr_151_lifecycle_flow.py",
+    "tests/integration/test_polyrepo_delivery_convergence.py",
+    "tests/reports/merge-verification/receipt-0741dd4c9f62-d59ac9b2a44647fa8e97504443ecff94.json",
+    "tests/unit/test_cli_delivery.py",
+    "tests/unit/test_cli_delivery_local.py",
+    "tests/unit/test_cli_delivery_status.py",
+    "tests/unit/test_cli_harness_init_summary.py",
+    "tests/unit/test_cli_harness_resume.py",
+    "tests/unit/test_cli_harness_run.py",
+    "tests/unit/test_cli_polyrepo_runtime_extension.py",
+    "tests/unit/test_cli_typer_app.py",
+    "tests/unit/test_delivery_service_boundary.py",
+    "tests/unit/test_harness_single_repo_unchanged.py",
+    "tests/unit/test_land_cli.py"
+  ],
+  "commands": [
+    [
+      "pytest",
+      "-q",
+      "-m",
+      "unit"
+    ]
+  ],
+  "requires_full_suite": true,
+  "scope": "full-unit"
+}
