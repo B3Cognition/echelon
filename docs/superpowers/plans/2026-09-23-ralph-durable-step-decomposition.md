@@ -184,7 +184,7 @@ git commit -m "refactor: extract pending delivery slice recovery"
 - Consumes: `PendingSliceRecovery` from Task 1, feature branch, iteration counters, and current resume worktree.
 - Produces: `PreparedIteration` and `RalphController._prepare_iteration(...)` for Tasks 3 and 6.
 
-- [ ] **Step 1: Add failing worktree-preparation tests**
+- [x] **Step 1: Add failing worktree-preparation tests**
 
 Add tests that directly cover all three current paths: recovered operation,
 downstream-reentry worktree, and new worktree creation.
@@ -240,7 +240,7 @@ def test_prepare_iteration_creates_build_scoped_worktree(tmp_path: Path) -> None
     assert prepared.worktree_path == "/tmp/candidate"
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -251,7 +251,7 @@ Run:
 
 Expected: FAIL because `PreparedIteration` and `_prepare_iteration` do not exist.
 
-- [ ] **Step 3: Extract worktree selection and Phase A synchronization**
+- [x] **Step 3: Extract worktree selection and Phase A synchronization**
 
 Add:
 
@@ -286,7 +286,7 @@ Phase A input synchronization into this method. Preserve current fresh-branch
 arguments and the `build_incomplete`/`verified_provenance_unavailable` block
 payloads. Keep cleanup in `_run_loop_inner`'s existing `finally` path.
 
-- [ ] **Step 4: Run worktree and resume verification**
+- [x] **Step 4: Run worktree and resume verification**
 
 Run:
 
@@ -299,7 +299,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py tests/integration/test_ralph_controller.py
