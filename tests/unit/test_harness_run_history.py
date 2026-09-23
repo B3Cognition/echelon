@@ -35,7 +35,6 @@ def test_append_run_creates_spec_local_history_file(tmp_path: Path) -> None:
         spec_id="001-demo",
         build_id="build-20260617-000000-000001",
         mode="banzai",
-        strategy_id="default",
         result=_result(),
         pr_url="https://github.com/t/r/pull/1",
     )
@@ -45,7 +44,7 @@ def test_append_run_creates_spec_local_history_file(tmp_path: Path) -> None:
     assert row["spec_id"] == "001-demo"
     assert row["build_id"] == "build-20260617-000000-000001"
     assert row["mode"] == "banzai"
-    assert row["strategy_id"] == "default"
+    assert "strategy_id" not in row
     assert row["status"] == "failed"
     assert row["termination_reason"] == "outer_cap"
     assert row["tokens_used"] == 1234
@@ -60,7 +59,6 @@ def test_summarize_history_returns_recent_runs_and_total_tokens(tmp_path: Path) 
         spec_id="001-demo",
         build_id="build-1",
         mode="semi",
-        strategy_id="default",
         result=_result(tokens=100),
         pr_url=None,
     )
@@ -69,7 +67,6 @@ def test_summarize_history_returns_recent_runs_and_total_tokens(tmp_path: Path) 
         spec_id="001-demo",
         build_id="build-2",
         mode="banzai",
-        strategy_id="codegen",
         result=_result(tokens=250),
         pr_url=None,
     )

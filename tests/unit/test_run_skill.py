@@ -107,33 +107,27 @@ def test_delivery_summary_reports_convergence_stall_without_raw_failure_content(
         ),
         blocked_phase="implementation",
     )
-    comparison = {
-        "strategies": {
-            "default": {
-                "status": "blocked",
-                "termination_reason": "convergence_stalled",
-                "outer_iterations": 7,
-                "inner_iterations": 9,
-                "tokens_used": 5000,
-                "converged": False,
-                "convergence_lease": {
-                    "meaningful_attempts": 3,
-                    "stalled_attempts": 2,
-                    "infrastructure_attempts": 2,
-                    "last_outcome": "stalled",
-                    "last_reason": "authoritative progress evidence did not improve",
-                    "best_checkpoint_commit": "abcdef1234567890",
-                },
-                "max_outer": 12,
-            }
+    state = {
+        "status": "blocked",
+        "termination_reason": "convergence_stalled",
+        "outer_iterations": 7,
+        "inner_iterations": 9,
+        "tokens_used": 5000,
+        "convergence_lease": {
+            "meaningful_attempts": 3,
+            "stalled_attempts": 2,
+            "infrastructure_attempts": 2,
+            "last_outcome": "stalled",
+            "last_reason": "authoritative progress evidence did not improve",
+            "best_checkpoint_commit": "abcdef1234567890",
         },
-        "summary": {"converged": 0, "failed": 1, "total_tokens": 5000},
+        "max_outer": 12,
     }
 
     _print_delivery_summary(
         intent,
-        {"default": result},
-        comparison,
+        result,
+        state,
         workspace_root=Path("/tmp/nonexistent"),
         spec_dir=None,
     )
@@ -144,6 +138,8 @@ def test_delivery_summary_reports_convergence_stall_without_raw_failure_content(
     assert "excluded infrastructure attempts: 2" in output
     assert "best checkpoint: abcdef123456" in output
     assert "raw secret" in output  # verification remains visible in its existing section
+    assert "strategies" not in output
+    assert "default" not in output
 
 
 def test_resolve_run_roots_defaults_workspace_to_harness_root(tmp_path: Path) -> None:
@@ -419,10 +415,6 @@ class TestRunSkillAutoLand:
         coordinator = mock_coordinator_cls.return_value
         coordinator.state.return_value = {}
         coordinator.run.return_value = _make_converged_result()
-        coordinator.compare_results.return_value = {
-            "strategies": {}, "summary": {"converged": 1, "failed": 0, "total_tokens": 0}
-        }
-        coordinator.status.return_value = {"strategies": {"default": {}}}
 
         outcome = run("spec 042 auto_merge", MagicMock(), MagicMock(), base_dir=tmp_path)
 
@@ -470,11 +462,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
-        }
-        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
         mock_coordinator_cls.return_value = coordinator_instance
 
         mock_land.return_value = True
@@ -533,11 +520,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
-        }
-        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
         mock_coordinator_cls.return_value = coordinator_instance
 
         run(
@@ -578,10 +560,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         gitops = MagicMock()
@@ -613,10 +591,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_failed_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         gitops = MagicMock()
@@ -673,9 +647,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_failed_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {}, "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         run(
@@ -714,10 +685,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         mock_land.return_value = False
@@ -762,10 +729,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         gitops = MagicMock()
@@ -832,10 +795,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
         gitops = MagicMock()
 
@@ -875,10 +834,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_failed_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 50000},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         gitops = MagicMock()
@@ -898,26 +853,11 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_checkpoint_result()
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
-        }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            {},
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -926,7 +866,7 @@ class TestRunSkillAutoLand:
         assert "◐ CHECKPOINTED" in captured.err
         assert "stopped: checkpoint recovery needed" in captured.err
         assert "continue: echelon delivery continue 001-demo" in captured.err
-        assert "0 converged, 0 failed, 1 checkpointed" in captured.err
+        assert "checkpointed" in captured.err
 
     def test_delivery_summary_explains_publication_failure(
         self,
@@ -939,30 +879,17 @@ class TestRunSkillAutoLand:
         result = replace(
             _make_checkpoint_result(), termination_reason="publish_failed"
         )
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": "publish_failed",
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                    "publication_failure": {
-                        "stage": "dirty_adjudication",
-                        "error": "Dirty worktree adjudication blocked commit",
-                    },
-                }
+        state = {
+            "publication_failure": {
+                "stage": "dirty_adjudication",
+                "error": "Dirty worktree adjudication blocked commit",
             },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
         }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            state,
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -983,19 +910,6 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_converged_result()
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "converged": True,
-                    "outer_iterations": 1,
-                    "inner_iterations": 0,
-                    "branch": "001-demo",
-                }
-            },
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10_000},
-        }
 
         with patch(
             "harness.run_summary.summarize_run_for_cli",
@@ -1003,8 +917,8 @@ class TestRunSkillAutoLand:
         ) as summarize:
             _print_delivery_summary(
                 intent,
-                {"default": result},
-                comparison,
+                result,
+                {"branch": "001-demo"},
                 tmp_path,
                 None,
                 summary_command="echelon delivery continue",
@@ -1034,41 +948,17 @@ class TestRunSkillAutoLand:
         from harness.skills.run_skill import _print_delivery_summary
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
-        result_map: dict[str, DeliveryResult] = {}
-        strategies: dict[str, dict[str, object]] = {}
-        for index in range(30):
-            sid = f"strategy-{index:02}"
-            result = _make_converged_result()
-            result_map[sid] = result
-            strategies[sid] = {
-                "status": result.status,
-                "termination_reason": result.termination_reason,
-                "converged": True,
-                "outer_iterations": 1,
-                "inner_iterations": 0,
-                "branch": f"harness/001-demo/{sid}/{'segment-' * 55}",
-            }
-        limited_sid = "strategy-provider-limited"
-        limited = replace(
+        result = replace(
             _make_checkpoint_result(),
             termination_reason="provider_session_limit",
+            final_verify=VerifyResult(passed=True),
         )
         provider_message = "You've hit your session limit · resets 9:10pm"
-        result_map[limited_sid] = limited
-        strategies[limited_sid] = {
-            "status": limited.status,
-            "termination_reason": limited.termination_reason,
-            "converged": False,
-            "outer_iterations": limited.outer_iterations,
-            "inner_iterations": limited.inner_iterations,
-            "branch": f"harness/001-demo/{limited_sid}/{'segment-' * 55}",
+        state = {
+            "branch": f"harness/001-demo/{'segment-' * 55}",
             "build_status": "provider_session_limit",
             "provider_limit_message": provider_message,
             "provider_reset_hint": "9:10pm",
-        }
-        comparison = {
-            "strategies": strategies,
-            "summary": {"converged": 30, "failed": 1, "total_tokens": 300_000},
         }
         captured: dict[str, object] = {}
 
@@ -1101,8 +991,8 @@ class TestRunSkillAutoLand:
         ):
             _print_delivery_summary(
                 intent,
-                result_map,
-                comparison,
+                result,
+                state,
                 tmp_path,
                 None,
             )
@@ -1128,39 +1018,19 @@ class TestRunSkillAutoLand:
         assert context.provider_limit_message == provider_message
         assert all(provider_message not in fact["text"] for fact in facts)
 
-    def test_delivery_summary_marks_mixed_strategy_outcome_blocked(
+    def test_delivery_summary_marks_checkpointed_outcome_blocked(
         self,
         tmp_path: Path,
     ) -> None:
         from harness.run_intent import RunIntent
         from harness.skills.run_skill import _print_delivery_summary
 
-        converged = _make_converged_result()
         checkpointed = _make_checkpoint_result()
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": converged.status,
-                    "termination_reason": converged.termination_reason,
-                    "converged": True,
-                    "outer_iterations": 1,
-                    "inner_iterations": 0,
-                },
-                "backup": {
-                    "status": checkpointed.status,
-                    "termination_reason": checkpointed.termination_reason,
-                    "converged": False,
-                    "outer_iterations": checkpointed.outer_iterations,
-                    "inner_iterations": checkpointed.inner_iterations,
-                },
-            },
-            "summary": {"converged": 1, "failed": 1, "total_tokens": 10_000},
-        }
         captured: dict[str, object] = {}
 
         def summarize(context):
             captured["context"] = context
-            return "One strategy completed while another needs continuation."
+            return "The delivery needs continuation."
 
         with patch(
             "harness.run_summary.summarize_run_for_cli",
@@ -1168,8 +1038,8 @@ class TestRunSkillAutoLand:
         ):
             _print_delivery_summary(
                 RunIntent(spec_id="001-demo", mode="semi"),
-                {"default": converged, "backup": checkpointed},
-                comparison,
+                checkpointed,
+                {},
                 tmp_path,
                 None,
             )
@@ -1186,32 +1056,19 @@ class TestRunSkillAutoLand:
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_checkpoint_result()
         result = replace(result, termination_reason="provider_session_limit")
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                    "build_status": "provider_session_limit",
-                    "provider_limit_message": "You've hit your session limit · resets 9:10pm",
-                    "provider_reset_hint": "9:10pm",
-                    "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
-                    "salvage_branch": "harness/001-demo/default/iter-0",
-                    "salvage_verified": "not_run",
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        state = {
+            "build_status": "provider_session_limit",
+            "provider_limit_message": "You've hit your session limit · resets 9:10pm",
+            "provider_reset_hint": "9:10pm",
+            "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
+            "salvage_branch": "harness/001-demo/iter-0",
+            "salvage_verified": "not_run",
         }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            state,
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -1222,10 +1079,10 @@ class TestRunSkillAutoLand:
         assert "You've hit your session limit" in captured.err
         assert "reset: 9:10pm" in captured.err
         assert "salvage commit: abcdef123456" in captured.err
-        assert "salvage branch: harness/001-demo/default/iter-0" in captured.err
+        assert "salvage branch: harness/001-demo/iter-0" in captured.err
         assert "salvage verified: not_run" in captured.err
         assert "continue: echelon delivery continue 001-demo" in captured.err
-        assert "0 converged, 0 failed, 1 provider-limited" in captured.err
+        assert "provider-limited" in captured.err
         assert "CHECKPOINTED" not in captured.err
 
     def test_delivery_summary_ignores_stale_provider_status_for_escalation(
@@ -1255,27 +1112,15 @@ class TestRunSkillAutoLand:
             ),
             blocked_phase="implementation",
         )
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "converged": False,
-                    "build_status": "provider_session_limit",
-                    "provider_limit_message": "stale provider limit text",
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
+        state = {
+            "build_status": "provider_session_limit",
+            "provider_limit_message": "stale provider limit text",
         }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            state,
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -1296,26 +1141,11 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="banzai")
         result = _make_checkpoint_outer_cap_result()
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
-        }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            {},
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -1328,7 +1158,7 @@ class TestRunSkillAutoLand:
         assert "verify: ✗ FAILED" not in captured.err
         assert "deferred [other] full verify-spec refresh deferred" in captured.err
         assert "✗ [other] full verify-spec refresh deferred" not in captured.err
-        assert "0 converged, 0 failed, 1 checkpointed" in captured.err
+        assert "checkpointed" in captured.err
 
     def test_delivery_summary_renders_verified_ledger_counts(
         self,
@@ -1339,34 +1169,21 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_checkpoint_result()
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                    "fulfillment_refresh": {
-                        "verified_ledger": {
-                            "reused": 70,
-                            "rechecked": 5,
-                            "invalidated": 1,
-                            "unresolved": 2,
-                        }
-                    },
+        state = {
+            "fulfillment_refresh": {
+                "verified_ledger": {
+                    "reused": 70,
+                    "rechecked": 5,
+                    "invalidated": 1,
+                    "unresolved": 2,
                 }
             },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
         }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            state,
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -1393,26 +1210,11 @@ class TestRunSkillAutoLand:
                 )
             ],
         ))
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
-        }
 
         _print_delivery_summary(
             intent,
-            {"default": result},
-            comparison,
+            result,
+            {},
             workspace_root=Path("/tmp/nonexistent"),
             spec_dir=None,
         )
@@ -1459,22 +1261,7 @@ class TestRunSkillAutoLand:
             ),
             blocked_phase="implementation",
         )
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "converged": False,
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
-        }
-
-        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, spec_dir)
+        _print_delivery_summary(intent, result, {}, tmp_path, spec_dir)
 
         captured = capsys.readouterr()
         assert "recommended action:" in captured.err
@@ -1533,23 +1320,9 @@ class TestRunSkillAutoLand:
             ),
             blocked_phase="implementation",
         )
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "converged": False,
-                    "escalation_file": str(escalation_file),
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
-        }
-
-        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, None)
+        _print_delivery_summary(
+            intent, result, {"escalation_file": str(escalation_file)}, tmp_path, None
+        )
 
         captured = capsys.readouterr()
         assert "suggested answers:" in captured.err
@@ -1605,23 +1378,9 @@ class TestRunSkillAutoLand:
             ),
             blocked_phase="implementation",
         )
-        comparison = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "converged": False,
-                    "escalation_file": str(escalation_file),
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
-        }
-
-        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, None)
+        _print_delivery_summary(
+            intent, result, {"escalation_file": str(escalation_file)}, tmp_path, None
+        )
 
         captured = capsys.readouterr()
         assert "stopped: external_spec_artifact_missing" in captured.err
@@ -1648,7 +1407,7 @@ class TestRunSkillAutoLand:
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         history_path(spec_dir).write_text(
-            '{"runs":[{"build_id":"build-old","strategy_id":"default","status":"failed","termination_reason":"outer_cap","tokens_used":1200}]}',
+            '{"runs":[{"build_id":"build-old","status":"failed","termination_reason":"outer_cap","tokens_used":1200}]}',
             encoding="utf-8",
         )
 
@@ -1659,22 +1418,6 @@ class TestRunSkillAutoLand:
         coordinator_instance.state.return_value = {}
         result = _make_failed_result()
         coordinator_instance.run.return_value = result
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {
-                "default": {
-                    "status": result.status,
-                    "termination_reason": result.termination_reason,
-                    "outer_iterations": result.outer_iterations,
-                    "inner_iterations": result.inner_iterations,
-                    "tokens_used": result.tokens_used,
-                    "pr_url": result.pr_url,
-                    "branch": result.branch,
-                    "converged": False,
-                }
-            },
-            "summary": {"converged": 0, "failed": 1, "total_tokens": result.tokens_used},
-        }
-        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
         mock_coordinator_cls.return_value = coordinator_instance
 
         gitops = MagicMock()
@@ -1713,10 +1456,6 @@ class TestRunSkillAutoLand:
         coordinator_instance = MagicMock()
         coordinator_instance.state.return_value = {}
         coordinator_instance.run.return_value = _make_converged_result()
-        coordinator_instance.compare_results.return_value = {
-            "strategies": {},
-            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
-        }
         mock_coordinator_cls.return_value = coordinator_instance
 
         mock_land.side_effect = RuntimeError("git merge failed")
