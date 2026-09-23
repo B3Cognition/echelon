@@ -11,9 +11,13 @@ def test_deepen_routes_closed_l2_selection_and_resource_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReDeepenRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_deepen", lambda args: calls.append(args))
+    calls: list[ReDeepenRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.deepen_re",
+        lambda request: calls.append(request),
+    )
 
     result = CliRunner().invoke(
         app,
@@ -36,20 +40,16 @@ def test_deepen_routes_closed_l2_selection_and_resource_authority(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [[
-        "--to",
-        "L2",
-        "--source",
-        "api",
-        "--domain",
-        "010-orders",
-        "--from-run",
-        "re-parent",
-        "--token-limit",
-        "2000000",
-        "--active-ms-limit",
-        "3600000",
-    ]]
+    assert calls == [
+        ReDeepenRequest(
+            target_layer="L2",
+            sources=("api",),
+            domains=("010-orders",),
+            from_run="re-parent",
+            token_limit=2000000,
+            active_ms_limit=3600000,
+        )
+    ]
 
 
 @pytest.mark.unit
@@ -57,14 +57,18 @@ def test_deepen_routes_all_sources_without_provider_specific_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReDeepenRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_deepen", lambda args: calls.append(args))
+    calls: list[ReDeepenRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.deepen_re",
+        lambda request: calls.append(request),
+    )
 
     result = CliRunner().invoke(app, ["re", "deepen", "--to", "L2", "--all"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [["--to", "L2", "--all"]]
+    assert calls == [ReDeepenRequest(target_layer="L2", all_sources=True)]
 
 
 @pytest.mark.unit

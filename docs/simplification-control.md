@@ -6,7 +6,7 @@ starting another.
 **Design:**
 [`2026-09-21-harness-simplification-control-design.md`](superpowers/specs/2026-09-21-harness-simplification-control-design.md)
 
-**Current milestone:** S3 — Complete the Typer CLI cutover
+**Current milestone:** S4 — Decompose delivery orchestration without changing its state contract
 
 ## Status
 
@@ -15,10 +15,10 @@ starting another.
 | S0 | DONE | Establish an evidence-based simplification baseline. | Review found 115,134 lines under `src/harness/re_v2`, oversized orchestration methods in squad/delivery, and a dual CLI. Representative controller suite: 274 passed. | Review and ordered control queue exist. |
 | S1 | DONE | Remove retired SOAR execution without removing shared memory and security utilities. | 24,911 lines deleted; `src/codegen` reduced to nine retained utility files; 535 focused tests and 10,003 full-unit tests passed. | No SOAR execution entry point, installer option, strategy, overlay, or active execution test remains; retained utility consumers and normal delivery tests pass. |
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
-| S3 | ACTIVE | Complete the Typer CLI cutover. | Executable route recount: 104 public commands, 95 using modular services and 9 consuming `_legacy_cli()`; 23 hidden routes after propagating hidden parent groups. Benchmark, stack, workspace, phase/version, spec, and delivery workflows are cut over; retired routes are deleted and compatibility aliases are isolated. The active RE facade is next and final. | User-facing commands invoke typed application services; compatibility aliases are isolated; `cli.py` no longer owns active command workflows. |
-| S4 | PENDING | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
+| S3 | DONE | Complete the Typer CLI cutover. | Executable route recount: 104 public commands, all 104 using modular front doors, 23 hidden routes, and zero direct public or hidden `_legacy_cli()` consumers. Final structural gate: 27 passed. Repository gate against `bfdb744c`: 9,853 passed, 0 skipped, 11,438 deselected, 0 failures in 2,121.92s. `echelon.re_service` is the single quarantine adapter; `echelon.cli` retains the RE protocol kernel for S6. | User-facing commands invoke typed application services; compatibility aliases are isolated; the remaining RE kernel dependency is contained behind one named facade scheduled for S6. |
+| S4 | ACTIVE | Decompose delivery orchestration without changing its state contract. | `RalphController._run_loop_inner` and `StrategyCoordinator._run_strategy` each exceed 1,000 lines. Next action: inventory the durable Delivery controller steps before any decomposition. | Coordinator schedules strategies only; Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | PENDING | Reduce spec authoring to one controller kernel and publication boundary. | Squad routing, state, recovery, completion, and publication form a large circular dependency component. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
-| S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in executable controller code. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
+| S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in the RE kernel retained in `echelon.cli`; `echelon.re_service` is its single active route adapter. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
 | S7 | PENDING | Remove residual compatibility code and break large import cycles. | Static import analysis found production cycles far larger than a locally understandable component. | No production strongly connected import component contains more than five modules; full repository verification passes. |
 
 ## S1 Work Queue
@@ -63,6 +63,8 @@ starting another.
 | 2026-09-22 | S3 | Spec service cutover implemented in `025ea318` and `51e89892`: all 16 active `spec` routes now call typed services, Phase A run/recovery ownership moved to `echelon.spec_service`, shared manual phase replay consumes its public recovery helpers, and the hidden `spec target` mutation guard is isolated there. Focused verification: 1,492 passed across the planned Spec/Phase A partitions. The CLI regression gate had 2,523 applicable passes; its sole remaining missing-template failure reproduced unchanged on the base branch. |
 | 2026-09-22 | S3 | Spec service repository gate: 9,822 passed and 11,421 deselected in 29m30s; receipt `tests/reports/merge-verification/receipt-51e89892a0d9-07ba7c1ebc08415f8439c88672ce73e6.json`. S3 remains active; active `delivery` workflows are next. |
 | 2026-09-23 | S3 | Delivery service cutover completed in `a85def96`, `f9ad8087`, `d8bd6a92`, and `bc64acae`; `0741dd4c` moved the lifecycle ownership validator. Final review fix `cdb1a4d3` passes the API project root to run/recovery capability checks, moves the remaining Delivery-only renderer, removes eight CLI helper re-exports, and migrates the remaining integration/runtime test imports. All nine active Delivery routes use `echelon.delivery_service`; `delivery status` retains its facade with a service-owned kernel. RED: three explicit-root regressions and the ownership guard failed as intended. GREEN: 38 affected tests (including all 17 boundary cases) passed in 13.66s; 302 focused Delivery tests passed in 58.32s. Executable-tree recount: 104 public, 23 hidden, 9 public direct `_legacy_cli()` consumers, 95 modular public routes; S3 stays ACTIVE with RE next. The single final repository gate against `3abca341` tested commit `cdb1a4d310ed7bf39358ee71284ebedf5a8f465a`, tree `b2b80184eab739396535ae402d800dc8985e8eb2`: 9,822 passed, 0 skipped, 11,438 deselected, 0 failures in 1,773.29s (29m33.29s); receipt subprocess duration 1,775,535ms, exit 0. Replacement receipt: `tests/reports/merge-verification/receipt-cdb1a4d310ed-88781f07aeae4d69a0049ac35bed75fb.json`, bound to the tested code/test commit before the evidence commit. Earlier broad CLI gate evidence remains historical: 1,672 passed and 1 baseline-reproduced failure in 274.71s; not rerun in this wave. The active RE facade is next and final; RE protocol consolidation remains assigned to S6. |
+| 2026-09-23 | S3 | Completed. All nine public and two hidden RE routes use the `echelon.re_service` typed quarantine facade; `echelon.cli` retains the protocol kernel for S6. Final review correction `3e648dc5` restores malformed `re resume` compatibility by letting the unchanged kernel validate through the facade: RED was 4 output-contract failures, GREEN was 4 passed in 10.46s; adding the missing module marker changed the boundary selection from 27 deselected/exit 5 to 27 passed in 10.36s. The focused RE/CLI suite passed 275 tests in 38.83s. Structural acceptance still has no `_legacy_cli()` call in `src/echelon/cli_app.py`; executable-tree recount remains 104 public, 23 hidden, zero direct public or hidden `_legacy_cli()` consumers, and 104 modular public routes. The single repository gate against `bfdb744c` tested commit `3e648dc5ab1907b07c3e5cf9922381d8b9e697bc`, tree `21b0b54adcb157d18ff7fa59822735e8f495de4f`: 9,853 passed, 0 skipped, 11,438 deselected, 0 failures in 2,121.92s (35m21.92s); receipt subprocess duration 2,124,409ms, exit 0. Receipt: `tests/reports/merge-verification/receipt-3e648dc5ab19-9a15640fb46a41918b2d6d2807f60395.json`. |
+| 2026-09-23 | S4 | Activated after all S3 exit checks passed. Next action: inventory the durable Delivery controller steps before any decomposition. RE protocol consolidation remains assigned to S6. |
 
 ## S2 Work Queue
 
@@ -81,10 +83,10 @@ starting another.
 - [x] Inventory every public Typer command and its delegated `cli.py` entry point.
 - [x] Classify each route as typed service, compatibility alias, or dead path.
 - [x] Define and approve the minimum cutover boundary before editing behavior.
-- [ ] Move active command workflows behind typed application services.
+- [x] Move active command workflows behind typed application services.
 - [x] Isolate compatibility aliases from active routing.
-- [ ] Run focused CLI verification.
-- [ ] Run the repository verification gate and record its result.
+- [x] Run focused CLI verification.
+- [x] Run the repository verification gate and record its result.
 
 ### S3 Cutover Order
 
@@ -95,7 +97,7 @@ starting another.
 - [x] Delete retired routes and isolate root/`harness` compatibility aliases.
 - [x] Cut over active `spec` workflows.
 - [x] Cut over active `delivery` workflows without changing the state contract.
-- [ ] Put active `re` workflows behind a typed facade; leave protocol consolidation to S6.
+- [x] Put active `re` workflows behind a typed facade; leave protocol consolidation to S6.
 
 ## Drift Guard
 
