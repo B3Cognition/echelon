@@ -1,7 +1,11 @@
 import ast
 import inspect
 
+import pytest
 from typer.testing import CliRunner
+
+
+pytestmark = pytest.mark.unit
 
 
 ACTIVE_RE_CALLBACKS = {
