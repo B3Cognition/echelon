@@ -18,7 +18,7 @@ from harness.delivery_results import DeliveryResult
 from harness.run_intent import RunIntent
 from harness.skills.run_skill import (
     RunContextError,
-    _fresh_delivery_baselines,
+    _fresh_delivery_baseline,
     _resolve_run_roots,
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
@@ -195,9 +195,9 @@ def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.return_value = True
 
-    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+    baselines = _fresh_delivery_baseline(tmp_path, intent, gitops)
 
-    assert baselines == {}
+    assert baselines is None
     gitops.commit_is_ancestor_of_default.assert_called_once_with(candidate)
 
 
@@ -227,9 +227,9 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.side_effect = lambda commit: commit == landed
 
-    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+    baselines = _fresh_delivery_baseline(tmp_path, intent, gitops)
 
-    assert baselines == {}
+    assert baselines is None
     gitops.commit_is_ancestor_of_default.assert_called_once_with(landed)
 
 
@@ -264,15 +264,15 @@ def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.return_value = False
 
-    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+    baselines = _fresh_delivery_baseline(tmp_path, intent, gitops)
 
-    assert baselines == {"default": newest}
+    assert baselines == newest
     gitops.commit_is_ancestor_of_default.assert_called_once_with(newest)
 
 
 @pytest.mark.unit
 class TestRunContextValidation:
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.skills.run_skill.find_spec_dir")
     @patch("harness.skills.run_skill.parse_intent")
     def test_run_rejects_missing_explicit_orchestration_root_before_coordinator(
@@ -302,7 +302,7 @@ class TestRunContextValidation:
         mock_find_spec_dir.assert_not_called()
         mock_coordinator_cls.assert_not_called()
 
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.skills.run_skill.find_spec_dir", return_value=None)
     @patch("harness.skills.run_skill.parse_intent")
     def test_run_rejects_missing_spec_from_explicit_orchestration_root_before_coordinator(
@@ -344,7 +344,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     def test_coordinator_exception_still_emits_one_delivery_summary(
         self,
         mock_coordinator_cls: MagicMock,
@@ -363,7 +363,7 @@ class TestRunSkillAutoLand:
             mode="semi",
             strategies=("default",),
         )
-        mock_coordinator_cls.return_value.start.side_effect = RuntimeError(
+        mock_coordinator_cls.return_value.run.side_effect = RuntimeError(
             "coordinator exploded"
         )
         runs = tmp_path / "runs"
@@ -398,7 +398,7 @@ class TestRunSkillAutoLand:
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land", return_value=False)
     def test_landing_block_does_not_change_converged_delivery(
         self,
@@ -417,7 +417,8 @@ class TestRunSkillAutoLand:
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         mock_parse.return_value = RunIntent(spec_id="042", mode="semi", auto_merge=True)
         coordinator = mock_coordinator_cls.return_value
-        coordinator.start.return_value = [_make_converged_result()]
+        coordinator.state.return_value = {}
+        coordinator.run.return_value = _make_converged_result()
         coordinator.compare_results.return_value = {
             "strategies": {}, "summary": {"converged": 1, "failed": 0, "total_tokens": 0}
         }
@@ -436,7 +437,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_polyrepo_auto_land_uses_workspace_root_and_keeps_target_harness_root(
         self,
@@ -467,7 +468,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
@@ -503,7 +505,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_multi_target_auto_land_is_skipped(
         self,
@@ -529,7 +531,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = RunIntent(spec_id="042", mode="banzai", auto_merge=True)
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
@@ -555,7 +558,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_land_not_called_when_auto_merge_false(
         self,
@@ -573,7 +576,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
@@ -590,7 +594,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     def test_resume_uses_existing_build_id(
         self,
         mock_coordinator_cls: MagicMock,
@@ -607,7 +611,8 @@ class TestRunSkillAutoLand:
         intent = RunIntent(spec_id="012", mode="semi", auto_merge=False)
         mock_parse.return_value = intent
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_failed_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
@@ -631,7 +636,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     def test_new_budget_uses_checkpoint_from_prior_blocked_run(
         self,
         mock_coordinator_cls: MagicMock,
@@ -666,7 +671,8 @@ class TestRunSkillAutoLand:
         }), encoding="utf-8")
         marker.write_text("build-newer", encoding="utf-8")
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_failed_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {}, "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
         }
@@ -682,12 +688,12 @@ class TestRunSkillAutoLand:
             resume_build_id="build-prepared",
         )
 
-        assert mock_coordinator_cls.call_args.kwargs["fresh_branch_bases"] == {"default": candidate}
+        assert mock_coordinator_cls.call_args.kwargs["fresh_branch_base"] == candidate
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_land_returns_false_logs_warning(
         self,
@@ -706,7 +712,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
@@ -726,7 +733,7 @@ class TestRunSkillAutoLand:
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     def test_delivery_run_does_not_prepare_or_switch_target_checkout(
         self,
         mock_coordinator_cls: MagicMock,
@@ -753,7 +760,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
@@ -776,7 +784,7 @@ class TestRunSkillAutoLand:
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     def test_delivery_preserves_active_authoring_branch_dirty_state_and_pointer(
         self,
         mock_coordinator_cls: MagicMock,
@@ -822,7 +830,8 @@ class TestRunSkillAutoLand:
         )
         mock_parse.return_value = RunIntent(spec_id="001-spec-a", mode="semi", auto_merge=False)
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
@@ -846,7 +855,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_land_not_called_when_not_converged(
         self,
@@ -864,7 +873,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_failed_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 0, "failed": 1, "total_tokens": 50000},
@@ -1621,7 +1631,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.skills.run_skill._print_delivery_summary")
     def test_run_prints_harness_history_before_and_after_and_appends_entry(
         self,
@@ -1646,8 +1656,9 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
+        coordinator_instance.state.return_value = {}
         result = _make_failed_result()
-        coordinator_instance.start.return_value = [result]
+        coordinator_instance.run.return_value = result
         coordinator_instance.compare_results.return_value = {
             "strategies": {
                 "default": {
@@ -1681,7 +1692,7 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
-    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.DeliveryController")
     @patch("harness.land.land")
     def test_land_exception_caught_and_logged(
         self,
@@ -1700,7 +1711,8 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
-        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.state.return_value = {}
+        coordinator_instance.run.return_value = _make_converged_result()
         coordinator_instance.compare_results.return_value = {
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},

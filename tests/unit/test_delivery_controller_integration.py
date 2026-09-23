@@ -10,8 +10,8 @@ from harness.mode import ModeController
 from harness.ralph import RalphController
 from harness.state import StateStore
 from harness.verify_result import VerifyResult
-from tests.unit.test_coordinator import MockProvider
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import MockProvider
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor, _steps
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 
@@ -94,23 +94,23 @@ def test_retired_feature_key_has_only_generic_scalar_parsing():
     assert config.llm.features["delivery_gate_controller"] == "retired"
 
 
-def test_coordinator_trial_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):
-    from harness.coordinator import StrategyCoordinator
+def test_delivery_controller_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):
+    from harness.delivery_controller import DeliveryController
     from harness.run_intent import RunIntent
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     # The fixture intentionally has only subagent profiles, no echelon.build command.
-    coordinator = StrategyCoordinator(
+    delivery = DeliveryController(
         provider=controller._provider, gitops=controller._gitops,
         config=controller._config, base_dir=str(slice_project[0]),
     )
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: ScriptedExecutor())
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: ScriptedExecutor())
     captured = []
     def stop_before_build(self, **kwargs):
         from harness.delivery_results import ImplementationResult
         captured.append(kwargs["build_prompt"])
         return ImplementationResult("blocked", "test_stop", 0, 0, None, 0, None)
-    monkeypatch.setattr("harness.coordinator.RalphController.run_loop", stop_before_build)
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1, mode="banzai"))[0]
+    monkeypatch.setattr("harness.delivery_controller.RalphController.run_loop", stop_before_build)
+    result = delivery.run(RunIntent(spec_id="001", max_outer=1, max_inner=1, mode="banzai"))
     assert result.termination_reason == "test_stop"
     assert captured and "banzai mode" in captured[0]
     assert "You are MANAGER" not in captured[0]
@@ -379,7 +379,7 @@ def test_full_loop_crash_after_progress_state_preserves_accepted_candidate(slice
 
 def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, tmp_path, monkeypatch):
     import shutil
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
     from harness.run_intent import RunIntent
     from harness.visual_ralph import VisualRalphController
@@ -394,7 +394,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
     gitops.base_dir = str(slice_project[0])
     gitops.get_latest_worktree.return_value = str(slice_project[0])
     executor = ScriptedExecutor()
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: executor)
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: executor)
 
     def implementation(self, **kwargs):
         result = _build(self, slice_project)
@@ -412,8 +412,8 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
     monkeypatch.setattr(RalphController, "run_loop", implementation)
     monkeypatch.setattr(VisualRalphController, "run_loop", visual)
-    coordinator = StrategyCoordinator(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1, token_budget=50))[0]
+    coordinator = DeliveryController(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
+    result = coordinator.run(RunIntent(spec_id="001", max_outer=1, max_inner=1, token_budget=50))
     assert result.status == "blocked", result
     assert result.tokens_used == 48
     assert len(executor.calls) == 4  # Initial build only; 28 + 20 exceeds 95% of 50.
@@ -421,7 +421,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
 def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tmp_path, monkeypatch):
     import shutil
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
     from harness.run_intent import RunIntent
     from harness.visual_ralph import VisualRalphController
@@ -436,7 +436,7 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
     gitops.base_dir = str(slice_project[0])
     gitops.get_latest_worktree.return_value = str(slice_project[0])
     executor = ScriptedExecutor()
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: executor)
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: executor)
     implementations = []
     def implementation(self, **kwargs):
         implementations.append(self)
@@ -460,8 +460,8 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
         return VisualResult("fix_applied", "fix_applied", 1, result["tokens"], None)
     monkeypatch.setattr(RalphController, "run_loop", implementation)
     monkeypatch.setattr(VisualRalphController, "run_loop", visual)
-    coordinator = StrategyCoordinator(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
+    coordinator = DeliveryController(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
+    result = coordinator.run(RunIntent(spec_id="001", max_outer=1, max_inner=1))
     assert result.status == "converged", result
     assert result.tokens_used == 61  # 28 initial + 28 repair + 5 verification.
     assert len(executor.calls) == 8

@@ -10,7 +10,7 @@ import pytest
 from harness.paths import current_build_marker
 from harness.skills.run_skill import (
     RunContextError,
-    _fresh_delivery_baselines,
+    _fresh_delivery_baseline,
     _fresh_delivery_completed_tasks,
 )
 
@@ -52,7 +52,7 @@ def test_recovery_ignores_foreign_or_unbound_spec(tmp_path, spec_id):
     payload = json.loads(path.read_text())
     payload["spec_id"] = spec_id
     path.write_text(json.dumps(payload))
-    assert _fresh_delivery_baselines(tmp_path, _intent()) == {}
+    assert _fresh_delivery_baseline(tmp_path, _intent()) is None
 
 
 def test_legacy_checkpoint_does_not_restore_unbound_task_completion(tmp_path):
@@ -61,7 +61,7 @@ def test_legacy_checkpoint_does_not_restore_unbound_task_completion(tmp_path):
     payload["checkpoint_commits"][0]["task_ids"] = ["T-001"]
     path.write_text(json.dumps(payload))
     gitops = SimpleNamespace(commit_is_ancestor=lambda *args: True)
-    assert _fresh_delivery_completed_tasks(tmp_path, _intent(), {"default": "a" * 40}, gitops) == {}
+    assert _fresh_delivery_completed_tasks(tmp_path, _intent(), "a" * 40, gitops) == ()
 
 
 def test_checkpoint_progress_requires_unchanged_definitions(tmp_path):
@@ -78,17 +78,17 @@ def test_checkpoint_progress_requires_unchanged_definitions(tmp_path):
     path.write_text(json.dumps(payload))
     gitops = SimpleNamespace(commit_is_ancestor=lambda *args: True)
     def recover():
-        return _fresh_delivery_completed_tasks(tmp_path, _intent(), {"default": "a" * 40}, gitops, spec_dir=spec)
-    assert recover() == {"default": ("T-001",)}
+        return _fresh_delivery_completed_tasks(tmp_path, _intent(), "a" * 40, gitops, spec_dir=spec)
+    assert recover() == ("T-001",)
     (spec / "tasks.md").write_text("- [x] T-001 implement original\n  **Status:** DONE\n  - [x] original acceptance\n")
-    assert recover() == {"default": ("T-001",)}
+    assert recover() == ("T-001",)
     (spec / "spec.md").write_text("Changed requirement\n")
-    assert recover() == {}
+    assert recover() == ()
     (spec / "spec.md").write_text("Original requirement\n")
     (spec / "tasks.md").write_text("- [ ] T-001 implement original\n  **Status:** DEFERRED\n  - [ ] original acceptance\n")
-    assert recover() == {}
+    assert recover() == ()
     (spec / "tasks.md").write_text("- [ ] T-001 implement DIFFERENT\n  **Status:** PENDING\n")
-    assert recover() == {}
+    assert recover() == ()
 
 
 @pytest.mark.unit
@@ -116,7 +116,7 @@ def test_new_budget_prefers_checkpoint_from_dead_running_delivery(tmp_path: Path
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("build-newest", encoding="utf-8")
 
-    assert _fresh_delivery_baselines(tmp_path, _intent()) == {"default": newest}
+    assert _fresh_delivery_baseline(tmp_path, _intent()) == newest
 
 
 @pytest.mark.unit
@@ -136,7 +136,7 @@ def test_new_budget_refuses_to_compete_with_live_running_delivery(tmp_path: Path
     marker.write_text("build-newest", encoding="utf-8")
 
     with pytest.raises(RunContextError, match="already active"):
-        _fresh_delivery_baselines(tmp_path, _intent())
+        _fresh_delivery_baseline(tmp_path, _intent())
 
 
 @pytest.mark.unit
@@ -215,9 +215,9 @@ def test_fresh_delivery_recovers_only_checkpointed_tasks_on_baseline_ancestry(
     recovered = _fresh_delivery_completed_tasks(
         tmp_path,
         _intent(),
-        {"default": baseline},
+        baseline,
         GitOps(),
         spec_dir=spec,
     )
 
-    assert recovered == {"default": ("T-001", "T-002")}
+    assert recovered == ("T-001", "T-002")

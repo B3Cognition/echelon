@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
-from harness.coordinator import StrategyCoordinator
+from harness.delivery_controller import DeliveryController
 from harness.delivery_results import ImplementationResult, ReviewResult, VisualResult
 from harness.paths import current_build_marker
 from harness.review_artifacts import ReviewArtifactPublisher
@@ -230,13 +230,13 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
     monkeypatch.setattr(StateStore, "transition", record_transition)
 
     with patch("harness.skills.run_skill.parse_intent", return_value=intent), \
-         patch("harness.coordinator.AICodingCliProvider", return_value=object()), \
+         patch("harness.delivery_controller.AICodingCliProvider", return_value=object()), \
          patch("harness.skills.run_skill.run_gc"), \
          patch("harness.land.land", return_value=False) as land, \
-         patch("harness.coordinator.RalphController", _RecordingRalph), \
-         patch("harness.coordinator.VisualRalphController") as visual_controller, \
-         patch("harness.coordinator.ReviewLoopController", _PublishingReviewController), \
-         patch("harness.coordinator.subprocess.run", wraps=subprocess.run) as git_run:
+         patch("harness.delivery_controller.RalphController", _RecordingRalph), \
+         patch("harness.delivery_controller.VisualRalphController") as visual_controller, \
+         patch("harness.delivery_controller.ReviewLoopController", _PublishingReviewController), \
+         patch("harness.delivery_controller.subprocess.run", wraps=subprocess.run) as git_run:
         visual_controller.return_value.run_loop.return_value = visual
         outcome = run(
             "run 911", provider=MagicMock(), gitops=gitops,
@@ -465,19 +465,19 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
         "completed", "converged", 1,
         "https://github.com/example/api/pull/912", 3,
     )
-    first = StrategyCoordinator(
+    first = DeliveryController(
         provider=MagicMock(), gitops=gitops, config=config,
         base_dir=harness_root, build_id="build-912", orchestration_root=workspace,
     )
 
-    with patch("harness.coordinator.AICodingCliProvider", return_value=object()), \
-         patch("harness.coordinator.RalphController") as ralph, \
-         patch("harness.coordinator.ReviewLoopController") as review, \
+    with patch("harness.delivery_controller.AICodingCliProvider", return_value=object()), \
+         patch("harness.delivery_controller.RalphController") as ralph, \
+         patch("harness.delivery_controller.ReviewLoopController") as review, \
          patch.object(first, "_finalize_delivery", side_effect=RuntimeError("crash")):
         ralph.return_value.run_loop.return_value = implementation
         review.return_value.run_loop.return_value = completed_review
         with pytest.raises(RuntimeError, match="crash"):
-            first.start(intent)
+            first.run(intent)
 
         state_store = StateStore(
             harness_root / "runs" / "build-912" / "state", "912", "default"
@@ -486,11 +486,11 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
         assert checkpoint["status"] == "finalizing"
         assert checkpoint["last_completed_phase"] == "review"
 
-        resumed = StrategyCoordinator(
+        resumed = DeliveryController(
             provider=MagicMock(), gitops=gitops, config=config,
             base_dir=harness_root, build_id="build-912", orchestration_root=workspace,
         )
-        result = resumed.start(intent)[0]
+        result = resumed.run(intent)
 
     assert result.status == "converged"
     assert review.return_value.run_loop.call_count == 1

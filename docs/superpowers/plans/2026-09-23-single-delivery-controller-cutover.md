@@ -36,7 +36,7 @@
 - Consumes: existing `RunIntent`, `DeliveryResult`, `StateStore`, `RalphController`, review, visual, repair, verification, and publication collaborators.
 - Produces: a `DeliveryController` constructor with optional `fresh_branch_base` and `fresh_completed_task_ids`, `DeliveryController.run(intent: RunIntent) -> DeliveryResult`, `DeliveryController.state() -> dict[str, object]`, `_fresh_delivery_baseline(harness_root: Path, intent: Any, gitops: Any | None = None) -> str | None`, and `_fresh_delivery_completed_tasks(harness_root: Path, intent: Any, baseline: str | None, gitops: Any | None = None, *, spec_dir: Path | None = None) -> tuple[str, ...]`.
 
-- [ ] **Step 1: Move the existing controller behavior tests to the new API and verify RED**
+- [x] **Step 1: Move the existing controller behavior tests to the new API and verify RED**
 
 First rename `test_coordinator.py` and its existing `_make_coordinator` helper
 to `test_delivery_controller.py` and `_make_controller`. Change the production
@@ -78,7 +78,7 @@ assert StateStore(state_dir, intent.spec_id, "default").read()["status"] == expe
 The literal expected status in each migrated test remains the value already
 asserted by that test; do not replace it with a shared result builder.
 
-- [ ] **Step 2: Run the migrated tests and verify RED**
+- [x] **Step 2: Run the migrated tests and verify RED**
 
 Run:
 
@@ -94,7 +94,7 @@ Expected: collection fails because `harness.delivery_controller` and
 `DeliveryController` do not exist. This is the production change that makes the
 behavior tests fail.
 
-- [ ] **Step 3: Move the active single-run body into `DeliveryController`**
+- [x] **Step 3: Move the active single-run body into `DeliveryController`**
 
 Copy the non-fan-out helpers and `_run_strategy` body from `coordinator.py` into `delivery_controller.py`, then expose this exact public shape:
 
@@ -150,7 +150,7 @@ commit or `None`, and collapse `_fresh_delivery_completed_tasks` to one tuple.
 Use those values directly in the controller constructor instead of maps keyed
 by `default`.
 
-- [ ] **Step 4: Migrate controller-focused tests to the new owner**
+- [x] **Step 4: Migrate controller-focused tests to the new owner**
 
 Rename the two controller test modules listed above. Change imports and
 monkeypatch targets from `harness.coordinator` to
@@ -172,7 +172,7 @@ comparison, or peer cancellation. Retain and migrate every test covering phase
 resume, verification, visual/review re-entry, publication, polyrepo routing,
 escalation, and finalization.
 
-- [ ] **Step 5: Run the controller regression partition and verify GREEN**
+- [x] **Step 5: Run the controller regression partition and verify GREEN**
 
 Run:
 
@@ -190,7 +190,7 @@ Run:
 Expected: PASS with no import or patch target referring to
 `harness.coordinator` in these files.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/delivery_controller.py src/harness/skills/run_skill.py \

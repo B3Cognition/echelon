@@ -7,13 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
-from harness.coordinator import StrategyCoordinator
+from harness.delivery_controller import DeliveryController
 from harness.delivery_results import DeliveryResult, ImplementationResult, ReviewResult, VisualResult
 from harness.verify_result import VerifyResult
 from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
 from harness.state import StateStore
-from harness.strategy_loader import StrategySpec
 
 
 def _config(tmp_path: Path) -> HarnessConfig:
@@ -58,7 +57,7 @@ class TestCoordinatorReviewReentry:
         config = _config(tmp_path)
         config.llm.enabled = True
         monkeypatch.setattr(
-            "harness.coordinator.AICodingCliProvider", lambda config: object()
+            "harness.delivery_controller.AICodingCliProvider", lambda config: object()
         )
         spec_dir = tmp_path / "specs" / "005-owned"
         spec_dir.mkdir(parents=True)
@@ -83,7 +82,7 @@ class TestCoordinatorReviewReentry:
         store.write(state)
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "ambient-target")
         monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "ambient-target")
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(), gitops=MagicMock(), config=config,
             base_dir=str(tmp_path), orchestration_root=tmp_path,
         )
@@ -93,19 +92,17 @@ class TestCoordinatorReviewReentry:
             "https://github.com/org/repo/pull/1", 0, None, None,
         )
 
-        with patch("harness.coordinator.ReviewLoopController") as review, \
-             patch("harness.coordinator.RalphController") as ralph, \
+        with patch("harness.delivery_controller.ReviewLoopController") as review, \
+             patch("harness.delivery_controller.RalphController") as ralph, \
              patch.object(coord, "_downstream_resume_error", return_value=None), \
              patch.object(coord, "_finalize_delivery", return_value=terminal) as finalize:
             review.return_value.complete_published_batch.return_value = True
             review.return_value.run_loop.return_value = ReviewResult(
                 "completed", "converged", 1, "https://github.com/org/repo/pull/1", 0
             )
-            result = coord._run_strategy(
+            result = coord._run_delivery(
                 RunIntent(spec_id="005", max_outer=1, max_inner=1),
-                "default",
-                None,
-                StrategySpec(),
+                budget=None,
             )
             assert result.status == "converged", result
             captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
@@ -118,7 +115,7 @@ class TestCoordinatorReviewReentry:
     def test_build_reentry_prompt_injects_only_published_review_fix_content(self, tmp_path):
         """A re-entry may only use artifacts from its just-published batch."""
         config = _config(tmp_path)
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(),
             gitops=MagicMock(),
             config=config,
@@ -156,7 +153,7 @@ class TestCoordinatorReviewReentry:
     def test_build_reentry_prompt_returns_base_when_no_spec_dir(self, tmp_path):
         """Returns base prompt unchanged when no spec directory exists."""
         config = _config(tmp_path)
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(),
             gitops=MagicMock(),
             config=config,
@@ -170,7 +167,7 @@ class TestCoordinatorReviewReentry:
     def test_build_reentry_prompt_returns_base_when_no_review_fix_files(self, tmp_path):
         """Returns base prompt unchanged when branch has no review-fix files."""
         config = _config(tmp_path)
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(),
             gitops=MagicMock(),
             config=config,
@@ -186,7 +183,7 @@ class TestCoordinatorReviewReentry:
 
     def test_target_task_ids_extend_once_in_published_order(self, tmp_path):
         """Re-entry persists only canonical IDs from the completed publication."""
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
             base_dir=str(tmp_path),
         )
@@ -204,7 +201,7 @@ class TestCoordinatorReviewReentry:
 
     def test_review_reentry_checkpoint_preserves_exact_published_batch(self, tmp_path):
         """A crash after review returns must leave the exact re-entry recoverable."""
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
             base_dir=str(tmp_path),
         )
@@ -236,7 +233,7 @@ class TestCoordinatorReviewReentry:
 
     def test_verified_reentry_retries_only_side_effects_after_resume(self, tmp_path):
         """A side-effect retry preserves Phase 1 counters and skips Ralph work."""
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
             base_dir=str(tmp_path),
         )
@@ -315,7 +312,7 @@ class TestCoordinatorReviewReentry:
         gitops = MagicMock()
         gitops.get_latest_worktree.return_value = str(worktree)
 
-        coord = StrategyCoordinator(
+        coord = DeliveryController(
             provider=MagicMock(),
             gitops=gitops,
             config=config,
@@ -344,14 +341,13 @@ class TestCoordinatorReviewReentry:
                 repair_loop_runs.append(draft)
                 return super().run(draft)
 
-        with patch("harness.coordinator.AICodingCliProvider", return_value=object()), \
+        with patch("harness.delivery_controller.AICodingCliProvider", return_value=object()), \
              patch.object(coord, "_worktree_head", return_value="verified-head"), \
-             patch("harness.coordinator.RalphController") as MockRalph, \
-             patch("harness.coordinator.ReviewLoopController") as MockReview, \
-             patch("harness.coordinator.VisualRalphController") as MockVisual, \
-             patch("harness.coordinator.RepairLoop", SpyRepairLoop, create=True), \
-             patch("harness.coordinator.StateStore") as MockState, \
-             patch("harness.coordinator.load_strategies") as mock_strat:
+             patch("harness.delivery_controller.RalphController") as MockRalph, \
+             patch("harness.delivery_controller.ReviewLoopController") as MockReview, \
+             patch("harness.delivery_controller.VisualRalphController") as MockVisual, \
+             patch("harness.delivery_controller.RepairLoop", SpyRepairLoop, create=True), \
+             patch("harness.delivery_controller.StateStore") as MockState:
 
             # Phase 1: first call converges, second call (re-entry) converges too
             ralph_instance = MagicMock()
@@ -417,12 +413,7 @@ class TestCoordinatorReviewReentry:
             state_instance.transition.side_effect = transition_state
             MockState.return_value = state_instance
 
-            # Strategy loader
-            mock_strat.return_value = {"default": StrategySpec()}
-
-            result = coord._run_strategy(
-                intent, "default", budget=None, spec=StrategySpec()
-            )
+            result = coord._run_delivery(intent, budget=None)
 
         assert len(repair_loop_runs) == 1
 
