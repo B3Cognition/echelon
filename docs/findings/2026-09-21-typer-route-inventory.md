@@ -25,14 +25,25 @@ services and 9 still delegate into `echelon.cli`. The active RE facade is the
 next and final Typer cutover slice; RE protocol consolidation remains owned by
 S6.
 
-Delivery cutover verification used merge base `3abca341`: the structural
-ownership search returned no legacy `cli.py` definitions and the boundary suite
-passed 13 tests. The broader focused Delivery suite passed 287 tests; the CLI
-regression gate recorded 1,672 passes and one known pre-existing failure. The
-repository gate recorded 9,822 passed, 0 skipped, 11,434 deselected, and 0
-failures in 29m34.11s after its ownership validator moved with the service.
-Receipt:
-`tests/reports/merge-verification/receipt-0741dd4c9f62-d59ac9b2a44647fa8e97504443ecff94.json`.
+Final Delivery review fixes are committed in `cdb1a4d3`: run/resume/continue
+capability checks use the supplied project root; Delivery-only error rendering
+and test imports belong to the service; unused CLI helper re-exports are gone.
+The explicit-root regression failed for all three entry points before the fix.
+Afterward, all 17 boundary cases passed within the 38-test affected suite
+(13.66s), including polyrepo convergence and both runtime-extension consumers.
+The focused Delivery suite passed 302 tests in 58.32s. The ownership search
+found no retained moved helpers in `cli.py` or stale direct test imports/patches.
+
+The single final repository gate against `3abca341` tested
+`cdb1a4d310ed7bf39358ee71284ebedf5a8f465a` (tree
+`b2b80184eab739396535ae402d800dc8985e8eb2`): 9,822 passed, 0 skipped,
+11,438 deselected, and 0 failures in 1,773.29s (29m33.29s). The receipt records
+1,775,535ms for the complete pytest subprocess, with exit code 0:
+`tests/reports/merge-verification/receipt-cdb1a4d310ed-88781f07aeae4d69a0049ac35bed75fb.json`.
+This replaces the prior Delivery receipt; the receipt identifies the tested
+code/test commit, preceding the documentation/evidence commit. The earlier
+broad CLI gate remains historical: 1,672 passed and one failure reproduced on
+the design baseline in 274.71s; it was not rerun in this final wave.
 
 The compatibility cleanup removed the hidden retired `build` and `cicd`
 routes. Retained root and hidden `harness` aliases now call their canonical
