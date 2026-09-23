@@ -709,8 +709,6 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "001",
         "--mode",
         "banzai",
-        "--strategy",
-        "alternate",
         "--max-outer",
         "3",
         "--max-inner",
@@ -718,7 +716,6 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "--token-budget",
         "1000",
         "--no-auto-merge",
-        "--kill-losers",
         "--reset",
     ])
 
@@ -727,12 +724,10 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         DeliveryRunRequest(
             spec_id="001",
             mode="banzai",
-            strategy="alternate",
             max_outer=3,
             max_inner=2,
             token_budget=1000,
             auto_merge=False,
-            kill_losers=True,
             reset=True,
         ),
     )]
@@ -801,8 +796,6 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
         "Use the direct mapping",
         "--mode",
         "banzai",
-        "--strategy",
-        "alternate",
     ])
 
     assert calls == [(
@@ -811,7 +804,6 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
             spec_id="001",
             answer="Use the direct mapping",
             mode="banzai",
-            strategy="alternate",
         ),
     )]
 
@@ -824,7 +816,7 @@ def test_delivery_resume_help_declares_answer_argument():
     assert "SPEC_ID" in result.output
     assert "ANSWER" in result.output
     assert "--mode" in result.output
-    assert "--strategy" in result.output
+    assert "--strategy" not in result.output
 
 
 @pytest.mark.unit
@@ -838,14 +830,13 @@ def test_delivery_continue_canonical_flags_route_to_harness_continue(monkeypatch
         lambda project_root, request: calls.append((project_root, request)),
     )
 
-    run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "alternate"])
+    run(["delivery", "continue", "001", "--mode", "banzai"])
 
     assert calls == [(
         Path.cwd(),
         DeliveryRecoveryRequest(
             spec_id="001",
             mode="banzai",
-            strategy="alternate",
         ),
     )]
 
@@ -870,9 +861,30 @@ def test_delivery_run_declares_canonical_flags():
         for opt in getattr(param, "opts", [])
     }
     assert "--mode" in declared_options
-    assert "--strategy" in declared_options
+    assert "--strategy" not in declared_options
+    assert "--kill-losers" not in declared_options
     assert "--max-outer" in declared_options
     assert "--target" not in declared_options
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["delivery", "run", "001", "--strategy", "alternate"],
+        ["delivery", "run", "001", "--kill-losers"],
+        ["delivery", "resume", "001", "--strategy", "alternate"],
+        ["delivery", "continue", "001", "--strategy", "alternate"],
+        ["delivery", "checkpoint", "list", "001", "--strategy", "alternate"],
+    ],
+)
+def test_delivery_execution_strategy_options_are_rejected(argv):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 @pytest.mark.unit
@@ -1071,12 +1083,10 @@ def test_root_help_hides_compatibility_aliases():
             ("001",),
             {
                 "mode": "banzai",
-                "strategy": None,
                 "max_outer": None,
                 "max_inner": None,
                 "token_budget": None,
                 "auto_merge": None,
-                "kill_losers": False,
                 "reset": False,
             },
         ),
@@ -1096,13 +1106,13 @@ def test_root_help_hides_compatibility_aliases():
             ["harness", "continue", "001"],
             "delivery_continue",
             ("001",),
-            {"mode": None, "strategy": None},
+            {"mode": None},
         ),
         (
             ["harness", "resume", "001", "go"],
             "delivery_resume",
             ("001",),
-            {"answer": "go", "mode": None, "strategy": None},
+            {"answer": "go", "mode": None},
         ),
     ),
 )
@@ -1307,7 +1317,7 @@ def test_delivery_help_uses_phase_b_common_forms():
     assert "Usage: root delivery [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase B/delivery commands" in result.output
     assert "Common forms:" in result.output
-    assert "status [<spec_id>] [--strategy <s>]" in result.output
+    assert "status [<spec_id>]" in result.output
     assert "run <spec_id> [--target <source-id-or-path>] [--mode <m>]" in result.output
     assert "land <spec_id> [--continue] [--prepare-only]" in result.output
 
@@ -1320,7 +1330,7 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
 
     assert help_result.exit_code == 0
     assert "SPEC_ID" in help_result.output
-    assert "--strategy" in help_result.output
+    assert "--strategy" not in help_result.output
     assert "--json" in help_result.output
 
     calls: list[dict[str, object]] = []
@@ -1328,25 +1338,22 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
     def record_status_command(
         *,
         spec_id: str = "",
-        strategy: str = "",
         json_output: bool = False,
     ) -> None:
         calls.append(
             {
                 "spec_id": spec_id,
-                "strategy": strategy,
                 "json_output": json_output,
             }
         )
 
     monkeypatch.setattr("echelon.delivery_status.command", record_status_command)
 
-    run(["delivery", "status", "001", "--strategy", "alternate", "--json"])
+    run(["delivery", "status", "001", "--json"])
 
     assert calls == [
         {
             "spec_id": "001",
-            "strategy": "alternate",
             "json_output": True,
         }
     ]

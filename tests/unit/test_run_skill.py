@@ -187,7 +187,7 @@ def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
         ),
         encoding="utf-8",
     )
-    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    intent = RunIntent(spec_id="012", mode="semi")
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.return_value = True
 
@@ -219,7 +219,7 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
             ),
             encoding="utf-8",
         )
-    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    intent = RunIntent(spec_id="012", mode="semi")
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.side_effect = lambda commit: commit == landed
 
@@ -256,7 +256,7 @@ def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
     marker = tmp_path / "runs" / "current-012.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("build-20260908-043009-777477", encoding="utf-8")
-    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    intent = RunIntent(spec_id="012", mode="semi")
     gitops = MagicMock()
     gitops.commit_is_ancestor_of_default.return_value = False
 
@@ -357,7 +357,6 @@ class TestRunSkillAutoLand:
         mock_parse.return_value = RunIntent(
             spec_id="001-demo",
             mode="semi",
-            strategies=("default",),
         )
         mock_coordinator_cls.return_value.run.side_effect = RuntimeError(
             "coordinator exploded"

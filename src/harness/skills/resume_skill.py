@@ -38,7 +38,7 @@ def resume(
         orchestration_root: Workspace that owns canonical specs and history.
     """
     # 1. Parse spec_id and answer
-    spec_id, strategy_id, answer = _parse_resume_input(user_message)
+    spec_id, answer = _parse_resume_input(user_message)
 
     if not spec_id:
         print("Which spec? Provide a spec ID (e.g., 'resume spec 012 ...').",
@@ -62,11 +62,11 @@ def resume(
         _bdir = builds[0] if builds else _build_dir_fn(base_path, "")
         _bid = _bdir.name if _bdir.name else ""
     state_dir = _bdir / "state"
-    state_store = StateStore(state_dir, spec_id, strategy_id)
+    state_store = StateStore(state_dir, spec_id, "default")
     state = state_store.read()
 
     if not state:
-        print(f"No state found for spec={spec_id}, strategy={strategy_id}.",
+        print(f"No state found for spec={spec_id}.",
               file=sys.stderr)
         return
 
@@ -87,13 +87,13 @@ def resume(
         logger.info("No escalation file -- resuming from guided mode pause")
 
     # 5. Re-enter the normal run/coordinator path so resume uses the same
-    # provider, LLM prompt, build id, and strategy wiring as delivery resume.
+    # provider, LLM prompt, and build id as delivery resume.
     from harness.config import load_config
     from harness.skills.run_skill import RunContextError, print_run_context_error, run
 
     mode = state.get("mode", "semi")
     run_message = (
-        f"spec {spec_id} strategy={strategy_id} mode={mode} resume\n\n"
+        f"spec {spec_id} mode={mode} resume\n\n"
         f"task: {answer}"
     )
     try:
@@ -111,28 +111,23 @@ def resume(
         raise SystemExit(1) from error
 
 
-def _parse_resume_input(text: str) -> tuple:
-    """Parse spec_id, strategy_id, and answer from text.
+def _parse_resume_input(text: str) -> tuple[str, str]:
+    """Parse spec_id and answer from text.
 
-    Returns: (spec_id, strategy_id, answer)
+    Returns: (spec_id, answer)
     """
     spec_match = re.search(r"(?:spec\s+|spec_id\s*[=:]\s*)(\w[\w-]*)", text, re.IGNORECASE)
     spec_id = spec_match.group(1) if spec_match else ""
-
-    strat_match = re.search(r"(?:strategy\s+|strategy_id\s*[=:]\s*)(\w[\w-]*)", text, re.IGNORECASE)
-    strategy_id = strat_match.group(1) if strat_match else "default"
 
     # Answer is everything after "answer:" or the main message content
     answer_match = re.search(r"(?:answer\s*[:=]\s*)(.*)", text, re.IGNORECASE | re.DOTALL)
     if answer_match:
         answer = answer_match.group(1).strip()
     else:
-        # Use the whole text minus the spec/strategy parts as the answer
+        # Use the whole text minus the spec part as the answer
         answer = text
         if spec_match:
             answer = answer[:spec_match.start()] + answer[spec_match.end():]
-        if strat_match:
-            answer = answer[:strat_match.start()] + answer[strat_match.end():]
         answer = answer.strip()
 
-    return spec_id, strategy_id, answer
+    return spec_id, answer

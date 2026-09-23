@@ -948,8 +948,7 @@ def run(
 
     # 1. Parse intent
     intent = parse_intent(user_message)
-    logger.info("Parsed run intent: spec=%s, mode=%s, strategies=%s",
-                intent.spec_id, intent.mode, intent.strategies)
+    logger.info("Parsed run intent: spec=%s, mode=%s", intent.spec_id, intent.mode)
 
     spec_dir = find_spec_dir(intent.spec_id, workspace_root)
     if orchestration_root is not None and spec_dir is None:

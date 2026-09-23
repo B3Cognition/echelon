@@ -39,14 +39,11 @@ Environment variables for `run`:
   HARNESS_MODE          optional  banzai | semi | guided  (default: semi)
   HARNESS_MAX_OUTER     optional  integer  (default: 12 meaningful observations)
   HARNESS_MAX_INNER     optional  integer  (default: 3)
-  HARNESS_STRATEGIES    optional  comma-separated strategy IDs  (default: default)
   HARNESS_AUTO_MERGE    optional  true | false  (default: false)
-  HARNESS_KILL_LOSERS   optional  true | false  (default: false)
   HARNESS_TOKEN_BUDGET  optional  integer token cap  (default: unlimited)
 
 Environment variables for `resume`:
   HARNESS_SPEC      required  spec ID
-  HARNESS_STRATEGY  optional  strategy ID  (default: default)
   HARNESS_ANSWER    required  answer text for the escalation question
 """
 
@@ -71,21 +68,15 @@ def _run() -> None:
     mode = os.environ.get("HARNESS_MODE", "semi").strip()
     max_outer = int(os.environ.get("HARNESS_MAX_OUTER", str(DEFAULT_MAX_OUTER)))
     max_inner = int(os.environ.get("HARNESS_MAX_INNER", "3"))
-    strategies_csv = os.environ.get("HARNESS_STRATEGIES", "default").strip()
     auto_merge = _bool_env("HARNESS_AUTO_MERGE")
-    kill_losers = _bool_env("HARNESS_KILL_LOSERS")
     token_budget_raw = os.environ.get("HARNESS_TOKEN_BUDGET", "").strip()
 
     # Build a message string that parse_intent can consume.
     parts = [f"spec {spec_id}", f"{mode} mode",
              f"max {max_outer} outer iterations",
              f"max {max_inner} inner iterations"]
-    if strategies_csv != "default":
-        parts.append(f"strategies={strategies_csv}")
     if auto_merge:
         parts.append("auto_merge")
-    if kill_losers:
-        parts.append("kill_losers")
     if token_budget_raw:
         parts.append(f"token_budget={token_budget_raw}")
     user_message = " ".join(parts)
@@ -111,7 +102,6 @@ def _run() -> None:
 
 def _resume() -> None:
     spec_id = os.environ.get("HARNESS_SPEC", "").strip()
-    strategy_id = os.environ.get("HARNESS_STRATEGY", "default").strip()
     answer = os.environ.get("HARNESS_ANSWER", "").strip()
 
     if not spec_id:
@@ -121,7 +111,7 @@ def _resume() -> None:
         print("HARNESS_ANSWER is required.", file=sys.stderr)
         sys.exit(1)
 
-    user_message = f"spec {spec_id} strategy {strategy_id} answer: {answer}"
+    user_message = f"spec {spec_id} answer: {answer}"
 
     from harness.config import load_config
     from harness.docker_provider import DockerWorktreeProvider

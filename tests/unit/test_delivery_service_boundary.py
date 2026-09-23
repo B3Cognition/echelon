@@ -111,16 +111,16 @@ def test_delivery_checkpoint_list_routes_typed_values(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "echelon.delivery_service.list_checkpoints",
-        lambda project_root, *, spec_id, strategy, extra_args=(): calls.append(
-            (project_root, spec_id, strategy, tuple(extra_args))
+        lambda project_root, *, spec_id, extra_args=(): calls.append(
+            (project_root, spec_id, tuple(extra_args))
         ),
     )
     result = CliRunner().invoke(
         app,
-        ["delivery", "checkpoint", "list", "001-demo", "--strategy", "safe"],
+        ["delivery", "checkpoint", "list", "001-demo"],
     )
     assert result.exit_code == 0
-    assert calls == [(Path.cwd(), "001-demo", "safe", ())]
+    assert calls == [(Path.cwd(), "001-demo", ())]
 
 
 def test_delivery_run_routes_immutable_request(monkeypatch):
@@ -136,10 +136,10 @@ def test_delivery_run_routes_immutable_request(monkeypatch):
         app,
         [
             "delivery", "run", "001-demo", "legacy=value",
-            "--mode", "banzai", "--strategy", "safe",
+            "--mode", "banzai",
             "--max-outer", "4", "--max-inner", "2",
             "--token-budget", "9000", "--no-auto-merge",
-            "--kill-losers", "--reset",
+            "--reset",
         ],
     )
     assert result.exit_code == 0
@@ -149,12 +149,10 @@ def test_delivery_run_routes_immutable_request(monkeypatch):
             spec_id="001-demo",
             extra_args=("legacy=value",),
             mode="banzai",
-            strategy="safe",
             max_outer=4,
             max_inner=2,
             token_budget=9000,
             auto_merge=False,
-            kill_losers=True,
             reset=True,
         ),
     )]
@@ -171,7 +169,7 @@ def test_delivery_resume_routes_answer_and_options(monkeypatch):
     )
     result = CliRunner().invoke(
         app,
-        ["delivery", "resume", "001-demo", "Use option 1", "--mode", "semi", "--strategy", "safe"],
+        ["delivery", "resume", "001-demo", "Use option 1", "--mode", "semi"],
     )
     assert result.exit_code == 0
     assert calls == [(
@@ -180,7 +178,6 @@ def test_delivery_resume_routes_answer_and_options(monkeypatch):
             spec_id="001-demo",
             answer="Use option 1",
             mode="semi",
-            strategy="safe",
         ),
     )]
 

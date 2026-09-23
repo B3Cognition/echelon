@@ -24,8 +24,6 @@ class TestRunIntentConstruction:
         assert intent.max_inner == 3
         assert intent.token_budget is None
         assert intent.auto_merge is True
-        assert intent.kill_losers is False
-        assert intent.strategies == ["default"]
         assert intent.resume is False
 
     def test_all_fields(self) -> None:
@@ -36,8 +34,6 @@ class TestRunIntentConstruction:
             max_inner=5,
             token_budget=500000,
             auto_merge=True,
-            kill_losers=True,
-            strategies=["aggressive", "conservative"],
         )
         assert intent.spec_id == "042"
         assert intent.mode == "banzai"
@@ -45,8 +41,6 @@ class TestRunIntentConstruction:
         assert intent.max_inner == 5
         assert intent.token_budget == 500000
         assert intent.auto_merge is True
-        assert intent.kill_losers is True
-        assert intent.strategies == ["aggressive", "conservative"]
 
 
 @pytest.mark.unit
@@ -65,10 +59,6 @@ class TestRunIntentValidation:
         """FR-MERGE-001: auto_merge + guided is forbidden."""
         with pytest.raises(IntentValidationError, match="FR-MERGE-001"):
             RunIntent(spec_id="012", mode="guided", auto_merge=True)
-
-    def test_empty_strategies_rejected(self) -> None:
-        with pytest.raises(IntentValidationError, match="non-empty"):
-            RunIntent(spec_id="012", strategies=[])
 
     def test_zero_budget_rejected(self) -> None:
         with pytest.raises(IntentValidationError, match="token_budget"):
@@ -113,12 +103,6 @@ class TestParseIntent:
         assert intent.spec_id == "012"
         assert intent.auto_merge is True
 
-    def test_with_kill_losers(self) -> None:
-        intent = parse_intent("spec 012 kill_losers strategies=aggressive,conservative")
-        assert intent.spec_id == "012"
-        assert intent.kill_losers is True
-        assert intent.strategies == ["aggressive", "conservative"]
-
     def test_with_inner_outer(self) -> None:
         intent = parse_intent("spec 012 max 10 outer iterations, max 5 inner iterations")
         assert intent.spec_id == "012"
@@ -133,8 +117,6 @@ class TestParseIntent:
         assert intent.max_inner == 3
         assert intent.token_budget is None
         assert intent.auto_merge is True
-        assert intent.kill_losers is False
-        assert intent.strategies == ["default"]
 
     def test_no_auto_merge(self) -> None:
         """Explicit negation disables auto_merge."""
@@ -161,12 +143,12 @@ class TestParseIntent:
 
     def test_task_description_extracted(self) -> None:
         """task: prefix is parsed into task_description."""
-        intent = parse_intent("spec 013 semi mode strategies=alternate task: fix the bug in bugfix-1.md")
+        intent = parse_intent("spec 013 semi mode task: fix the bug in bugfix-1.md")
         assert intent.task_description == "fix the bug in bugfix-1.md"
 
     def test_task_description_absent(self) -> None:
         """No task: prefix → task_description is empty string."""
-        intent = parse_intent("spec 013 semi mode strategies=alternate")
+        intent = parse_intent("spec 013 semi mode")
         assert intent.task_description == ""
 
     def test_task_description_multiword(self) -> None:
@@ -187,5 +169,11 @@ class TestParseIntent:
 
     def test_resume_flag_parsed_from_message(self) -> None:
         """resume marks a run as an explicit continuation request."""
-        intent = parse_intent("spec 001 strategy=default mode=semi resume")
+        intent = parse_intent("spec 001 mode=semi resume")
         assert intent.resume is True
+
+
+def test_run_intent_has_no_strategy_dimension() -> None:
+    fields = RunIntent.__dataclass_fields__
+    assert "strategies" not in fields
+    assert "kill_losers" not in fields

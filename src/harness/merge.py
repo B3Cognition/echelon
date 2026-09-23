@@ -1,8 +1,7 @@
 """Auto-merge logic with precondition checks.
 
-Per T046 / FR-MERGE-001 / FR-MERGE-002:
-- Preconditions: verify passed, converged, mode not guided, N=1 strategy
-- N>1 disables auto-merge
+Per T046 / FR-MERGE-001:
+- Preconditions: verify passed, converged, and mode not guided
 - Branch protection failure handled gracefully
 """
 
@@ -24,11 +23,10 @@ def attempt_auto_merge(
 ) -> bool:
     """Attempt auto-merge if all preconditions are met.
 
-    Per FR-MERGE-001, all four preconditions must pass:
+    Per FR-MERGE-001, all preconditions must pass:
     1. Verify passed (final_verify.passed = True)
     2. Status = converged
     3. Mode is banzai or semi (never guided)
-    4. N=1 strategy (FR-MERGE-002)
 
     Args:
         loop_result: Result from the ralph-loop.
@@ -38,15 +36,6 @@ def attempt_auto_merge(
     Returns:
         True if merge succeeded, False otherwise.
     """
-    # Check N > 1
-    if len(intent.strategies) > 1:
-        logger.info(
-            "Auto-merge disabled: N=%d strategies active. "
-            "Compare PRs and merge manually.",
-            len(intent.strategies),
-        )
-        return False
-
     # Check mode
     if intent.mode == "guided":
         logger.info("Auto-merge skipped: mode=guided requires human review")

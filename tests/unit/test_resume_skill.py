@@ -46,7 +46,7 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     with patch("harness.config.load_config", return_value=MagicMock()), \
          patch("harness.skills.run_skill.run") as mock_run:
         resume(
-            "resume spec 001 strategy default answer: use option A",
+            "resume spec 001 answer: use option A",
             provider=MagicMock(),
             gitops=MagicMock(),
             base_dir=str(tmp_path),
@@ -59,3 +59,4 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     assert mock_run.call_args.kwargs["orchestration_root"] == workspace
     assert "spec 001" in mock_run.call_args.args[0]
     assert "resume" in mock_run.call_args.args[0]
+    assert "strategy" not in mock_run.call_args.args[0]

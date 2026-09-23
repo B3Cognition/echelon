@@ -361,7 +361,7 @@ git commit -m "refactor: use one delivery result"
 - Consumes: single `DeliveryController` and fixed single-result adapters.
 - Produces: `DeliveryRunRequest` and `DeliveryRecoveryRequest` without strategy fields; `RunIntent` without `strategies` or `kill_losers`.
 
-- [ ] **Step 1: Write failing CLI and intent absence tests**
+- [x] **Step 1: Write failing CLI and intent absence tests**
 
 Add tests for the public contract:
 
@@ -383,7 +383,7 @@ Add CLI tests proving `delivery run/resume/continue/checkpoint list --strategy`
 and `delivery run --kill-losers` fail as unknown options. Keep a separate
 assertion that `delivery land --strategy merge` remains accepted.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -400,7 +400,7 @@ Run:
 Expected: the removed options still appear and the dataclass still exposes both
 fields.
 
-- [ ] **Step 3: Remove the typed and Typer option surface**
+- [x] **Step 3: Remove the typed and Typer option surface**
 
 Make the request types exactly:
 
@@ -431,7 +431,7 @@ Keep `DeliveryLandRequest.strategy` and `delivery land --strategy` unchanged.
 Use Typer’s ordinary unknown-option failure for the removed flags; do not accept
 or translate them.
 
-- [ ] **Step 4: Remove natural-language and environment parsing**
+- [x] **Step 4: Remove natural-language and environment parsing**
 
 Delete `_STRATEGIES_PATTERN`, `_KILL_LOSERS_PATTERN`, their parsing branches,
 validation, and fields from `RunIntent`. Build the run message without a
@@ -450,14 +450,14 @@ An extra positional token such as `strategy=foo` has no control meaning and is
 treated by the existing free-text rules; only the removed `--strategy` option
 must be rejected by Typer.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the command from Step 2.
 
 Expected: PASS, including the preserved `delivery land --strategy merge`
 coverage.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/echelon/cli_app.py src/echelon/delivery_service.py \

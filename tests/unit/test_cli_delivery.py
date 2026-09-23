@@ -292,7 +292,6 @@ def test_delivery_checkpoint_rejects_artifact_only_provider(
         delivery_service.list_checkpoints(
             tmp_path,
             spec_id="001-demo",
-            strategy=None,
         )
 
     assert exc.value.code == 2
