@@ -56,7 +56,7 @@ mandatory.
 - Consumes: `RalphController._state_store`, persisted `delivery_slice_operation`, and current iteration accounting.
 - Produces: `PendingSliceRecovery` and `RalphController._recover_pending_slice(...)` for Task 2.
 
-- [ ] **Step 1: Add failing seam tests**
+- [x] **Step 1: Add failing seam tests**
 
 Add direct characterization tests that require the new typed recovery boundary:
 
@@ -110,7 +110,7 @@ def test_pending_slice_recovery_blocks_unsafe_worktree_without_dispatch(
     controller._exec_build.assert_not_called()
 ```
 
-- [ ] **Step 2: Run the seam tests to verify RED**
+- [x] **Step 2: Run the seam tests to verify RED**
 
 Run:
 
@@ -122,7 +122,7 @@ Run:
 
 Expected: FAIL because `PendingSliceRecovery` and `_recover_pending_slice` do not exist.
 
-- [ ] **Step 3: Add the typed recovery result and extract existing behavior**
+- [x] **Step 3: Add the typed recovery result and extract existing behavior**
 
 Add beside the existing Ralph result dataclasses:
 
@@ -153,7 +153,7 @@ from `_run_loop_inner` into this method. Preserve the existing
 `delivery_reconciliation_required` finalization payload verbatim. Replace the
 inline block with one call and an immediate return when `blocked_result` is set.
 
-- [ ] **Step 4: Run focused recovery verification**
+- [x] **Step 4: Run focused recovery verification**
 
 Run:
 
@@ -166,7 +166,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py tests/unit/test_delivery_finalization.py

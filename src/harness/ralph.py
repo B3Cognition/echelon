@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -319,6 +320,15 @@ class _DocumentationBuildResult(dict):
     """Controller-only provenance for a taskless documentation completion."""
 
 
+@dataclass(frozen=True)
+class PendingSliceRecovery:
+    """Result of reconciling a persisted delivery slice operation."""
+
+    recovering: bool
+    worktree_path: str | None = None
+    blocked_result: ImplementationResult | None = None
+
+
 class RalphController:
     """Orchestrates the single delivery implementation loop.
 
@@ -385,6 +395,54 @@ class RalphController:
     def reuse_worktree_on_next_run(self, worktree_path: str) -> None:
         """Carry a downstream repair into the next Phase 1 verification run."""
         self._resume_worktree_path = worktree_path
+
+    def _recover_pending_slice(
+        self,
+        *,
+        outer_iter: int,
+        total_inner_iterations: int,
+        pr_url: str | None,
+        tokens_used: int,
+    ) -> PendingSliceRecovery:
+        """Reconcile a persisted slice before any fresh provider dispatch."""
+        pending_slice = self._state_store.read().get("delivery_slice_operation")
+        if pending_slice is None:
+            return PendingSliceRecovery(recovering=False)
+
+        preserved = (
+            pending_slice.get("worktree_path")
+            if isinstance(pending_slice, dict)
+            else None
+        )
+        if (
+            not isinstance(preserved, str)
+            or not Path(preserved).is_absolute()
+            or Path(preserved).is_symlink()
+            or not Path(preserved).is_dir()
+        ):
+            return PendingSliceRecovery(
+                recovering=True,
+                blocked_result=self._finalize(
+                    status="blocked",
+                    reason="delivery_reconciliation_required",
+                    outer_iterations=outer_iter,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                    extra_state={
+                        "build_reason": (
+                            "pending delivery candidate is missing or unsafe"
+                        )
+                    },
+                ),
+            )
+
+        self._resume_worktree_path = None
+        return PendingSliceRecovery(
+            recovering=True,
+            worktree_path=preserved,
+        )
 
     def run_loop(
         self,
@@ -514,20 +572,17 @@ class RalphController:
                     final_verify=None,
                 )
 
-            pending_slice = self._state_store.read().get("delivery_slice_operation")
-            recovering_slice = pending_slice is not None
-            if recovering_slice:
-                preserved = pending_slice.get("worktree_path") if isinstance(pending_slice, dict) else None
-                if (not isinstance(preserved, str) or not Path(preserved).is_absolute()
-                        or Path(preserved).is_symlink() or not Path(preserved).is_dir()):
-                    return self._finalize(
-                        status="blocked", reason="delivery_reconciliation_required",
-                        outer_iterations=outer_iter, inner_iterations=total_inner_iterations,
-                        pr_url=pr_url, tokens_used=tokens_used, final_verify=None,
-                        extra_state={"build_reason": "pending delivery candidate is missing or unsafe"},
-                    )
-                self._resume_worktree_path = None
-                worktree_path = preserved
+            recovery = self._recover_pending_slice(
+                outer_iter=outer_iter,
+                total_inner_iterations=total_inner_iterations,
+                pr_url=pr_url,
+                tokens_used=tokens_used,
+            )
+            if recovery.blocked_result is not None:
+                return recovery.blocked_result
+            recovering_slice = recovery.recovering
+            if recovery.worktree_path is not None:
+                worktree_path = recovery.worktree_path
             # Create worktree — use feature branch when available so spec artifacts
             # (spec.md, tasks.md, constitution.md) are present from the start.
             elif self._resume_worktree_path and outer_iter == start_outer:
