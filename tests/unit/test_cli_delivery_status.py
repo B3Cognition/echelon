@@ -124,7 +124,7 @@ def _write_escalation(project_root: Path) -> Path:
 
 @pytest.mark.unit
 def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step(
         {
@@ -142,7 +142,7 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": status}, "001")
 
@@ -151,7 +151,7 @@ def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
 
 @pytest.mark.unit
 def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": "running"}, "001")
 

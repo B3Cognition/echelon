@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from echelon.cli import _harness_init_detection_fields, _harness_init_next_step
+from echelon.delivery_service import (
+    _harness_init_detection_fields,
+    _harness_init_next_step,
+)
 
 
 @pytest.mark.unit

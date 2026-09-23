@@ -293,7 +293,7 @@ def test_delivery_provisioning_gate_is_scoped_to_each_polyrepo_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _delivery_provisioning_blockers
+    from echelon.delivery_service import _delivery_provisioning_blockers
 
     workspace = tmp_path / "workspace"
     config_file = workspace / ".echelon" / "config.yml"
@@ -381,7 +381,7 @@ def test_multi_target_delivery_applies_real_provisioning_gate_per_target(
         "import os\nimport sys\n"
         "from pathlib import Path\n"
         f"sys.path.insert(0, {str(source_root)!r})\n"
-        "from echelon.cli import _block_if_delivery_provisioning_incomplete\n"
+        "from echelon.delivery_service import _block_if_delivery_provisioning_incomplete\n"
         "target = Path(os.environ['ECHELON_TARGET_REPO_PATH'])\n"
         "_block_if_delivery_provisioning_incomplete(\n"
         "    project_root=Path(os.environ['ECHELON_POLYREPO_ROOT']),\n"

@@ -34,7 +34,7 @@ class TestCmdLand:
     def test_top_level_land_help_points_to_delivery_land(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["--help"])
@@ -48,7 +48,7 @@ class TestCmdLand:
     def test_land_option_errors_use_delivery_namespace(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["001", "--wat"])
@@ -61,7 +61,7 @@ class TestCmdLand:
     def test_land_unexpected_argument_errors_use_delivery_namespace(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["001", "extra"])
@@ -78,7 +78,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """land() is called with spec_id, project_dir, and gitops."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         expected_cwd = Path.cwd()
 
@@ -110,7 +110,7 @@ class TestCmdLand:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from echelon.cli import HarnessWorkspaceTarget, _cmd_land
+        from echelon.delivery_service import HarnessWorkspaceTarget, _cmd_land
 
         root = tmp_path
         spec_dir = root / "specs" / "001-demo"
@@ -134,7 +134,7 @@ class TestCmdLand:
             )
 
         monkeypatch.chdir(root)
-        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
+        monkeypatch.setattr("echelon.delivery_service._resolve_harness_workspace_target", fake_resolve)
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as run_multi:
             with pytest.raises(SystemExit) as exc_info:
                 _cmd_land(["001", "--continue"])
@@ -160,7 +160,7 @@ class TestCmdLand:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         workspace = tmp_path / "workspace"
         target = workspace / "sources" / "prosaic"
@@ -178,7 +178,7 @@ class TestCmdLand:
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
 
         with (
-            patch("echelon.cli._sync_polyrepo_runtime_extension") as sync_ext,
+            patch("echelon.delivery_service._sync_polyrepo_runtime_extension") as sync_ext,
             patch("harness.paths.mirror_path", return_value=harness_base / "runs" / "mirror.git"),
             pytest.raises(SystemExit) as exc_info,
         ):
@@ -205,7 +205,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """--continue tells land() to continue an existing preparation."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -225,7 +225,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """--prepare-only and --no-autoresolve are forwarded as LandOptions."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -238,7 +238,7 @@ class TestCmdLand:
         assert options.prepare_only is True
         assert options.autoresolve is False
 
-    @patch("echelon.cli._archive_squad_run")
+    @patch("echelon.delivery_service._archive_squad_run")
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")
@@ -246,7 +246,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land, mock_archive, capsys
     ):
         """A prepare-only success is not treated as a completed landing."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -268,7 +268,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """--strategy rebase is forwarded as LandOptions.strategy."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -284,7 +284,7 @@ class TestCmdLand:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from echelon.cli import _archive_squad_run
+        from echelon.delivery_service import _archive_squad_run
 
         run_dir = tmp_path / "runs" / "spec-1"
         run_dir.mkdir(parents=True)
@@ -305,7 +305,7 @@ class TestCmdLand:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from echelon.cli import _archive_squad_run
+        from echelon.delivery_service import _archive_squad_run
 
         run_dir = tmp_path / "runs" / "spec-1"
         run_dir.mkdir(parents=True)
@@ -331,7 +331,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """--strategy merge is forwarded as LandOptions.strategy."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -349,7 +349,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """--allow-fulfillment-gaps permits landing despite fulfillment report gaps."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -362,7 +362,7 @@ class TestCmdLand:
 
     def test_missing_strategy_value_exits_1(self, capsys):
         """--strategy requires an explicit merge or rebase value."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["042", "--strategy"])
@@ -373,7 +373,7 @@ class TestCmdLand:
 
     def test_invalid_strategy_value_exits_1(self, capsys):
         """--strategy rejects values other than merge or rebase."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["042", "--strategy", "squash"])
@@ -384,7 +384,7 @@ class TestCmdLand:
 
     def test_unknown_land_flag_exits_1(self, capsys):
         """Unknown land flags are rejected instead of silently ignored."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["042", "--no-autresolve"])
@@ -396,7 +396,7 @@ class TestCmdLand:
 
     def test_flag_shaped_first_arg_exits_1(self, capsys):
         """The spec id cannot be replaced by an option-like token."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land(["--continue", "042"])
@@ -413,7 +413,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """Exit code 0 when land() returns True."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -431,7 +431,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
         """Exit code 1 when land() returns False."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -452,7 +452,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
         """A success message is printed when land() returns True."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -472,7 +472,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
         """A failure message is printed to stderr when land() returns False."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -491,7 +491,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """GitOpsManager is instantiated with the loaded config."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_config = MagicMock()
         mock_load_config.return_value = mock_config
@@ -501,7 +501,10 @@ class TestCmdLand:
         with pytest.raises(SystemExit):
             _cmd_land(["099"])
 
-        mock_gitops_cls.assert_called_once_with(mock_config)
+        mock_gitops_cls.assert_called_once_with(
+            mock_config,
+            base_dir=str(Path.cwd()),
+        )
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
@@ -510,7 +513,7 @@ class TestCmdLand:
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """If land() raises an exception, it propagates (not silently caught)."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.return_value = MagicMock()
         mock_gitops_cls.return_value = MagicMock()
@@ -521,7 +524,7 @@ class TestCmdLand:
 
     def test_no_args_shows_help(self, capsys):
         """Calling land with no arguments shows help and exits 0."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land([])
@@ -533,7 +536,7 @@ class TestCmdLand:
     @pytest.mark.parametrize("flag", ["-h", "--help"])
     def test_help_flag_shows_help(self, flag, capsys):
         """Calling land with -h or --help shows help and exits 0."""
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         with pytest.raises(SystemExit) as exc_info:
             _cmd_land([flag])
@@ -546,7 +549,7 @@ class TestCmdLand:
     def test_config_validation_error_exits_1(self, mock_load_config, capsys):
         """If load_config() raises ValidationError, exit 1 with user-friendly message."""
         from harness.config import ValidationError as HarnessValidationError
-        from echelon.cli import _cmd_land
+        from echelon.delivery_service import _cmd_land
 
         mock_load_config.side_effect = HarnessValidationError("bad config")
 
