@@ -127,7 +127,7 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
         store.transition("verified", updates={"last_completed_phase": "review"})
         store.transition("finalizing")
 
-    _mark_current_harness_state_blocked(tmp_path, "003", "default", "harness_error", "boom")
+    _mark_current_harness_state_blocked(tmp_path, "003", "harness_error", "boom")
 
     state = store.read()
     assert state["status"] == "blocked"
@@ -147,7 +147,7 @@ def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: 
     store.transition("finalizing")
     store.transition("converged", updates={"termination_reason": "converged"})
 
-    _mark_current_harness_state_blocked(tmp_path, "003", "default", "harness_error", "post-run")
+    _mark_current_harness_state_blocked(tmp_path, "003", "harness_error", "post-run")
 
     assert store.read()["status"] == "converged"
 
@@ -164,9 +164,7 @@ def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp
         store.initialize("run-1", "semi", enabled_phases=["implementation", "finalization"])
         store.transition("running")
 
-    _mark_current_harness_state_blocked(
-        target_root, "003", "default", "harness_error", "target crash"
-    )
+    _mark_current_harness_state_blocked(target_root, "003", "harness_error", "target crash")
 
     assert target.read()["status"] == "blocked"
     assert target.read()["blocked_phase"] == "implementation"

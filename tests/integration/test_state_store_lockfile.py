@@ -43,7 +43,7 @@ class TestLockAcquireRelease:
         """Stale lock (dead PID) reclaimed with warning."""
         store = StateStore(tmp_path, "spec-001")
 
-        # Write a lock with a dead PID directly at the per-strategy lock path
+        # Write a lock with a dead PID directly at the run-scoped lock path
         lock_file = tmp_path / "delivery.lock"
         lock_file.write_text(
             "pid=999999999\ntimestamp=2026-01-01T00:00:00Z\nrun_id=old-run\n",

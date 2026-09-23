@@ -307,7 +307,7 @@ def test_documentation_downstream_feedback_respects_current_budget(documentation
     store.write(state)
     result = controller.run_downstream_feedback(
         handle=None, worktree_path=str(root), verify_result=_failure("docs-missing"),
-        build_command="echelon build", strategy_context="", build_prompt="build", phase="visual")
+        build_command="echelon build", delivery_context="", build_prompt="build", phase="visual")
     assert not result["passed"] and result["build_reason"] == "delivery_documentation_budget_exhausted", result
     assert len(executor.calls) == dispatches
     assert store.read()["tokens_used"] == used + dispatches * 7

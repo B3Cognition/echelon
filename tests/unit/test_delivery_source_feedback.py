@@ -62,7 +62,7 @@ def _accepted(slice_project, tmp_path, monkeypatch, mode="semi", cli="codex"):
 def _downstream(controller, root, *, phase="visual", base="Keep the isometric camera."):
     return controller.run_downstream_feedback(
         handle=None, worktree_path=str(root), verify_result=_failure(mixed=True),
-        build_command="echelon build", strategy_context="Preserve keyboard movement.",
+        build_command="echelon build", delivery_context="Preserve keyboard movement.",
         build_prompt=base, phase=phase, evidence_paths=("evidence/screenshot.png",),
     )
 
@@ -118,7 +118,7 @@ def test_actual_repair_roles_receive_one_contract_and_complete_evidence(
         assert context["failures"][1]["details"]["test_cases"]["UT-GREETING-000001"]["status"] == "unbound"
         assert context["context"] == {
             "base_prompt": "Keep the isometric camera.",
-            "strategy_context": "Preserve keyboard movement.",
+            "delivery_context": "Preserve keyboard movement.",
             "phase": route, "inner_iteration": 1 if route == "inner" else 0,
             "evidence_paths": [] if route == "inner" else ["evidence/screenshot.png"],
         }

@@ -118,14 +118,14 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
 
 
 class TestStaleCancelRequestedClearedOnResume:
-    """Regression: stale cancel_requested from a previous Ctrl+C/coordinator cancel
+    """Regression: stale cancel_requested from a previous interrupted run
     must not block the next run from proceeding.
 
     Mirrors test_stale_cancel_requested_cleared_on_resume from the squad harness
     (tests/integration/test_squad_controller.py).
 
-    Scenario: the coordinator wrote cancel_requested=True to this strategy's state
-    (kill_losers), the strategy's process ended, and on re-invocation the state file
+    Scenario: an earlier process wrote cancel_requested=True, then ended, and on
+    re-invocation the state file
     still has cancel_requested=True from the previous run.  The new invocation calls
     initialize() which resets to status=initialized but a race or other codepath could
     leave cancel_requested stale.  The fix in _run_loop_inner clears it immediately
@@ -138,11 +138,10 @@ class TestStaleCancelRequestedClearedOnResume:
         controller, state_store = _make_controller(tmp_path)
 
         # Simulate: fresh initialize(), then a stale cancel_requested is present
-        # (e.g. written by coordinator kill_losers on the previous run, before
-        # initialize() flushed it, or by any other pre-existing path).
+        # (e.g. written during interruption before initialize() flushed it).
         state_store.initialize("run-fresh", "semi")
         # Inject cancel_requested=True directly into the initialized state,
-        # mirroring what the coordinator's kill_losers path does.
+        # mirroring an interrupted cancellation write.
         state = state_store.read()
         state["cancel_requested"] = True
         state_store.write(state)

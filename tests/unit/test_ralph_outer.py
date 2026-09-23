@@ -3701,7 +3701,7 @@ class TestPromptHelpers:
             token_budget=None,
             state={},
             build_command="echelon build",
-            strategy_context="",
+            delivery_context="",
             worktree_path=str(tmp_path),
             build_prompt="spec 001",
         )

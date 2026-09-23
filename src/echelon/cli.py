@@ -197,19 +197,19 @@ Commands:
 
   delivery init                              Initialize delivery environment: sandbox, mirror, verify.
   delivery target <spec_id>                  Prepare target-scoped delivery metadata from spec targets.
-  delivery status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state.
+  delivery status [spec_id]                  Show current Phase B delivery/Ralph state.
   delivery verify-local <spec_id> [--target <id>] [--engine auto|docker|podman] [--yes]
                                             Explicit macOS local verification; does not affect landing.
   delivery cleanup-local <local-run-id>      Recover one journalled local verification run.
-  delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
-                    [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
+  delivery run <spec_id> [--mode <m>] [--max-outer <n>] [--max-inner <n>]
+                    [--token-budget <n>] [--auto-merge|--no-auto-merge] [--reset]
                                             Run build→verify→PR loop.
                     Legacy key=value options remain accepted for compatibility.
-  delivery continue <spec_id> [--strategy <s>] [--mode <guided|semi|banzai>]
+  delivery continue <spec_id> [--mode <guided|semi|banzai>]
                                             Continue a blocked delivery run without a new answer.
-  delivery resume <spec_id> "<answer>" [--strategy <s>] [--mode <guided|semi|banzai>]
+  delivery resume <spec_id> "<answer>" [--mode <guided|semi|banzai>]
                                             Resume a blocked delivery run with a human answer.
-  delivery checkpoint list <spec_id> [--strategy <s>]
+  delivery checkpoint list <spec_id>
                                             List delivery checkpoint/recovery commits.
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]

@@ -131,7 +131,7 @@ def run_multi_target(
     Args:
         spec_id: Spec ID to pass to each harness run.
         targets: List of resolved absolute target paths.
-        extra_args: Additional CLI args to forward (e.g. ["strategy=alternate"]).
+        extra_args: Additional CLI args to forward (e.g. ["mode=banzai"]).
         echelon_bin: Path to echelon binary (resolved from PATH if None).
     """
     if echelon_bin is None:

@@ -809,7 +809,7 @@ git commit -m "refactor: remove delivery strategy identity"
 - Produces: a deleted implementation surface backed by the executable CLI,
   state, controller, recovery, and integration contracts from Tasks 1–5.
 
-- [ ] **Step 1: Re-run the executable cutover contracts before deletion**
+- [x] **Step 1: Re-run the executable cutover contracts before deletion**
 
 Run the behavior suites that would expose any remaining dependency on the
 retired modules:
@@ -828,14 +828,14 @@ retired modules:
 Expected: PASS. These tests execute the replacement behavior; no test inspects
 source text merely to freeze a private structure.
 
-- [ ] **Step 2: Delete dead modules/tests and stale references**
+- [x] **Step 2: Delete dead modules/tests and stale references**
 
 Delete the three production modules and their strategy-only tests. Remove
 multi-strategy factories from `tests/e2e/conftest.py` and stale coordinator
 wording from active module docstrings. Do not edit historical specs, findings,
 plans, changelog entries, or receipts merely because they record the old design.
 
-- [ ] **Step 3: Update current documentation and milestone tracking**
+- [x] **Step 3: Update current documentation and milestone tracking**
 
 Document only:
 
@@ -850,7 +850,7 @@ choice. In `docs/simplification-control.md`, check off the cutover items, record
 focused evidence, and set the next S4 action to writing the Ralph durable-step
 decomposition plan. Do not mark S4 complete yet.
 
-- [ ] **Step 4: Run static absence checks**
+- [x] **Step 4: Run static absence checks**
 
 Run:
 
@@ -866,7 +866,7 @@ Expected: every command exits zero. Review remaining `strategy` matches manually
 and confirm they belong to landing, Spec authoring, discovery, or historical
 documents.
 
-- [ ] **Step 5: Run focused Delivery verification**
+- [x] **Step 5: Run focused Delivery verification**
 
 Run:
 
@@ -891,7 +891,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the completed cutover**
+- [x] **Step 6: Commit the completed cutover**
 
 ```bash
 git add -A

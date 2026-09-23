@@ -4,7 +4,7 @@ Provides shared fixtures for ralph-loop E2E tests:
 - Stub LLM setup
 - Temp directories for state/escalation/git
 - Mock gitops manager
-- Pre-configured RalphController and StrategyCoordinator factories
+- Pre-configured RalphController factories
 """
 
 from __future__ import annotations
