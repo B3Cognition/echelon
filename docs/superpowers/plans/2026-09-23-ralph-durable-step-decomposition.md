@@ -21,6 +21,28 @@
 - Add characterization coverage before moving each behavior boundary.
 - Keep every task independently green and commit it before beginning the next task.
 
+## Approved Execution Amendment
+
+The user approved a characterization-first exception for this pure refactor.
+For Tasks 1-9, this section supersedes each instruction to add a failing test
+whose only failure is the absence of a new private method or result type:
+
+1. name the existing observable state, result, or side effect protected by the
+   extraction;
+2. run its existing behavior/recovery tests green before editing production
+   code;
+3. add a behavior-level characterization test only when that observable
+   contract is not already covered;
+4. never assert that a private extraction method exists, and never assert on a
+   mock merely to prove internal delegation;
+5. extract the minimum code behind the planned typed seam;
+6. rerun the same behavior/recovery partition after the extraction.
+
+The code snippets for private-seam RED tests remain design examples for the
+intended signatures, not tests to copy into the suite. All production behavior,
+state-contract, focused-verification, commit, and repository-gate steps remain
+mandatory.
+
 ---
 
 ### Task 1: Extract pending-slice recovery
