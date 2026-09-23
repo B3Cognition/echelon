@@ -339,6 +339,18 @@ class PreparedIteration:
     blocked_result: ImplementationResult | None = None
 
 
+@dataclass(frozen=True)
+class ControlledSliceDispatch:
+    """Immediate evidence from one controlled delivery-slice dispatch."""
+
+    before_state: dict[str, Any]
+    before_head: str | None
+    after_head: str | None
+    build_result: dict[str, Any] | None
+    tokens_used: int
+    terminal_result: ImplementationResult | None = None
+
+
 class RalphController:
     """Orchestrates the single delivery implementation loop.
 
@@ -542,6 +554,156 @@ class RalphController:
             recovering_slice=recovery.recovering,
         )
 
+    def _dispatch_controlled_slice(
+        self,
+        *,
+        worktree_path: str,
+        outer_iter: int,
+        build_command: str,
+        delivery_context: str,
+        build_prompt: str,
+        last_verify_failures_text: str,
+        tokens_used: int,
+        token_budget: int | None,
+        total_inner_iterations: int,
+        pr_url: str | None,
+    ) -> ControlledSliceDispatch:
+        """Dispatch one controlled slice and validate its immediate evidence."""
+        _clear_build_status(worktree_path)
+        iter_prompt = self._make_iter_prompt(
+            build_prompt,
+            outer_iter,
+            last_verify_failures_text,
+        )
+        before_build_state = self._state_store.read()
+        containment_before = _snapshot_containment_projects(
+            before_build_state,
+            getattr(self._gitops, "base_dir", None),
+            worktree_path,
+        )
+        before_build_head = self._current_head(worktree_path)
+        self._controlled_slice_budget = (
+            token_budget * 0.95 - tokens_used
+            if token_budget and token_budget > 0
+            else None
+        )
+        build_result = self._exec_build(
+            None,
+            build_command,
+            delivery_context,
+            worktree_path=worktree_path,
+            prompt=iter_prompt,
+        )
+        after_build_head = self._current_head(worktree_path)
+
+        source_root_violation = self._detect_forbidden_source_root_access(
+            before_build_state,
+            build_result,
+        )
+        if source_root_violation is not None:
+            _print_source_root_containment_violation_banner(
+                self._spec_id,
+                source_root_violation,
+            )
+            return ControlledSliceDispatch(
+                before_state=before_build_state,
+                before_head=before_build_head,
+                after_head=after_build_head,
+                build_result=build_result,
+                tokens_used=tokens_used,
+                terminal_result=self._finalize(
+                    status="blocked",
+                    reason="containment_violation",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                    extra_state={
+                        "source_root_containment_violation": source_root_violation,
+                    },
+                ),
+            )
+
+        harness_source_violation = self._detect_forbidden_harness_source_access(
+            build_result,
+            worktree_path=worktree_path,
+        )
+        if harness_source_violation is not None:
+            _print_harness_source_containment_violation_banner(
+                self._spec_id,
+                harness_source_violation,
+            )
+            return ControlledSliceDispatch(
+                before_state=before_build_state,
+                before_head=before_build_head,
+                after_head=after_build_head,
+                build_result=build_result,
+                tokens_used=tokens_used,
+                terminal_result=self._finalize(
+                    status="blocked",
+                    reason="containment_violation",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                    extra_state={
+                        "harness_source_containment_violation": harness_source_violation,
+                    },
+                ),
+            )
+
+        containment_violation = _detect_first_containment_violation(
+            containment_before,
+            worktree_path,
+        )
+        if containment_violation is not None:
+            _print_containment_violation_banner(
+                self._spec_id,
+                containment_violation,
+            )
+            return ControlledSliceDispatch(
+                before_state=before_build_state,
+                before_head=before_build_head,
+                after_head=after_build_head,
+                build_result=build_result,
+                tokens_used=tokens_used,
+                terminal_result=self._finalize(
+                    status="blocked",
+                    reason="containment_violation",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                    extra_state={
+                        "containment_violation": containment_violation,
+                    },
+                ),
+            )
+
+        tokens_used += _known_token_count(build_result.get("tokens"))
+        self._enforce_completed_task_ids(build_result, worktree_path)
+        self._append_iteration_log(
+            before_build_state,
+            outer_iter,
+            0,
+            "build",
+            build_result.get("exit_code", 0),
+            build_result.get("passed", True),
+            build_result.get("duration_s", 0.0),
+            build_result.get("tokens"),
+            provider_invocation=build_result.get("provider_invocation"),
+        )
+        return ControlledSliceDispatch(
+            before_state=before_build_state,
+            before_head=before_build_head,
+            after_head=after_build_head,
+            build_result=build_result,
+            tokens_used=tokens_used,
+        )
+
     def run_loop(
         self,
         max_outer: int = DEFAULT_MAX_OUTER,
@@ -704,109 +866,27 @@ class RalphController:
                 handle: Optional[SandboxHandle] = None
 
                 try:
-                    # Clear stale build status before each iteration so a
-                    # status file committed from a prior build on this branch
-                    # cannot be mistaken for this build completing successfully.
-                    _clear_build_status(worktree_path)
-
-                    # Run build
-                    iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
-                    before_build_state = self._state_store.read()
-                    containment_before = _snapshot_containment_projects(
-                        before_build_state,
-                        getattr(self._gitops, "base_dir", None),
-                        worktree_path,
-                    )
-                    before_build_head = self._current_head(worktree_path)
-                    self._controlled_slice_budget = (
-                        token_budget * 0.95 - tokens_used if token_budget and token_budget > 0 else None
-                    )
-                    build_result = self._exec_build(
-                        handle, build_command, delivery_context,
+                    dispatch = self._dispatch_controlled_slice(
                         worktree_path=worktree_path,
-                        prompt=iter_prompt,
+                        outer_iter=outer_iter,
+                        build_command=build_command,
+                        delivery_context=delivery_context,
+                        build_prompt=build_prompt,
+                        last_verify_failures_text=last_verify_failures_text,
+                        tokens_used=tokens_used,
+                        token_budget=token_budget,
+                        total_inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
                     )
-                    after_build_head = self._current_head(worktree_path)
-                    source_root_violation = self._detect_forbidden_source_root_access(
-                        before_build_state,
-                        build_result,
-                    )
-                    if source_root_violation is not None:
+                    tokens_used = dispatch.tokens_used
+                    if dispatch.terminal_result is not None:
                         preserve_worktree = True
-                        _print_source_root_containment_violation_banner(
-                            self._spec_id,
-                            source_root_violation,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="containment_violation",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=None,
-                            extra_state={
-                                "source_root_containment_violation": source_root_violation,
-                            },
-                        )
-                    harness_source_violation = self._detect_forbidden_harness_source_access(
-                        build_result,
-                        worktree_path=worktree_path,
-                    )
-                    if harness_source_violation is not None:
-                        preserve_worktree = True
-                        _print_harness_source_containment_violation_banner(
-                            self._spec_id,
-                            harness_source_violation,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="containment_violation",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=None,
-                            extra_state={
-                                "harness_source_containment_violation": harness_source_violation,
-                            },
-                        )
-                    containment_violation = _detect_first_containment_violation(
-                        containment_before,
-                        worktree_path,
-                    )
-                    if containment_violation is not None:
-                        preserve_worktree = True
-                        _print_containment_violation_banner(
-                            self._spec_id,
-                            containment_violation,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="containment_violation",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=None,
-                            extra_state={
-                                "containment_violation": containment_violation,
-                            },
-                        )
-                    tokens_used += _known_token_count(build_result.get("tokens"))
-                    self._enforce_completed_task_ids(build_result, worktree_path)
-
-                    build_log_phase = "build"
-
-                    # Log build iteration
-                    self._append_iteration_log(
-                        state, outer_iter, 0, build_log_phase,
-                        build_result.get("exit_code", 0),
-                        build_result.get("passed", True),
-                        build_result.get("duration_s", 0.0),
-                        build_result.get("tokens"),
-                        provider_invocation=build_result.get("provider_invocation"),
-                    )
+                        return dispatch.terminal_result
+                    before_build_state = dispatch.before_state
+                    before_build_head = dispatch.before_head
+                    after_build_head = dispatch.after_head
+                    build_result = dispatch.build_result
+                    assert build_result is not None
                     scoped_completed_task_ids = _clean_task_ids(
                         build_result.get("task_ids")
                     )

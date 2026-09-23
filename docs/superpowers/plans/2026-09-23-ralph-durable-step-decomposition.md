@@ -317,7 +317,7 @@ git commit -m "refactor: extract Ralph iteration preparation"
 - Consumes: a `PreparedIteration`, prompt/context inputs, and current token accounting.
 - Produces: `ControlledSliceDispatch` and `RalphController._dispatch_controlled_slice(...)` for Task 4.
 
-- [ ] **Step 1: Add failing dispatch-boundary tests**
+- [x] **Step 1: Add failing dispatch-boundary tests**
 
 ```python
 def test_dispatch_controlled_slice_returns_evidence_without_applying_progress(
@@ -353,7 +353,7 @@ def test_dispatch_controlled_slice_returns_evidence_without_applying_progress(
 Add a second case that returns the unchanged `containment_violation` terminal
 result and asserts no progress mutation occurs.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -364,7 +364,7 @@ Run:
 
 Expected: FAIL because the typed dispatch seam does not exist.
 
-- [ ] **Step 3: Extract provider dispatch and containment checks**
+- [x] **Step 3: Extract provider dispatch and containment checks**
 
 Add:
 
@@ -404,7 +404,7 @@ Move the stale-status clear, prompt construction, containment snapshots,
 accounting, completed-task-ID validation, and build iteration log into this
 method. Do not apply canonical task progress or commit a checkpoint here.
 
-- [ ] **Step 4: Run dispatch and containment verification**
+- [x] **Step 4: Run dispatch and containment verification**
 
 Run:
 
@@ -417,7 +417,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py tests/unit/test_delivery_source_feedback.py
