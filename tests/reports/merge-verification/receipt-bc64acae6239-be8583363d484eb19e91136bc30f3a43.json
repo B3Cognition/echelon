@@ -1,0 +1,51 @@
+{
+  "plan": {
+    "base_commit": "3abca341ae0d84623d74387e112d9662e8d723f6",
+    "candidate_commit": "bc64acae6239c24084401b96f54c699cfc0be041",
+    "candidate_tree": "a33bbb1b7e517327b4851167214901e92fc15b9d",
+    "changed_paths": [
+      "docs/superpowers/plans/2026-09-22-delivery-service-cutover.md",
+      "src/echelon/cli.py",
+      "src/echelon/cli_app.py",
+      "src/echelon/delivery_service.py",
+      "src/echelon/delivery_status.py",
+      "tests/integration/test_egr_151_lifecycle_flow.py",
+      "tests/unit/test_cli_delivery.py",
+      "tests/unit/test_cli_delivery_local.py",
+      "tests/unit/test_cli_delivery_status.py",
+      "tests/unit/test_cli_harness_init_summary.py",
+      "tests/unit/test_cli_harness_resume.py",
+      "tests/unit/test_cli_harness_run.py",
+      "tests/unit/test_cli_typer_app.py",
+      "tests/unit/test_delivery_service_boundary.py",
+      "tests/unit/test_harness_single_repo_unchanged.py",
+      "tests/unit/test_land_cli.py"
+    ],
+    "commands": [
+      [
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ]
+    ],
+    "requires_full_suite": true,
+    "scope": "full-unit"
+  },
+  "results": [
+    {
+      "command": [
+        "/Users/michalbachorik/work/echelon_r/echelon/.worktrees/delivery-service-cutover/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ],
+      "duration_ms": 1774877,
+      "exit_code": 1
+    }
+  ],
+  "schema_version": 1,
+  "status": "failed"
+}
