@@ -66,6 +66,7 @@ starting another.
 | 2026-09-23 | S3 | Completed. All nine public and two hidden RE routes use the `echelon.re_service` typed quarantine facade; `echelon.cli` retains the protocol kernel for S6. Final review correction `3e648dc5` restores malformed `re resume` compatibility by letting the unchanged kernel validate through the facade: RED was 4 output-contract failures, GREEN was 4 passed in 10.46s; adding the missing module marker changed the boundary selection from 27 deselected/exit 5 to 27 passed in 10.36s. The focused RE/CLI suite passed 275 tests in 38.83s. Structural acceptance still has no `_legacy_cli()` call in `src/echelon/cli_app.py`; executable-tree recount remains 104 public, 23 hidden, zero direct public or hidden `_legacy_cli()` consumers, and 104 modular public routes. The single repository gate against `bfdb744c` tested commit `3e648dc5ab1907b07c3e5cf9922381d8b9e697bc`, tree `21b0b54adcb157d18ff7fa59822735e8f495de4f`: 9,853 passed, 0 skipped, 11,438 deselected, 0 failures in 2,121.92s (35m21.92s); receipt subprocess duration 2,124,409ms, exit 0. Receipt: `tests/reports/merge-verification/receipt-3e648dc5ab19-9a15640fb46a41918b2d6d2807f60395.json`. |
 | 2026-09-23 | S4 | Activated after all S3 exit checks passed. Next action: inventory the durable Delivery controller steps before any decomposition. RE protocol consolidation remains assigned to S6. |
 | 2026-09-23 | S4 | Inventory confirmed that every active Delivery command reaches `StrategyCoordinator`, but production always uses its single built-in `default` path. The coordinator nevertheless owns state initialization/resume, phase routing, result comparison, budget splitting, thread fan-out, peer cancellation, and finalization; its `_run_strategy` method is approximately 1,000 lines, as is `RalphController._run_loop_inner`. Approved hard cutover removes the Delivery strategy concept entirely, does not support historical strategy state, introduces one run-scoped `DeliveryController`, and then extracts one existing durable checkpoint at a time. Design: `docs/superpowers/specs/2026-09-23-single-delivery-controller-design.md`. |
+| 2026-09-23 | S4 | Single-run cutover implementation plan written as `docs/superpowers/plans/2026-09-23-single-delivery-controller-cutover.md`. It separates the deletion-first cutover from the later Ralph loop decomposition so each has an independent green repository gate. |
 
 ## S2 Work Queue
 
@@ -105,8 +106,10 @@ starting another.
 - [x] Inventory the active Delivery call path and durable controller checkpoints.
 - [x] Confirm that multi-strategy execution is not a supported product mode.
 - [x] Approve the single-run hard-cutover boundary and historical-state policy.
-- [ ] Review and approve the written S4 design.
-- [ ] Write and review the implementation plan.
+- [x] Review and approve the written S4 design.
+- [x] Write the single-run cutover implementation plan.
+- [ ] Review and approve the single-run cutover implementation plan.
+- [ ] Write and approve the checkpoint-led Ralph decomposition plan after the cutover lands.
 - [ ] Remove Delivery strategy inputs, parsing, loading, fan-out, comparison, and cancellation.
 - [ ] Replace per-strategy state with one run-scoped state and controller.
 - [ ] Extract controller/Ralph steps one durable checkpoint at a time.
