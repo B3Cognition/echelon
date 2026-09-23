@@ -1,15 +1,19 @@
 {
   "plan": {
     "base_commit": "3abca341ae0d84623d74387e112d9662e8d723f6",
-    "candidate_commit": "bc64acae6239c24084401b96f54c699cfc0be041",
-    "candidate_tree": "a33bbb1b7e517327b4851167214901e92fc15b9d",
+    "candidate_commit": "0741dd4c9f622a77a56ab95f3ef581dc322db6b3",
+    "candidate_tree": "cc5555c3a6dca9d19745c18a315bcd126c5e830d",
     "changed_paths": [
+      "docs/findings/2026-09-21-typer-route-inventory.md",
+      "docs/simplification-control.md",
       "docs/superpowers/plans/2026-09-22-delivery-service-cutover.md",
       "src/echelon/cli.py",
       "src/echelon/cli_app.py",
       "src/echelon/delivery_service.py",
       "src/echelon/delivery_status.py",
+      "tests/echelon-validation/test_spec_completion.py",
       "tests/integration/test_egr_151_lifecycle_flow.py",
+      "tests/reports/merge-verification/receipt-bc64acae6239-be8583363d484eb19e91136bc30f3a43.json",
       "tests/unit/test_cli_delivery.py",
       "tests/unit/test_cli_delivery_local.py",
       "tests/unit/test_cli_delivery_status.py",
@@ -42,10 +46,10 @@
         "-m",
         "unit"
       ],
-      "duration_ms": 1774877,
-      "exit_code": 1
+      "duration_ms": 1776345,
+      "exit_code": 0
     }
   ],
   "schema_version": 1,
-  "status": "failed"
+  "status": "passed"
 }
