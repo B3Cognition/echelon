@@ -20,7 +20,7 @@ class TestCommit:
         """Commit message contains [skip ci] when ci_skip_enabled=true."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         # Make a change
         (Path(worktree_path) / "new-file.txt").write_text("hello")
@@ -50,7 +50,7 @@ class TestCommit:
         """Commit message does NOT contain [skip ci] when skip_ci=False."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         (Path(worktree_path) / "new-file.txt").write_text("hello")
         subprocess.run(
@@ -74,7 +74,7 @@ class TestCommit:
         """push --force-with-lease succeeds on clean push."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         # The mirror's origin remote uses --mirror push refspec which conflicts
         # with named-branch pushes. Reconfigure the push refspec on the mirror
@@ -103,7 +103,7 @@ class TestCommit:
         mgr.commit(worktree_path, "test commit")
 
         # Push should succeed (bare_repo as origin)
-        branch = "harness/012-payment/default/iter-1"
+        branch = "harness/012-payment/build-test/iter-1"
         mgr.push(worktree_path, branch)
 
         # Verify the branch exists on the remote (bare repo)

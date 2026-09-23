@@ -580,10 +580,10 @@ class GitOpsManager:
     def create_worktree(
         self,
         spec_id: str,
-        strategy_id: str,
         outer_iter: int,
+        *,
+        build_id: str,
         base_branch: Optional[str] = None,
-        build_id: str = "",
         prepare_codegraph: bool = False,
         fresh_branch: bool = False,
         fresh_branch_base: Optional[str] = None,
@@ -597,7 +597,7 @@ class GitOpsManager:
         it is merged to main.
 
         When base_branch is None (legacy / no-echelon mode): a new branch named
-        'harness/{spec_id}/{strategy_id}/iter-{outer_iter}' is created from the
+        'harness/{spec_id}/{build_id}/iter-{outer_iter}' is created from the
         prior iteration branch when available, otherwise from the default branch
         HEAD. A fresh delivery resets iteration zero to the target's current
         default branch instead of reusing an identically named branch from an
@@ -619,7 +619,7 @@ class GitOpsManager:
         # Worktree directory — same path regardless of branching mode.
         worktree_dir = (
             _build_dir_fn(self._base_dir, build_id) / "worktrees"
-            / strategy_id / f"iter-{outer_iter}"
+            / f"iter-{outer_iter}"
         )
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
@@ -717,7 +717,7 @@ class GitOpsManager:
             # Legacy mode: create a new harness/* branch, continuing from the
             # prior iteration branch when one exists.
             default_branch = self.get_default_branch()
-            branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
+            branch_name = f"harness/{spec_id}/{build_id}/iter-{outer_iter}"
             if fresh_branch_base and outer_iter == 0:
                 branch_base = fresh_branch_base
             elif fresh_branch and outer_iter == 0:
@@ -728,7 +728,7 @@ class GitOpsManager:
             else:
                 branch_base = self._legacy_iteration_base(
                     spec_id=spec_id,
-                    strategy_id=strategy_id,
+                    build_id=build_id,
                     outer_iter=outer_iter,
                     default_branch=default_branch,
                 )
@@ -927,7 +927,7 @@ class GitOpsManager:
         self,
         *,
         spec_id: str,
-        strategy_id: str,
+        build_id: str,
         outer_iter: int,
         default_branch: str,
     ) -> str:
@@ -936,7 +936,7 @@ class GitOpsManager:
 
         for previous_iter in range(outer_iter - 1, -1, -1):
             previous_branch = (
-                f"harness/{spec_id}/{strategy_id}/iter-{previous_iter}"
+                f"harness/{spec_id}/{build_id}/iter-{previous_iter}"
             )
             result = _run_git(
                 ["rev-parse", "--verify", f"refs/heads/{previous_branch}"],
@@ -1139,11 +1139,11 @@ class GitOpsManager:
         if _commit_trailer(message, "Echelon-Origin") != "delivery":
             return
         spec_id = _commit_trailer(message, "Echelon-Spec")
-        strategy = _commit_trailer(message, "Echelon-Strategy")
-        if not spec_id or not strategy:
+        build_id = _commit_trailer(message, "Echelon-Run")
+        if not spec_id or not build_id:
             return
 
-        pattern = f"refs/heads/harness/{spec_id}/{strategy}/iter-*"
+        pattern = f"refs/heads/harness/{spec_id}/{build_id}/iter-*"
         branches = _run_git(
             ["for-each-ref", "--format=%(refname:short)", pattern],
             cwd=worktree_path,
@@ -1324,7 +1324,6 @@ class GitOpsManager:
         self,
         branch: str,
         spec_id: str,
-        strategy_id: str,
         spec_name: str = "",
     ) -> str:
         """Create draft PR on target repo, or return the URL of an existing one.
@@ -1350,12 +1349,11 @@ class GitOpsManager:
             logger.info("PR already exists for branch %s: %s", branch, existing)
             return existing
 
-        title_suffix = f" — {spec_name}" if spec_name else f"/{strategy_id}"
+        title_suffix = f" — {spec_name}" if spec_name else ""
         title = f"harness: {spec_id}{title_suffix}"
         body = (
             f"Automated build via Echelon delivery.\n\n"
-            f"Spec: {spec_id}{(' — ' + spec_name) if spec_name else ''}\n"
-            f"Strategy: {strategy_id}"
+            f"Spec: {spec_id}{(' — ' + spec_name) if spec_name else ''}"
         )
 
         try:
@@ -1544,32 +1542,10 @@ class GitOpsManager:
 
     # === Query Operations ===
 
-    def get_latest_worktree(
-        self, spec_id: str, strategy_id: str, build_id: str = ""
-    ) -> Optional[str]:
-        """Return path to the most recently created worktree for this spec/strategy.
-
-        When build_id is provided, looks in that specific build's worktrees.
-        When build_id is empty, scans all builds under runs/ and returns the
-        highest-mtime iter directory across all of them.
-
-        Worktrees are created at:
-            runs/{build_id}/worktrees/{strategy_id}/iter-{N}
-        """
-        rd = _runs_dir_fn(self._base_dir)
-        if build_id:
-            search_dirs = [_build_dir_fn(self._base_dir, build_id) / "worktrees" / strategy_id]
-        else:
-            search_dirs = [
-                d / "worktrees" / strategy_id
-                for d in sorted(rd.glob("build-*/"))
-                if d.is_dir()
-            ] if rd.exists() else []
-
-        candidates = []
-        for target in search_dirs:
-            if target.exists():
-                candidates.extend(p for p in target.iterdir() if p.is_dir())
+    def get_latest_worktree(self, spec_id: str, *, build_id: str) -> Optional[str]:
+        """Return the latest iteration checkout from one delivery build."""
+        root = _build_dir_fn(self._base_dir, build_id) / "worktrees"
+        candidates = [path for path in root.glob("iter-*") if path.is_dir()]
 
         if not candidates:
             return None
@@ -1952,14 +1928,13 @@ class GitOpsManager:
 
     def _branch_from_worktree_path(self, worktree_path: str) -> Optional[str]:
         """Extract branch name from worktree path convention."""
-        # Path: runs/{spec_id}/strategies/{strategy_id}/worktrees/iter-{N}
+        # Path: runs/{build_id}/worktrees/iter-{N}
         parts = Path(worktree_path).parts
         try:
             wt_idx = parts.index("worktrees")
-            spec_id = parts[wt_idx + 1]
-            strategy_id = parts[wt_idx + 2]
-            iter_part = parts[wt_idx + 3]
-            return f"harness/{spec_id}-{strategy_id}-{iter_part}"
+            build_id = parts[wt_idx - 1]
+            iter_part = parts[wt_idx + 1]
+            return f"harness/{build_id}/{iter_part}"
         except (ValueError, IndexError):
             return None
 

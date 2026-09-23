@@ -76,13 +76,11 @@ class _PublishingReviewController:
         self,
         *,
         config: HarnessConfig,
-        strategy_id: str,
         base_dir: str,
         build_id: str,
         spec_dir: Path,
         **_: object,
     ) -> None:
-        self._strategy_id = strategy_id
         self._state_dir = Path(base_dir) / "runs" / build_id / "state"
         self._spec_dir = spec_dir
         self._config = config
@@ -99,7 +97,7 @@ class _PublishingReviewController:
         if self._calls > 1:
             return ReviewResult("completed", "converged", 1, pr_url, 3)
         with ReviewArtifactPublisher(
-            self._spec_dir, self._state_dir, self._strategy_id
+            self._spec_dir, self._state_dir
         ) as publisher:
             allocation = publisher.allocate(("review-1",))
             artifact = allocation.attempt_dir / allocation.artifact_names[0]
@@ -136,7 +134,7 @@ class _PublishingReviewController:
         self.completion_calls.append((pr_url, attempt_id))
         self.phase1_calls_at_consumption.append(len(_RecordingRalph.calls))
         with ReviewArtifactPublisher(
-            self._spec_dir, self._state_dir, self._strategy_id
+            self._spec_dir, self._state_dir
         ) as publisher:
             batch = publisher.recover_publication(set())
             assert batch is not None
@@ -272,7 +270,7 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
     }
     assert _PublishingReviewController.phase1_calls_at_consumption == [2]
     journal = json.loads(
-        (harness_root / "runs" / build_id / "state" / "default-review-publication.json").read_text(
+        (harness_root / "runs" / build_id / "state" / "review-publication.json").read_text(
             encoding="utf-8"
         )
     )

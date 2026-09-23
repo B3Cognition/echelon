@@ -428,8 +428,7 @@ class TestSingleStrategy:
         receipt = write_verification_receipt(
             evidence_dir=tmp_path / "evidence",
             spec_id="spec-001",
-            strategy_id="default",
-            build_id="run-1",
+                        build_id="run-1",
             candidate_commit=evidence_commit,
             fingerprint_before=fingerprint,
             fingerprint_after=fingerprint,
@@ -470,8 +469,7 @@ class TestSingleStrategy:
         assert coord._checkpoint_verified_result(
             store,
             spec_id="spec-001",
-            strategy_id="default",
-            implementation=implementation,
+                        implementation=implementation,
             outer_iterations=1,
             tokens_used=0,
         ) is None
@@ -1110,8 +1108,7 @@ class TestDeliveryStateMigration:
             blocked = coordinator._checkpoint_verified_result(
                 store,
                 spec_id="spec-001",
-                strategy_id="default",
-                implementation=implementation,
+                                implementation=implementation,
                 outer_iterations=1,
                 tokens_used=0,
             )

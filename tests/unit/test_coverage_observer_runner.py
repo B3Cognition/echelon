@@ -134,8 +134,7 @@ def _standard_receipt(root: Path, fingerprint: str) -> object:
         evidence_dir=root / "verification",
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         candidate_commit="a" * 40,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -213,8 +212,7 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -272,8 +270,7 @@ def test_isolated_observer_normalizes_report_paths_under_its_sandbox_mount(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -307,8 +304,7 @@ def test_isolated_observer_retries_transient_browser_loss_in_fresh_sandbox(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -339,8 +335,7 @@ def test_isolated_observer_classifies_repeated_browser_loss_as_infrastructure(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -395,8 +390,7 @@ def test_captured_observer_reuses_passing_standard_receipt_without_session(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -430,8 +424,7 @@ def test_isolated_observer_rejects_a_candidate_mutation_in_its_receipt(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 

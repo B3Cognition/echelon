@@ -369,7 +369,7 @@ class TestSingleRepoPathUnchanged:
         marker.write_text("build-test", encoding="utf-8")
         state_dir = build_dir(harness_base, "build-test") / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             '{"status":"blocked","termination_reason":"verify_command_needed"}\n',
             encoding="utf-8",
         )

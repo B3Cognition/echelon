@@ -22,7 +22,7 @@ class TestCreateWorktree:
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
 
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         assert Path(worktree_path).exists()
         assert Path(worktree_path).is_dir()
@@ -34,14 +34,14 @@ class TestCreateWorktree:
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
 
-        worktree_path = mgr.create_worktree("012-payment", "conservative", 3)
+        worktree_path = mgr.create_worktree("012-payment", 3, build_id="build-test")
 
         # Check branch name
         result = subprocess.run(
             ["git", "-C", worktree_path, "branch", "--show-current"],
             capture_output=True, text=True, check=True,
         )
-        assert result.stdout.strip() == "harness/012-payment/conservative/iter-3"
+        assert result.stdout.strip() == "harness/012-payment/build-test/iter-3"
 
     def test_create_worktree_supports_empty_target_repo(self, tmp_path):
         """A new source repo with no commits can still get an orphan harness worktree."""
@@ -74,7 +74,7 @@ class TestCreateWorktree:
         mgr = GitOpsManager(config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(target))
 
-        worktree_path = mgr.create_worktree("001-new-tool", "default", 0)
+        worktree_path = mgr.create_worktree("001-new-tool", 0, build_id="build-test")
 
         assert Path(worktree_path).exists()
         current = subprocess.run(
@@ -83,7 +83,7 @@ class TestCreateWorktree:
             text=True,
             check=True,
         )
-        assert current.stdout.strip() == "harness/001-new-tool/default/iter-0"
+        assert current.stdout.strip() == "harness/001-new-tool/build-test/iter-0"
         status = subprocess.run(
             ["git", "-C", worktree_path, "status", "--short", "--branch"],
             capture_output=True,
@@ -101,7 +101,7 @@ class TestDestroyWorktree:
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
 
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
         assert Path(worktree_path).exists()
 
         mgr.destroy_worktree(worktree_path, keep_branch=True)
@@ -114,13 +114,13 @@ class TestDestroyWorktree:
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
 
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
         mgr.destroy_worktree(worktree_path, keep_branch=True)
 
         # Branch should still exist in mirror
         result = subprocess.run(
             ["git", "-C", str(mgr.mirror_path), "branch", "--list",
-             "harness/012-payment/default/iter-1"],
+             "harness/012-payment/build-test/iter-1"],
             capture_output=True, text=True, check=True,
         )
-        assert "harness/012-payment/default/iter-1" in result.stdout
+        assert "harness/012-payment/build-test/iter-1" in result.stdout

@@ -106,7 +106,7 @@ def _get_stale_worktrees(
 ) -> List[Path]:
     """Find worktree directories older than threshold by mtime.
 
-    Worktrees are nested as: worktree_base/{strategy}/{iter-N}
+    Worktrees are nested as: worktree_base/{iter-N}
 
     Returns list of worktree paths to remove.
     """
@@ -117,20 +117,17 @@ def _get_stale_worktrees(
     cutoff = time.time() - (max_age_hours * 3600)
     protected_paths = {path.resolve() for path in protected}
 
-    for strategy_dir in worktree_base.iterdir():
-        if not strategy_dir.is_dir():
+    for iter_dir in worktree_base.glob("iter-*"):
+        if not iter_dir.is_dir():
             continue
-        for iter_dir in strategy_dir.iterdir():
-            if not iter_dir.is_dir():
+        try:
+            if iter_dir.resolve() in protected_paths:
                 continue
-            try:
-                if iter_dir.resolve() in protected_paths:
-                    continue
-                mtime = iter_dir.stat().st_mtime
-                if mtime < cutoff:
-                    stale.append(iter_dir)
-            except OSError:
-                continue
+            mtime = iter_dir.stat().st_mtime
+            if mtime < cutoff:
+                stale.append(iter_dir)
+        except OSError:
+            continue
 
     return stale
 
@@ -165,8 +162,7 @@ def _get_protected_worktrees(build_dir: Path) -> set[Path]:
             protected.add(registered_path)
             return protected
 
-    strategy_dir = worktree_base / "default"
-    candidates = [path for path in strategy_dir.glob("iter-*") if path.is_dir()]
+    candidates = [path for path in worktree_base.glob("iter-*") if path.is_dir()]
     if candidates:
         protected.add(max(candidates, key=_iteration_order).resolve())
 

@@ -71,7 +71,7 @@ def _make_controller(tmp_path, verify_results, mode="semi"):
         provider=MockProvider(verify_results),
         gitops=gitops, state_store=state_store,
         mode_controller=mode_ctrl, escalation_handler=escalation,
-        spec_id="spec-001", strategy_id="default", config=config,
+        spec_id="spec-001", config=config,
     )
     ctrl._exec_controlled_slice = MagicMock(
         return_value={

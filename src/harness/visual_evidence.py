@@ -65,7 +65,6 @@ def write_visual_receipt(
     *,
     evidence_dir: Path,
     spec_id: str,
-    strategy_id: str,
     build_id: str,
     candidate_commit: str,
     candidate_fingerprint: str,
@@ -124,7 +123,6 @@ def write_visual_receipt(
         "schema_version": SCHEMA_VERSION,
         "authority": AUTHORITY,
         "spec_id": spec_id,
-        "strategy_id": strategy_id,
         "build_id": build_id,
         "candidate_commit": candidate_commit,
         "candidate_fingerprint": candidate_fingerprint,
@@ -238,7 +236,7 @@ def _stable_evidence_sha256(payload: Mapping[str, object]) -> str:
     stable = {
         key: payload.get(key)
         for key in (
-            "authority", "spec_id", "strategy_id", "build_id",
+            "authority", "spec_id", "build_id",
             "candidate_fingerprint", "screenshot_dir", "required_artifacts",
             "playwright", "artifacts", "status", "failure_id",
         )

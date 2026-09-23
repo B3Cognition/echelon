@@ -297,7 +297,7 @@ def test_coverage_map_delivery_block_authorizes_exact_sentinel_rewind(
         / "runs"
         / "build-20260618-073106-635192"
         / "state"
-        / "default.json"
+        / "delivery.json"
     )
     state_path.parent.mkdir(parents=True)
     state_path.write_text(

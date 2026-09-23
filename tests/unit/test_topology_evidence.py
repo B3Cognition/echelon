@@ -481,7 +481,7 @@ def test_delivery_receipt_accepts_harness_managed_source_worktree(
         check=True,
         capture_output=True,
     )
-    worktree = workspace / "runs/targets/api/runs/build-1/worktrees/default/iter-0"
+    worktree = workspace / "runs/targets/api/runs/build-1/worktrees/iter-0"
     worktree.parent.mkdir(parents=True)
     subprocess.run(
         ["git", "worktree", "add", "-b", "harness/test", str(worktree), "main"],

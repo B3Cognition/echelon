@@ -195,7 +195,6 @@ class ReviewLoopController:
         gitops: Any,
         config: HarnessConfig,
         spec_id: str,
-        strategy_id: str,
         base_dir: str = ".",
         build_id: str = "",
         spec_dir: str | Path | None = None,
@@ -204,7 +203,6 @@ class ReviewLoopController:
         self._config = config
         self._rl = config.review_loop
         self._spec_id = spec_id
-        self._strategy_id = strategy_id
         self._base_dir = Path(base_dir).resolve()
         self._spec_dir = (
             _lexical_absolute_path(spec_dir) if spec_dir is not None else None
@@ -219,11 +217,9 @@ class ReviewLoopController:
         # Persistent state: tracks which comment IDs we've already acted on
         self._state_file = (
             _build_dir_fn(self._base_dir, build_id) / "state"
-            / f"{strategy_id}-review.json"
+            / "review.json"
         )
-        self._status_file = self._state_file.with_name(
-            f"{strategy_id}-review-status.json"
-        )
+        self._status_file = self._state_file.with_name("review-status.json")
         self._seen_state_error = False
         try:
             self._seen_ids = self._load_seen_ids()
@@ -354,7 +350,7 @@ class ReviewLoopController:
         tokens_used = 0
         try:
             with ReviewReadChannel(delivery_worktree, spec_dir) as read_channel:
-                with ReviewArtifactPublisher(spec_dir, state_dir, self._strategy_id) as publisher:
+                with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
                     batch = publisher.recover_publication(self._seen_ids)
                     self._published_batch = batch
                     if batch is None:
@@ -406,9 +402,7 @@ class ReviewLoopController:
         if spec_dir is None:
             return False
         try:
-            with ReviewArtifactPublisher(
-                spec_dir, self._state_file.parent, self._strategy_id
-            ) as publisher:
+            with ReviewArtifactPublisher(spec_dir, self._state_file.parent) as publisher:
                 batch = publisher.recover_publication(set())
                 pending = self._pending_batch_state(attempt_id)
                 if batch is None:

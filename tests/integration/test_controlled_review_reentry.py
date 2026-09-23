@@ -111,7 +111,7 @@ def review_handoff(slice_project, monkeypatch, request):
     initial = RalphController(
         provider=MockProvider(), gitops=gitops, state_store=store,
         mode_controller=ModeController(mode), escalation_handler=EscalationHandler(str(root.parent / "escalations")),
-        spec_id="001", strategy_id="default", config=config, llm_provider=provider(config),
+        spec_id="001", config=config, llm_provider=provider(config),
     )
     built = initial._exec_build(None, "echelon build", "", worktree_path=str(root), prompt="Initial candidate")
     assert built["passed"] and built["task_ids"] == ["T-001"], built

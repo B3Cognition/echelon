@@ -17,7 +17,6 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
 
     spec_id = "001"
     build_id = "build-existing"
-    strategy_id = "default"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     marker = current_build_marker(tmp_path, spec_id)
@@ -29,11 +28,10 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     escalation_file.write_text("# Escalation\n", encoding="utf-8")
     state_dir = bdir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{strategy_id}.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": spec_id,
-                "strategy_id": strategy_id,
                 "status": "blocked",
                 "mode": "semi",
                 "termination_reason": "blocker_escalation",

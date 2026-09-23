@@ -66,7 +66,6 @@ class RunnabilityRunner:
         sandbox_spec_factory: Callable[[Path], SandboxSpec],
         spec_id: str,
         target_id: str,
-        strategy_id: str,
         build_id: str,
         browser_helper: bytes | None = None,
     ) -> None:
@@ -74,7 +73,6 @@ class RunnabilityRunner:
         self._sandbox_spec_factory = sandbox_spec_factory
         self._spec_id = spec_id
         self._target_id = target_id
-        self._strategy_id = strategy_id
         self._build_id = build_id
         self._browser_helper = browser_helper
 
@@ -932,7 +930,6 @@ class RunnabilityRunner:
             evidence_dir=evidence_dir,
             spec_id=self._spec_id,
             target_id=self._target_id,
-            strategy_id=self._strategy_id,
             build_id=self._build_id,
             candidate_commit=candidate_commit,
             candidate_fingerprint=candidate_fingerprint,

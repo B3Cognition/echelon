@@ -117,7 +117,7 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
     provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
     controller = VisualRalphController(
         provider=provider, config=_make_config(max_iterations=1), spec_id="001",
-        strategy_id="default", feedback_runner=invalid_setup, base_dir=str(tmp_path),
+        feedback_runner=invalid_setup, base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -154,8 +154,7 @@ def test_visual_feedback_without_controller_callback_is_configuration_failure(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
     )
 
     result = controller._exec_visual_feedback(
@@ -181,8 +180,7 @@ def test_exec_visual_verify_pass():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -204,8 +202,7 @@ def test_exec_visual_verify_rejects_zero_test_success() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
 
@@ -236,8 +233,7 @@ def test_exec_visual_verify_rejects_skipped_required_test() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
 
@@ -259,8 +255,7 @@ def test_exec_visual_verify_fail_parses_failures():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -283,8 +278,7 @@ def test_exec_visual_verify_non_json_stdout():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -311,8 +305,7 @@ def test_run_loop_converges_on_first_pass(tmp_path: Path):
         provider=provider,
         config=_make_config(max_iterations=3),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -362,8 +355,7 @@ def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
         provider=provider,
         config=config,
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
         sandbox_spec_factory=sandbox_factory,
     )
@@ -405,8 +397,7 @@ def test_zero_test_failure_reports_command_stderr() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller._exec_visual_verify(
         SandboxHandle(id="abc123", session_id="s1")
@@ -430,8 +421,7 @@ def test_playwright_parse_failure_reports_command_stderr() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller._exec_visual_verify(
         SandboxHandle(id="abc123", session_id="s1")
@@ -455,8 +445,7 @@ def test_visual_command_diagnostics_redact_runtime_credentials() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
     controller._runtime_env = {"TEST_DATABASE_URL": secret_url}
 
     result = controller._exec_visual_verify(
@@ -485,8 +474,7 @@ def test_visual_dependency_bootstrap_failure_is_actionable(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller.run_loop(worktree_path=str(tmp_path))
 
@@ -516,8 +504,7 @@ def test_run_loop_retains_success_screenshot_as_candidate_evidence(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -544,8 +531,7 @@ def test_retrieve_screenshots_falls_back_to_playwright_test_results(
         provider=MagicMock(),
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
     handle = SandboxHandle(id="ctr1", session_id="s1")
@@ -590,8 +576,7 @@ def test_run_loop_rejects_success_without_required_screenshot(tmp_path: Path) ->
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -628,8 +613,7 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime(tmp_path: Path):
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -665,8 +649,7 @@ def test_run_loop_reports_fix_applied_after_visual_feedback():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
         feedback_runner=lambda *args: {
             "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
         },
@@ -698,8 +681,7 @@ def test_run_loop_reports_failure_when_command_app_never_ready():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -727,8 +709,7 @@ def test_run_loop_reports_failure_when_setup_command_fails():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -755,8 +736,7 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
         provider=provider,
         config=_make_config(max_iterations=2),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
         feedback_runner=lambda *args: {
             "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
         },
@@ -795,8 +775,7 @@ def test_visual_feedback_uses_configured_provider_repair_runner(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        feedback_runner=repair_runner,
+                feedback_runner=repair_runner,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
@@ -847,8 +826,7 @@ def test_changed_visual_repair_can_defer_host_browser_verification(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        feedback_runner=defer_after_change,
+                feedback_runner=defer_after_change,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
@@ -872,8 +850,7 @@ def test_run_loop_blocks_when_visual_feedback_fails():
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        feedback_runner=lambda *args: {
+                feedback_runner=lambda *args: {
             "exit_code": 1,
             "passed": False,
             "duration_s": 0.0,

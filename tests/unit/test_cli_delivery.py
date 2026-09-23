@@ -348,11 +348,10 @@ def test_delivery_checkpoint_list_prints_harness_checkpoint_commits(
 
     state_dir = tmp_path / "runs" / "build-20260708-120000-000000" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         """
 {
   "spec_id": "001-demo",
-  "strategy_id": "default",
   "status": "blocked",
   "termination_reason": "build_incomplete",
   "checkpoint_commits": [

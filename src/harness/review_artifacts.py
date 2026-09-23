@@ -31,7 +31,7 @@ _ARTIFACT_RE = re.compile(r"review-fix-([1-9][0-9]*)\.md\Z")
 _NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,})\Z")
 _TITLE_RE = re.compile(r"^  \*\*Title:\*\* (RF[1-9][0-9]*-T[123]) - \S.*\Z")
 _SECTION_RE = re.compile(r"^(?:---|## Review Fix [1-9][0-9]*: \S.*|> Source: review-fix-[1-9][0-9]*\.md|> PR: \S.*|> Status: pending)\Z")
-_LOCK_FIELDS = {"pid", "created_at", "strategy", "token", "released"}
+_LOCK_FIELDS = {"pid", "created_at", "token", "released"}
 _JOURNAL_FIELDS = {
     "version", "attempt_id", "status", "comment_ids", "attempt_dir",
     "artifact_names", "task_ids", "review_task_ids", "artifacts",
@@ -67,13 +67,12 @@ class PublishedReviewBatch:
 class ReviewArtifactPublisher:
     """Own the review lock from artifact allocation through publication."""
 
-    def __init__(self, spec_dir: Path, state_dir: Path, strategy: str) -> None:
+    def __init__(self, spec_dir: Path, state_dir: Path) -> None:
         self.spec_dir = Path(spec_dir)
         self.state_dir = Path(state_dir)
-        self.strategy = strategy
         self.lock_file = self.spec_dir / ".echelon-review.lock"
-        self.journal_file = self.state_dir / f"{strategy}-review-publication.json"
-        self.status_file = self.state_dir / f"{strategy}-review-status.json"
+        self.journal_file = self.state_dir / "review-publication.json"
+        self.status_file = self.state_dir / "review-status.json"
         self._allocation: ReviewAllocation | None = None
         self._allocated_tasks_before: tuple[bool, bytes] | None = None
         self._locked = False
@@ -120,7 +119,7 @@ class ReviewArtifactPublisher:
         task_ids = _allocate_canonical_task_ids(tasks_path, len(ids) * 3)
         staging_root = self.state_dir / "review-staging"
         staging_root.mkdir(parents=True, exist_ok=True)
-        attempt_dir = Path(tempfile.mkdtemp(prefix=f"{self.strategy}-", dir=staging_root))
+        attempt_dir = Path(tempfile.mkdtemp(prefix="delivery-", dir=staging_root))
         attempt_id = attempt_dir.name
         self.status_file.unlink(missing_ok=True)
         _fsync_directory(self.state_dir)
@@ -220,7 +219,7 @@ class ReviewArtifactPublisher:
                     if legacy_pid is not None and is_process_alive(legacy_pid):
                         raise ReviewArtifactError(f"review lock is held by PID {legacy_pid}: {self.lock_file}")
                 token = uuid4().hex
-                payload = _lock_payload(self.strategy, token)
+                payload = _lock_payload(token)
                 _write_fd_bytes(fd, payload)
                 self._lock_fd = fd
                 self._lock_identity = identity
@@ -761,12 +760,11 @@ def _write_fd_bytes(fd: int, content: bytes) -> None:
     os.fsync(fd)
 
 
-def _lock_payload(strategy: str, token: str) -> bytes:
+def _lock_payload(token: str) -> bytes:
     return _render_lock_metadata(
         {
             "pid": str(os.getpid()),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "strategy": strategy,
             "token": token,
             "released": "false",
         }
@@ -774,7 +772,7 @@ def _lock_payload(strategy: str, token: str) -> bytes:
 
 
 def _render_lock_metadata(metadata: dict[str, str]) -> bytes:
-    return "".join(f"{name}={metadata[name]}\n" for name in ("pid", "created_at", "strategy", "token", "released")).encode("utf-8")
+    return "".join(f"{name}={metadata[name]}\n" for name in ("pid", "created_at", "token", "released")).encode("utf-8")
 
 
 def _parse_lock_metadata(content: bytes) -> dict[str, str] | None:
@@ -783,7 +781,7 @@ def _parse_lock_metadata(content: bytes) -> dict[str, str] | None:
         if set(values) != _LOCK_FIELDS or values["released"] not in {"true", "false"}:
             return None
         int(values["pid"])
-        if not values["strategy"] or not values["token"]:
+        if not values["token"]:
             return None
         return values
     except (UnicodeDecodeError, ValueError):

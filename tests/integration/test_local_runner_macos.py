@@ -75,8 +75,7 @@ def _prepare_fixture(workspace: Path):
     standard = write_verification_receipt(
         evidence_dir=workspace / "evidence" / "standard",
         spec_id="001-local-runner",
-        strategy_id="default",
-        build_id="build-local-runner",
+                build_id="build-local-runner",
         candidate_commit=candidate_commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -88,8 +87,7 @@ def _prepare_fixture(workspace: Path):
     observer = write_verification_receipt(
         evidence_dir=workspace / "evidence" / "observer",
         spec_id="001-local-runner",
-        strategy_id="default",
-        build_id="build-local-runner",
+                build_id="build-local-runner",
         candidate_commit=candidate_commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -149,8 +147,8 @@ def _prepare_fixture(workspace: Path):
             },
         }}},
     }
-    (build_root / "state" / "default.json").write_text(json.dumps({
-        "spec_id": "001-local-runner", "strategy_id": "default", "status": "converged",
+    (build_root / "state" / "delivery.json").write_text(json.dumps({
+        "spec_id": "001-local-runner", "status": "converged",
         "verified_commit": candidate_commit, "delivery_stack_snapshot": snapshot,
         "coverage_observation": {"status": "passed", "ref": observation.ref.as_mapping()},
     }))

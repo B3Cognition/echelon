@@ -29,7 +29,7 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
     controller = RalphController(
         provider=MockProvider(), gitops=gitops, state_store=store,
         mode_controller=ModeController(mode), escalation_handler=EscalationHandler(str(tmp_path / "escalation")),
-        spec_id="001", strategy_id="default", config=config, llm_provider=executor,
+        spec_id="001", config=config, llm_provider=executor,
     )
     return controller, store
 
@@ -163,7 +163,7 @@ def _reconstruct(controller, store, executor):
         state_store=StateStore(store.state_dir, "001"),
         mode_controller=ModeController(store.read()["mode"]),
         escalation_handler=EscalationHandler(str(store.state_dir / "escalation")),
-        spec_id="001", strategy_id="default", config=controller._config, llm_provider=executor,
+        spec_id="001", config=controller._config, llm_provider=executor,
     )
 
 

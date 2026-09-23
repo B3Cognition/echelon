@@ -63,7 +63,7 @@ def _write_build_state(
     }
     if extra:
         payload.update(extra)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(payload),
         encoding="utf-8",
     )
@@ -693,7 +693,7 @@ def test_latest_polyrepo_target_build_is_ready_to_land(tmp_path: Path) -> None:
         / "state"
     )
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "007-animate-character-use-product",

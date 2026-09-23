@@ -297,7 +297,7 @@ class TestCoordinatorReviewReentry:
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
         workspace = tmp_path / "workspace"
         harness_root = workspace / "runs" / "targets" / "api"
-        worktree = harness_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree = harness_root / "runs" / "build-1" / "worktrees" / "iter-0"
         worktree.mkdir(parents=True)
         config = _config(workspace)
         config.llm.enabled = True

@@ -56,8 +56,8 @@ def _allocation(tmp_path: Path, *, comments: int = 1) -> ReviewAllocation:
         attempt_dir=attempt,
         artifact_names=names,
         task_ids=task_ids,
-        status_file=tmp_path / "state/default-review-status.json",
-        journal_file=tmp_path / "state/default-review-publication.json",
+        status_file=tmp_path / "state/review-status.json",
+        journal_file=tmp_path / "state/review-publication.json",
     )
 
 

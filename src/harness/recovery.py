@@ -35,12 +35,11 @@ def recover_blocked_run(
     *,
     project_dir: Path,
     spec_id: str,
-    strategy_id: str,
     state: dict[str, Any],
     gitops: Any,
     build_id: str = "",
 ) -> RecoveryResult:
-    """Recover the last committed strategy result for a blocked harness run.
+    """Recover the last committed result for a blocked harness run.
 
     Recovery is intentionally conservative. It only applies an existing commit:
     first from a preserved worktree, then from ``runs/mirror.git``. Dirty
@@ -80,7 +79,6 @@ def recover_blocked_run(
 
     source = _find_preserved_worktree_source(
         spec_id=spec_id,
-        strategy_id=strategy_id,
         gitops=gitops,
         build_id=build_id,
         checkpoint_commits=state.get("checkpoint_commits"),
@@ -101,11 +99,11 @@ def recover_blocked_run(
     if not mirror_path.exists():
         raise HarnessRecoveryError(f"Mirror not found: {mirror_path}")
 
-    commit = _find_strategy_commit(
+    commit = _find_delivery_commit(
         repo=mirror_path,
         ref=target_branch,
         spec_id=spec_id,
-        strategy_id=strategy_id,
+        build_id=build_id,
     )
     if commit is None:
         commit = _find_delivery_branch_head(
@@ -125,7 +123,7 @@ def recover_blocked_run(
                 applied=False,
             )
         raise HarnessRecoveryError(
-            f"No committed strategy result found on branch {target_branch!r}"
+            f"No committed delivery result found on branch {target_branch!r}"
         )
 
     return _apply_commit(
@@ -140,7 +138,6 @@ def recover_blocked_run(
 def _find_preserved_worktree_source(
     *,
     spec_id: str,
-    strategy_id: str,
     gitops: Any,
     build_id: str,
     checkpoint_commits: Any = None,
@@ -148,7 +145,7 @@ def _find_preserved_worktree_source(
     preferred_commit: str = "",
 ) -> Optional[tuple[Path, str]]:
     try:
-        worktree = gitops.get_latest_worktree(spec_id, strategy_id, build_id=build_id)
+        worktree = gitops.get_latest_worktree(spec_id, build_id=build_id)
     except Exception:
         worktree = None
     if not worktree:
@@ -201,11 +198,11 @@ def _find_preserved_worktree_source(
             f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
         )
 
-    commit = _find_strategy_commit(
+    commit = _find_delivery_commit(
         repo=worktree_path,
         ref="HEAD",
         spec_id=spec_id,
-        strategy_id=strategy_id,
+        build_id=build_id,
     )
     if commit is not None:
         return worktree_path, commit
@@ -314,12 +311,12 @@ def _find_branch_without_fetch(repo: Path, spec_id: str) -> Optional[str]:
     return None
 
 
-def _find_strategy_commit(
+def _find_delivery_commit(
     *,
     repo: Path,
     ref: str,
     spec_id: str,
-    strategy_id: str,
+    build_id: str,
 ) -> Optional[str]:
     result = _run_git(
         ["log", "--format=%H%x00%s", "-30", ref],
@@ -330,7 +327,7 @@ def _find_strategy_commit(
         return None
     for line in result.stdout.splitlines():
         commit, _, subject = line.partition("\x00")
-        if _looks_like_strategy_commit(subject, spec_id, strategy_id):
+        if _looks_like_delivery_commit(subject, spec_id, build_id):
             return commit
     return None
 
@@ -375,17 +372,15 @@ def _is_recovery_metadata_path(path: str) -> bool:
     )
 
 
-def _looks_like_strategy_commit(subject: str, spec_id: str, strategy_id: str) -> bool:
+def _looks_like_delivery_commit(subject: str, spec_id: str, build_id: str) -> bool:
     lowered = subject.lower()
     if "iter-" not in lowered:
         return False
     if "harness:" in lowered:
         return True
-    if strategy_id and strategy_id.lower() in lowered:
+    if build_id and build_id.lower() in lowered:
         return True
     if spec_id and spec_id.lower() in lowered:
-        return True
-    if "codegen" in lowered:
         return True
     return False
 

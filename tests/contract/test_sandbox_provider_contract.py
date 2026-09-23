@@ -48,7 +48,7 @@ def _make_spec(**overrides) -> SandboxSpec:
         post_create_command=None,
         forward_ports=[],
         session_timeout_ms=3_600_000,
-        labels={"strategy_id": "default", "spec_id": "001", "run_id": "test-run"},
+        labels={"spec_id": "001", "run_id": "test-run"},
     )
     defaults.update(overrides)
     return SandboxSpec(**defaults)

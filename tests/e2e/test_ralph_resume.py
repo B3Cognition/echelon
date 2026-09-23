@@ -44,8 +44,7 @@ class TestRalphResume:
             harness_config=harness_config,
             mode="semi",
             spec_id="test-spec",
-            strategy_id="default",
-        )
+                    )
 
         state_store.acquire_lock("test-run")
         state_store.initialize(
@@ -93,8 +92,7 @@ class TestRalphResume:
             mode_controller=ModeController("semi"),
             escalation_handler=escalation,
             spec_id="test-spec",
-            strategy_id="default",
-            config=harness_config,
+                        config=harness_config,
         )
 
         result2 = controller2.run_loop(
@@ -155,8 +153,7 @@ class TestRalphResume:
             mode_controller=ModeController("semi"),
             escalation_handler=escalation,
             spec_id="test-spec",
-            strategy_id="default",
-            config=harness_config,
+                        config=harness_config,
         )
 
         result2 = controller2.run_loop(
@@ -213,8 +210,7 @@ class TestRalphResume:
             mode_controller=ModeController("guided"),
             escalation_handler=escalation,
             spec_id="test-spec",
-            strategy_id="default",
-            config=harness_config,
+                        config=harness_config,
         )
 
         result2 = controller2.run_loop(

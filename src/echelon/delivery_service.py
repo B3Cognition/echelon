@@ -1119,7 +1119,6 @@ def _cmd_land(
         autoresolve=autoresolve,
         prepare_only=prepare_only,
         continue_existing=continue_existing,
-        strategy=strategy,
         allow_fulfillment_gaps=allow_fulfillment_gaps,
     )
 
@@ -2817,7 +2816,6 @@ def _run_delivery(
         else:
             free_text.append(arg)
     mode = kv.get("mode", "semi")
-    strategy = "default"  # Transitional state key; removed with run-scoped state.
     explicit_target = kv.get("target") or kv.get("target_source")
     if explicit_target:
         print(
@@ -3125,7 +3123,6 @@ def _run_delivery(
             _mark_current_harness_state_blocked(
                 harness_base_dir,
                 spec_id,
-                strategy,
                 "docker_unavailable",
             )
             print(
@@ -3139,7 +3136,6 @@ def _run_delivery(
         _print_harness_error_and_exit(
             project_root=harness_base_dir,
             spec_id=spec_id,
-            strategy=strategy,
             command=rerun_command,
             exc=exc,
         )
@@ -3214,7 +3210,6 @@ def _container_runtime_display(config: object) -> str:
 def _mark_current_harness_state_blocked(
     project_root: Path,
     spec_id: str,
-    strategy: str,
     reason: str,
     error: str = "",
 ) -> None:
@@ -3278,14 +3273,12 @@ def _print_harness_error_and_exit(
     *,
     project_root: Path,
     spec_id: str,
-    strategy: str,
     command: str,
     exc: Exception,
 ) -> None:
     _mark_current_harness_state_blocked(
         project_root,
         spec_id,
-        strategy,
         "harness_error",
         str(exc),
     )
@@ -3485,7 +3478,6 @@ def _run_delivery_resume(
         command_prefix, ProviderCapability.BUILD, project_dir=project_root,
     )
     spec_id, kv, resume_answer = _parse_harness_resume_args(args)
-    strategy = "default"  # Transitional state key; removed with run-scoped state.
     mode = kv.get("mode", "semi")
     target_resume_command = "resume" if require_answer else "continue"
 
@@ -3879,7 +3871,6 @@ def _run_delivery_resume(
                 _mark_current_harness_state_blocked(
                     harness_base_dir,
                     spec_id,
-                    strategy,
                     "docker_unavailable",
                 )
                 print(
@@ -3893,7 +3884,6 @@ def _run_delivery_resume(
             _print_harness_error_and_exit(
                 project_root=harness_base_dir,
                 spec_id=spec_id,
-                strategy=strategy,
                 command=rerun_command,
                 exc=exc,
             )
@@ -3950,7 +3940,6 @@ def _run_delivery_resume(
                 _mark_current_harness_state_blocked(
                     harness_base_dir,
                     spec_id,
-                    strategy,
                     "docker_unavailable",
                 )
                 print(
@@ -3964,7 +3953,6 @@ def _run_delivery_resume(
             _print_harness_error_and_exit(
                 project_root=harness_base_dir,
                 spec_id=spec_id,
-                strategy=strategy,
                 command=rerun_command,
                 exc=exc,
             )
@@ -3990,7 +3978,6 @@ def _run_delivery_resume(
             recovered = recover_blocked_run(
                 project_dir=recovery_project_dir,
                 spec_id=spec_id,
-                strategy_id=strategy,
                 state=state,
                 gitops=gitops,
                 build_id=build_id,
@@ -4040,7 +4027,6 @@ def _run_delivery_resume(
                 _mark_current_harness_state_blocked(
                     harness_base_dir,
                     spec_id,
-                    strategy,
                     "docker_unavailable",
                 )
                 print(
@@ -4054,7 +4040,6 @@ def _run_delivery_resume(
             _print_harness_error_and_exit(
                 project_root=harness_base_dir,
                 spec_id=spec_id,
-                strategy=strategy,
                 command=rerun_command,
                 exc=exc,
             )
@@ -4097,7 +4082,6 @@ def _run_delivery_resume(
             _mark_current_harness_state_blocked(
                 harness_base_dir,
                 spec_id,
-                strategy,
                 "docker_unavailable",
             )
             print(
@@ -4111,7 +4095,6 @@ def _run_delivery_resume(
         _print_harness_error_and_exit(
             project_root=harness_base_dir,
             spec_id=spec_id,
-            strategy=strategy,
             command=rerun_command,
             exc=exc,
         )

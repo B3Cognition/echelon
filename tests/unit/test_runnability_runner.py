@@ -284,8 +284,7 @@ def _runner(provider: RecordingProvider) -> RunnabilityRunner:
         sandbox_spec_factory=_sandbox_spec,
         spec_id="003-browser-game",
         target_id="browser-game",
-        strategy_id="default",
-        build_id="build-1",
+                build_id="build-1",
         browser_helper=b"// harness-owned browser helper\n",
     )
 

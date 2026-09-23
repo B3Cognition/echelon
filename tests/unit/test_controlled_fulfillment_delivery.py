@@ -223,7 +223,7 @@ def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner
     controller, store = setup_delivery(context, tmp_path, executor)
     fingerprint = product_evidence_fingerprint(context.project_root)
     ref = write_verification_receipt(evidence_dir=tmp_path / "receipts", spec_id=context.spec_id,
-        strategy_id="default", build_id="test-run", candidate_commit=_current_git_commit(context.project_root),
+        build_id="test-run", candidate_commit=_current_git_commit(context.project_root),
         fingerprint_before=fingerprint, fingerprint_after=fingerprint, verifier_source="configured",
         stages=[VerificationStage(name="verify", command=("python", "-m", "pytest"), exit_code=0,
             duration_ms=1, stdout=b"passed", stderr=b"")], attempt_sequence=1, sensitive_environment={})
@@ -267,11 +267,11 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     executor = ReviewedExecutor(inspect_source=True)
     controller, store = setup_delivery(context, tmp_path, executor, mode)
     controller._config.verify_command = "python -m pytest"
-    review = ReviewLoopController(controller._gitops, controller._config, "001", "default",
+    review = ReviewLoopController(controller._gitops, controller._config, "001",
         base_dir=str(context.workspace_root), build_id="review-acceptance", spec_dir=context.spec_dir)
     tasks = context.spec_dir / "tasks.md"
     tasks.write_text(tasks.read_text().replace("- [ ]", "- [x]"))
-    with ReviewArtifactPublisher(context.spec_dir, review._state_file.parent, "default") as publisher:
+    with ReviewArtifactPublisher(context.spec_dir, review._state_file.parent) as publisher:
         allocation = _stage_one_group(publisher)
         append = allocation.attempt_dir / "tasks-append.md"
         append.write_text(append.read_text().replace("req=UNMAPPED", "req=FR-000001"))

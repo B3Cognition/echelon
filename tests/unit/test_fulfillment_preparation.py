@@ -256,7 +256,7 @@ def test_managed_delivery_worktree_is_accepted(preparation_context):
         cwd=context.source_root)
     mirror = context.workspace_root / "runs/mirror.git"
     git("clone", "--mirror", str(context.source_root), str(mirror), cwd=context.workspace_root)
-    worktree = context.workspace_root / "runs/build/worktrees/default/iter-0"
+    worktree = context.workspace_root / "runs/build/worktrees/iter-0"
     worktree.parent.mkdir(parents=True)
     git("worktree", "add", "-b", "harness/test", str(worktree), "main", cwd=mirror)
     context = replace(context, project_root=worktree)
