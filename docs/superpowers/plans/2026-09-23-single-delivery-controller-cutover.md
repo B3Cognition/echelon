@@ -216,7 +216,7 @@ git commit -m "refactor: introduce single delivery controller"
 - Consumes: `DeliveryController.run(intent) -> DeliveryResult` and `DeliveryController.state()`.
 - Produces: single-result `_print_delivery_summary` and `_append_harness_history` helpers, plus `append_run` without a strategy parameter.
 
-- [ ] **Step 1: Write failing single-result output/history tests**
+- [x] **Step 1: Write failing single-result output/history tests**
 
 Add assertions that history rows contain no `strategy_id` and that summaries
 describe one delivery rather than a strategy count:
@@ -252,7 +252,7 @@ Update `test_run_skill.py` so its fake controller returns one
 `DeliveryResult` from `run()` and one dict from `state()`; assert output omits
 `strategies`, `default`, and “strategies reached provider limits”.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -266,7 +266,7 @@ Run:
 Expected: failures show the old required `strategy_id` argument and old
 comparison-shaped summary calls.
 
-- [ ] **Step 3: Replace comparison-shaped helpers with single-result helpers**
+- [x] **Step 3: Replace comparison-shaped helpers with single-result helpers**
 
 Change the core signatures to:
 
@@ -319,7 +319,7 @@ Remove `result_map`, `comparison`, strategy counts, and the one-entry adapter
 from `_execute_delivery_run`. Change `harness_run_history.append_run` to remove
 the `strategy_id` parameter and field.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -332,7 +332,7 @@ Run:
 
 Expected: PASS; output/history tests contain no strategy-shaped fixtures.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/skills/run_skill.py src/harness/harness_run_history.py \

@@ -14,14 +14,13 @@ import os
 import re
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping
 
 from harness.config import load_config
 from harness.delivery_controller import DeliveryController
 from harness.gc import run_gc
 from harness.harness_run_history import append_run, summarize_history
-from harness.delivery_results import DeliveryRunOutcome, LandingOutcome
+from harness.delivery_results import DeliveryResult, DeliveryRunOutcome, LandingOutcome
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
 from harness.spec_frontmatter import find_spec_dir, read_targets
@@ -374,26 +373,25 @@ def _verified_ledger_line(info: dict[str, Any]) -> str:
     )
 
 
-def _delivery_provider_limit_message(
-    result_map: Mapping[str, Any],
-    comparison: Mapping[str, Any],
-) -> str:
-    messages: list[str] = []
-    for sid, info in comparison.get("strategies", {}).items():
-        result = result_map.get(sid)
-        if _is_provider_limited_summary_row(info, result):
-            message = str(info.get("provider_limit_message") or "").strip()
-            messages.append(message or f"Strategy {sid} reached its provider limit")
-    if not messages:
-        return ""
-    if len(messages) == 1:
-        return messages[0]
-    return f"{len(messages)} strategies reached provider limits; first: {messages[0]}"
-
-
 def _delivery_summary_facts(
-    result_map: Mapping[str, Any],
-    comparison: Mapping[str, Any],
+    result: DeliveryResult,
+    state: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "status": result.status,
+        "termination_reason": result.termination_reason,
+        "outer_iterations": result.outer_iterations,
+        "inner_iterations": result.inner_iterations,
+        "tokens_used": result.tokens_used,
+        "build_status": state.get("build_status"),
+        "provider_limit_message": state.get("provider_limit_message"),
+        "completed_task_ids": state.get("completed_task_ids") or [],
+    }
+
+
+def _delivery_run_summary_facts(
+    result: DeliveryResult,
+    state: Mapping[str, object],
 ):
     from harness.run_summary import (
         SummaryFact,
@@ -401,101 +399,59 @@ def _delivery_summary_facts(
         SummaryFactImportance,
     )
 
-    strategies = comparison.get("strategies", {})
-    summary = comparison.get("summary", {})
-    n_converged = int(summary.get("converged", 0) or 0)
-    n_provider_limited = sum(
-        1
-        for sid, info in strategies.items()
-        if _is_provider_limited_summary_row(info, result_map.get(sid))
+    converged = result.status == "converged"
+    provider_limited = _is_provider_limited_summary_row(dict(state), result)
+    checkpointed = not converged and not provider_limited and (
+        result.termination_reason in _CHECKPOINT_REASONS
     )
-    n_checkpointed = sum(
-        1
-        for sid, info in strategies.items()
-        if not info.get("converged", False)
-        and not _is_provider_limited_summary_row(info, result_map.get(sid))
-        and (
-            getattr(result_map.get(sid), "termination_reason", None)
-            or info.get("termination_reason")
-        )
-        in _CHECKPOINT_REASONS
+    outcome = (
+        "converged"
+        if converged
+        else "provider-limited"
+        if provider_limited
+        else "checkpointed"
+        if checkpointed
+        else "failed"
     )
-    n_failed = max(
-        0,
-        int(summary.get("failed", 0) or 0) - n_checkpointed - n_provider_limited,
-    )
-    outcome_parts = [f"{n_converged} converged", f"{n_failed} failed"]
-    if n_checkpointed:
-        outcome_parts.append(f"{n_checkpointed} checkpointed")
-    if n_provider_limited:
-        outcome_parts.append(f"{n_provider_limited} provider-limited")
-    outcome = ", ".join(outcome_parts[:-1])
-    if len(outcome_parts) > 1:
-        outcome += f", and {outcome_parts[-1]}"
-    else:
-        outcome = outcome_parts[0]
     facts = [
         SummaryFact(
             SummaryFactCategory.OUTCOME,
             SummaryFactImportance.HIGH,
-            f"Delivery finished with {outcome} strategies.",
+            f"Delivery finished {outcome}.",
             0,
         )
     ]
-    for sid, info in strategies.items():
-        result = result_map.get(sid)
-        converged = bool(info.get("converged", False))
-        reason = (
-            getattr(result, "termination_reason", None)
-            if result is not None
-            else info.get("termination_reason")
+    if converged:
+        category = SummaryFactCategory.WORK
+        importance = SummaryFactImportance.HIGH
+        text = "Delivery converged successfully."
+    elif provider_limited or checkpointed:
+        category = SummaryFactCategory.HANDOFF
+        importance = SummaryFactImportance.HIGH
+        text = "Prepared delivery for durable continuation."
+    else:
+        category = SummaryFactCategory.BLOCKER
+        importance = SummaryFactImportance.CRITICAL
+        text = "Delivery stopped before convergence."
+    facts.append(SummaryFact(category, importance, text, len(facts)))
+    verification = result.final_verify
+    if verification is not None:
+        verdict = "passed" if verification.passed else "failed"
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.VERIFICATION,
+                SummaryFactImportance.HIGH,
+                f"Delivery verification {verdict}.",
+                len(facts),
+            )
         )
-        provider_limited = _is_provider_limited_summary_row(info, result)
-        if converged:
-            facts.append(
-                SummaryFact(
-                    SummaryFactCategory.WORK,
-                    SummaryFactImportance.HIGH,
-                    f"Strategy {sid} converged successfully.",
-                    len(facts),
-                )
-            )
-        elif provider_limited or reason in _CHECKPOINT_REASONS:
-            facts.append(
-                SummaryFact(
-                    SummaryFactCategory.HANDOFF,
-                    SummaryFactImportance.HIGH,
-                    f"Prepared strategy {sid} for durable continuation.",
-                    len(facts),
-                )
-            )
-        else:
-            facts.append(
-                SummaryFact(
-                    SummaryFactCategory.BLOCKER,
-                    SummaryFactImportance.CRITICAL,
-                    f"Strategy {sid} stopped before convergence.",
-                    len(facts),
-                )
-            )
-        verification = getattr(result, "final_verify", None)
-        if verification is not None:
-            verdict = "passed" if verification.passed else "failed"
-            facts.append(
-                SummaryFact(
-                    SummaryFactCategory.VERIFICATION,
-                    SummaryFactImportance.HIGH,
-                    f"Strategy {sid} verification {verdict}.",
-                    len(facts),
-                )
-            )
     return tuple(facts)
 
 
 def _print_delivery_summary(
     intent: Any,
-    result_map: Dict[str, Any],
-    comparison: Dict[str, Any],
+    result: DeliveryResult,
+    state: Mapping[str, object],
     workspace_root: Path,
     spec_dir: Path | None,
     config: Any = None,
@@ -518,181 +474,150 @@ def _print_delivery_summary(
     fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
     if target_repo:
         fields.append(("target", target_repo))
-    fields.append(("strategies", f"{', '.join(intent.strategies)}  |  mode: {intent.mode}"))
+    fields.append(("mode", str(intent.mode)))
 
-    for sid, info in comparison.get("strategies", {}).items():
-        result = result_map.get(sid)
-        converged = info.get("converged", False)
-        reason = getattr(result, "termination_reason", None) if result is not None else info.get("termination_reason")
-        build_status = str(info.get("build_status") or "")
-        provider_limited = _is_provider_limited_summary_row(info, result)
-        checkpointed = (not converged) and reason in _CHECKPOINT_REASONS and not provider_limited
-        if converged:
-            status_icon = "✓"
-            status_str = "CONVERGED"
-        elif provider_limited:
-            status_icon = "◐"
-            status_str = "PROVIDER SESSION LIMIT"
-        elif checkpointed:
-            status_icon = "◐"
-            status_str = "CHECKPOINTED"
-        else:
-            status_icon = "✗"
-            status_str = info.get("status", "FAILED").upper()
-        outer = info.get("outer_iterations", 0)
-        inner = info.get("inner_iterations", 0)
-        branch = info.get("branch") or f"harness/{intent.spec_id}/{sid}/iter-{max(outer - 1, 0)}"
-        pr_url = info.get("pr_url")
+    info = dict(state)
+    converged = result.status == "converged"
+    reason = result.termination_reason
+    provider_limited = _is_provider_limited_summary_row(info, result)
+    checkpointed = not converged and reason in _CHECKPOINT_REASONS and not provider_limited
+    if converged:
+        status_icon, status_str = "✓", "CONVERGED"
+    elif provider_limited:
+        status_icon, status_str = "◐", "PROVIDER SESSION LIMIT"
+    elif checkpointed:
+        status_icon, status_str = "◐", "CHECKPOINTED"
+    else:
+        status_icon, status_str = "✗", result.status.upper()
+    outer = result.outer_iterations
+    inner = result.inner_iterations
+    branch = result.branch or state.get("branch") or f"harness/{intent.spec_id}/iter-{max(outer - 1, 0)}"
+    pr_url = state.get("pr_url") or result.pr_url
+    lines = [
+        f"{status_icon} {status_str}",
+        f"branch: {branch}",
+        f"PR: {pr_url}" if pr_url else "PR: not created (gh/glab unavailable or pr_host unset)",
+        f"iterations: {outer} outer, {inner} inner retries",
+    ]
+    convergence = state.get("convergence_lease")
+    if isinstance(convergence, Mapping):
+        from harness.convergence import DEFAULT_STALL_PATIENCE
 
-        lines = [
-            f"{status_icon} {status_str}",
-            f"branch: {branch}",
-            f"PR: {pr_url}" if pr_url else "PR: not created (gh/glab unavailable or pr_host unset)",
-            f"iterations: {outer} outer, {inner} inner retries",
-        ]
-        convergence = info.get("convergence_lease")
-        if isinstance(convergence, Mapping):
-            from harness.convergence import DEFAULT_STALL_PATIENCE
-
-            meaningful = int(convergence.get("meaningful_attempts") or 0)
-            ceiling = int(info.get("max_outer") or intent.max_outer)
-            stalled = int(convergence.get("stalled_attempts") or 0)
-            infrastructure = int(convergence.get("infrastructure_attempts") or 0)
-            lines.extend(
-                [
-                    f"meaningful attempts: {meaningful}/{ceiling}",
-                    f"stall patience: {stalled}/{DEFAULT_STALL_PATIENCE}",
-                    f"excluded infrastructure attempts: {infrastructure}",
-                ]
-            )
-            outcome = str(convergence.get("last_outcome") or "").strip()
-            outcome_reason = str(convergence.get("last_reason") or "").strip()
-            if outcome:
-                lines.append(
-                    "convergence: "
-                    + (f"{outcome}: {outcome_reason}" if outcome_reason else outcome)
-                )
-            best_checkpoint = str(
-                convergence.get("best_checkpoint_commit") or ""
-            ).strip()
-            if best_checkpoint:
-                lines.append(f"best checkpoint: {best_checkpoint[:12]}")
-        if result is not None:
-            if reason and reason != "converged":
-                if provider_limited:
-                    lines.append("stopped: provider session limit")
-                    provider_message = str(info.get("provider_limit_message") or "")
-                    provider_reset = str(info.get("provider_reset_hint") or "")
-                    salvage_commit = str(info.get("salvage_commit") or "")
-                    salvage_branch = str(info.get("salvage_branch") or "")
-                    salvage_verified = str(info.get("salvage_verified") or "")
-                    if provider_message:
-                        lines.append(f"provider: {provider_message}")
-                    if provider_reset:
-                        lines.append(f"reset: {provider_reset}")
-                    if salvage_commit:
-                        lines.append(f"salvage commit: {salvage_commit[:12]}")
-                    if salvage_branch:
-                        lines.append(f"salvage branch: {salvage_branch}")
-                    if salvage_verified:
-                        lines.append(f"salvage verified: {salvage_verified}")
-                    lines.append(f"continue: echelon delivery continue {intent.spec_id}")
-                elif checkpointed:
-                    if reason == "checkpoint_outer_cap":
-                        lines.append("stopped: checkpoint continuation needed")
-                    else:
-                        lines.append("stopped: checkpoint recovery needed")
-                    lines.append(f"continue: echelon delivery continue {intent.spec_id}")
-                else:
-                    lines.append(f"stopped: {reason}")
-                    if reason == "outer_cap":
-                        lines.append(
-                            f"next: echelon delivery run {intent.spec_id}  "
-                            "# continue with a fresh outer-loop budget"
-                        )
-                if reason == "publish_failed":
-                    failure = info.get("publication_failure")
-                    if isinstance(failure, Mapping):
-                        stage = str(failure.get("stage") or "publication")
-                        error = str(failure.get("error") or "unknown error")
-                        lines.append(f"publish failure: {stage}: {error}")
-            fv = getattr(result, "final_verify", None)
-            if fv is not None:
-                duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
-                deferred = (
-                    reason == "checkpoint_outer_cap"
-                    and not fv.passed
-                    and any(
-                        getattr(failure, "id", "") == "fulfillment-refresh-deferred"
-                        for failure in (fv.failures or [])
-                    )
-                )
-                if deferred:
-                    lines.append(f"verify: deferred{duration}")
-                else:
-                    v_icon = "✓" if fv.passed else "✗"
-                    lines.append(f"verify: {v_icon} {'passed' if fv.passed else 'FAILED'}{duration}")
-                for failure in (fv.failures or []):
-                    if deferred:
-                        lines.append(
-                            f"        deferred [{failure.category.value}] {failure.error}"
-                        )
-                    else:
-                        lines.append(
-                            f"        ✗ [{failure.category.value}] {failure.error}"
-                        )
-            else:
-                lines.append("verify: skipped (no sandbox / project type undetected)")
-            if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
-                lines.append(f"recommended action: {fulfillment_recommendation}")
-            verified_ledger = _verified_ledger_line(info)
-            if verified_ledger:
-                lines.append(verified_ledger)
-            if _should_print_suggested_answers(reason, result):
-                lines.extend(
-                    _suggested_answer_lines(info.get("escalation_file"), intent.spec_id)
-                )
-
-        fields.append((sid, "\n".join(lines)))
-
-    summary = comparison.get("summary", {})
-    n_converged = summary.get("converged", 0)
-    n_checkpointed = sum(
-        1
-        for sid, info in comparison.get("strategies", {}).items()
-        if not info.get("converged", False)
-        and info.get("build_status") != "provider_session_limit"
-        and (
-            getattr(result_map.get(sid), "termination_reason", None)
-            or info.get("termination_reason")
+        meaningful = int(convergence.get("meaningful_attempts") or 0)
+        ceiling = int(state.get("max_outer") or intent.max_outer)
+        stalled = int(convergence.get("stalled_attempts") or 0)
+        infrastructure = int(convergence.get("infrastructure_attempts") or 0)
+        lines.extend(
+            [
+                f"meaningful attempts: {meaningful}/{ceiling}",
+                f"stall patience: {stalled}/{DEFAULT_STALL_PATIENCE}",
+                f"excluded infrastructure attempts: {infrastructure}",
+            ]
         )
-        in _CHECKPOINT_REASONS
+        outcome = str(convergence.get("last_outcome") or "").strip()
+        outcome_reason = str(convergence.get("last_reason") or "").strip()
+        if outcome:
+            lines.append(
+                "convergence: "
+                + (f"{outcome}: {outcome_reason}" if outcome_reason else outcome)
+            )
+        best_checkpoint = str(convergence.get("best_checkpoint_commit") or "").strip()
+        if best_checkpoint:
+            lines.append(f"best checkpoint: {best_checkpoint[:12]}")
+    if reason and reason != "converged":
+        if provider_limited:
+            lines.append("stopped: provider session limit")
+            for key, label in (
+                ("provider_limit_message", "provider"),
+                ("provider_reset_hint", "reset"),
+                ("salvage_branch", "salvage branch"),
+                ("salvage_verified", "salvage verified"),
+            ):
+                value = str(state.get(key) or "").strip()
+                if value:
+                    lines.append(f"{label}: {value}")
+            salvage_commit = str(state.get("salvage_commit") or "").strip()
+            if salvage_commit:
+                lines.append(f"salvage commit: {salvage_commit[:12]}")
+            lines.append(f"continue: echelon delivery continue {intent.spec_id}")
+        elif checkpointed:
+            stopped = (
+                "checkpoint continuation needed"
+                if reason == "checkpoint_outer_cap"
+                else "checkpoint recovery needed"
+            )
+            lines.append(f"stopped: {stopped}")
+            lines.append(f"continue: echelon delivery continue {intent.spec_id}")
+        else:
+            lines.append(f"stopped: {reason}")
+            if reason == "outer_cap":
+                lines.append(
+                    f"next: echelon delivery run {intent.spec_id}  "
+                    "# continue with a fresh outer-loop budget"
+                )
+        if reason == "publish_failed":
+            failure = state.get("publication_failure")
+            if isinstance(failure, Mapping):
+                stage = str(failure.get("stage") or "publication")
+                error = str(failure.get("error") or "unknown error")
+                lines.append(f"publish failure: {stage}: {error}")
+    fv = result.final_verify
+    if fv is not None:
+        duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
+        deferred = (
+            reason == "checkpoint_outer_cap"
+            and not fv.passed
+            and any(
+                getattr(failure, "id", "") == "fulfillment-refresh-deferred"
+                for failure in (fv.failures or [])
+            )
+        )
+        if deferred:
+            lines.append(f"verify: deferred{duration}")
+        else:
+            v_icon = "✓" if fv.passed else "✗"
+            lines.append(f"verify: {v_icon} {'passed' if fv.passed else 'FAILED'}{duration}")
+        for failure in (fv.failures or []):
+            prefix = "deferred" if deferred else "✗"
+            lines.append(f"        {prefix} [{failure.category.value}] {failure.error}")
+    else:
+        lines.append("verify: skipped (no sandbox / project type undetected)")
+    if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
+        lines.append(f"recommended action: {fulfillment_recommendation}")
+    verified_ledger = _verified_ledger_line(info)
+    if verified_ledger:
+        lines.append(verified_ledger)
+    if _should_print_suggested_answers(reason, result):
+        lines.extend(_suggested_answer_lines(state.get("escalation_file"), intent.spec_id))
+    fields.append(("delivery", "\n".join(lines)))
+
+    outcome = (
+        "converged"
+        if converged
+        else "provider-limited"
+        if provider_limited
+        else "checkpointed"
+        if checkpointed
+        else "failed"
     )
-    n_provider_limited = sum(
-        1
-        for sid, info in comparison.get("strategies", {}).items()
-        if _is_provider_limited_summary_row(info, result_map.get(sid))
+    if result.tokens_used:
+        outcome += f"  ·  {result.tokens_used:,} tokens"
+    fields.append(("outcome", outcome))
+    provider_limit_message = (
+        str(state.get("provider_limit_message") or "").strip()
+        if provider_limited
+        else ""
     )
-    raw_failed = summary.get("failed", 0)
-    n_failed = max(0, raw_failed - n_checkpointed - n_provider_limited)
-    total_tokens = summary.get("total_tokens", 0)
-    result_str = f"{n_converged} converged, {n_failed} failed"
-    if n_checkpointed:
-        result_str += f", {n_checkpointed} checkpointed"
-    if n_provider_limited:
-        result_str += f", {n_provider_limited} provider-limited"
-    if total_tokens:
-        result_str += f"  ·  {total_tokens:,} tokens"
-    fields.append(("delivery", result_str))
-    provider_limit_message = _delivery_provider_limit_message(result_map, comparison)
+    if provider_limited and not provider_limit_message:
+        provider_limit_message = "Delivery reached its provider limit"
     if provider_limit_message:
         fields.append(("provider limit", provider_limit_message))
     next_step = ""
-    if n_checkpointed or n_provider_limited:
+    if checkpointed or provider_limited:
         next_step = f"echelon delivery continue {intent.spec_id}"
-    elif n_failed:
+    elif not converged:
         next_step = f"echelon delivery run {intent.spec_id}"
-    elif n_converged and (landing is None or landing.status != "landed"):
+    elif landing is None or landing.status != "landed":
         next_step = f"echelon delivery land {intent.spec_id}"
     if landing is not None:
         landing_text = landing.status
@@ -713,11 +638,10 @@ def _print_delivery_summary(
                 ),
                 status=(
                     "done"
-                    if n_converged
-                    and not (n_failed or n_checkpointed or n_provider_limited)
+                    if converged
                     else "blocked"
                 ),
-                facts=_delivery_summary_facts(result_map, comparison),
+                facts=_delivery_run_summary_facts(result, state),
                 next_step=next_step,
                 provider_limit_message=provider_limit_message,
             )
@@ -748,71 +672,47 @@ def _print_delivery_exception_summary(
         except (TypeError, ValueError):
             return 0
 
-    result_map: dict[str, object] = {}
-    strategies: dict[str, dict[str, object]] = {}
-    durable_states: dict[str, dict[str, object]] = {}
+    state: dict[str, object] = {}
     try:
         build_id = current_build_marker(
             harness_root,
             str(intent.spec_id),
         ).read_text(encoding="utf-8").strip()
-        state_dir = runs_dir(harness_root) / build_id / "state"
-        for state_path in sorted(state_dir.glob("*.json")):
-            value = json.loads(state_path.read_text(encoding="utf-8"))
-            if isinstance(value, dict):
-                durable_states[state_path.stem] = value
+        state_path = runs_dir(harness_root) / build_id / "state" / "default.json"
+        value = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(value, dict):
+            state = value
     except (OSError, ValueError, json.JSONDecodeError):
-        durable_states = {}
-    strategy_ids = tuple(
-        dict.fromkeys(
-            (
-                *tuple(str(value) for value in getattr(intent, "strategies", ()) or ()),
-                *tuple(durable_states),
-            )
-            or ("default",)
-        )
+        state = {}
+    reason = str(
+        state.get("termination_reason")
+        or state.get("blocked_reason")
+        or "controller_exception"
     )
-    for strategy in strategy_ids:
-        state = durable_states.get(strategy, {})
-        reason = str(
-            state.get("termination_reason")
-            or state.get("blocked_reason")
-            or "coordinator_exception"
-        )
-        result = SimpleNamespace(
-            status=str(state.get("status") or "blocked"),
-            termination_reason=reason,
-            outer_iterations=durable_counter(state.get("outer_iteration")),
-            inner_iterations=durable_counter(state.get("inner_iteration")),
-            pr_url=state.get("pr_url"),
-            final_verify=None,
-        )
-        result_map[strategy] = result
-        strategies[strategy] = {
-            "status": str(state.get("status") or "blocked"),
-            "termination_reason": reason,
-            "build_status": str(state.get("build_status") or "failed"),
-            "outer_iterations": result.outer_iterations,
-            "inner_iterations": result.inner_iterations,
-            "converged": False,
-            "branch": state.get("branch"),
-            "pr_url": state.get("pr_url"),
-            "provider_limit_message": state.get("provider_limit_message"),
-            "provider_reset_hint": state.get("provider_reset_hint"),
-            "completed_task_ids": state.get("completed_task_ids") or [],
-            "publication_failure": state.get("publication_failure"),
-        }
+    result = DeliveryResult(
+        status="blocked",
+        termination_reason=reason,
+        outer_iterations=durable_counter(
+            state.get("outer_iter") or state.get("outer_iteration")
+        ),
+        inner_iterations=durable_counter(
+            state.get("inner_iter") or state.get("inner_iteration")
+        ),
+        pr_url=str(state.get("pr_url") or "") or None,
+        tokens_used=durable_counter(state.get("tokens_used")),
+        final_verify=None,
+        blocked_phase=(
+            str(state.get("blocked_phase"))
+            if state.get("blocked_phase")
+            in {"implementation", "visual", "review", "finalization"}
+            else "implementation"
+        ),
+        branch=str(state.get("branch") or "") or None,
+    )
     _print_delivery_summary(
         intent,
-        result_map,
-        {
-            "strategies": strategies,
-            "summary": {
-                "converged": 0,
-                "failed": len(strategies),
-                "total_tokens": 0,
-            },
-        },
+        result,
+        state,
         workspace_root,
         spec_dir,
         config,
@@ -865,13 +765,12 @@ def _print_harness_history_summary(
             continue
         build_id = str(row.get("build_id") or "?")
         short_build = build_id.replace("build-", "")
-        strategy = str(row.get("strategy_id") or "?")
         status = str(row.get("status") or "?")
         reason = str(row.get("termination_reason") or "?")
         tokens = int(row.get("tokens_used") or 0)
         fields.append(
             (
-                f"{short_build}/{strategy}",
+                short_build,
                 f"{status}  |  {reason}  |  {tokens:,} tokens",
             )
         )
@@ -889,25 +788,20 @@ def _append_harness_history(
     spec_id: str,
     build_id: str,
     mode: str,
-    result_map: Dict[str, Any],
-    comparison: Dict[str, Any],
-    controller: DeliveryController,
+    result: DeliveryResult,
+    state: Mapping[str, object],
 ) -> None:
     if spec_dir is None:
         return
-    for sid, result in result_map.items():
-        info = comparison.get("strategies", {}).get(sid, {})
-        state = controller.state()
-        append_run(
-            spec_dir,
-            spec_id=spec_id,
-            build_id=build_id,
-            mode=mode,
-            strategy_id=sid,
-            result=result,
-            pr_url=info.get("pr_url") or getattr(result, "pr_url", None),
-            started_at=state.get("started_at"),
-        )
+    append_run(
+        spec_dir,
+        spec_id=spec_id,
+        build_id=build_id,
+        mode=mode,
+        result=result,
+        pr_url=str(state.get("pr_url") or result.pr_url or "") or None,
+        started_at=str(state.get("started_at") or "") or None,
+    )
 
 
 def _execute_delivery_run(
@@ -967,40 +861,19 @@ def _execute_delivery_run(
 
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
     result = controller.run(intent)
-    result_map = {"default": result}
-    comparison = {
-        "strategies": {
-            "default": {
-                "status": result.status,
-                "termination_reason": result.termination_reason,
-                "outer_iterations": result.outer_iterations,
-                "inner_iterations": result.inner_iterations,
-                "tokens_used": result.tokens_used,
-                "pr_url": result.pr_url,
-                "branch": result.branch,
-                "converged": result.status == "converged",
-                **controller.state(),
-            }
-        },
-        "summary": {
-            "converged": 1 if result.status == "converged" else 0,
-            "failed": 0 if result.status == "converged" else 1,
-            "total_tokens": result.tokens_used,
-        },
-    }
+    state = controller.state()
     _append_harness_history(
         spec_dir=spec_dir,
         spec_id=intent.spec_id,
         build_id=build_id,
         mode=intent.mode,
-        result_map=result_map,
-        comparison=comparison,
-        controller=controller,
+        result=result,
+        state=state,
     )
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
 
     landing = LandingOutcome("not_requested")
-    converged = comparison.get("summary", {}).get("converged", 0) > 0
+    converged = result.status == "converged"
     if intent.auto_merge and converged:
         targets = read_targets(spec_dir) if spec_dir is not None else []
         if len(targets) > 1:
@@ -1040,8 +913,8 @@ def _execute_delivery_run(
 
     _print_delivery_summary(
         intent,
-        result_map,
-        comparison,
+        result,
+        state,
         workspace_root,
         spec_dir,
         config,

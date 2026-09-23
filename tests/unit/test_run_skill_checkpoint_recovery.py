@@ -156,7 +156,6 @@ def test_fresh_delivery_recovers_only_checkpointed_tasks_on_baseline_ancestry(
     first_payload.update(
         {
             "spec_id": "012",
-            "strategy_id": "default",
             "build": {
                 "task_results": {
                     "T-001": {"status": "DONE"},
@@ -175,7 +174,7 @@ def test_fresh_delivery_recovers_only_checkpointed_tasks_on_baseline_ancestry(
         checkpoint=baseline,
     )
     latest_payload = json.loads(latest.read_text(encoding="utf-8"))
-    latest_payload.update({"spec_id": "012", "strategy_id": "default"})
+    latest_payload.update({"spec_id": "012"})
     latest_payload["checkpoint_commits"][0]["task_ids"] = ["T-002"]
     latest_payload["build"] = {
         "task_results": {
@@ -193,7 +192,7 @@ def test_fresh_delivery_recovers_only_checkpointed_tasks_on_baseline_ancestry(
         checkpoint=unrelated,
     )
     other_payload = json.loads(other.read_text(encoding="utf-8"))
-    other_payload.update({"spec_id": "012", "strategy_id": "default"})
+    other_payload.update({"spec_id": "012"})
     other_payload["checkpoint_commits"][0]["task_ids"] = ["T-004"]
     other.write_text(json.dumps(other_payload), encoding="utf-8")
 
