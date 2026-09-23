@@ -47,15 +47,20 @@ broad CLI gate remains historical: 1,672 passed and one failure reproduced on
 the design baseline in 274.71s; it was not rerun in this final wave.
 
 Final S3 structural acceptance found no `_legacy_cli()` call in
-`src/echelon/cli_app.py`, and all 27 RE facade boundary tests passed in 10.32s.
-The worktree-local executable recount measured 104 public routes, 23 hidden
-routes, zero direct public or hidden `_legacy_cli()` consumers, and 104 modular
-public routes. The single final repository gate against `bfdb744c` tested
-`b423c8cee1a4099c719387afdd385d8584bc7ec8` (tree
-`36c25439debf3d8d46f5ee5214cd1ca70c96b25a`): 9,826 passed, 0 skipped,
-11,465 deselected, and 0 failures in 1,825.04s (30m25s). The receipt records
-1,827,473ms for the pytest subprocess, with exit code 0:
-`tests/reports/merge-verification/receipt-b423c8cee1a4-aa906e7b1aa34138ac985c250a569f07.json`.
+`src/echelon/cli_app.py`, and all 27 RE facade boundary tests selected by the
+unit marker passed in 10.36s. Final review correction `3e648dc5` removed the
+new Typer-only resume-mode rejection so malformed commands again traverse the
+typed facade and retain the kernel's exact `RE v2 · ERROR` banner and exit 2.
+The four compatibility cases failed against the Typer output before the fix
+and passed in 10.46s afterward; the 275-test focused RE/CLI suite passed in
+38.83s. The worktree-local executable recount remains 104 public routes, 23
+hidden routes, zero direct public or hidden `_legacy_cli()` consumers, and 104
+modular public routes. The single final repository gate against `bfdb744c`
+tested `3e648dc5ab1907b07c3e5cf9922381d8b9e697bc` (tree
+`21b0b54adcb157d18ff7fa59822735e8f495de4f`): 9,853 passed, 0 skipped,
+11,438 deselected, and 0 failures in 2,121.92s (35m21.92s). The receipt records
+2,124,409ms for the pytest subprocess, with exit code 0:
+`tests/reports/merge-verification/receipt-3e648dc5ab19-9a15640fb46a41918b2d6d2807f60395.json`.
 The receipt identifies the tested code/test commit before this
 documentation/evidence commit.
 

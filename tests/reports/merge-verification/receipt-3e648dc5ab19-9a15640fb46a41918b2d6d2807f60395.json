@@ -1,12 +1,15 @@
 {
   "plan": {
     "base_commit": "bfdb744ce1e8709948ec61b81ced8380d368da2b",
-    "candidate_commit": "b423c8cee1a4099c719387afdd385d8584bc7ec8",
-    "candidate_tree": "36c25439debf3d8d46f5ee5214cd1ca70c96b25a",
+    "candidate_commit": "3e648dc5ab1907b07c3e5cf9922381d8b9e697bc",
+    "candidate_tree": "21b0b54adcb157d18ff7fa59822735e8f495de4f",
     "changed_paths": [
+      "docs/findings/2026-09-21-typer-route-inventory.md",
+      "docs/simplification-control.md",
       "docs/superpowers/plans/2026-09-23-re-typed-quarantine-facade.md",
       "src/echelon/cli_app.py",
       "src/echelon/re_service.py",
+      "tests/reports/merge-verification/receipt-b423c8cee1a4-aa906e7b1aa34138ac985c250a569f07.json",
       "tests/unit/test_benchmark.py",
       "tests/unit/test_cli_phase.py",
       "tests/unit/test_cli_re_lifecycle.py",
@@ -40,7 +43,7 @@
         "-m",
         "unit"
       ],
-      "duration_ms": 1827473,
+      "duration_ms": 2124409,
       "exit_code": 0
     }
   ],
