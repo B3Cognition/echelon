@@ -329,6 +329,16 @@ class PendingSliceRecovery:
     blocked_result: ImplementationResult | None = None
 
 
+@dataclass(frozen=True)
+class PreparedIteration:
+    """Candidate worktree selected and synchronized for one Ralph iteration."""
+
+    worktree_path: str | None = None
+    recovering_slice: bool = False
+    preserve_worktree: bool = False
+    blocked_result: ImplementationResult | None = None
+
+
 class RalphController:
     """Orchestrates the single delivery implementation loop.
 
@@ -442,6 +452,94 @@ class RalphController:
         return PendingSliceRecovery(
             recovering=True,
             worktree_path=preserved,
+        )
+
+    def _prepare_iteration(
+        self,
+        *,
+        recovery: PendingSliceRecovery,
+        feature_branch: str | None,
+        outer_iter: int,
+        start_outer: int,
+        total_inner_iterations: int,
+        pr_url: str | None,
+        tokens_used: int,
+    ) -> PreparedIteration:
+        """Select and prepare exactly one candidate worktree."""
+        if recovery.worktree_path is not None:
+            worktree_path = recovery.worktree_path
+        elif self._resume_worktree_path and outer_iter == start_outer:
+            worktree_path = self._resume_worktree_path
+            self._resume_worktree_path = None
+            if not Path(worktree_path).is_dir():
+                return PreparedIteration(
+                    recovering_slice=recovery.recovering,
+                    blocked_result=self._finalize(
+                        status="blocked",
+                        reason="verified_provenance_unavailable",
+                        outer_iterations=outer_iter,
+                        inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
+                        tokens_used=tokens_used,
+                        final_verify=None,
+                    ),
+                )
+            state = self._state_store.read()
+            reentry = state.get("downstream_reentry")
+            if isinstance(reentry, dict):
+                state["downstream_reentry"] = {**reentry, "consumed": True}
+                self._state_store.write(state)
+            logger.info(
+                "Reusing registered worktree %s for downstream repair re-verification",
+                worktree_path,
+            )
+        else:
+            worktree_path = self._gitops.create_worktree(
+                self._spec_id,
+                outer_iter,
+                build_id=self._build_id,
+                base_branch=feature_branch,
+                prepare_codegraph=True,
+                fresh_branch=self._fresh_delivery and outer_iter == start_outer,
+                fresh_branch_base=(
+                    self._fresh_branch_base
+                    if self._fresh_delivery and outer_iter == start_outer
+                    else None
+                ),
+            )
+
+        phase_a_blockers = (
+            []
+            if recovery.recovering
+            else self._sync_phase_a_inputs_into_worktree(Path(worktree_path))
+        )
+        if phase_a_blockers:
+            reason = (
+                "Phase A artifacts are not build-ready in harness worktree: "
+                + "; ".join(phase_a_blockers)
+            )
+            return PreparedIteration(
+                worktree_path=worktree_path,
+                recovering_slice=recovery.recovering,
+                preserve_worktree=True,
+                blocked_result=self._finalize(
+                    status="blocked",
+                    reason="build_incomplete",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                    extra_state={
+                        "build_status": "phase_a_not_ready",
+                        "build_reason": reason,
+                    },
+                ),
+            )
+
+        return PreparedIteration(
+            worktree_path=worktree_path,
+            recovering_slice=recovery.recovering,
         )
 
     def run_loop(
@@ -580,71 +678,24 @@ class RalphController:
             )
             if recovery.blocked_result is not None:
                 return recovery.blocked_result
-            recovering_slice = recovery.recovering
-            if recovery.worktree_path is not None:
-                worktree_path = recovery.worktree_path
-            # Create worktree — use feature branch when available so spec artifacts
-            # (spec.md, tasks.md, constitution.md) are present from the start.
-            elif self._resume_worktree_path and outer_iter == start_outer:
-                worktree_path = self._resume_worktree_path
-                self._resume_worktree_path = None
-                if not Path(worktree_path).is_dir():
-                    return self._finalize(
-                        status="blocked",
-                        reason="verified_provenance_unavailable",
-                        outer_iterations=outer_iter,
-                        inner_iterations=total_inner_iterations,
-                        pr_url=pr_url,
-                        tokens_used=tokens_used,
-                        final_verify=None,
-                    )
-                state = self._state_store.read()
-                reentry = state.get("downstream_reentry")
-                if isinstance(reentry, dict):
-                    state["downstream_reentry"] = {**reentry, "consumed": True}
-                    self._state_store.write(state)
-                logger.info(
-                    "Reusing registered worktree %s for downstream repair re-verification",
-                    worktree_path,
-                )
-            else:
-                worktree_path = self._gitops.create_worktree(
-                    self._spec_id, outer_iter,
-                    build_id=self._build_id,
-                    base_branch=feature_branch,
-                    prepare_codegraph=True,
-                    fresh_branch=self._fresh_delivery and outer_iter == start_outer,
-                    fresh_branch_base=(
-                        self._fresh_branch_base
-                        if self._fresh_delivery and outer_iter == start_outer
-                        else None
-                    ),
-                )
-            preserve_worktree = False
+            prepared = self._prepare_iteration(
+                recovery=recovery,
+                feature_branch=feature_branch,
+                outer_iter=outer_iter,
+                start_outer=start_outer,
+                total_inner_iterations=total_inner_iterations,
+                pr_url=pr_url,
+                tokens_used=tokens_used,
+            )
+            if prepared.blocked_result is not None and prepared.worktree_path is None:
+                return prepared.blocked_result
+            worktree_path = prepared.worktree_path
+            recovering_slice = prepared.recovering_slice
+            preserve_worktree = prepared.preserve_worktree
 
             try:
-                phase_a_blockers = [] if recovering_slice else self._sync_phase_a_inputs_into_worktree(
-                    Path(worktree_path)
-                )
-                if phase_a_blockers:
-                    preserve_worktree = True
-                    reason = (
-                        "Phase A artifacts are not build-ready in harness worktree: "
-                        + "; ".join(phase_a_blockers)
-                    )
-                    return self._finalize(
-                        status="blocked",
-                        reason="build_incomplete",
-                        outer_iterations=outer_iter + 1,
-                        inner_iterations=total_inner_iterations,
-                        pr_url=pr_url,
-                        tokens_used=tokens_used,
-                        final_verify=None,
-                        extra_state={
-                            "build_status": "phase_a_not_ready",
-                            "build_reason": reason,
-                        },
-                    )
+                if prepared.blocked_result is not None:
+                    return prepared.blocked_result
 
                 # Host-side LLM builds and verification do not use the sandbox.
                 # Avoid creating it here: doing so makes Codex/Claude delivery
