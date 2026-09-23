@@ -244,7 +244,7 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
         )
 
     build_id = current_build_marker(harness_root, "911").read_text(encoding="utf-8")
-    state = StateStore(harness_root / "runs" / build_id / "state", "911", "default").read()
+    state = StateStore(harness_root / "runs" / build_id / "state", "911").read()
     assert outcome.results[0].status == "converged"
     assert outcome.landing.status == "blocked"
     assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
@@ -480,7 +480,7 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
             first.run(intent)
 
         state_store = StateStore(
-            harness_root / "runs" / "build-912" / "state", "912", "default"
+            harness_root / "runs" / "build-912" / "state", "912"
         )
         checkpoint = state_store.read()
         assert checkpoint["status"] == "finalizing"

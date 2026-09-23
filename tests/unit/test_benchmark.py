@@ -255,7 +255,7 @@ def test_collect_benchmark_record_reads_squad_and_delivery_state(tmp_path: Path)
     state_dir = build_dir / "state"
     state_dir.mkdir(parents=True)
     (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "run_id": "build-1",
@@ -615,7 +615,7 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
             state_dir = build_dir / "state"
             state_dir.mkdir(parents=True)
             (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
-            (state_dir / "default.json").write_text(
+            (state_dir / "delivery.json").write_text(
                 json.dumps({"run_id": "build-1", "status": "converged", "outer_iter": 2}),
                 encoding="utf-8",
             )
@@ -698,7 +698,7 @@ def test_run_benchmark_variant_records_metrics_before_trailing_clean(tmp_path: P
             state_dir = build_dir / "state"
             state_dir.mkdir(parents=True)
             (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
-            (state_dir / "default.json").write_text(
+            (state_dir / "delivery.json").write_text(
                 json.dumps({"run_id": "build-1", "status": "converged", "outer_iter": 2}),
                 encoding="utf-8",
             )
@@ -840,7 +840,7 @@ def test_run_benchmark_variant_snapshots_workspace_when_baseline_ref_missing(tmp
             state_dir = build_dir / "state"
             state_dir.mkdir(parents=True)
             (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
-            (state_dir / "default.json").write_text(
+            (state_dir / "delivery.json").write_text(
                 json.dumps({"run_id": "build-1", "status": "converged"}),
                 encoding="utf-8",
             )

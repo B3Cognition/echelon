@@ -81,7 +81,7 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
         target_default_branch="main",
         provider="docker",
     )
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
     provider = _ConvergeProvider()
@@ -393,7 +393,7 @@ def _make_controller_with_provider(
         target_default_branch="main",
         provider="docker",
     )
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
     gitops = _make_gitops()

@@ -12,16 +12,14 @@ import pytest
 def _write_delivery_state(
     project_root: Path,
     *,
-    strategy: str = "default",
     user_runnability: dict | None = None,
     coverage_observation: dict | None = None,
 ) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"{strategy}.json"
+    state_file = state_dir / "delivery.json"
     payload = {
                 "spec_id": "001",
-                "strategy_id": strategy,
                 "status": "blocked",
                 "mode": "banzai",
                 "outer_iter": 2,
@@ -72,12 +70,11 @@ def _write_target_delivery_state(project_root: Path) -> Path:
         / "state"
     )
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / "default.json"
+    state_file = state_dir / "delivery.json"
     state_file.write_text(
         json.dumps(
             {
                 "spec_id": "001",
-                "strategy_id": "default",
                 "status": "blocked",
                 "target_repo": "browser-3d-game",
                 "implementation_target": "sources/browser-3d-game",
@@ -515,7 +512,7 @@ def test_delivery_status_prints_publication_failure_cause(
 def test_delivery_status_json_has_no_strategy_dimension(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.delivery_status import command
 
-    _write_delivery_state(tmp_path, strategy="default")
+    _write_delivery_state(tmp_path)
 
     command(spec_id="001", json_output=True, project_root=tmp_path)
 

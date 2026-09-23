@@ -21,7 +21,7 @@ class TestAtomicWriteSurvival:
 
     def test_bak_exists_after_second_write(self, tmp_path):
         """Atomic write: .bak file exists after second write."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.initialize("run-001", "banzai")
 
         # Second write should create .bak
@@ -29,7 +29,7 @@ class TestAtomicWriteSurvival:
         data["tokens_used"] = 100
         store.write(data)
 
-        bak_file = tmp_path / "default.json.bak"
+        bak_file = tmp_path / "delivery.json.bak"
         assert bak_file.exists()
 
         # .bak should contain the original state
@@ -38,7 +38,7 @@ class TestAtomicWriteSurvival:
 
     def test_bak_recoverable_after_crash(self, tmp_path):
         """After crash, .bak is recoverable with valid state."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.initialize("run-001", "banzai")
 
         # Write valid state
@@ -47,11 +47,11 @@ class TestAtomicWriteSurvival:
         store.write(data)
 
         # Simulate corruption of main file
-        state_file = tmp_path / "default.json"
+        state_file = tmp_path / "delivery.json"
         state_file.write_text("CORRUPTED", encoding="utf-8")
 
         # .bak should still be valid
-        bak_file = tmp_path / "default.json.bak"
+        bak_file = tmp_path / "delivery.json.bak"
         bak_data = json.loads(bak_file.read_text(encoding="utf-8"))
         assert bak_data["status"] == "initialized"
         assert bak_data["run_id"] == "run-001"

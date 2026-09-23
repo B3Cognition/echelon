@@ -1,6 +1,6 @@
 """Status skill -- display current loop status.
 
-Per T044 / FR-CLI-003: aggregate status across all strategies.
+Per T044 / FR-CLI-003: display the current delivery status.
 Render within 3 seconds.
 """
 
@@ -32,54 +32,45 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
 
     if not rd.exists():
         print("No active loops.", file=sys.stderr)
-        return {"active_loops": 0, "strategies": {}}
+        return {"active_loops": 0, "delivery": {}}
 
-    strategies: Dict[str, Any] = {}
-
-    for build in sorted(rd.glob("build-*/")):
+    delivery: Dict[str, Any] = {}
+    for build in sorted(rd.glob("build-*/"), reverse=True):
         state_dir = build / "state"
-        if not state_dir.exists():
+        state_file = state_dir / "delivery.json"
+        if not state_file.is_file():
             continue
-        for state_file in state_dir.glob("*.json"):
-            sid = state_file.stem
-            try:
-                data = json.loads(state_file.read_text(encoding="utf-8"))
-                strategies[sid] = {
-                    "status": data.get("status", "unknown"),
-                    "outer_iter": data.get("outer_iter", 0),
-                    "inner_iter": data.get("inner_iter", 0),
-                    "tokens_used": data.get("tokens_used", 0),
-                    "token_budget": data.get("token_budget"),
-                    "pr_url": data.get("pr_url"),
-                    "termination_reason": data.get("termination_reason"),
-                    "escalation_file": data.get("escalation_file"),
-                    "dirty_worktree_adjudication": data.get(
-                        "dirty_worktree_adjudication"
-                    ),
-                    "publication_failure": data.get("publication_failure"),
-                }
-            except (json.JSONDecodeError, Exception) as e:
-                strategies[sid] = {
-                    "status": "corrupted",
-                    "error": str(e),
-                }
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            delivery = {
+                "status": data.get("status", "unknown"),
+                "outer_iter": data.get("outer_iter", 0),
+                "inner_iter": data.get("inner_iter", 0),
+                "tokens_used": data.get("tokens_used", 0),
+                "token_budget": data.get("token_budget"),
+                "pr_url": data.get("pr_url"),
+                "termination_reason": data.get("termination_reason"),
+                "escalation_file": data.get("escalation_file"),
+                "dirty_worktree_adjudication": data.get("dirty_worktree_adjudication"),
+                "publication_failure": data.get("publication_failure"),
+            }
+        except (json.JSONDecodeError, OSError) as error:
+            delivery = {"status": "corrupted", "error": str(error)}
+        break
 
-    active = sum(
-        1 for s in strategies.values()
-        if s.get("status") in ("running", "blocked", "initialized")
-    )
+    active = int(delivery.get("status") in ("running", "blocked", "initialized"))
 
     from echelon.ui import banner as _banner
 
-    if not strategies:
+    if not delivery:
         _banner("LOOP STATUS", [("active loops", "0")], file=sys.stderr)
-        return {"active_loops": 0, "strategies": {}}
+        return {"active_loops": 0, "delivery": {}}
 
     fields: list[tuple[str, str]] = []
-    for sid, info in strategies.items():
-        if info.get("status") == "corrupted":
-            fields.append((sid, "STATE CORRUPTED — run echelon delivery resume <spec_id> \"<answer>\" to recover"))
-            continue
+    info = delivery
+    if info.get("status") == "corrupted":
+        fields.append(("delivery", "STATE CORRUPTED — run echelon delivery resume <spec_id> \"<answer>\" to recover"))
+    else:
 
         budget_str = ""
         if info.get("token_budget") and info["token_budget"] > 0:
@@ -102,9 +93,9 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
         if info.get("status") == "blocked" and info.get("escalation_file"):
             val_lines.append(f"blocked: see {info['escalation_file']}")
 
-        fields.append((sid, "\n".join(val_lines)))
+        fields.append(("delivery", "\n".join(val_lines)))
 
     active_label = f"{active} active" if active > 0 else "all completed"
     _banner(f"LOOP STATUS ({active_label})", fields, file=sys.stderr)
 
-    return {"active_loops": active, "strategies": strategies}
+    return {"active_loops": active, "delivery": delivery}

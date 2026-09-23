@@ -3227,7 +3227,7 @@ def _mark_current_harness_state_blocked(
             state_dir = build_dir(project_root, marker.read_text().strip()) / "state"
         else:
             state_dir = runs_dir(project_root) / "state"
-        state_store = StateStore(state_dir, spec_id, strategy)
+        state_store = StateStore(state_dir, spec_id)
         data = state_store.read()
         if not data:
             return
@@ -3657,7 +3657,7 @@ def _run_delivery_resume(
         state_dir = build_dir(harness_base_dir, build_id) / "state"
     else:
         state_dir = runs_dir(harness_base_dir) / "state"
-    state_store = StateStore(state_dir, spec_id, strategy)
+    state_store = StateStore(state_dir, spec_id)
     state = state_store.read()
     if not _workspace_git_present(cwd):
         if state:

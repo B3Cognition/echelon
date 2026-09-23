@@ -12,11 +12,11 @@ def test_status_skill_corrupted_state_uses_delivery_resume_hint(
 ) -> None:
     state_dir = tmp_path / "runs" / "build-001" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text("{not-json", encoding="utf-8")
+    (state_dir / "delivery.json").write_text("{not-json", encoding="utf-8")
 
     result = show_status(str(tmp_path))
 
-    assert result["strategies"]["default"]["status"] == "corrupted"
+    assert result["delivery"]["status"] == "corrupted"
     err = capsys.readouterr().err
     assert "echelon delivery resume" in err
     assert "echelon.harness-resume" not in err

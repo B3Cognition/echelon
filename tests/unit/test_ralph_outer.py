@@ -477,7 +477,7 @@ def _make_controller(
     config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
     gitops = _make_gitops()
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
 

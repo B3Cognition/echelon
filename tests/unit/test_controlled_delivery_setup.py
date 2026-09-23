@@ -35,7 +35,7 @@ def test_delivery_without_llm_provider_blocks_before_ralph(
     assert result.status == "blocked"
     assert result.termination_reason == "delivery_configuration_invalid"
     assert constructed == []
-    state = StateStore(tmp_path / "runs/state", "spec-001", "default").read()
+    state = StateStore(tmp_path / "runs/state", "spec-001").read()
     assert "LLM provider" in state["build_reason"]
 
 

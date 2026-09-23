@@ -56,8 +56,8 @@ class TestStaleWorktreeDetection:
         latest.mkdir(parents=True)
         state_dir = build_dir / "state"
         state_dir.mkdir()
-        (state_dir / "default.json").write_text(
-            json.dumps({"status": "blocked", "strategy_id": "default"}),
+        (state_dir / "delivery.json").write_text(
+            json.dumps({"status": "blocked"}),
             encoding="utf-8",
         )
         old_time = time.time() - (25 * 3600)
@@ -81,8 +81,8 @@ class TestStaleWorktreeDetection:
         worktree.mkdir(parents=True)
         state_dir = build_dir / "state"
         state_dir.mkdir()
-        (state_dir / "default.json").write_text(
-            json.dumps({"status": status, "strategy_id": "default"}),
+        (state_dir / "delivery.json").write_text(
+            json.dumps({"status": status}),
             encoding="utf-8",
         )
 
@@ -96,7 +96,7 @@ class TestStaleBackupDetection:
         """Backup files older than threshold identified for removal."""
         state_base = tmp_path / "state"
         state_base.mkdir(parents=True)
-        bak_file = state_base / "default.json.bak"
+        bak_file = state_base / "delivery.json.bak"
         bak_file.write_text("{}")
 
         # Set mtime to 8 days ago
@@ -111,7 +111,7 @@ class TestStaleBackupDetection:
         """GC respects configurable thresholds."""
         state_base = tmp_path / "state"
         state_base.mkdir(parents=True)
-        bak_file = state_base / "default.json.bak"
+        bak_file = state_base / "delivery.json.bak"
         bak_file.write_text("{}")
 
         # Set mtime to 3 days ago

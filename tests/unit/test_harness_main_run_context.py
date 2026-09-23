@@ -78,7 +78,7 @@ def test_legacy_resume_renders_invalid_orchestration_context(
     marker.write_text(build_id, encoding="utf-8")
     state_dir = build_dir(tmp_path, build_id) / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": spec_id,

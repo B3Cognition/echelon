@@ -18,10 +18,10 @@ class TestLockAcquireRelease:
 
     def test_lock_acquired_with_pid(self, tmp_path):
         """Lock acquired and released cleanly."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.acquire_lock("run-001")
 
-        lock_file = tmp_path / "default.lock"
+        lock_file = tmp_path / "delivery.lock"
         assert lock_file.exists()
         content = lock_file.read_text(encoding="utf-8")
         assert f"pid={os.getpid()}" in content
@@ -32,19 +32,19 @@ class TestLockAcquireRelease:
 
     def test_lock_released_cleanly(self, tmp_path):
         """Release removes lock file."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
         store.acquire_lock("run-001")
         store.release_lock()
 
-        lock_file = tmp_path / "default.lock"
+        lock_file = tmp_path / "delivery.lock"
         assert not lock_file.exists()
 
     def test_stale_lock_reclaimed(self, tmp_path):
         """Stale lock (dead PID) reclaimed with warning."""
-        store = StateStore(tmp_path, "spec-001", "default")
+        store = StateStore(tmp_path, "spec-001")
 
         # Write a lock with a dead PID directly at the per-strategy lock path
-        lock_file = tmp_path / "default.lock"
+        lock_file = tmp_path / "delivery.lock"
         lock_file.write_text(
             "pid=999999999\ntimestamp=2026-01-01T00:00:00Z\nrun_id=old-run\n",
             encoding="utf-8",
@@ -59,10 +59,10 @@ class TestLockAcquireRelease:
 
     def test_concurrent_contention_raises(self, tmp_path):
         """Second process gets LockContention error."""
-        store1 = StateStore(tmp_path, "spec-001", "default")
+        store1 = StateStore(tmp_path, "spec-001")
         store1.acquire_lock("run-001")
 
-        store2 = StateStore(tmp_path, "spec-001", "default")
+        store2 = StateStore(tmp_path, "spec-001")
         with pytest.raises(LockContentionError):
             store2.acquire_lock("run-002")
 

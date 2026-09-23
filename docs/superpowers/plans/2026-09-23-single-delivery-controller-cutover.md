@@ -500,7 +500,7 @@ git commit -m "feat: remove delivery strategy options"
 - Consumes: build-scoped `state_dir` and `spec_id`.
 - Produces: `StateStore(state_dir: Path, spec_id: str)` using `delivery.json`, `delivery.lock`, and `delivery.json.bak` with no `strategy_id` state field.
 
-- [ ] **Step 1: Write failing fixed-path tests**
+- [x] **Step 1: Write failing fixed-path tests**
 
 Add this contract to `test_state_machine.py`:
 
@@ -524,7 +524,7 @@ def test_state_store_ignores_historical_default_state(tmp_path):
     assert StateStore(tmp_path, "001").read() == {}
 ```
 
-- [ ] **Step 2: Run state/status tests and verify RED**
+- [x] **Step 2: Run state/status tests and verify RED**
 
 Run:
 
@@ -537,7 +537,7 @@ Run:
 
 Expected: constructor arity and path assertions fail against per-strategy state.
 
-- [ ] **Step 3: Implement the fixed StateStore contract**
+- [x] **Step 3: Implement the fixed StateStore contract**
 
 Change initialization to:
 
@@ -554,7 +554,7 @@ Remove `strategy_id` from `initialize()`. Preserve atomic temporary writes,
 `.json.bak`, lock ownership, stale-lock behavior, state transitions, mode
 immutability, monotonic counters, and append-only logs unchanged.
 
-- [ ] **Step 4: Convert active state readers to the fixed path**
+- [x] **Step 4: Convert active state readers to the fixed path**
 
 Replace every active `StateStore(state_dir, spec_id, strategy)` construction
 with `StateStore(state_dir, spec_id)`. Status, checkpoints, exception summaries,
@@ -579,7 +579,7 @@ Return one status object shaped as:
 }
 ```
 
-- [ ] **Step 5: Update fixtures and verify GREEN**
+- [x] **Step 5: Update fixtures and verify GREEN**
 
 Mechanically change test construction from
 `StateStore(path, spec_id, "default")` to `StateStore(path, spec_id)`, then run
@@ -598,7 +598,7 @@ the command from Step 2 and:
 
 Expected: PASS and no tested command discovers `default.json`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/state.py src/harness/delivery_controller.py \

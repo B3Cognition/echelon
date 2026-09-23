@@ -15,7 +15,7 @@ def test_status_banner_shows_dirty_adjudication_counts(
 ) -> None:
     state_dir = tmp_path / "runs" / "build-1" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "status": "converged",
@@ -39,7 +39,5 @@ def test_status_banner_shows_dirty_adjudication_counts(
     payload = show_status(str(tmp_path))
     rendered = capsys.readouterr().err
 
-    assert payload["strategies"]["default"]["dirty_worktree_adjudication"][
-        "summary"
-    ]["ignored"] == 2
+    assert payload["delivery"]["dirty_worktree_adjudication"]["summary"]["ignored"] == 2
     assert "dirty: 1 committed, 2 ignored, 0 left, 0 blocked" in rendered

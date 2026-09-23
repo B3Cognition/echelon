@@ -62,7 +62,7 @@ def resume(
         _bdir = builds[0] if builds else _build_dir_fn(base_path, "")
         _bid = _bdir.name if _bdir.name else ""
     state_dir = _bdir / "state"
-    state_store = StateStore(state_dir, spec_id, "default")
+    state_store = StateStore(state_dir, spec_id)
     state = state_store.read()
 
     if not state:

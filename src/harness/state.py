@@ -1,6 +1,6 @@
 """StateStore with atomic writes, .bak snapshots, lockfile management.
 
-Per FR-STATE-001a: JSON per-strategy state files.
+Per FR-STATE-001a: one JSON delivery state file per build.
 Per FR-STATE-001b: Atomic writes (tempfile + fsync + rename) with .bak.
 Per FR-STATE-002: Lockfile with PID validation, stale lock reclaim.
 Per FR-MODE-002: Mode is immutable after initialization.
@@ -132,7 +132,7 @@ def state_lock_owner_is_alive(state_file: Path) -> bool:
 
 
 class StateStore:
-    """Manages per-strategy state.json with atomic writes and locking.
+    """Manages one delivery state file with atomic writes and locking.
 
     Invariants:
     - Writes are atomic: write to .tmp, fsync, rename.
@@ -143,12 +143,11 @@ class StateStore:
     - iteration_log is append-only.
     """
 
-    def __init__(self, state_dir: Path, spec_id: str, strategy_id: str) -> None:
+    def __init__(self, state_dir: Path, spec_id: str) -> None:
         self.state_dir = Path(state_dir)
         self.spec_id = spec_id
-        self.strategy_id = strategy_id
-        self.state_file = self.state_dir / f"{strategy_id}.json"
-        self.lock_file = self.state_dir / f"{strategy_id}.lock"
+        self.state_file = self.state_dir / "delivery.json"
+        self.lock_file = self.state_dir / "delivery.lock"
         self._data: Optional[Dict[str, Any]] = None
 
     def _ensure_dir(self) -> None:
@@ -449,7 +448,6 @@ class StateStore:
         now = datetime.now(timezone.utc).isoformat()
         data = {
             "spec_id": self.spec_id,
-            "strategy_id": self.strategy_id,
             "run_id": run_id,
             "status": "initialized",
             "delivery_state_version": DELIVERY_STATE_VERSION,

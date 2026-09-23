@@ -1,8 +1,4 @@
-"""Tests for the delivery-service run kernel.
-
-Covers the free-text task description capture introduced to fix the bug
-where 'echelon delivery run 013 strategy=codegen "do X"' silently dropped "do X".
-"""
+"""Tests for the delivery-service run kernel."""
 
 from __future__ import annotations
 
@@ -118,7 +114,7 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
 ) -> None:
     from echelon.delivery_service import _mark_current_harness_state_blocked
 
-    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store = StateStore(tmp_path / "runs" / "state", "003")
     store.initialize("run-1", "semi", enabled_phases=["implementation", "visual", "review", "finalization"])
     store.transition("running")
     if status == "validating":
@@ -144,7 +140,7 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
 def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: Path) -> None:
     from echelon.delivery_service import _mark_current_harness_state_blocked
 
-    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store = StateStore(tmp_path / "runs" / "state", "003")
     store.initialize("run-1", "semi")
     store.transition("running")
     store.transition("verified", updates={"last_completed_phase": "implementation"})
@@ -162,8 +158,8 @@ def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp
     from echelon.delivery_service import _mark_current_harness_state_blocked
 
     target_root = tmp_path / "runs" / "targets" / "api"
-    target = StateStore(target_root / "runs" / "state", "003", "default")
-    source = StateStore(tmp_path / "runs" / "state", "003", "default")
+    target = StateStore(target_root / "runs" / "state", "003")
+    source = StateStore(tmp_path / "runs" / "state", "003")
     for store in (target, source):
         store.initialize("run-1", "semi", enabled_phases=["implementation", "finalization"])
         store.transition("running")
@@ -187,14 +183,19 @@ class TestHarnessRunArgParsing:
         kv: dict[str, str] = {}
         free_text: list[str] = []
         for arg in args[1:]:
-            if "=" in arg:
+            if "=" in arg and arg.partition("=")[0].strip() in {
+                "mode",
+                "max_outer",
+                "max_inner",
+                "token_budget",
+                "auto_merge",
+            }:
                 k, _, v = arg.partition("=")
                 kv[k.strip()] = v.strip()
             else:
                 free_text.append(arg)
-        strategy = kv.get("strategy", "default")
         mode = kv.get("mode", "semi")
-        parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+        parts = [f"spec {spec_id}", f"{mode} mode"]
         if free_text:
             parts.append(f"task: {' '.join(free_text)}")
         return " ".join(parts)
@@ -205,15 +206,16 @@ class TestHarnessRunArgParsing:
             ["013", "strategy=codegen", "fix the bug as described in 'bugfix-1.md'"]
         )
         intent = parse_intent(msg)
-        assert intent.task_description == "fix the bug as described in 'bugfix-1.md'"
+        assert intent.task_description == (
+            "strategy=codegen fix the bug as described in 'bugfix-1.md'"
+        )
         assert intent.spec_id == "013"
-        assert intent.strategies == ["codegen"]
 
-    def test_no_free_text_gives_empty_task_description(self) -> None:
-        """When only kv args are given, task_description is empty."""
+    def test_removed_strategy_control_is_plain_task_text(self) -> None:
+        """Removed strategy syntax has no control-plane meaning."""
         msg = self._build_user_message(["013", "strategy=codegen"])
         intent = parse_intent(msg)
-        assert intent.task_description == ""
+        assert intent.task_description == "strategy=codegen"
 
     def test_multiple_free_text_words_joined(self) -> None:
         """Multiple free-text tokens are joined into a single task_description."""
@@ -221,11 +223,11 @@ class TestHarnessRunArgParsing:
         intent = parse_intent(msg)
         assert intent.task_description == "implement feature X"
 
-    def test_kv_args_not_leaked_into_task(self) -> None:
-        """key=value pairs are not included in task_description."""
+    def test_only_supported_kv_args_are_excluded_from_task(self) -> None:
+        """Supported controls are parsed while removed controls remain task text."""
         msg = self._build_user_message(["013", "mode=banzai", "strategy=default", "do the thing"])
         intent = parse_intent(msg)
-        assert intent.task_description == "do the thing"
+        assert intent.task_description == "strategy=default do the thing"
         assert intent.mode == "banzai"
         assert "mode=banzai" not in intent.task_description
 
@@ -678,12 +680,11 @@ class TestHarnessRunTaskFormatErrors:
         intent = parse_intent(user_message)
         assert intent.spec_id == "003"
         assert intent.mode == "banzai"
-        assert intent.strategies == ["codegen"]
+        assert intent.task_description == "strategy=codegen kill_losers=true"
         assert intent.max_outer == 3
         assert intent.max_inner == 2
         assert intent.token_budget == 1000
         assert intent.auto_merge is False
-        assert intent.kill_losers is True
 
     def test_placeholder_constitution_blocks_before_harness_dispatch(
         self,

@@ -216,7 +216,7 @@ def make_ralph_controller(
     state_dir = tmp_dir / "runs" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    state_store = StateStore(state_dir, spec_id, strategy_id)
+    state_store = StateStore(state_dir, spec_id)
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_dir / "runs"))
     stub_provider = StubSandboxProvider(stub_llm)

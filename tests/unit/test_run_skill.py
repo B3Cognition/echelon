@@ -177,7 +177,7 @@ def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
     candidate = "a" * 40
     state_dir = tmp_path / "runs" / "build-stale" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "status": "running",
@@ -209,7 +209,7 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
     ):
         state_dir = tmp_path / "runs" / build_id / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps(
                 {
                     "status": "running",
@@ -242,7 +242,7 @@ def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
     for build_id, status, reason, checkpoint in states:
         state_dir = tmp_path / "runs" / build_id / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps(
                 {
                     "status": status,
@@ -368,7 +368,7 @@ class TestRunSkillAutoLand:
             "build-durable\n",
             encoding="utf-8",
         )
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             '{"status":"blocked","outer_iteration":"unknown"}',
             encoding="utf-8",
         )
@@ -627,7 +627,7 @@ class TestRunSkillAutoLand:
         candidate = "a" * 40
         prior_state = tmp_path / "runs" / "build-prior" / "state"
         prior_state.mkdir(parents=True)
-        (prior_state / "default.json").write_text(json.dumps({
+        (prior_state / "delivery.json").write_text(json.dumps({
             "status": "blocked",
             "termination_reason": "task_progress_incomplete",
             "checkpoint_commits": [{"commit": candidate}],
@@ -639,7 +639,7 @@ class TestRunSkillAutoLand:
         # selection must still recover the durable prior candidate.
         newer_state = tmp_path / "runs" / "build-newer" / "state"
         newer_state.mkdir(parents=True)
-        (newer_state / "default.json").write_text(json.dumps({
+        (newer_state / "delivery.json").write_text(json.dumps({
             "status": "running", "termination_reason": None,
         }), encoding="utf-8")
         marker.write_text("build-newer", encoding="utf-8")
