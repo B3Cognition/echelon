@@ -685,7 +685,7 @@ git commit -m "refactor: extract candidate verification checkpoint"
 - Consumes: Tasks 1-5 typed boundaries.
 - Produces: `OuterIterationOutcome`, `_run_outer_iteration(...)`, and a dispatcher-only `_run_loop_inner` for Delivery.
 
-- [ ] **Step 1: Add failing composition tests**
+- [x] **Step 1: Add failing composition tests**
 
 ```python
 def test_run_loop_inner_dispatches_one_named_outer_iteration(tmp_path: Path) -> None:
@@ -721,7 +721,7 @@ def test_run_loop_inner_dispatches_one_named_outer_iteration(tmp_path: Path) -> 
 Add a continue case proving counters from `OuterIterationOutcome` feed the next
 call and a terminal case proving no second iteration is dispatched.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -732,7 +732,7 @@ Run:
 
 Expected: FAIL because the composition seam does not exist.
 
-- [ ] **Step 3: Compose one outer iteration from extracted boundaries**
+- [x] **Step 3: Compose one outer iteration from extracted boundaries**
 
 Add:
 
@@ -763,7 +763,7 @@ Rewrite `_run_loop_inner` so it only:
 6. continues or returns based on its typed decision;
 7. applies the existing outer-cap finalization.
 
-- [ ] **Step 4: Run all Ralph characterization tests**
+- [x] **Step 4: Run all Ralph characterization tests**
 
 Run:
 
@@ -778,7 +778,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Check orchestration size and commit**
+- [x] **Step 5: Check orchestration size and commit**
 
 Run:
 

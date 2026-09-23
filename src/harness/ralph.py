@@ -383,6 +383,20 @@ class CandidateCheckpointOutcome:
     fulfillment_refresh_deferred: bool = False
 
 
+@dataclass(frozen=True)
+class OuterIterationOutcome:
+    """State returned by one fully composed Ralph outer iteration."""
+
+    decision: CandidateDecision
+    result: ImplementationResult | None
+    outer_iter: int
+    total_inner_iterations: int
+    tokens_used: int
+    pr_url: str | None
+    final_verify: VerifyResult | None
+    last_verify_failures_text: str = ""
+
+
 class RalphController:
     """Orchestrates the single delivery implementation loop.
 
@@ -1101,133 +1115,33 @@ class RalphController:
             fulfillment_refresh_deferred=fulfillment_refresh_deferred,
         )
 
-    def run_loop(
+    def _run_outer_iteration(
         self,
-        max_outer: int = DEFAULT_MAX_OUTER,
-        max_inner: int = 3,
-        token_budget: Optional[int] = None,
-        build_command: str = "echelon build",
-        delivery_context: str = "",
-        build_prompt: str = "",
-    ) -> ImplementationResult:
-        """Execute the ralph-loop until a termination condition.
-
-        Args:
-            max_outer: Maximum outer iterations.
-            max_inner: Maximum inner iterations per outer.
-            token_budget: Total token budget (None = unlimited).
-            build_command: Validated internal build command. The controller never
-                executes it; controlled delivery currently requires
-                ``echelon build``.
-            delivery_context: Additional context from delivery configuration.
-
-        Returns:
-            ImplementationResult with termination details.
-        """
-        self._install_signal_handlers()
-
-        try:
-            return self._run_loop_inner(
-                max_outer=max_outer,
-                max_inner=max_inner,
-                token_budget=token_budget,
-                build_command=build_command,
-                delivery_context=delivery_context,
-                build_prompt=build_prompt,
-            )
-        finally:
-            self._restore_signal_handlers()
-
-    def _run_loop_inner(
-        self,
+        *,
+        feature_branch: str | None,
+        start_outer: int,
+        outer_iter: int,
+        total_inner_iterations: int,
+        tokens_used: int,
+        pr_url: str | None,
+        final_verify: VerifyResult | None,
+        last_verify_failures_text: str,
         max_outer: int,
         max_inner: int,
-        token_budget: Optional[int],
+        token_budget: int | None,
         build_command: str,
         delivery_context: str,
-        build_prompt: str = "",
-    ) -> ImplementationResult:
-        """Inner implementation of run_loop (signal handlers installed)."""
-        state = self._state_store.read()
-        if not state:
-            raise RuntimeError("State not initialized. Call state_store.initialize() first.")
+        build_prompt: str,
+        state: dict[str, Any],
+    ) -> OuterIterationOutcome:
+        """Compose one durable Ralph outer iteration."""
 
-        # Handle resume from blocked/interrupted state
-        current_status = state.get("status", "initialized")
-        if current_status == "blocked":
-            return self._handle_blocked_resume(state, max_outer, max_inner, token_budget, build_command, delivery_context, build_prompt)
-        if current_status == "interrupted":
-            # Resume from interrupted: restart from current counters
-            logger.info("Resuming from interrupted state")
-
-        # Transition to running
-        if current_status in ("initialized", "interrupted"):
-            state = self._state_store.transition("running")
-            # Clear stale cancel_requested set by a prior SIGINT — it persists across process
-            # invocations and would cause immediate killed_by_coordinator exit on next run.
-            if state.get("cancel_requested"):
-                state["cancel_requested"] = False
-                self._state_store.write(state)
-
-        total_inner_iterations = 0
-        pr_url = state.get("pr_url")
-        tokens_used = state.get("tokens_used", 0)
-        start_outer = state.get("outer_iter", 0)
-        last_verify_failures_text: str = ""
-        final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
-
-        # Resolve the spec's feature branch once. When found, all worktrees are
-        # checked out on that branch so spec artifacts (spec.md, tasks.md,
-        # constitution.md, etc.) are available without the build agent needing to
-        # merge them in manually. Falls back to an ordinary harness delivery
-        # branch when no source-owned feature branch exists.
-        feature_branch: Optional[str] = None
-        try:
-            feature_branch = self._gitops.find_feature_branch(self._spec_id)
-            if feature_branch:
-                logger.info(
-                    "Feature branch '%s' found — worktrees will use it as base "
-                    "so spec artifacts are available from the start",
-                    feature_branch,
-                )
-            else:
-                logger.info(
-                    "No source-owned feature branch found for spec '%s' — using "
-                    "a harness delivery branch",
-                    self._spec_id,
-                )
-        except Exception as e:
-            logger.warning(
-                "Could not resolve feature branch for spec '%s' (continuing with "
-                "a harness delivery branch): %s",
-                self._spec_id, e,
-            )
-
-        outer_iter = start_outer
-        while self._convergence_lease().meaningful_attempts < max_outer:
-            # Check termination conditions
-            termination = self._check_termination(
-                tokens_used=tokens_used,
-                token_budget=token_budget,
-            )
-            if termination:
-                if termination == "killed_by_coordinator":
-                    term_status = "cancelled"
-                elif termination == "user_cancel":
-                    term_status = "interrupted"
-                elif termination == "budget_exhausted":
-                    term_status = "blocked"
-                else:
-                    term_status = "failed"
-                return self._finalize(
-                    status=term_status,
-                    reason=termination,
-                    outer_iterations=outer_iter,
-                    inner_iterations=total_inner_iterations,
-                    pr_url=pr_url,
-                    tokens_used=tokens_used,
-                    final_verify=None,
-                )
+        def execute() -> ImplementationResult | None:
+            nonlocal total_inner_iterations
+            nonlocal tokens_used
+            nonlocal pr_url
+            nonlocal final_verify
+            nonlocal last_verify_failures_text
 
             recovery = self._recover_pending_slice(
                 outer_iter=outer_iter,
@@ -1678,14 +1592,197 @@ class RalphController:
                     if isinstance(operation, dict) and operation.get("worktree_path") == worktree_path:
                         current.pop("delivery_slice_operation")
                         self._state_store.write(current)
+            return None
 
-            # Update state after each iteration
+        result = execute()
+        if result is not None:
+            decision = (
+                CandidateDecision.VERIFIED
+                if result.status == "verified"
+                else CandidateDecision.TERMINAL
+            )
+            return OuterIterationOutcome(
+                decision=decision,
+                result=result,
+                outer_iter=outer_iter + 1,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                final_verify=final_verify,
+                last_verify_failures_text=last_verify_failures_text,
+            )
+
+        state = self._state_store.read()
+        state["outer_iter"] = outer_iter + 1
+        state["tokens_used"] = tokens_used
+        state["pr_url"] = pr_url
+        self._state_store.write(state)
+        return OuterIterationOutcome(
+            decision=CandidateDecision.CONTINUE,
+            result=None,
+            outer_iter=outer_iter + 1,
+            total_inner_iterations=total_inner_iterations,
+            tokens_used=tokens_used,
+            pr_url=pr_url,
+            final_verify=final_verify,
+            last_verify_failures_text=last_verify_failures_text,
+        )
+
+    def run_loop(
+        self,
+        max_outer: int = DEFAULT_MAX_OUTER,
+        max_inner: int = 3,
+        token_budget: Optional[int] = None,
+        build_command: str = "echelon build",
+        delivery_context: str = "",
+        build_prompt: str = "",
+    ) -> ImplementationResult:
+        """Execute the ralph-loop until a termination condition.
+
+        Args:
+            max_outer: Maximum outer iterations.
+            max_inner: Maximum inner iterations per outer.
+            token_budget: Total token budget (None = unlimited).
+            build_command: Validated internal build command. The controller never
+                executes it; controlled delivery currently requires
+                ``echelon build``.
+            delivery_context: Additional context from delivery configuration.
+
+        Returns:
+            ImplementationResult with termination details.
+        """
+        self._install_signal_handlers()
+
+        try:
+            return self._run_loop_inner(
+                max_outer=max_outer,
+                max_inner=max_inner,
+                token_budget=token_budget,
+                build_command=build_command,
+                delivery_context=delivery_context,
+                build_prompt=build_prompt,
+            )
+        finally:
+            self._restore_signal_handlers()
+
+    def _run_loop_inner(
+        self,
+        max_outer: int,
+        max_inner: int,
+        token_budget: Optional[int],
+        build_command: str,
+        delivery_context: str,
+        build_prompt: str = "",
+    ) -> ImplementationResult:
+        """Inner implementation of run_loop (signal handlers installed)."""
+        state = self._state_store.read()
+        if not state:
+            raise RuntimeError("State not initialized. Call state_store.initialize() first.")
+
+        # Handle resume from blocked/interrupted state
+        current_status = state.get("status", "initialized")
+        if current_status == "blocked":
+            return self._handle_blocked_resume(state, max_outer, max_inner, token_budget, build_command, delivery_context, build_prompt)
+        if current_status == "interrupted":
+            # Resume from interrupted: restart from current counters
+            logger.info("Resuming from interrupted state")
+
+        # Transition to running
+        if current_status in ("initialized", "interrupted"):
+            state = self._state_store.transition("running")
+            # Clear stale cancel_requested set by a prior SIGINT — it persists across process
+            # invocations and would cause immediate killed_by_coordinator exit on next run.
+            if state.get("cancel_requested"):
+                state["cancel_requested"] = False
+                self._state_store.write(state)
+
+        total_inner_iterations = 0
+        pr_url = state.get("pr_url")
+        tokens_used = state.get("tokens_used", 0)
+        start_outer = state.get("outer_iter", 0)
+        last_verify_failures_text: str = ""
+        final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
+
+        # Resolve the spec's feature branch once. When found, all worktrees are
+        # checked out on that branch so spec artifacts (spec.md, tasks.md,
+        # constitution.md, etc.) are available without the build agent needing to
+        # merge them in manually. Falls back to an ordinary harness delivery
+        # branch when no source-owned feature branch exists.
+        feature_branch: Optional[str] = None
+        try:
+            feature_branch = self._gitops.find_feature_branch(self._spec_id)
+            if feature_branch:
+                logger.info(
+                    "Feature branch '%s' found — worktrees will use it as base "
+                    "so spec artifacts are available from the start",
+                    feature_branch,
+                )
+            else:
+                logger.info(
+                    "No source-owned feature branch found for spec '%s' — using "
+                    "a harness delivery branch",
+                    self._spec_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "Could not resolve feature branch for spec '%s' (continuing with "
+                "a harness delivery branch): %s",
+                self._spec_id, e,
+            )
+
+        outer_iter = start_outer
+        while self._convergence_lease().meaningful_attempts < max_outer:
+            # Check termination conditions
+            termination = self._check_termination(
+                tokens_used=tokens_used,
+                token_budget=token_budget,
+            )
+            if termination:
+                if termination == "killed_by_coordinator":
+                    term_status = "cancelled"
+                elif termination == "user_cancel":
+                    term_status = "interrupted"
+                elif termination == "budget_exhausted":
+                    term_status = "blocked"
+                else:
+                    term_status = "failed"
+                return self._finalize(
+                    status=term_status,
+                    reason=termination,
+                    outer_iterations=outer_iter,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                )
+
+            outcome = self._run_outer_iteration(
+                feature_branch=feature_branch,
+                start_outer=start_outer,
+                outer_iter=outer_iter,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                final_verify=final_verify,
+                last_verify_failures_text=last_verify_failures_text,
+                max_outer=max_outer,
+                max_inner=max_inner,
+                token_budget=token_budget,
+                build_command=build_command,
+                delivery_context=delivery_context,
+                build_prompt=build_prompt,
+                state=state,
+            )
+            if outcome.result is not None:
+                return outcome.result
+            assert outcome.decision is CandidateDecision.CONTINUE
+            outer_iter = outcome.outer_iter
+            total_inner_iterations = outcome.total_inner_iterations
+            tokens_used = outcome.tokens_used
+            pr_url = outcome.pr_url
+            final_verify = outcome.final_verify
+            last_verify_failures_text = outcome.last_verify_failures_text
             state = self._state_store.read()
-            state["outer_iter"] = outer_iter + 1
-            state["tokens_used"] = tokens_used
-            state["pr_url"] = pr_url
-            self._state_store.write(state)
-            outer_iter += 1
 
         # Outer cap reached. If the only outstanding verification failure is an
         # intentionally deferred banzai fulfillment refresh, useful checkpointed
