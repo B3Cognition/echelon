@@ -44,7 +44,11 @@ def _reject_legacy_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_legacy_cli():
         raise AssertionError("phase commands must not use the legacy CLI dispatcher")
 
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
 
 @pytest.fixture(autouse=True)

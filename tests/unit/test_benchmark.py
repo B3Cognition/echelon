@@ -312,7 +312,11 @@ def test_benchmark_list_bypasses_legacy_cli(monkeypatch: pytest.MonkeyPatch) -> 
     def fail_legacy_cli():
         raise AssertionError("benchmark list must not load echelon.cli")
 
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["benchmark", "list"])
 
@@ -531,7 +535,11 @@ def test_benchmark_run_bypasses_legacy_cli_and_calls_typed_service(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(
         app,
@@ -1078,7 +1086,11 @@ def test_benchmark_show_bypasses_legacy_cli(
         raise AssertionError("benchmark show must not load echelon.cli")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["benchmark", "show"])
 

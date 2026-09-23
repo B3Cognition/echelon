@@ -526,12 +526,6 @@ def _extend_repeated_option(args: list[str], flag: str, values: list[str] | None
         args.extend([flag, value])
 
 
-def _legacy_cli():
-    from echelon import cli as legacy_cli
-
-    return legacy_cli
-
-
 def _memory_exit_code(status: str) -> int:
     if status in {"pass", "warn", "complete"}:
         return 0
@@ -1230,19 +1224,18 @@ def re_continue(
     ),
 ) -> None:
     """Continue the active RE run without a human answer."""
-    args: list[str] = []
-    if run_id:
-        args.append(run_id)
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
-    _extend_option(
-        args,
-        "--re-semantic-time-limit-minutes",
-        re_semantic_time_limit_minutes,
+    from echelon.re_service import ReContinueRequest, continue_re
+
+    continue_re(
+        ReContinueRequest(
+            run_id=run_id,
+            re_max_inner=re_max_inner,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            re_semantic_token_limit=re_semantic_token_limit,
+            re_semantic_time_limit_minutes=re_semantic_time_limit_minutes,
+        )
     )
-    _legacy_cli()._cmd_re_continue(args)
 
 
 @re_app.command("resume")
@@ -1296,21 +1289,20 @@ def re_resume(
     ),
 ) -> None:
     """Resume with exactly one custom, recommended, or bounded Banzai mode."""
-    args = [answer] if answer is not None else []
-    if recommended:
-        args.append("--recommended")
-    if banzai:
-        args.append("--banzai")
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
-    _extend_option(
-        args,
-        "--re-semantic-time-limit-minutes",
-        re_semantic_time_limit_minutes,
+    from echelon.re_service import ReResumeRequest, resume_re
+
+    resume_re(
+        ReResumeRequest(
+            answer=answer,
+            recommended=recommended,
+            banzai=banzai,
+            re_max_inner=re_max_inner,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            re_semantic_token_limit=re_semantic_token_limit,
+            re_semantic_time_limit_minutes=re_semantic_time_limit_minutes,
+        )
     )
-    _legacy_cli()._cmd_re_resume(args)
 
 
 @re_app.command("publish")
@@ -1328,12 +1320,15 @@ def re_publish(
     ),
 ) -> None:
     """Publish validated reverse-engineering output from one run."""
-    args = [run_id]
-    if allow_partial:
-        args.append("--allow-partial")
-    if commit:
-        args.append("--commit")
-    _legacy_cli()._cmd_re_publish(args)
+    from echelon.re_service import RePublishRequest, publish_re
+
+    publish_re(
+        RePublishRequest(
+            run_id=run_id,
+            allow_partial=allow_partial,
+            commit=commit,
+        )
+    )
 
 
 @re_app.command("finalize")
@@ -1349,12 +1344,11 @@ def re_finalize(
     ),
 ) -> None:
     """Finalize a structurally publishable blocked RE run with explicit debt."""
-    args: list[str] = []
-    if run_id:
-        args.append(run_id)
-    if allow_partial:
-        args.append("--allow-partial")
-    _legacy_cli()._cmd_re_finalize(args)
+    from echelon.re_service import ReFinalizeRequest, finalize_re
+
+    finalize_re(
+        ReFinalizeRequest(run_id=run_id, allow_partial=allow_partial)
+    )
 
 
 @re_app.command("synthesize")
@@ -1404,32 +1398,36 @@ def re_synthesize(
     ),
 ) -> None:
     """Regenerate workspace synthesis from finalized partial source results."""
-    args: list[str] = []
+    from echelon.re_service import ReSynthesizeRequest, synthesize_re
+
     if from_run is not None:
         if run_id is not None or allow_partial or re_token_limit is not None or re_time_limit_minutes is not None:
             raise typer.BadParameter(
                 "--from-run cannot be combined with legacy run-id/--allow-partial/--re-* options",
                 param_hint="--from-run",
             )
-        args.extend(["--from-run", from_run])
-        for source_id in accept_partial or []:
-            args.extend(["--accept-partial", source_id])
-        _extend_option(args, "--token-limit", token_limit)
-        _extend_option(args, "--active-ms-limit", active_ms_limit)
-        _legacy_cli()._cmd_re_synthesize(args)
+        synthesize_re(
+            ReSynthesizeRequest(
+                from_run=from_run,
+                accept_partial=tuple(accept_partial or ()),
+                token_limit=token_limit,
+                active_ms_limit=active_ms_limit,
+            )
+        )
         return
     if accept_partial or token_limit is not None or active_ms_limit is not None:
         raise typer.BadParameter(
             "--accept-partial, --token-limit, and --active-ms-limit require --from-run",
             param_hint="--from-run",
         )
-    if run_id:
-        args.append(run_id)
-    if allow_partial:
-        args.append("--allow-partial")
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _legacy_cli()._cmd_re_synthesize(args)
+    synthesize_re(
+        ReSynthesizeRequest(
+            run_id=run_id,
+            allow_partial=allow_partial,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+        )
+    )
 
 
 @re_app.command("analyze", hidden=True)
@@ -1571,7 +1569,9 @@ def re_execute_run(
     run_id: str = typer.Argument(..., help="Active workspace run id."),
 ) -> None:
     """Execute active workspace RE with harness-owned transitions."""
-    _legacy_cli()._cmd_re_execute_run([run_id])
+    from echelon.re_service import execute_re_run
+
+    execute_re_run(run_id=run_id)
 
 
 @re_app.command("check-domain", hidden=True)
@@ -1581,7 +1581,9 @@ def re_check_domain(
     domain_id: str = typer.Argument(..., help="Domain id from the source manifest."),
 ) -> None:
     """Check one staged source-domain spec before the agent returns DONE."""
-    _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
+    from echelon.re_service import check_re_domain
+
+    check_re_domain(run_id=run_id, source_id=source_id, domain_id=domain_id)
 
 
 @app.command("init", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
