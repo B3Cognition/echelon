@@ -108,7 +108,7 @@ starting another.
 - [x] Approve the single-run hard-cutover boundary and historical-state policy.
 - [x] Review and approve the written S4 design.
 - [x] Write the single-run cutover implementation plan.
-- [ ] Review and approve the single-run cutover implementation plan.
+- [x] Review and approve the single-run cutover implementation plan.
 - [ ] Write and approve the checkpoint-led Ralph decomposition plan after the cutover lands.
 - [ ] Remove Delivery strategy inputs, parsing, loading, fan-out, comparison, and cancellation.
 - [ ] Replace per-strategy state with one run-scoped state and controller.

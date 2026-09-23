@@ -36,46 +36,49 @@
 - Consumes: existing `RunIntent`, `DeliveryResult`, `StateStore`, `RalphController`, review, visual, repair, verification, and publication collaborators.
 - Produces: a `DeliveryController` constructor with optional `fresh_branch_base` and `fresh_completed_task_ids`, `DeliveryController.run(intent: RunIntent) -> DeliveryResult`, `DeliveryController.state() -> dict[str, object]`, `_fresh_delivery_baseline(harness_root: Path, intent: Any, gitops: Any | None = None) -> str | None`, and `_fresh_delivery_completed_tasks(harness_root: Path, intent: Any, baseline: str | None, gitops: Any | None = None, *, spec_dir: Path | None = None) -> tuple[str, ...]`.
 
-- [ ] **Step 1: Write failing single-controller contract tests**
+- [ ] **Step 1: Move the existing controller behavior tests to the new API and verify RED**
 
-Add tests that import `DeliveryController`, prove `run()` returns one result,
-and prove the public method delegates once to the single-run body. The migrated
-controller tests in Step 4 retain the existing Ralph invocation assertions.
 First rename `test_coordinator.py` and its existing `_make_coordinator` helper
-to `test_delivery_controller.py` and `_make_controller`, then add:
+to `test_delivery_controller.py` and `_make_controller`. Change the production
+import and construction to:
 
 ```python
-def test_delivery_controller_runs_one_delivery(monkeypatch, tmp_path):
-    expected = DeliveryResult(
-        status="blocked",
-        termination_reason="outer_cap",
-        outer_iterations=1,
-        inner_iterations=0,
-        pr_url=None,
-        tokens_used=7,
-        final_verify=None,
-        blocked_phase="implementation",
+from harness.delivery_controller import DeliveryController
+
+
+def _make_controller(tmp_path: Path, should_pass: bool = True) -> DeliveryController:
+    config = HarnessConfig(
+        target_repo="git@example.com:t/r.git",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(enabled=True),
     )
-    controller = _make_controller(tmp_path)
-    run_delivery = Mock(return_value=expected)
-    monkeypatch.setattr(controller, "_run_delivery", run_delivery)
-    result = controller.run(RunIntent("001", token_budget=100))
-
-    assert result == expected
-    run_delivery.assert_called_once()
+    gitops = MagicMock()
+    gitops.create_worktree.return_value = str(tmp_path / "worktree")
+    gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
+    _initialize_git_worktree(tmp_path)
+    gitops.get_latest_worktree.return_value = str(tmp_path)
+    return DeliveryController(
+        provider=MockProvider(should_pass=should_pass),
+        gitops=gitops,
+        config=config,
+        base_dir=str(tmp_path),
+    )
 ```
 
-Add a structural assertion in `tests/unit/test_delivery_controller_integration.py`:
+Replace each old single-strategy invocation with the new public API while
+retaining its existing result and durable-state assertions:
 
 ```python
-def test_delivery_controller_has_no_multi_run_api():
-    from harness.delivery_controller import DeliveryController
-
-    assert not hasattr(DeliveryController, "compare_results")
-    assert not hasattr(DeliveryController, "_cancel_peers")
+result = controller.run(replace(intent, token_budget=10_000))
+assert result.status == expected_status
+assert StateStore(state_dir, intent.spec_id, "default").read()["status"] == expected_status
 ```
 
-- [ ] **Step 2: Run the new tests and verify RED**
+The literal expected status in each migrated test remains the value already
+asserted by that test; do not replace it with a shared result builder.
+
+- [ ] **Step 2: Run the migrated tests and verify RED**
 
 Run:
 
@@ -87,7 +90,9 @@ Run:
   tests/integration/test_controlled_review_reentry.py
 ```
 
-Expected: collection fails because `harness.delivery_controller` and `DeliveryController` do not exist.
+Expected: collection fails because `harness.delivery_controller` and
+`DeliveryController` do not exist. This is the production change that makes the
+behavior tests fail.
 
 - [ ] **Step 3: Move the active single-run body into `DeliveryController`**
 
@@ -798,58 +803,30 @@ git commit -m "refactor: remove delivery strategy identity"
 - Modify: `AGENTS.md`
 - Modify: `README.md`
 - Modify: `docs/simplification-control.md`
-- Create: `tests/unit/test_single_delivery_structure.py`
 
 **Interfaces:**
 - Consumes: the completed single-run controller/state/artifact contracts.
-- Produces: a deletion guard proving the retired architecture cannot re-enter production.
+- Produces: a deleted implementation surface backed by the executable CLI,
+  state, controller, recovery, and integration contracts from Tasks 1–5.
 
-- [ ] **Step 1: Write the structural deletion guard and verify RED**
+- [ ] **Step 1: Re-run the executable cutover contracts before deletion**
 
-Create `tests/unit/test_single_delivery_structure.py`:
-
-```python
-from pathlib import Path
-
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_retired_delivery_strategy_modules_are_absent():
-    for relative in (
-        "src/harness/coordinator.py",
-        "src/harness/strategy_loader.py",
-        "src/harness/budget.py",
-    ):
-        assert not (ROOT / relative).exists(), relative
-
-
-def test_active_delivery_source_has_no_strategy_execution_vocabulary():
-    paths = (
-        ROOT / "src/harness/delivery_controller.py",
-        ROOT / "src/harness/run_intent.py",
-        ROOT / "src/harness/state.py",
-        ROOT / "src/harness/skills/run_skill.py",
-    )
-    forbidden = (
-        "StrategyCoordinator",
-        "strategy_id",
-        "kill_losers",
-        "load_strategies",
-        "slice_budget",
-    )
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    for token in forbidden:
-        assert token not in combined
-```
-
-Run:
+Run the behavior suites that would expose any remaining dependency on the
+retired modules:
 
 ```bash
-.venv/bin/python -m pytest -q tests/unit/test_single_delivery_structure.py
+.venv/bin/python -m pytest -q \
+  tests/unit/test_delivery_controller.py \
+  tests/unit/test_delivery_controller_review_reentry.py \
+  tests/unit/test_run_intent.py tests/unit/test_state_machine.py \
+  tests/unit/test_run_skill.py tests/unit/test_cli_delivery.py \
+  tests/unit/test_cli_delivery_status.py \
+  tests/integration/test_controlled_review_reentry.py \
+  tests/integration/test_polyrepo_delivery_convergence.py
 ```
 
-Expected: FAIL because the three retired modules still exist.
+Expected: PASS. These tests execute the replacement behavior; no test inspects
+source text merely to freeze a private structure.
 
 - [ ] **Step 2: Delete dead modules/tests and stale references**
 
@@ -895,7 +872,6 @@ Run:
 
 ```bash
 .venv/bin/python -m pytest -q \
-  tests/unit/test_single_delivery_structure.py \
   tests/unit/test_run_intent.py tests/unit/test_state_machine.py \
   tests/unit/test_state_store_logic.py tests/unit/test_run_skill.py \
   tests/unit/test_run_skill_checkpoint_recovery.py \
