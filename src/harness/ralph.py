@@ -28,6 +28,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from uuid import uuid4
@@ -358,6 +359,28 @@ class ProgressCheckpointOutcome:
     build_result: dict[str, Any]
     checkpoint_commit: dict[str, Any] | None
     changed_files: tuple[str, ...]
+
+
+class CandidateDecision(str, Enum):
+    CONTINUE = "continue"
+    VERIFIED = "verified"
+    TERMINAL = "terminal"
+
+
+@dataclass(frozen=True)
+class CandidateCheckpointOutcome:
+    """Result of verifying and, when needed, repairing one candidate."""
+
+    decision: CandidateDecision
+    result: ImplementationResult | None
+    final_verify: VerifyResult | None
+    total_inner_iterations: int
+    tokens_used: int
+    pr_url: str | None
+    last_verify_failures_text: str = ""
+    preserve_worktree: bool = False
+    convergence_observation: LeaseObservation | None = None
+    fulfillment_refresh_deferred: bool = False
 
 
 class RalphController:
@@ -764,6 +787,320 @@ class RalphController:
             changed_files=changed_files,
         )
 
+    def _verify_candidate_checkpoint(
+        self,
+        *,
+        worktree_path: str,
+        outer_iter: int,
+        total_inner_iterations: int,
+        pr_url: str | None,
+        tokens_used: int,
+        max_inner: int,
+        max_outer: int,
+        token_budget: int | None,
+        build_command: str,
+        delivery_context: str,
+        build_prompt: str,
+        progress: ProgressCheckpointOutcome,
+        state: dict[str, Any],
+    ) -> CandidateCheckpointOutcome:
+        """Run ordered candidate gates and classify the next action."""
+        build_result = progress.build_result
+        changed_files = list(progress.changed_files)
+        completed_task_ids = _clean_task_ids(build_result.get("task_ids"))
+
+        verify_result = self._exec_verify(None, worktree_path=worktree_path)
+        verify_result = self._apply_verification_diagnosis(
+            verify_result,
+            worktree_path,
+        )
+        self._controlled_slice_budget = (
+            max(0, token_budget * 0.95 - tokens_used - verify_result.token_usage)
+            if token_budget and token_budget > 0
+            else None
+        )
+        verify_result = self._apply_post_verify_gates(
+            verify_result,
+            worktree_path,
+            completed_task_ids=completed_task_ids,
+            changed_files=changed_files,
+        )
+        tokens_used += verify_result.token_usage
+        self._record_provider_attempt_summary(
+            phase="build",
+            attempt=outer_iter + 1,
+            result=build_result,
+            verify_result=verify_result,
+            changed_files=changed_files,
+        )
+
+        if _is_provider_session_limit_verify_result(verify_result):
+            _print_verify_spec_provider_session_limit_banner(
+                self._spec_id,
+                verify_result,
+            )
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="provider_session_limit",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                    extra_state={
+                        "build_status": "provider_session_limit",
+                        "build_reason": "verify-spec provider session limit",
+                        "provider_limit_message": _provider_session_limit_failure_text(
+                            verify_result
+                        ),
+                    },
+                ),
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        if any(f.id == "local-verify-skipped" for f in verify_result.failures):
+            _print_verify_command_needed_banner(self._spec_id)
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="verify_command_needed",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                ),
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        if any(
+            f.id == "sandbox-verification-unavailable"
+            for f in verify_result.failures
+        ):
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="sandbox_verification_unavailable",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                ),
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        if _is_user_runnability_sandbox_prerequisite(verify_result):
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="user_runnability_sandbox_prerequisite",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                ),
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        self._append_iteration_log(
+            state,
+            outer_iter,
+            0,
+            "verify",
+            0 if verify_result.passed else 1,
+            verify_result.passed,
+            verify_result.duration_s,
+            verify_result.token_usage,
+            failure_signatures=[
+                normalize(f.category.value, f.id, f.error)
+                for f in verify_result.failures
+            ],
+        )
+
+        if self._mode.should_pause_at_boundary("after_verify"):
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._pause_at_boundary(
+                    "after_verify",
+                    outer_iter,
+                    total_inner_iterations,
+                    pr_url,
+                    tokens_used,
+                    verify_result,
+                ),
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        if verify_result.passed:
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.VERIFIED,
+                result=None,
+                final_verify=verify_result,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        inner_result = self._run_inner_loop(
+            handle=None,
+            verify_result=verify_result,
+            outer_iter=outer_iter,
+            max_inner=max_inner,
+            tokens_used=tokens_used,
+            token_budget=token_budget,
+            state=state,
+            build_command=build_command,
+            delivery_context=delivery_context,
+            worktree_path=worktree_path,
+            build_prompt=build_prompt,
+        )
+        tokens_used = inner_result["tokens_used"]
+        total_inner_iterations += inner_result["inner_count"]
+        final_verify = inner_result.get("final_verify")
+
+        if final_verify and _is_provider_session_limit_verify_result(final_verify):
+            _print_verify_spec_provider_session_limit_banner(
+                self._spec_id,
+                final_verify,
+            )
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="provider_session_limit",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                    extra_state={
+                        "build_status": "provider_session_limit",
+                        "build_reason": "verify-spec provider session limit",
+                        "provider_limit_message": _provider_session_limit_failure_text(
+                            final_verify
+                        ),
+                    },
+                ),
+                final_verify=final_verify,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                preserve_worktree=True,
+            )
+
+        fulfillment_refresh_deferred = bool(
+            final_verify and _is_fulfillment_refresh_deferred(final_verify)
+        )
+        last_verify_failures_text = ""
+        if final_verify and final_verify.failures and not fulfillment_refresh_deferred:
+            last_verify_failures_text = "\n".join(
+                f"[{f.category.value}] {f.id}: {f.error}"
+                for f in final_verify.failures
+            )
+
+        if inner_result["converged"]:
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.VERIFIED,
+                result=None,
+                final_verify=final_verify,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                last_verify_failures_text=last_verify_failures_text,
+                preserve_worktree=True,
+                fulfillment_refresh_deferred=fulfillment_refresh_deferred,
+            )
+
+        if inner_result.get("blocked"):
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason=str(
+                        inner_result.get("blocked_reason")
+                        or "blocker_escalation"
+                    ),
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                ),
+                final_verify=final_verify,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                last_verify_failures_text=last_verify_failures_text,
+                preserve_worktree=True,
+                fulfillment_refresh_deferred=fulfillment_refresh_deferred,
+            )
+
+        if _is_task_progress_incomplete(final_verify):
+            return CandidateCheckpointOutcome(
+                decision=CandidateDecision.TERMINAL,
+                result=self._finalize(
+                    status="blocked",
+                    reason="task_progress_incomplete",
+                    outer_iterations=outer_iter + 1,
+                    inner_iterations=total_inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                ),
+                final_verify=final_verify,
+                total_inner_iterations=total_inner_iterations,
+                tokens_used=tokens_used,
+                pr_url=pr_url,
+                last_verify_failures_text=last_verify_failures_text,
+                preserve_worktree=True,
+                fulfillment_refresh_deferred=fulfillment_refresh_deferred,
+            )
+
+        convergence_observation = self._record_convergence_observation(
+            final_verify,
+            worktree_path,
+            hard_ceiling=max_outer,
+        )
+        return CandidateCheckpointOutcome(
+            decision=CandidateDecision.CONTINUE,
+            result=None,
+            final_verify=final_verify,
+            total_inner_iterations=total_inner_iterations,
+            tokens_used=tokens_used,
+            pr_url=pr_url,
+            last_verify_failures_text=last_verify_failures_text,
+            convergence_observation=convergence_observation,
+            fulfillment_refresh_deferred=fulfillment_refresh_deferred,
+        )
+
     def run_loop(
         self,
         max_outer: int = DEFAULT_MAX_OUTER,
@@ -1114,269 +1451,44 @@ class RalphController:
                                 extra_state=blocked_state,
                             )
 
-                    # Run verify
-                    verify_result = self._exec_verify(handle, worktree_path=worktree_path)
-                    verify_result = self._apply_verification_diagnosis(
-                        verify_result, worktree_path
-                    )
-                    self._controlled_slice_budget = (
-                        max(0, token_budget * 0.95 - tokens_used - verify_result.token_usage)
-                        if token_budget and token_budget > 0 else None)
-                    verify_result = self._apply_post_verify_gates(
-                        verify_result,
-                        worktree_path,
-                        completed_task_ids=scoped_completed_task_ids,
-                        changed_files=scoped_changed_files,
-                    )
-                    tokens_used += verify_result.token_usage
-                    self._record_provider_attempt_summary(
-                        phase="build",
-                        attempt=outer_iter + 1,
-                        result=build_result,
-                        verify_result=verify_result,
-                        changed_files=scoped_changed_files,
-                    )
-
-                    if _is_provider_session_limit_verify_result(verify_result):
-                        preserve_worktree = True
-                        _print_verify_spec_provider_session_limit_banner(
-                            self._spec_id,
-                            verify_result,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="provider_session_limit",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=verify_result,
-                            extra_state={
-                                "build_status": "provider_session_limit",
-                                "build_reason": "verify-spec provider session limit",
-                                "provider_limit_message": _provider_session_limit_failure_text(
-                                    verify_result
-                                ),
-                            },
-                        )
-
-                    # Hard-stop: unknown project type cannot be fixed by the LLM.
-                    # Block immediately and ask the human to configure verify_command.
-                    if any(f.id == "local-verify-skipped" for f in verify_result.failures):
-                        preserve_worktree = True
-                        _print_verify_command_needed_banner(self._spec_id)
-                        return self._finalize(
-                            status="blocked",
-                            reason="verify_command_needed",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=verify_result,
-                        )
-
-                    # Infrastructure cannot be repaired by the product agent.
-                    # Block immediately with a durable reason instead of consuming
-                    # build retries and misreporting a coordinator exception.
-                    if any(
-                        f.id == "sandbox-verification-unavailable"
-                        for f in verify_result.failures
-                    ):
-                        preserve_worktree = True
-                        return self._finalize(
-                            status="blocked",
-                            reason="sandbox_verification_unavailable",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=verify_result,
-                        )
-
-                    if _is_user_runnability_sandbox_prerequisite(verify_result):
-                        preserve_worktree = True
-                        return self._finalize(
-                            status="blocked",
-                            reason="user_runnability_sandbox_prerequisite",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=verify_result,
-                        )
-
-                    # Log verify iteration
-                    self._append_iteration_log(
-                        state, outer_iter, 0, "verify",
-                        0 if verify_result.passed else 1,
-                        verify_result.passed,
-                        verify_result.duration_s,
-                        verify_result.token_usage,
-                        failure_signatures=[
-                            normalize(f.category.value, f.id, f.error)
-                            for f in verify_result.failures
-                        ],
-                    )
-
-                    if self._mode.should_pause_at_boundary("after_verify"):
-                        preserve_worktree = True
-                        return self._pause_at_boundary(
-                            "after_verify", outer_iter, total_inner_iterations,
-                            pr_url, tokens_used, verify_result,
-                        )
-
-                    if verify_result.passed:
-                        try:
-                            branch = self._commit_and_push(worktree_path, outer_iter)
-                        except CommitPushError as e:
-                            preserve_worktree = True
-                            return self._finalize(
-                                status="blocked",
-                                reason="publish_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=verify_result,
-                                branch=e.branch,
-                                extra_state=self._publish_checkpoint_state(
-                                    worktree_path=worktree_path,
-                                    branch=e.branch,
-                                    stage=e.stage,
-                                    verify_result=verify_result,
-                                    error=e,
-                                ),
-                            )
-                        if not self._merge_verified_branch(worktree_path, branch, verify_result):
-                            preserve_worktree = True
-                            return self._finalize(
-                                status="blocked",
-                                reason="target_merge_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=verify_result,
-                                branch=branch,
-                                extra_state=self._publish_checkpoint_state(
-                                    worktree_path=worktree_path,
-                                    branch=branch,
-                                    stage="target_merge",
-                                    verify_result=verify_result,
-                                ),
-                            )
-                        try:
-                            self._commit_orchestration_spec_artifacts(
-                                worktree_path, outer_iter, branch=branch
-                            )
-                        except CommitPushError as e:
-                            preserve_worktree = True
-                            return self._finalize(
-                                status="blocked",
-                                reason="publish_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=verify_result,
-                                branch=e.branch,
-                                extra_state=self._publish_checkpoint_state(
-                                    worktree_path=worktree_path,
-                                    branch=e.branch,
-                                    stage=e.stage,
-                                    verify_result=verify_result,
-                                    error=e,
-                                ),
-                            )
-                        try:
-                            pr_url = self._manage_pr(pr_url, branch, converged=True)
-                        except Exception as exc:
-                            preserve_worktree = True
-                            logger.warning("Verified PR publication failed: %s", exc)
-                            return self._finalize(
-                                status="blocked",
-                                reason="publish_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=verify_result,
-                                branch=branch,
-                                extra_state=self._publish_checkpoint_state(
-                                    worktree_path=worktree_path,
-                                    branch=branch,
-                                    stage="pr",
-                                    verify_result=verify_result,
-                                    error=exc,
-                                ),
-                            )
-                        # Phase 2/3 and landing consume the converged delivery
-                        # worktree after Ralph returns, even on an early outer
-                        # iteration.
-                        preserve_worktree = True
-                        return self._finalize(
-                            status="verified",
-                            reason="converged",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=verify_result,
-                            branch=branch,
-                        )
-
-                    # Inner loop
-                    inner_result = self._run_inner_loop(
-                        handle=handle,
-                        verify_result=verify_result,
+                    candidate = self._verify_candidate_checkpoint(
+                        worktree_path=worktree_path,
                         outer_iter=outer_iter,
-                        max_inner=max_inner,
+                        total_inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
                         tokens_used=tokens_used,
+                        max_inner=max_inner,
+                        max_outer=max_outer,
                         token_budget=token_budget,
-                        state=state,
                         build_command=build_command,
                         delivery_context=delivery_context,
-                        worktree_path=worktree_path,
                         build_prompt=build_prompt,
+                        progress=progress,
+                        state=state,
                     )
-                    tokens_used = inner_result["tokens_used"]
-                    total_inner_iterations += inner_result["inner_count"]
-
-                    final_verify = inner_result.get("final_verify")
-                    if final_verify and _is_provider_session_limit_verify_result(final_verify):
-                        preserve_worktree = True
-                        _print_verify_spec_provider_session_limit_banner(
-                            self._spec_id,
-                            final_verify,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="provider_session_limit",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=final_verify,
-                            extra_state={
-                                "build_status": "provider_session_limit",
-                                "build_reason": "verify-spec provider session limit",
-                                "provider_limit_message": _provider_session_limit_failure_text(
-                                    final_verify
-                                ),
-                            },
-                        )
-                    fulfillment_refresh_deferred = bool(
-                        final_verify and _is_fulfillment_refresh_deferred(final_verify)
+                    tokens_used = candidate.tokens_used
+                    total_inner_iterations = candidate.total_inner_iterations
+                    pr_url = candidate.pr_url
+                    final_verify = candidate.final_verify
+                    last_verify_failures_text = (
+                        candidate.last_verify_failures_text
                     )
-                    if final_verify and final_verify.failures and not fulfillment_refresh_deferred:
-                        last_verify_failures_text = "\n".join(
-                            f"[{f.category.value}] {f.id}: {f.error}"
-                            for f in final_verify.failures
-                        )
+                    fulfillment_refresh_deferred = (
+                        candidate.fulfillment_refresh_deferred
+                    )
 
-                    if inner_result["converged"]:
+                    if candidate.decision is CandidateDecision.TERMINAL:
+                        preserve_worktree = candidate.preserve_worktree
+                        assert candidate.result is not None
+                        return candidate.result
+
+                    if candidate.decision is CandidateDecision.VERIFIED:
+                        assert final_verify is not None
                         try:
-                            branch = self._commit_and_push(worktree_path, outer_iter)
+                            branch = self._commit_and_push(
+                                worktree_path,
+                                outer_iter,
+                            )
                         except CommitPushError as e:
                             preserve_worktree = True
                             return self._finalize(
@@ -1386,18 +1498,20 @@ class RalphController:
                                 inner_iterations=total_inner_iterations,
                                 pr_url=pr_url,
                                 tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
+                                final_verify=final_verify,
                                 branch=e.branch,
                                 extra_state=self._publish_checkpoint_state(
                                     worktree_path=worktree_path,
                                     branch=e.branch,
                                     stage=e.stage,
-                                    verify_result=inner_result.get("final_verify"),
+                                    verify_result=final_verify,
                                     error=e,
                                 ),
                             )
                         if not self._merge_verified_branch(
-                            worktree_path, branch, inner_result.get("final_verify")
+                            worktree_path,
+                            branch,
+                            final_verify,
                         ):
                             preserve_worktree = True
                             return self._finalize(
@@ -1407,18 +1521,20 @@ class RalphController:
                                 inner_iterations=total_inner_iterations,
                                 pr_url=pr_url,
                                 tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
+                                final_verify=final_verify,
                                 branch=branch,
                                 extra_state=self._publish_checkpoint_state(
                                     worktree_path=worktree_path,
                                     branch=branch,
                                     stage="target_merge",
-                                    verify_result=inner_result.get("final_verify"),
+                                    verify_result=final_verify,
                                 ),
                             )
                         try:
                             self._commit_orchestration_spec_artifacts(
-                                worktree_path, outer_iter, branch=branch
+                                worktree_path,
+                                outer_iter,
+                                branch=branch,
                             )
                         except CommitPushError as e:
                             preserve_worktree = True
@@ -1429,21 +1545,28 @@ class RalphController:
                                 inner_iterations=total_inner_iterations,
                                 pr_url=pr_url,
                                 tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
+                                final_verify=final_verify,
                                 branch=e.branch,
                                 extra_state=self._publish_checkpoint_state(
                                     worktree_path=worktree_path,
                                     branch=e.branch,
                                     stage=e.stage,
-                                    verify_result=inner_result.get("final_verify"),
+                                    verify_result=final_verify,
                                     error=e,
                                 ),
                             )
                         try:
-                            pr_url = self._manage_pr(pr_url, branch, converged=True)
+                            pr_url = self._manage_pr(
+                                pr_url,
+                                branch,
+                                converged=True,
+                            )
                         except Exception as exc:
                             preserve_worktree = True
-                            logger.warning("Verified PR publication failed: %s", exc)
+                            logger.warning(
+                                "Verified PR publication failed: %s",
+                                exc,
+                            )
                             return self._finalize(
                                 status="blocked",
                                 reason="publish_failed",
@@ -1451,19 +1574,16 @@ class RalphController:
                                 inner_iterations=total_inner_iterations,
                                 pr_url=pr_url,
                                 tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
+                                final_verify=final_verify,
                                 branch=branch,
                                 extra_state=self._publish_checkpoint_state(
                                     worktree_path=worktree_path,
                                     branch=branch,
                                     stage="pr",
-                                    verify_result=inner_result.get("final_verify"),
+                                    verify_result=final_verify,
                                     error=exc,
                                 ),
                             )
-                        # Phase 2/3 and landing consume the converged delivery
-                        # worktree after Ralph returns, even on an early outer
-                        # iteration.
                         preserve_worktree = True
                         return self._finalize(
                             status="verified",
@@ -1472,52 +1592,19 @@ class RalphController:
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
                             tokens_used=tokens_used,
-                            final_verify=inner_result.get("final_verify"),
+                            final_verify=final_verify,
                             branch=branch,
                         )
 
-                    if inner_result.get("blocked"):
-                        # Preserve committed post-checkpoint evidence (notably
-                        # documentation-only commits) for delivery resume.
-                        preserve_worktree = True
-                        return self._finalize(
-                            status="blocked",
-                            reason=str(
-                                inner_result.get("blocked_reason")
-                                or "blocker_escalation"
-                            ),
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=inner_result.get("final_verify"),
-                        )
-
-                    if _is_task_progress_incomplete(inner_result.get("final_verify")):
-                        # Canonical task evidence is a delivery-completeness
-                        # blocker, not an implementation retry or a publication
-                        # failure. Do not consume more outer iterations or try
-                        # to checkpoint incidental verification artifacts.
-                        preserve_worktree = True
-                        return self._finalize(
-                            status="blocked",
-                            reason="task_progress_incomplete",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=inner_result.get("final_verify"),
-                        )
-
-                    convergence_observation = self._record_convergence_observation(
-                        inner_result["final_verify"],
-                        worktree_path,
-                        hard_ceiling=max_outer,
+                    convergence_observation = (
+                        candidate.convergence_observation
                     )
-
-                    # Inner loop exhausted -- commit progress and continue outer
+                    assert convergence_observation is not None
                     try:
-                        branch = self._commit_and_push(worktree_path, outer_iter)
+                        branch = self._commit_and_push(
+                            worktree_path,
+                            outer_iter,
+                        )
                     except CommitPushError as e:
                         preserve_worktree = True
                         return self._finalize(
@@ -1527,22 +1614,27 @@ class RalphController:
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
                             tokens_used=tokens_used,
-                            final_verify=inner_result.get("final_verify"),
+                            final_verify=final_verify,
                             branch=e.branch,
                             extra_state=self._publish_checkpoint_state(
                                 worktree_path=worktree_path,
                                 branch=e.branch,
                                 stage=e.stage,
-                                verify_result=inner_result.get("final_verify"),
+                                verify_result=final_verify,
                                 error=e,
                             ),
                         )
-                    pr_url = self._manage_pr(pr_url, branch, converged=False)
+                    pr_url = self._manage_pr(
+                        pr_url,
+                        branch,
+                        converged=False,
+                    )
 
                     if convergence_observation.should_stop:
                         stop_reason = (
                             "convergence_stalled"
-                            if convergence_observation.stop_reason == "stall_patience"
+                            if convergence_observation.stop_reason
+                            == "stall_patience"
                             else "checkpoint_outer_cap"
                             if (
                                 fulfillment_refresh_deferred
@@ -1561,9 +1653,8 @@ class RalphController:
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
                             tokens_used=tokens_used,
-                            final_verify=inner_result.get("final_verify"),
+                            final_verify=final_verify,
                         )
-
                 finally:
                     if handle is not None:
                         try:
