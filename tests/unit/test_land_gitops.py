@@ -187,7 +187,7 @@ class TestCommitDefaultBranchAncestryGuard:
         subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
 
         subprocess.run(
-            ["git", "checkout", "-b", "harness/910/default/iter-1"],
+            ["git", "checkout", "-b", "harness/910/build-910/iter-1"],
             cwd=repo,
             check=True,
         )
@@ -203,7 +203,7 @@ class TestCommitDefaultBranchAncestryGuard:
                 origin="delivery",
                 action="verification-evidence",
                 spec_id="910",
-                strategy="default",
+                run_id="build-910",
             ),
         )
         gitops = GitOpsManager(
@@ -244,7 +244,7 @@ class TestCommitDefaultBranchAncestryGuard:
         subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
 
         subprocess.run(
-            ["git", "checkout", "-b", "harness/910/default/iter-1"],
+            ["git", "checkout", "-b", "harness/910/build-910/iter-1"],
             cwd=repo,
             check=True,
         )
@@ -253,7 +253,7 @@ class TestCommitDefaultBranchAncestryGuard:
         subprocess.run(["git", "commit", "-m", "feature"], cwd=repo, check=True)
         subprocess.run(["git", "checkout", "main"], cwd=repo, check=True)
         subprocess.run(
-            ["git", "merge", "--no-ff", "harness/910/default/iter-1", "-m", "merge"],
+            ["git", "merge", "--no-ff", "harness/910/build-910/iter-1", "-m", "merge"],
             cwd=repo,
             check=True,
         )
@@ -265,7 +265,7 @@ class TestCommitDefaultBranchAncestryGuard:
                 origin="delivery",
                 action="verification-evidence",
                 spec_id="910",
-                strategy="default",
+                run_id="build-910",
             ),
         )
         gitops = GitOpsManager(

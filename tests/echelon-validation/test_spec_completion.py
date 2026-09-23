@@ -5,7 +5,7 @@
 - state-schema.json has build object with tasks_completed_pct
 - phase1-what.md sets spec_status to planned after CARTOGRAPHER (LLM-owned)
 - cli.py writes "In Progress" to spec frontmatter at harness run start (Python-owned)
-- coordinator.py does not overwrite Ralph's ready_to_land status after convergence
+- delivery_controller.py does not overwrite Ralph's ready_to_land status after convergence
 """
 
 from __future__ import annotations
@@ -51,8 +51,8 @@ class TestSpecCompletion:
         content = (SRC / "echelon" / "delivery_service.py").read_text()
         assert re.search(r'_write_spec_status\(spec_dir,\s*"in_progress"\)', content)
 
-    def test_coordinator_does_not_overwrite_ready_to_land_on_convergence(self) -> None:
+    def test_delivery_controller_does_not_overwrite_ready_to_land_on_convergence(self) -> None:
         # Ralph owns the verified-but-not-landed status transition.
-        content = (SRC / "harness" / "coordinator.py").read_text()
+        content = (SRC / "harness" / "delivery_controller.py").read_text()
         assert 'write_spec_status(_spec_dir, "Implemented")' not in content
         assert "marked Implemented" not in content

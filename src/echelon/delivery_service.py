@@ -1119,6 +1119,7 @@ def _cmd_land(
         autoresolve=autoresolve,
         prepare_only=prepare_only,
         continue_existing=continue_existing,
+        strategy=strategy,
         allow_fulfillment_gaps=allow_fulfillment_gaps,
     )
 
