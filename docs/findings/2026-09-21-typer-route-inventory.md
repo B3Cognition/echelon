@@ -5,25 +5,26 @@ Baseline: `60e91d91` (`main` after S2)
 ## Summary
 
 - Public Typer commands: 104
-- Public commands already using modular services: 95
-- Public commands delegating into `echelon.cli`: 9
+- Public commands using modular services: 104
+- Public commands directly consuming `_legacy_cli()`: 0
 - Hidden commands: 23
-- Hidden commands directly consuming `_legacy_cli()`: 2
+- Hidden commands directly consuming `_legacy_cli()`: 0
 
 The executable `typer.main.get_command(app)` tree was recounted on 2026-09-23:
 walk `click.Group.commands` recursively, count leaf commands, and inherit each
 parent's `hidden` flag. This treats all commands below hidden `harness` and
 `admin` groups as hidden, even when their own decorators are not hidden.
-Inspect each unwrapped leaf callback for `_legacy_cli()` consumption; the nine
-public consumers are the active RE routes below, and the two hidden consumers
-are `re execute-run` and `re check-domain`. Compatibility aliases can still
-reach legacy RE code indirectly through their canonical routes.
+Inspect each unwrapped leaf callback for `_legacy_cli()` consumption. No public
+or hidden leaf callback consumes it directly after the RE facade cutover.
+The active RE callbacks can reach the quarantined kernel only through
+`echelon.re_service`.
 
-Current S3 progress after the benchmark, stack, workspace, phase/version,
-compatibility, spec, and Delivery slices: 95 public commands use modular
-services and 9 still delegate into `echelon.cli`. The active RE facade is the
-next and final Typer cutover slice; RE protocol consolidation remains owned by
-S6.
+S3 is complete after the benchmark, stack, workspace, phase/version,
+compatibility, spec, Delivery, and RE slices: all 104 public commands use
+modular front doors. `echelon.re_service` is the single quarantine adapter for
+the nine public and two hidden RE routes. `echelon.cli` still retains the RE
+protocol kernel for consolidation in S6; S3 completed the typed command
+boundary and did not simplify that protocol kernel.
 
 Final Delivery review fixes are committed in `cdb1a4d3`: run/resume/continue
 capability checks use the supplied project root; Delivery-only error rendering
@@ -34,7 +35,7 @@ Afterward, all 17 boundary cases passed within the 38-test affected suite
 The focused Delivery suite passed 302 tests in 58.32s. The ownership search
 found no retained moved helpers in `cli.py` or stale direct test imports/patches.
 
-The single final repository gate against `3abca341` tested
+The previous Delivery repository gate against `3abca341` tested
 `cdb1a4d310ed7bf39358ee71284ebedf5a8f465a` (tree
 `b2b80184eab739396535ae402d800dc8985e8eb2`): 9,822 passed, 0 skipped,
 11,438 deselected, and 0 failures in 1,773.29s (29m33.29s). The receipt records
@@ -44,6 +45,19 @@ This replaces the prior Delivery receipt; the receipt identifies the tested
 code/test commit, preceding the documentation/evidence commit. The earlier
 broad CLI gate remains historical: 1,672 passed and one failure reproduced on
 the design baseline in 274.71s; it was not rerun in this final wave.
+
+Final S3 structural acceptance found no `_legacy_cli()` call in
+`src/echelon/cli_app.py`, and all 27 RE facade boundary tests passed in 10.32s.
+The worktree-local executable recount measured 104 public routes, 23 hidden
+routes, zero direct public or hidden `_legacy_cli()` consumers, and 104 modular
+public routes. The single final repository gate against `bfdb744c` tested
+`b423c8cee1a4099c719387afdd385d8584bc7ec8` (tree
+`36c25439debf3d8d46f5ee5214cd1ca70c96b25a`): 9,826 passed, 0 skipped,
+11,465 deselected, and 0 failures in 1,825.04s (30m25s). The receipt records
+1,827,473ms for the pytest subprocess, with exit code 0:
+`tests/reports/merge-verification/receipt-b423c8cee1a4-aa906e7b1aa34138ac985c250a569f07.json`.
+The receipt identifies the tested code/test commit before this
+documentation/evidence commit.
 
 The compatibility cleanup removed the hidden retired `build` and `cicd`
 routes. Retained root and hidden `harness` aliases now call their canonical
@@ -68,6 +82,7 @@ compatibility adapter.
 | `graph` | `build`, `query`, `explain`, `path`, `neighbors`, `impact`, `audit`, `refresh`, `export`, `view` |
 | `graph workspace` | `build`, `audit`, `refresh`, `export`, `view` |
 | `memory` | `search`, `list-rooms`, `list-specs`, `list-kinds` |
+| `re` | `run`, `refresh`, `deepen`, `status`, `continue`, `resume`, `publish`, `finalize`, `synthesize` (`echelon.re_service` typed quarantine facade) |
 | `re memory` | `refresh`, `audit` |
 | `spec checkpoint` | `list`, `accept`, `commit` |
 | `spec memory` | `mine`, `audit`, `refresh` |
@@ -88,7 +103,7 @@ compatibility adapter.
 | `workspace` | `init`, `doctor`, `migrate-to-prosaic`, `migrate` | Cut over to modular services |
 | `workspace sources` | `sync` | Cut over to modular services |
 | `phase` | `list`, `run` | Cut over to `echelon.phase_service`; replay temporarily reuses shared spec/recovery helpers in `cli.py` pending the spec slice |
-| `re` | `run`, `refresh`, `deepen`, `status`, `continue`, `resume`, `publish`, `finalize`, `synthesize` | Active; keep protocol consolidation in S6 |
+| `re` | `run`, `refresh`, `deepen`, `status`, `continue`, `resume`, `publish`, `finalize`, `synthesize` | Cut over to the `echelon.re_service` typed quarantine facade; keep protocol consolidation in S6 |
 | hidden `harness` group | `run`, `land` | Compatibility aliases |
 
 ## Hidden routes
@@ -97,7 +112,7 @@ compatibility adapter.
 | --- | --- |
 | root `init`, `artifacts`, `status`, `land`, `continue`, `rewind`, `resume`, `run`, `review`, `verify-spec`, `reopen`, `bugfix`, `change` | Compatibility aliases; canonical forwarding is isolated from active route implementations |
 | `harness run`, `harness land`, `harness continue`, `harness resume` | Compatibility aliases forwarding to canonical `delivery` commands |
-| `re execute-run`, `re check-domain` | Active internal workflow entry points |
+| `re execute-run`, `re check-domain` | Active internal workflow entry points using the `echelon.re_service` typed quarantine facade |
 | `re analyze`, `spec analyze` | Modular diagnostic entry points |
 | `spec target` | Retired mutation guard isolated in `echelon.spec_service`; no `cli.py` delegation |
 | `admin commands` | Modular command inventory below the hidden `admin` group |
