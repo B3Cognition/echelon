@@ -249,7 +249,11 @@ def test_stack_list_bypasses_legacy_cli(monkeypatch: pytest.MonkeyPatch) -> None
     def fail_legacy_cli():
         raise AssertionError("stack list must not load echelon.cli")
 
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["stack", "list", "--json"])
 
@@ -279,7 +283,11 @@ def test_stack_detect_bypasses_legacy_cli(
         raise AssertionError("stack detect must not load echelon.cli")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["stack", "detect", "--json"])
 
@@ -299,7 +307,11 @@ def test_stack_preflight_bypasses_legacy_cli(
         raise AssertionError("stack preflight must not load echelon.cli")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["stack", "preflight", "--json"])
 
@@ -323,7 +335,11 @@ def test_stack_provision_bypasses_legacy_cli(
         raise AssertionError("stack provision must not load echelon.cli")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(
         app,
@@ -389,7 +405,11 @@ def test_stack_selection_commands_bypass_legacy_cli(
         raise AssertionError("stack selection commands must not load echelon.cli")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
     result = CliRunner().invoke(app, ["stack", *args])
 

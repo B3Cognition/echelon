@@ -20,13 +20,16 @@ def invoke_help(*args: str):
 @pytest.mark.unit
 def test_re_publish_routes_explicit_flags(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import RePublishRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_publish", lambda args: calls.append(args))
+    calls: list[RePublishRequest] = []
+    monkeypatch.setattr("echelon.re_service.publish_re", calls.append)
 
     run(["re", "publish", "spec-123", "--allow-partial", "--commit"])
 
-    assert calls == [["spec-123", "--allow-partial", "--commit"]]
+    assert calls == [
+        RePublishRequest(run_id="spec-123", allow_partial=True, commit=True)
+    ]
 
 
 @pytest.mark.unit
@@ -138,9 +141,10 @@ def test_re_status_json_option_routes_without_changing_default(monkeypatch):
 @pytest.mark.unit
 def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
     from echelon.cli_app import app
+    from echelon.re_service import ReResumeRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_resume", lambda args: calls.append(args))
+    calls: list[ReResumeRequest] = []
+    monkeypatch.setattr("echelon.re_service.resume_re", calls.append)
     runner = CliRunner()
 
     custom = runner.invoke(app, ["re", "resume", "Use accepted timeout evidence."])
@@ -160,15 +164,13 @@ def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
 
     assert custom.exit_code == recommended.exit_code == banzai.exit_code == 0
     assert calls == [
-        ["Use accepted timeout evidence."],
-        ["--recommended"],
-        [
-            "--banzai",
-            "--re-semantic-token-limit",
-            "9000000",
-            "--re-semantic-time-limit-minutes",
-            "720",
-        ],
+        ReResumeRequest(answer="Use accepted timeout evidence."),
+        ReResumeRequest(recommended=True),
+        ReResumeRequest(
+            banzai=True,
+            re_semantic_token_limit=9000000,
+            re_semantic_time_limit_minutes=720,
+        ),
     ]
 
 
@@ -243,28 +245,28 @@ def test_root_help_documents_common_quiet_option() -> None:
 @pytest.mark.unit
 def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReFinalizeRequest
 
-    calls: list[list[str]] = []
+    calls: list[ReFinalizeRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_finalize",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.re_service.finalize_re",
+        calls.append,
     )
 
     run(["re", "finalize", "re-123", "--allow-partial"])
 
-    assert calls == [["re-123", "--allow-partial"]]
+    assert calls == [ReFinalizeRequest(run_id="re-123", allow_partial=True)]
 
 
 @pytest.mark.unit
 def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReSynthesizeRequest
 
-    calls: list[list[str]] = []
+    calls: list[ReSynthesizeRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_synthesize",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.re_service.synthesize_re",
+        calls.append,
     )
 
     run(
@@ -279,7 +281,11 @@ def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
     )
 
     assert calls == [
-        ["re-123", "--allow-partial", "--re-token-limit", "1325000000"]
+        ReSynthesizeRequest(
+            run_id="re-123",
+            allow_partial=True,
+            re_token_limit=1325000000,
+        )
     ]
 
 
@@ -287,12 +293,15 @@ def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
 def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_execute_run", lambda args: calls.append(args))
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "echelon.re_service.execute_re_run",
+        lambda **kwargs: calls.append(kwargs),
+    )
 
     run(["re", "execute-run", "spec-123"])
 
-    assert calls == [["spec-123"]]
+    assert calls == [{"run_id": "spec-123"}]
 
 
 @pytest.mark.unit
@@ -307,12 +316,21 @@ def test_cli_does_not_expose_extension_backed_prosaic_export() -> None:
 def test_re_check_domain_routes_to_deterministic_gate(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_check_domain", lambda args: calls.append(args))
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "echelon.re_service.check_re_domain",
+        lambda **kwargs: calls.append(kwargs),
+    )
 
     run(["re", "check-domain", "spec-123", "api", "001-re-api"])
 
-    assert calls == [["spec-123", "api", "001-re-api"]]
+    assert calls == [
+        {
+            "run_id": "spec-123",
+            "source_id": "api",
+            "domain_id": "001-re-api",
+        }
+    ]
 
 
 @pytest.mark.unit
@@ -1065,12 +1083,6 @@ def test_harness_aliases_route_through_canonical_delivery_commands(
         calls.append((args, kwargs))
 
     monkeypatch.setattr(cli_app, target, canonical)
-    monkeypatch.setattr(
-        cli_app,
-        "_legacy_cli",
-        lambda: (_ for _ in ()).throw(AssertionError("alias loaded legacy CLI")),
-    )
-
     result = CliRunner().invoke(cli_app.app, argv)
 
     assert result.exit_code == 0
@@ -1157,12 +1169,6 @@ def test_root_aliases_route_through_canonical_commands(
         calls.append((args, kwargs))
 
     monkeypatch.setattr(cli_app, target, canonical)
-    monkeypatch.setattr(
-        cli_app,
-        "_legacy_cli",
-        lambda: (_ for _ in ()).throw(AssertionError("alias loaded legacy CLI")),
-    )
-
     result = CliRunner().invoke(cli_app.app, argv)
 
     assert result.exit_code == 0
@@ -1181,15 +1187,11 @@ def test_typer_run_prints_version_without_subcommand(capsys):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("args", (["--version"], ["version"]))
-def test_version_commands_bypass_legacy_cli(monkeypatch, capsys, args):
-    from echelon.cli_app import run
+def test_version_commands_bypass_legacy_cli(capsys, args):
+    from echelon import cli_app
 
-    def fail_legacy_cli():
-        raise AssertionError("version commands must not load echelon.cli")
-
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
-
-    run(args)
+    assert not hasattr(cli_app, "_legacy_cli")
+    cli_app.run(args)
 
     assert capsys.readouterr().out.strip() == "echelon 4.1.1"
 

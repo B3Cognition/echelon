@@ -128,24 +128,25 @@ def test_continue_accepts_explicit_protocol_27_run_id(
 def test_public_cli_routes_protocol_27_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon import cli
     from echelon.cli_app import app
+    from echelon.re_service import (
+        ReContinueRequest,
+        ReStatusRequest,
+        ReSynthesizeRequest,
+    )
 
-    calls: list[tuple[str, list[str]]] = []
+    calls: list[tuple[str, object]] = []
     monkeypatch.setattr(
-        cli,
-        "_cmd_re_status",
-        lambda args: calls.append(("status", list(args))),
+        "echelon.re_service.show_re_status",
+        lambda request: calls.append(("status", request)),
     )
     monkeypatch.setattr(
-        cli,
-        "_cmd_re_continue",
-        lambda args: calls.append(("continue", list(args))),
+        "echelon.re_service.continue_re",
+        lambda request: calls.append(("continue", request)),
     )
     monkeypatch.setattr(
-        cli,
-        "_cmd_re_synthesize",
-        lambda args: calls.append(("synthesize", list(args))),
+        "echelon.re_service.synthesize_re",
+        lambda request: calls.append(("synthesize", request)),
     )
     runner = CliRunner()
 
@@ -168,19 +169,15 @@ def test_public_cli_routes_protocol_27_arguments(
     )
     assert result.exit_code == 0, result.output
     assert calls == [
-        ("status", ["re-child", "--json"]),
-        ("continue", ["re-child"]),
+        ("status", ReStatusRequest(run_id="re-child", as_json=True)),
+        ("continue", ReContinueRequest(run_id="re-child")),
         (
             "synthesize",
-            [
-                "--from-run",
-                "re-parent",
-                "--accept-partial",
-                "web",
-                "--token-limit",
-                "400000",
-                "--active-ms-limit",
-                "600000",
-            ],
+            ReSynthesizeRequest(
+                from_run="re-parent",
+                accept_partial=("web",),
+                token_limit=400000,
+                active_ms_limit=600000,
+            ),
         ),
     ]

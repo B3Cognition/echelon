@@ -22,7 +22,11 @@ def _reject_legacy_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_legacy_cli():
         raise AssertionError("workspace commands must not load echelon.cli")
 
-    monkeypatch.setattr("echelon.cli_app._legacy_cli", fail_legacy_cli)
+    monkeypatch.setattr(
+        "echelon.cli_app._legacy_cli",
+        fail_legacy_cli,
+        raising=False,
+    )
 
 
 @pytest.mark.unit
