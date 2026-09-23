@@ -9,7 +9,7 @@ import yaml
 
 from tests.support.temp_storage import copy_package_build_tree
 
-from echelon.cli import _sync_polyrepo_runtime_extension
+from echelon.delivery_service import _sync_polyrepo_runtime_extension
 from harness.runtime_surface import (
     DELIVERY_BASH_FILES,
     DELIVERY_TEMPLATE_FILES,

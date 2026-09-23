@@ -277,26 +277,6 @@ def _command_display(prefix: str, args: list[str]) -> str:
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
 
-def _print_harness_config_error(error: Exception) -> None:
-    field_path = getattr(error, "field_path", None)
-    if field_path == "target_repo":
-        print(f"✗ Harness config error: {error}", file=sys.stderr)
-        return
-    print(f"✗ Harness config error: {error}\n  Fix: re-run 'echelon delivery init'.", file=sys.stderr)
-
-
-from echelon.delivery_service import (
-    HarnessWorkspaceTarget,
-    _apply_target_verify_command_detection,
-    _block_if_spec_task_targets_mismatch,
-    _format_missing_verify_command_resume_message,
-    _resolve_harness_workspace_target,
-    _source_dispatch_metadata,
-    _sync_polyrepo_runtime_extension,
-    _workspace_target_dispatch_metadata,
-)
-
-
 _RUNS_GITIGNORE_PATTERNS = (
     "**/.echelon/checkpoints.json",
     "**/.echelon/checkpoints.lock",

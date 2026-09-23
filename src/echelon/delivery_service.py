@@ -1015,6 +1015,14 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
         print(f"  Spec run left at {run_rel}/", flush=True)
 
 
+def _print_harness_config_error(error: Exception) -> None:
+    field_path = getattr(error, "field_path", None)
+    if field_path == "target_repo":
+        print(f"✗ Harness config error: {error}", file=sys.stderr)
+        return
+    print(f"✗ Harness config error: {error}\n  Fix: re-run 'echelon delivery init'.", file=sys.stderr)
+
+
 def _cmd_land(
     args: list[str],
     *,
@@ -1025,7 +1033,6 @@ def _cmd_land(
     from echelon.cli import (
         _banner,
         _command_display,
-        _print_harness_config_error,
         _require_provider_capability,
     )
 
@@ -2796,7 +2803,6 @@ def _run_delivery(
     from echelon.cli import (
         _banner,
         _command_display,
-        _print_harness_config_error,
         _project_echelon_config,
         _require_provider_capability,
         _workspace_git_preflight,
@@ -2809,7 +2815,9 @@ def _run_delivery(
         sys.exit(1)
 
     rerun_command = _command_display(command_prefix, display_args or args)
-    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
+    _require_provider_capability(
+        command_prefix, ProviderCapability.BUILD, project_dir=project_root,
+    )
     _workspace_git_preflight(project_root, command_name=rerun_command)
 
     spec_id = args[0]
@@ -3467,7 +3475,6 @@ def _run_delivery_resume(
     from echelon.cli import (
         _banner,
         _command_display,
-        _print_harness_config_error,
         _print_legacy_branchless_recovery_notice,
         _project_echelon_config,
         _require_provider_capability,
@@ -3496,7 +3503,9 @@ def _run_delivery_resume(
         return
 
     rerun_command = _command_display(command_prefix, display_args or args)
-    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
+    _require_provider_capability(
+        command_prefix, ProviderCapability.BUILD, project_dir=project_root,
+    )
     spec_id, kv, resume_answer = _parse_harness_resume_args(args)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
