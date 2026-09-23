@@ -29,6 +29,7 @@ REMOVED_HANDLERS = {
     "_cmd_delivery_verify_local",
     "_cmd_delivery_cleanup_local",
     "_cmd_delivery_checkpoint",
+    "_outer_cap_delivery_action",
 }
 
 
@@ -257,6 +258,60 @@ def test_legacy_cli_does_not_define_delivery_handlers():
         node.name for node in tree.body if isinstance(node, ast.FunctionDef)
     }
     assert definitions.isdisjoint(REMOVED_HANDLERS)
+
+
+def test_land_delivery_roots_config_and_gitops_in_supplied_project(
+    monkeypatch,
+    tmp_path,
+):
+    from echelon.delivery_service import DeliveryLandRequest, land_delivery
+
+    project_root = tmp_path / "project"
+    other_root = tmp_path / "other"
+    project_root.mkdir()
+    other_root.mkdir()
+    monkeypatch.chdir(other_root)
+
+    config = object()
+    load_calls = []
+    gitops_calls = []
+    land_calls = []
+    monkeypatch.setattr(
+        "echelon.cli._require_provider_capability",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr("echelon.cli._banner", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "echelon.delivery_service._dispatch_land_to_spec_targets",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "echelon.delivery_service._archive_squad_run",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "harness.config.load_config",
+        lambda **kwargs: load_calls.append(kwargs) or config,
+    )
+    monkeypatch.setattr(
+        "harness.gitops.GitOpsManager",
+        lambda loaded, *, base_dir=None: gitops_calls.append(
+            (loaded, base_dir)
+        ) or object(),
+    )
+    monkeypatch.setattr(
+        "harness.land.land",
+        lambda spec_id, **kwargs: land_calls.append((spec_id, kwargs)) or True,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        land_delivery(project_root, DeliveryLandRequest(spec_id="001-demo"))
+
+    assert exc_info.value.code == 0
+    assert load_calls == [{"project_root": project_root}]
+    assert gitops_calls == [(config, str(project_root))]
+    assert land_calls[0][0] == "001-demo"
+    assert land_calls[0][1]["project_dir"] == project_root
 
 
 def test_continue_delivery_rejects_answer():
