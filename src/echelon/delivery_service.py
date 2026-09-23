@@ -27,12 +27,10 @@ class DeliveryRunRequest:
     spec_id: str
     extra_args: tuple[str, ...] = ()
     mode: str | None = None
-    strategy: str | None = None
     max_outer: int | None = None
     max_inner: int | None = None
     token_budget: int | None = None
     auto_merge: bool | None = None
-    kill_losers: bool = False
     reset: bool = False
 
 
@@ -42,7 +40,6 @@ class DeliveryRecoveryRequest:
     extra_args: tuple[str, ...] = ()
     answer: str | None = None
     mode: str | None = None
-    strategy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -354,7 +351,6 @@ def _delivery_status_summary(
 ) -> dict:
     state = _delivery_status_effective_state(state)
     spec_id = str(state.get("spec_id") or "")
-    strategy = str(state.get("strategy_id") or "default")
     status = str(state.get("status") or "unknown")
     # Resume deliberately retains terminal fields for recovery/history. They
     # are not facts about a currently active attempt and must not be presented
@@ -370,7 +366,6 @@ def _delivery_status_summary(
     )
     summary = {
         "spec_id": spec_id,
-        "strategy": strategy,
         "build_id": str(state.get("build_id") or ""),
         "status": status,
         "mode": str(state.get("mode") or ""),
@@ -528,7 +523,6 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
     }.get(str(summary.get("status") or ""), "status")
     fields: list[tuple[str, str]] = [
         ("spec", str(summary.get("spec_id") or "-")),
-        ("strategy", str(summary.get("strategy") or "default")),
         ("build", str(summary.get("build_id") or "-")),
         ("status", f"{status_icon}: {summary.get('status') or 'unknown'}"),
     ]
@@ -2348,14 +2342,11 @@ def cleanup_local(project_root: Path, *, local_run_id: str) -> None:
 def _find_harness_checkpoint_state(
     project_root: Path,
     spec_id: str,
-    strategy_id: str = "",
 ) -> dict | None:
     from echelon.cli import _iter_harness_build_states
 
     for state in _iter_harness_build_states(project_root):
         if str(state.get("spec_id") or "") != spec_id:
-            continue
-        if strategy_id and str(state.get("strategy_id") or "") != strategy_id:
             continue
         return state
     return None
@@ -2365,32 +2356,24 @@ def list_checkpoints(
     project_root: Path,
     *,
     spec_id: str,
-    strategy: str | None,
     extra_args: Sequence[str] = (),
 ) -> None:
     from echelon.cli import _require_provider_capability
-
-    strategy_id = strategy or ""
-    for raw in extra_args:
-        if raw.startswith("strategy="):
-            strategy_id = raw.split("=", 1)[1]
 
     _require_provider_capability(
         "echelon delivery checkpoint",
         ProviderCapability.BUILD,
         project_dir=project_root,
     )
-    state = _find_harness_checkpoint_state(project_root, spec_id, strategy_id)
+    state = _find_harness_checkpoint_state(project_root, spec_id)
     if state is None:
-        strategy_suffix = f" strategy {strategy_id!r}" if strategy_id else ""
         print(
-            f"No delivery checkpoint state found for {spec_id!r}{strategy_suffix}.",
+            f"No delivery checkpoint state found for {spec_id!r}.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    strategy_label = str(state.get("strategy_id") or strategy_id or "default")
-    print(f"CHECKPOINTS - delivery {spec_id} (strategy {strategy_label})\n")
+    print(f"CHECKPOINTS - delivery {spec_id}\n")
     rows: list[tuple[str, str, str, str, str]] = []
     checkpoints = state.get("checkpoint_commits")
     if isinstance(checkpoints, list):
@@ -2455,15 +2438,12 @@ def _run_args(request: DeliveryRunRequest) -> list[str]:
     args.extend(
         _option_pairs(
             mode=request.mode,
-            strategy=request.strategy,
             max_outer=request.max_outer,
             max_inner=request.max_inner,
             token_budget=request.token_budget,
             auto_merge=request.auto_merge,
         )
     )
-    if request.kill_losers:
-        args.append("kill_losers=true")
     if request.reset:
         args.append("--reset")
     return args
@@ -2473,8 +2453,6 @@ def _display_run_args(request: DeliveryRunRequest) -> list[str]:
     args = [request.spec_id, *request.extra_args]
     if request.mode is not None:
         args.append(f"--mode={request.mode}")
-    if request.strategy is not None:
-        args.append(f"--strategy={request.strategy}")
     if request.max_outer is not None:
         args.append(f"--max-outer={request.max_outer}")
     if request.max_inner is not None:
@@ -2483,8 +2461,6 @@ def _display_run_args(request: DeliveryRunRequest) -> list[str]:
         args.append(f"--token-budget={request.token_budget}")
     if request.auto_merge is not None:
         args.append("--auto-merge" if request.auto_merge else "--no-auto-merge")
-    if request.kill_losers:
-        args.append("--kill-losers")
     if request.reset:
         args.append("--reset")
     return args
@@ -2495,7 +2471,7 @@ def _recovery_args(request: DeliveryRecoveryRequest) -> list[str]:
     if request.answer is not None:
         args.append(request.answer)
     args.extend(request.extra_args)
-    args.extend(_option_pairs(mode=request.mode, strategy=request.strategy))
+    args.extend(_option_pairs(mode=request.mode))
     return args
 
 
@@ -2827,13 +2803,21 @@ def _run_delivery(
     for arg in args[1:]:
         if arg == "--reset":
             continue
-        if "=" in arg:
+        if "=" in arg and arg.partition("=")[0].strip() in {
+            "mode",
+            "target",
+            "target_source",
+            "max_outer",
+            "max_inner",
+            "token_budget",
+            "auto_merge",
+        }:
             k, _, v = arg.partition("=")
             kv[k.strip()] = v.strip()
         else:
             free_text.append(arg)
-    strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
+    strategy = "default"  # Transitional state key; removed with run-scoped state.
     explicit_target = kv.get("target") or kv.get("target_source")
     if explicit_target:
         print(
@@ -2845,7 +2829,7 @@ def _run_delivery(
         )
         raise SystemExit(2)
 
-    parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+    parts = [f"spec {spec_id}", f"{mode} mode"]
     if kv.get("max_outer"):
         parts.append(f"max {kv['max_outer']} outer iterations")
     if kv.get("max_inner"):
@@ -2858,9 +2842,6 @@ def _run_delivery(
             parts.append("no_auto_merge")
         else:
             parts.append("auto_merge")
-    kill_losers = kv.get("kill_losers")
-    if kill_losers is not None and kill_losers.lower() not in {"0", "false", "no", "off"}:
-        parts.append("kill_losers")
     if free_text:
         parts.append(f"task: {' '.join(free_text)}")
     if reset:
@@ -3118,7 +3099,6 @@ def _run_delivery(
     _banner("HARNESS RUN", [
         ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
         ("Mode", mode),
-        ("Strategy", strategy),
         ("Target", target_display),
     ])
 
@@ -3439,18 +3419,16 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     i = 1
     while i < len(args):
         arg = args[i]
-        if arg in {"--mode", "--strategy"} and i + 1 < len(args):
+        if arg == "--mode" and i + 1 < len(args):
             kv[arg.removeprefix("--")] = args[i + 1].strip()
             i += 2
             continue
         if arg.startswith("--mode="):
             kv["mode"] = arg.partition("=")[2].strip()
-        elif arg.startswith("--strategy="):
-            kv["strategy"] = arg.partition("=")[2].strip()
         elif "=" in arg:
             key, _, value = arg.partition("=")
             key = key.strip()
-            if key in {"mode", "strategy"}:
+            if key == "mode":
                 kv[key] = value.strip()
             elif key == "answer":
                 answer_parts.append(value.strip())
@@ -3486,7 +3464,7 @@ def _run_delivery_resume(
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
+            f"Usage: {command_prefix} <spec_id> [mode=<guided|semi|banzai>] [answer]\n\n"
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
                 "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
@@ -3507,7 +3485,7 @@ def _run_delivery_resume(
         command_prefix, ProviderCapability.BUILD, project_dir=project_root,
     )
     spec_id, kv, resume_answer = _parse_harness_resume_args(args)
-    strategy = kv.get("strategy", "default")
+    strategy = "default"  # Transitional state key; removed with run-scoped state.
     mode = kv.get("mode", "semi")
     target_resume_command = "resume" if require_answer else "continue"
 
@@ -3694,7 +3672,7 @@ def _run_delivery_resume(
 
     if not state:
         print(
-            f"✗ No harness state found for spec {spec_id!r} (strategy={strategy!r}).\n"
+            f"✗ No harness state found for spec {spec_id!r}.\n"
             "  Run 'echelon delivery run <spec_id>' to start a new run.",
             file=sys.stderr,
         )
@@ -3869,7 +3847,6 @@ def _run_delivery_resume(
 
         fields = [
             ("Spec", spec_id),
-            ("Strategy", strategy),
             ("Reason", "phase_a_repaired"),
         ]
         if resolved_spec_dir is not None:
@@ -3883,7 +3860,7 @@ def _run_delivery_resume(
             buffer_limit_bytes=config.buffer_limit_bytes,
             container_cli=_container_runtime_cli(config),
         )
-        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        user_message = f"spec {spec_id} mode={mode} resume"
         try:
             outcome = run(
                 user_message,
@@ -3941,7 +3918,6 @@ def _run_delivery_resume(
 
         fields = [
             ("Spec", spec_id),
-            ("Strategy", strategy),
             ("Reason", termination_reason),
         ]
         if resolved_spec_dir is not None:
@@ -3955,7 +3931,7 @@ def _run_delivery_resume(
             buffer_limit_bytes=config.buffer_limit_bytes,
             container_cli=_container_runtime_cli(config),
         )
-        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        user_message = f"spec {spec_id} mode={mode} resume"
         try:
             outcome = run(
                 user_message,
@@ -4029,7 +4005,6 @@ def _run_delivery_resume(
         action = "applied" if recovered.applied else "already present"
         fields = [
             ("Spec", spec_id),
-            ("Strategy", strategy),
             ("Reason", termination_reason),
             ("Source", recovered.source),
             ("Commit", recovered.commit[:12]),
@@ -4046,7 +4021,7 @@ def _run_delivery_resume(
             buffer_limit_bytes=config.buffer_limit_bytes,
             container_cli=_container_runtime_cli(config),
         )
-        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        user_message = f"spec {spec_id} mode={mode} resume"
         try:
             outcome = run(
                 user_message,
@@ -4095,7 +4070,6 @@ def _run_delivery_resume(
 
     _banner("HARNESS RESUME", [
         ("Spec", spec_id),
-        ("Strategy", strategy),
         ("Verify", config.verify_command),
     ])
 
@@ -4104,7 +4078,7 @@ def _run_delivery_resume(
         buffer_limit_bytes=config.buffer_limit_bytes,
         container_cli=_container_runtime_cli(config),
     )
-    user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+    user_message = f"spec {spec_id} mode={mode} resume"
     try:
         outcome = run(
             user_message,

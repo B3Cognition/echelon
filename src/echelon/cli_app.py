@@ -56,12 +56,12 @@ delivery_app = typer.Typer(
         "Common forms:\n"
         "  init\n"
         "  target <spec_id>\n"
-        "  status [<spec_id>] [--strategy <s>]\n"
+        "  status [<spec_id>]\n"
         "  verify-local <spec_id> [--target <target-id>] [--engine auto|docker|podman]\n"
         "  cleanup-local <local-run-id>\n"
-        "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
-        "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
-        "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
+        "  run <spec_id> [--target <source-id-or-path>] [--mode <m>]\n"
+        "  continue <spec_id> [--mode <m>]\n"
+        "  resume <spec_id> \"<answer>\" [--mode <m>]\n"
         "  land <spec_id> [--continue] [--prepare-only]"
     ),
     rich_markup_mode=None,
@@ -225,7 +225,7 @@ graph_app.add_typer(graph_workspace_app, name="workspace")
 
 @harness_app.command(
     "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def harness_run(
     ctx: typer.Context,
@@ -237,12 +237,10 @@ def harness_run(
         ctx,
         spec_id,
         mode=mode,
-        strategy=None,
         max_outer=None,
         max_inner=None,
         token_budget=None,
         auto_merge=None,
-        kill_losers=False,
         reset=False,
     )
 
@@ -268,18 +266,18 @@ def harness_land(
     )
 
 
-@harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True})
 def harness_continue(ctx: typer.Context, spec_id: str = typer.Argument(...)) -> None:
-    delivery_continue(ctx, spec_id, mode=None, strategy=None)
+    delivery_continue(ctx, spec_id, mode=None)
 
 
-@harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True})
 def harness_resume(
     ctx: typer.Context,
     spec_id: str = typer.Argument(...),
     answer: Optional[str] = typer.Argument(None),
 ) -> None:
-    delivery_resume(ctx, spec_id, answer=answer, mode=None, strategy=None)
+    delivery_resume(ctx, spec_id, answer=answer, mode=None)
 
 
 class TopologyDirection(str, Enum):
@@ -4427,7 +4425,6 @@ def delivery_target(spec_id: str) -> None:
 @delivery_app.command("status")
 def delivery_status(
     spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to inspect."),
-    strategy: Optional[str] = typer.Option(None, "--strategy", help="Delivery strategy id."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show current Phase B delivery/Ralph state."""
@@ -4435,7 +4432,6 @@ def delivery_status(
 
     command(
         spec_id=spec_id or "",
-        strategy=strategy or "",
         json_output=json_output,
     )
 
@@ -4499,7 +4495,7 @@ def delivery_cleanup_local(
 
 @delivery_app.command(
     "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_run(
     ctx: typer.Context,
@@ -4508,11 +4504,6 @@ def delivery_run(
         None,
         "--mode",
         help="Autonomy mode: semi, banzai, or guided.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Build strategy name (default recommended).",
     ),
     max_outer: Optional[int] = typer.Option(
         None,
@@ -4534,11 +4525,6 @@ def delivery_run(
         "--auto-merge/--no-auto-merge",
         help="Enable or disable automatic landing after convergence.",
     ),
-    kill_losers: bool = typer.Option(
-        False,
-        "--kill-losers",
-        help="Cancel peer strategies after the first convergence.",
-    ),
     reset: bool = typer.Option(
         False,
         "--reset",
@@ -4554,12 +4540,10 @@ def delivery_run(
             spec_id,
             extra_args=tuple(ctx.args),
             mode=mode,
-            strategy=strategy,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
             auto_merge=auto_merge,
-            kill_losers=kill_losers,
             reset=reset,
         ),
     )
@@ -4567,14 +4551,13 @@ def delivery_run(
 
 @delivery_app.command(
     "resume",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_resume(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., metavar="SPEC_ID"),
     answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for blocker escalation."),
     mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """Resume a blocked delivery run with a human answer."""
     from echelon.delivery_service import DeliveryRecoveryRequest, resume_delivery
@@ -4586,20 +4569,18 @@ def delivery_resume(
             extra_args=tuple(ctx.args),
             answer=answer,
             mode=mode,
-            strategy=strategy,
         ),
     )
 
 
 @delivery_app.command(
     "continue",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_continue(
     ctx: typer.Context,
     spec_id: str,
     mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""
     from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
@@ -4610,7 +4591,6 @@ def delivery_continue(
             spec_id=spec_id,
             extra_args=tuple(ctx.args),
             mode=mode,
-            strategy=strategy,
         ),
     )
 
@@ -4667,12 +4647,11 @@ def delivery_land(
 
 @delivery_checkpoint_app.command(
     "list",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_checkpoint_list(
     ctx: typer.Context,
     spec_id: str,
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """List delivery checkpoint and recovery commits for a spec."""
     from echelon.delivery_service import list_checkpoints
@@ -4680,7 +4659,6 @@ def delivery_checkpoint_list(
     list_checkpoints(
         Path.cwd(),
         spec_id=spec_id,
-        strategy=strategy,
         extra_args=tuple(ctx.args),
     )
 

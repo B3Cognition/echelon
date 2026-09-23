@@ -98,7 +98,7 @@ def test_legacy_resume_renders_invalid_orchestration_context(
          ):
         with pytest.raises(SystemExit) as exc:
             resume(
-                "resume spec 042 strategy default answer: use option A",
+                "resume spec 042 answer: use option A",
                 provider=MagicMock(),
                 gitops=MagicMock(),
                 base_dir=str(tmp_path),

@@ -11,7 +11,6 @@ from echelon.ui import banner as _banner
 def command(
     *,
     spec_id: str = "",
-    strategy: str = "",
     json_output: bool = False,
     project_root: Path | None = None,
 ) -> None:
@@ -35,13 +34,6 @@ def command(
             for state in states
             if str(state.get("spec_id") or "") == spec_id
         ]
-    if strategy:
-        states = [
-            state
-            for state in states
-            if str(state.get("strategy_id") or "") == strategy
-        ]
-
     summaries = [
         _delivery_status_summary(state, project_root=root) for state in states
     ]
@@ -50,7 +42,6 @@ def command(
             "status": summaries[0]["status"] if summaries else "none",
             "spec_id": spec_id
             or (summaries[0].get("spec_id") if summaries else ""),
-            "strategy": strategy,
             "latest": summaries[0] if summaries else None,
             "states": summaries[:10],
         }

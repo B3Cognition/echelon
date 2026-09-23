@@ -512,18 +512,18 @@ def test_delivery_status_prints_publication_failure_cause(
 
 
 @pytest.mark.unit
-def test_delivery_status_json_filters_strategy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_delivery_status_json_has_no_strategy_dimension(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.delivery_status import command
 
     _write_delivery_state(tmp_path, strategy="default")
-    _write_delivery_state(tmp_path, strategy="codegen")
 
-    command(spec_id="001", strategy="codegen", json_output=True, project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "blocked"
     assert payload["latest"]["spec_id"] == "001"
-    assert payload["latest"]["strategy"] == "codegen"
+    assert "strategy" not in payload
+    assert "strategy" not in payload["latest"]
     assert payload["latest"]["next"] == 'echelon delivery resume 001 "<answer>"'
     assert len(payload["states"]) == 1
 

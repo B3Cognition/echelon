@@ -1,7 +1,7 @@
 """RunIntent: parsed representation of ``echelon delivery run`` arguments.
 
 Per data-model RunIntent entity:
-  spec_id, mode, max_outer, max_inner, token_budget, auto_merge, kill_losers, strategies.
+  spec_id, mode, max_outer, max_inner, token_budget, and auto_merge.
 
 Per FR-CLI-001: parse_intent completes within 2 seconds.
 Per FR-MERGE-001: auto_merge=true + mode=guided is rejected.
@@ -11,9 +11,9 @@ Per FR-CLI-001: missing spec_id raises with single clarifying question.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from harness.convergence import DEFAULT_MAX_OUTER
 
@@ -37,8 +37,6 @@ class RunIntent:
     max_inner: int = 3
     token_budget: Optional[int] = None
     auto_merge: bool = True
-    kill_losers: bool = False
-    strategies: List[str] = field(default_factory=lambda: ["default"])
     task_description: str = ""
     reset: bool = False
     resume: bool = False
@@ -84,12 +82,6 @@ class RunIntent:
                 f"token_budget must be > 0 or None (unlimited), got {self.token_budget}"
             )
 
-        # strategies must be non-empty
-        if not self.strategies:
-            raise IntentValidationError(
-                "strategies must be non-empty. Provide at least one strategy ID."
-            )
-
         # FR-MERGE-001: auto_merge + guided is forbidden
         if self.auto_merge and self.mode == "guided":
             raise IntentValidationError(
@@ -127,14 +119,6 @@ _NO_AUTO_MERGE_PATTERN = re.compile(
 )
 _AUTO_MERGE_PATTERN = re.compile(
     r"\bauto[_\s]?merge\b",
-    re.IGNORECASE,
-)
-_KILL_LOSERS_PATTERN = re.compile(
-    r"\bkill[_\s]?losers\b",
-    re.IGNORECASE,
-)
-_STRATEGIES_PATTERN = re.compile(
-    r"(?:strateg(?:y|ies)\s*[=:]\s*)([\w-]+(?:\s*,\s*[\w-]+)*)",
     re.IGNORECASE,
 )
 _TASK_PATTERN = re.compile(
@@ -203,16 +187,6 @@ def parse_intent(text: str) -> RunIntent:
     else:
         auto_merge = True
 
-    # Extract kill_losers
-    kill_losers = bool(_KILL_LOSERS_PATTERN.search(text))
-
-    # Extract strategies
-    strategies = ["default"]
-    strat_match = _STRATEGIES_PATTERN.search(text)
-    if strat_match:
-        raw = strat_match.group(1)
-        strategies = [s.strip() for s in raw.split(",") if s.strip()]
-
     # Extract free-text task description (everything after "task: ")
     task_description = ""
     task_match = _TASK_PATTERN.search(text)
@@ -232,8 +206,6 @@ def parse_intent(text: str) -> RunIntent:
         max_inner=max_inner,
         token_budget=token_budget,
         auto_merge=auto_merge,
-        kill_losers=kill_losers,
-        strategies=strategies,
         task_description=task_description,
         reset=reset,
         resume=resume,
