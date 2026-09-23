@@ -546,7 +546,13 @@ git commit -m "refactor: extract delivery progress checkpoint"
 - Consumes: prepared worktree, `ProgressCheckpointOutcome`, iteration accounting, and configured gate helpers.
 - Produces: `CandidateCheckpointOutcome` and `RalphController._verify_candidate_checkpoint(...)` for Task 6.
 
-- [ ] **Step 1: Add failing candidate-checkpoint tests**
+**Execution note:** The live controller also requires the current loop state and
+outer convergence ceiling. Verification returns `VERIFIED` without publishing;
+the caller retains the existing commit/merge/PR sequence and creates the final
+`ImplementationResult`. This corrects the illustrative signature below without
+changing runtime ordering.
+
+- [x] **Step 1: Add failing candidate-checkpoint tests**
 
 ```python
 def test_verify_candidate_checkpoint_returns_verified_without_publishing(
@@ -584,7 +590,7 @@ def test_verify_candidate_checkpoint_returns_verified_without_publishing(
 Add cases for a repairable verifier failure and an existing blocking gate,
 asserting unchanged `termination_reason` and inner-iteration accounting.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -595,7 +601,7 @@ Run:
 
 Expected: FAIL because the candidate outcome types and method do not exist.
 
-- [ ] **Step 3: Extract the ordered verification decision**
+- [x] **Step 3: Extract the ordered verification decision**
 
 Add:
 
@@ -645,7 +651,7 @@ reordering helpers. Preserve deferred-target behavior: this method may bind the
 verified candidate but must not publish when downstream visual/review phases are
 enabled.
 
-- [ ] **Step 4: Run the focused verification stack**
+- [x] **Step 4: Run the focused verification stack**
 
 Run:
 
@@ -660,7 +666,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py tests/unit/test_verification_evidence.py tests/unit/test_runnability_evidence.py
