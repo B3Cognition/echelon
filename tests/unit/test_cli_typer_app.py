@@ -175,6 +175,33 @@ def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    (
+        ["re", "resume"],
+        ["re", "resume", "Use option 1", "--recommended"],
+        ["re", "resume", "Use option 1", "--banzai"],
+        ["re", "resume", "--recommended", "--banzai"],
+    ),
+)
+def test_re_resume_rejects_missing_or_conflicting_modes_before_routing(
+    monkeypatch,
+    args,
+):
+    from echelon.cli_app import app
+
+    monkeypatch.setattr(
+        "echelon.re_service.resume_re",
+        lambda _request: pytest.fail("invalid resume mode dispatched"),
+    )
+
+    result = CliRunner().invoke(app, args, env={"COLUMNS": "200"})
+
+    assert result.exit_code == 2
+    assert "exactly one resume mode is required" in " ".join(result.output.split())
+
+
+@pytest.mark.unit
 def test_re_resume_help_explains_bounded_debt_acceptance() -> None:
     from echelon.cli_app import app
 

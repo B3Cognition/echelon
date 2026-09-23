@@ -1289,6 +1289,14 @@ def re_resume(
     ),
 ) -> None:
     """Resume with exactly one custom, recommended, or bounded Banzai mode."""
+    selected_modes = int(answer is not None) + int(recommended) + int(banzai)
+    if selected_modes != 1:
+        raise typer.BadParameter(
+            'exactly one resume mode is required: "<guidance>", '
+            "--recommended, or --banzai",
+            param_hint="answer/--recommended/--banzai",
+        )
+
     from echelon.re_service import ReResumeRequest, resume_re
 
     resume_re(
