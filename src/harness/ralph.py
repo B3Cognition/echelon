@@ -351,6 +351,15 @@ class ControlledSliceDispatch:
     terminal_result: ImplementationResult | None = None
 
 
+@dataclass(frozen=True)
+class ProgressCheckpointOutcome:
+    """Canonical task progress and its durable checkpoint evidence."""
+
+    build_result: dict[str, Any]
+    checkpoint_commit: dict[str, Any] | None
+    changed_files: tuple[str, ...]
+
+
 class RalphController:
     """Orchestrates the single delivery implementation loop.
 
@@ -704,6 +713,57 @@ class RalphController:
             tokens_used=tokens_used,
         )
 
+    def _checkpoint_slice_progress(
+        self,
+        *,
+        dispatch: ControlledSliceDispatch,
+        worktree_path: str,
+        outer_iter: int,
+    ) -> ProgressCheckpointOutcome:
+        """Apply accepted task progress and record its durable checkpoint."""
+        build_result = dispatch.build_result
+        if build_result is None:
+            raise ValueError("cannot checkpoint a slice without a build result")
+
+        scoped_completed_task_ids = _clean_task_ids(build_result.get("task_ids"))
+        applied_task_ids = self._apply_build_task_progress(
+            worktree_path=worktree_path,
+            task_ids=build_result.get("task_ids"),
+        )
+        if scoped_completed_task_ids and set(applied_task_ids) != set(
+            scoped_completed_task_ids
+        ):
+            missing_task_ids = sorted(
+                set(scoped_completed_task_ids) - set(applied_task_ids)
+            )
+            build_result["passed"] = False
+            build_result["build_status"] = "task_progress_update_failed"
+            build_result["build_reason"] = (
+                "could not mark completed_task_ids in canonical tasks.md: "
+                + ", ".join(missing_task_ids)
+            )
+            build_result["exit_code"] = 1
+
+        changed_files = tuple(self._changed_files_since_head(worktree_path))
+        checkpoint_commit = self._try_checkpoint_progress_commit(
+            worktree_path=worktree_path,
+            before_state=dispatch.before_state,
+            after_state=self._state_store.read(),
+            outer_iter=outer_iter,
+            inner_iter=0,
+            phase="build",
+            allow_without_task_progress=(
+                build_result.get("completion_marker_explicit", False)
+                and build_result.get("passed", True)
+                and build_result.get("build_status") == "done"
+            ),
+        )
+        return ProgressCheckpointOutcome(
+            build_result=build_result,
+            checkpoint_commit=checkpoint_commit,
+            changed_files=changed_files,
+        )
+
     def run_loop(
         self,
         max_outer: int = DEFAULT_MAX_OUTER,
@@ -882,41 +942,16 @@ class RalphController:
                     if dispatch.terminal_result is not None:
                         preserve_worktree = True
                         return dispatch.terminal_result
-                    before_build_state = dispatch.before_state
-                    before_build_head = dispatch.before_head
-                    after_build_head = dispatch.after_head
-                    build_result = dispatch.build_result
-                    assert build_result is not None
+                    progress = self._checkpoint_slice_progress(
+                        dispatch=dispatch,
+                        worktree_path=worktree_path,
+                        outer_iter=outer_iter,
+                    )
+                    build_result = progress.build_result
                     scoped_completed_task_ids = _clean_task_ids(
                         build_result.get("task_ids")
                     )
-                    applied_task_ids = self._apply_build_task_progress(
-                        worktree_path=worktree_path,
-                        task_ids=build_result.get("task_ids"),
-                    )
-                    if scoped_completed_task_ids and set(applied_task_ids) != set(scoped_completed_task_ids):
-                        missing_task_ids = sorted(set(scoped_completed_task_ids) - set(applied_task_ids))
-                        build_result["passed"] = False
-                        build_result["build_status"] = "task_progress_update_failed"
-                        build_result["build_reason"] = (
-                            "could not mark completed_task_ids in canonical tasks.md: "
-                            + ", ".join(missing_task_ids)
-                        )
-                        build_result["exit_code"] = 1
-                    scoped_changed_files = self._changed_files_since_head(worktree_path)
-                    build_checkpoint = self._try_checkpoint_progress_commit(
-                        worktree_path=worktree_path,
-                        before_state=before_build_state,
-                        after_state=self._state_store.read(),
-                        outer_iter=outer_iter,
-                        inner_iter=0,
-                        phase="build",
-                        allow_without_task_progress=(
-                            build_result.get("completion_marker_explicit", False)
-                            and build_result.get("passed", True)
-                            and build_result.get("build_status") == "done"
-                        ),
-                    )
+                    scoped_changed_files = list(progress.changed_files)
 
                     # Check mode boundary
                     if self._mode.should_pause_at_boundary("after_build"):

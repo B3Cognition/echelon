@@ -435,7 +435,7 @@ git commit -m "refactor: extract controlled slice dispatch"
 - Consumes: `ControlledSliceDispatch` from Task 3 and the prepared worktree.
 - Produces: `ProgressCheckpointOutcome` and `RalphController._checkpoint_slice_progress(...)` for Task 5.
 
-- [ ] **Step 1: Add failing progress-boundary tests**
+- [x] **Step 1: Add failing progress-boundary tests**
 
 ```python
 def test_checkpoint_slice_progress_binds_canonical_task_completion(
@@ -472,7 +472,7 @@ def test_checkpoint_slice_progress_binds_canonical_task_completion(
 Add a mismatch case asserting that missing canonical task IDs convert the build
 to `task_progress_update_failed` exactly as today.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -483,7 +483,7 @@ Run:
 
 Expected: FAIL because `ProgressCheckpointOutcome` and the method do not exist.
 
-- [ ] **Step 3: Extract progress application and checkpoint invocation**
+- [x] **Step 3: Extract progress application and checkpoint invocation**
 
 Add:
 
@@ -514,7 +514,7 @@ method. Keep `_checkpoint_progress_commit` unchanged as the Git/evidence
 primitive. Preserve verification-deferred checkpoint behavior and operation
 receipt clearing exactly.
 
-- [ ] **Step 4: Run progress/recovery verification**
+- [x] **Step 4: Run progress/recovery verification**
 
 Run:
 
@@ -527,7 +527,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/ralph.py tests/unit/test_ralph_outer.py tests/unit/test_run_skill_checkpoint_recovery.py
