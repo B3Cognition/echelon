@@ -61,6 +61,13 @@ When debugging, first determine whether the failure is bundle installation, Pros
 - **Phase A — spec authoring.** `echelon spec run` / `echelon spec bugfix` / `echelon spec change`. The squad publishes under `specs/{NNN-slug}/`; durable controller state stays under `runs/spec-*`. The Echelon constitution is `.echelon/constitution.md`.
 - **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. One `DeliveryController` owns each run. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
 
+The current Phase B control flow follows durable checkpoints rather than a
+generic workflow framework. `DeliveryController` opens or resumes one run,
+dispatches its persisted phase, processes bounded review re-entry or verified
+publication, and finalizes once. `RalphController` recovers a pending slice,
+prepares one iteration, dispatches one controlled slice, checkpoints accepted
+progress, and verifies the resulting candidate.
+
 `echelon land <id>` and `echelon spec target …` are pure-Python (no LLM); `_cmd_init`, `_cmd_land`, `_cmd_harness_init`, `_cmd_harness_run` in `src/echelon/cli.py` are the dispatch points.
 
 ## Controlled delivery ownership
