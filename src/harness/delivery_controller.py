@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from harness.paths import build_dir
 from harness.config import HarnessConfig
@@ -207,6 +207,16 @@ class DeliveryResumePlan:
     persisted_phase: str
     error_reason: str | None
     candidate_changed: bool
+
+
+@dataclass(frozen=True)
+class ReviewReentryOutcome:
+    """Bounded result of one persisted review repair re-entry."""
+
+    pending_reentry: dict[str, object] | None
+    initial_artifacts: tuple[Path, ...]
+    implementation: ImplementationResult | None = None
+    blocked_result: DeliveryResult | None = None
 
 
 
@@ -1052,6 +1062,134 @@ class DeliveryController:
             branch=implementation.branch,
         )
 
+    def _process_review_reentry(
+        self,
+        *,
+        state_store: StateStore,
+        pending_reentry: object,
+        effects_only: bool,
+        ralph: RalphController,
+        spec_dir: Path | None,
+        spec_id: str,
+        max_outer: int,
+        max_inner: int,
+        token_budget: int | None,
+        delivery_context: str,
+        base_prompt: str,
+    ) -> ReviewReentryOutcome:
+        """Process at most one persisted review repair re-entry."""
+        if pending_reentry is None:
+            return ReviewReentryOutcome(None, ())
+        validated = _pending_review_reentry(pending_reentry)
+        if validated is None:
+            implementation = self._implementation_from_state(state_store.read())
+            return ReviewReentryOutcome(
+                pending_reentry=None,
+                initial_artifacts=(),
+                implementation=implementation,
+                blocked_result=self._persist_phase_block(
+                    state_store,
+                    phase="review",
+                    reason="invalid_pending_review_reentry",
+                    implementation=implementation,
+                    outer_iterations=implementation.outer_iterations,
+                    tokens_used=implementation.tokens_used,
+                ),
+            )
+
+        artifacts = tuple(Path(path) for path in validated["artifact_paths"])
+        completion_controller = ReviewLoopController(
+            gitops=self._gitops,
+            config=self._config,
+            spec_id=spec_id,
+            base_dir=str(self._base_dir),
+            build_id=self._build_id,
+            spec_dir=spec_dir,
+        )
+        if effects_only:
+            if self._complete_verified_review_reentry(
+                state_store,
+                completion_controller,
+                pr_url=str(state_store.read().get("pr_url") or ""),
+                pending_reentry=validated,
+            ):
+                return ReviewReentryOutcome(None, artifacts)
+            implementation = self._implementation_from_state(state_store.read())
+            return ReviewReentryOutcome(
+                pending_reentry=validated,
+                initial_artifacts=artifacts,
+                implementation=implementation,
+                blocked_result=self._persist_phase_block(
+                    state_store,
+                    phase="review",
+                    reason="review_side_effects_pending",
+                    implementation=implementation,
+                    outer_iterations=implementation.outer_iterations,
+                    tokens_used=implementation.tokens_used,
+                ),
+            )
+
+        current_status = state_store.read().get("status")
+        if current_status != "running":
+            state_store.transition(
+                "running",
+                updates={"pending_review_reentry": validated},
+            )
+        prompt = self._build_reentry_prompt(
+            base_prompt,
+            spec_id,
+            spec_dir=spec_dir,
+            published_artifacts=artifacts,
+        )
+        implementation = ralph.run_loop(
+            max_outer=max_outer,
+            max_inner=max_inner,
+            token_budget=token_budget,
+            build_command="echelon build",
+            delivery_context=delivery_context,
+            build_prompt=prompt,
+        )
+        if implementation.status != "verified":
+            return ReviewReentryOutcome(validated, artifacts, implementation)
+
+        checkpoint_block = self._checkpoint_verified_result(
+            state_store,
+            spec_id=spec_id,
+            implementation=implementation,
+            outer_iterations=implementation.outer_iterations,
+            tokens_used=implementation.tokens_used,
+        )
+        if checkpoint_block is not None:
+            return ReviewReentryOutcome(
+                validated,
+                artifacts,
+                implementation,
+                checkpoint_block,
+            )
+        self._mark_review_reentry_phase_verified(state_store, validated)
+        verified_reentry = dict(validated)
+        verified_reentry["phase1_verified"] = True
+        if self._complete_verified_review_reentry(
+            state_store,
+            completion_controller,
+            pr_url=implementation.pr_url or "",
+            pending_reentry=verified_reentry,
+        ):
+            return ReviewReentryOutcome(None, artifacts, implementation)
+        return ReviewReentryOutcome(
+            pending_reentry=verified_reentry,
+            initial_artifacts=artifacts,
+            implementation=implementation,
+            blocked_result=self._persist_phase_block(
+                state_store,
+                phase="review",
+                reason="review_side_effects_pending",
+                implementation=implementation,
+                outer_iterations=implementation.outer_iterations,
+                tokens_used=implementation.tokens_used,
+            ),
+        )
+
     def _run_delivery(
         self,
         intent: RunIntent,
@@ -1354,34 +1492,24 @@ class DeliveryController:
                 resume_worktree_path=resume_repaired_worktree,
             )
 
-            pending_reentry = _pending_review_reentry(
-                state_store.read().get("pending_review_reentry")
+            reentry_outcome = self._process_review_reentry(
+                state_store=state_store,
+                pending_reentry=state_store.read().get("pending_review_reentry"),
+                effects_only=pending_effects_only_resume,
+                ralph=controller,
+                spec_dir=spec_dir,
+                spec_id=intent.spec_id,
+                max_outer=intent.max_outer,
+                max_inner=intent.max_inner,
+                token_budget=budget,
+                delivery_context=delivery_context,
+                base_prompt=arguments,
             )
-            if pending_effects_only_resume and pending_reentry is not None:
-                completion_controller = ReviewLoopController(
-                    gitops=self._gitops,
-                    config=self._config,
-                    spec_id=intent.spec_id,
-                    base_dir=str(self._base_dir),
-                    build_id=self._build_id,
-                    spec_dir=spec_dir,
-                )
-                if not self._complete_verified_review_reentry(
-                    state_store,
-                    completion_controller,
-                    pr_url=str(state_store.read().get("pr_url") or ""),
-                    pending_reentry=pending_reentry,
-                ):
-                    implementation = self._implementation_from_state(state_store.read())
-                    return self._persist_phase_block(
-                        state_store,
-                        phase="review",
-                        reason="review_side_effects_pending",
-                        implementation=implementation,
-                        outer_iterations=implementation.outer_iterations,
-                        tokens_used=implementation.tokens_used,
-                    )
-                pending_reentry = None
+            if reentry_outcome.blocked_result is not None:
+                return reentry_outcome.blocked_result
+            pending_reentry = reentry_outcome.pending_reentry
+            initial_review_artifacts = reentry_outcome.initial_artifacts
+            reentry_implementation = reentry_outcome.implementation
 
             resumed_phase = (
                 self._resume_phase(existing)
@@ -1390,6 +1518,8 @@ class DeliveryController:
             )
             if pending_effects_only_resume:
                 resumed_phase = self._resume_phase(state_store.read())
+            if reentry_implementation is not None:
+                resumed_phase = "implementation"
             if pending_reentry is not None:
                 resumed_phase = "implementation"
                 current_status = state_store.read().get("status")
@@ -1401,15 +1531,12 @@ class DeliveryController:
                 list(state_store.read().get("enabled_phases") or ["implementation"]),
                 resumed_phase,
             )[0]
-            if pending_reentry is not None:
-                initial_review_artifacts = tuple(
-                    Path(path) for path in pending_reentry["artifact_paths"]
-                )
             if current_phase == "implementation":
                 implementation_result = (
-                    controller.resume_verified_publication()
+                    reentry_implementation
+                    or controller.resume_verified_publication()
                     if should_resume_verified_publication
-                    else None
+                    else reentry_implementation
                 )
                 if implementation_result is None:
                     implementation_result = controller.run_loop(
@@ -1424,7 +1551,11 @@ class DeliveryController:
                 implementation_result = self._implementation_from_state(state_store.read())
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
-            if implementation_result.status == "verified" and current_phase == "implementation":
+            if (
+                implementation_result.status == "verified"
+                and current_phase == "implementation"
+                and reentry_implementation is None
+            ):
                 checkpoint_block = self._checkpoint_verified_result(
                     state_store,
                     spec_id=intent.spec_id,
@@ -1434,35 +1565,6 @@ class DeliveryController:
                 )
                 if checkpoint_block is not None:
                     return checkpoint_block
-                if pending_reentry is not None:
-                    self._mark_review_reentry_phase_verified(
-                        state_store, pending_reentry
-                    )
-                    pending_reentry = dict(pending_reentry)
-                    pending_reentry["phase1_verified"] = True
-                    completion_controller = ReviewLoopController(
-                        gitops=self._gitops,
-                        config=self._config,
-                        spec_id=intent.spec_id,
-                        base_dir=str(self._base_dir),
-                        build_id=self._build_id,
-                        spec_dir=spec_dir,
-                    )
-                    if not self._complete_verified_review_reentry(
-                        state_store,
-                        completion_controller,
-                        pr_url=implementation_result.pr_url or "",
-                        pending_reentry=pending_reentry,
-                    ):
-                        return self._persist_phase_block(
-                            state_store,
-                            phase="review",
-                            reason="review_side_effects_pending",
-                            implementation=implementation_result,
-                            outer_iterations=implementation_outer_iterations,
-                            tokens_used=implementation_tokens,
-                        )
-                    pending_reentry = None
 
             visual_result: VisualResult | None = None
             visual_reentry_block: DeliveryResult | None = None

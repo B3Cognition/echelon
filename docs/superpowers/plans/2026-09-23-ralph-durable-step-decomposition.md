@@ -935,7 +935,7 @@ git commit -m "refactor: extract Delivery resume planning"
 - Consumes: `DeliveryRunContext`, `DeliveryResumePlan`, persisted `pending_review_reentry`, and existing review helpers.
 - Produces: `ReviewReentryOutcome` and `_process_review_reentry(...)` for Task 9.
 
-- [ ] **Step 1: Add failing review-reentry boundary tests**
+- [x] **Step 1: Add failing review-reentry boundary tests**
 
 ```python
 def test_process_review_reentry_completes_effects_without_ralph_dispatch(
@@ -974,7 +974,7 @@ Add tests for invalid payload, bounded repair dispatch, and side-effects-pending
 block. Assert exact existing reasons: `invalid_pending_review_reentry` and
 `review_side_effects_pending`.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -986,7 +986,7 @@ Run:
 
 Expected: FAIL because `ReviewReentryOutcome` and the method do not exist.
 
-- [ ] **Step 3: Extract review re-entry orchestration**
+- [x] **Step 3: Extract review re-entry orchestration**
 
 Add:
 
@@ -1005,7 +1005,7 @@ prompt setup, phase-1 verification marking, and side-effect completion behind
 the method. Preserve current retry ceilings and do not create a second repair
 loop.
 
-- [ ] **Step 4: Run review re-entry verification**
+- [x] **Step 4: Run review re-entry verification**
 
 Run:
 
@@ -1018,7 +1018,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/delivery_controller.py tests/unit/test_delivery_controller_review_reentry.py tests/integration/test_controlled_review_reentry.py
