@@ -1038,7 +1038,7 @@ git commit -m "refactor: extract bounded review reentry"
 - Consumes: Tasks 7-8 context/plan/outcome types, existing `resume_verified_publication`, and `_finalize_delivery`.
 - Produces: `_dispatch_verified_publication(...)`, `_run_delivery_phases(...)`, and a dispatcher-only `_run_delivery`.
 
-- [ ] **Step 1: Add failing publication-dispatch tests**
+- [x] **Step 1: Add failing publication-dispatch tests**
 
 ```python
 def test_dispatch_verified_publication_resumes_only_checkpointed_effects(
@@ -1067,7 +1067,7 @@ def test_dispatch_verified_publication_resumes_only_checkpointed_effects(
 Add a no-checkpoint case returning `None` and retain existing tests for invalid
 worktree/commit/evidence/branch publication checkpoints.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -1079,7 +1079,7 @@ Run:
 
 Expected: FAIL because the explicit dispatch method does not exist.
 
-- [ ] **Step 3: Extract publication dispatch and phase composition**
+- [x] **Step 3: Extract publication dispatch and phase composition**
 
 Add:
 
@@ -1111,7 +1111,7 @@ only:
 
 Keep `_finalize_delivery` as the only converged terminal writer.
 
-- [ ] **Step 4: Run full focused Delivery/Ralph verification**
+- [x] **Step 4: Run full focused Delivery/Ralph verification**
 
 Run:
 
@@ -1130,7 +1130,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Check both orchestration sizes and commit**
+- [x] **Step 5: Check both orchestration sizes and commit**
 
 Run:
 

@@ -1190,22 +1190,29 @@ class DeliveryController:
             ),
         )
 
-    def _run_delivery(
+    @staticmethod
+    def _dispatch_verified_publication(
+        *,
+        state_store: StateStore,
+        ralph: RalphController,
+        resume: bool,
+    ) -> ImplementationResult | None:
+        """Resume proven publication effects without implementation dispatch."""
+        del state_store
+        return ralph.resume_verified_publication() if resume else None
+
+    def _run_delivery_phases(
         self,
+        *,
         intent: RunIntent,
-        budget: Optional[int],
+        budget: int | None,
+        state_store: StateStore,
+        run_id: str,
+        mode_controller: ModeController,
+        escalation_handler: EscalationHandler,
+        context: DeliveryRunContext,
     ) -> DeliveryResult:
-        """Run the single durable Delivery loop."""
-        state_store = StateStore(self._state_dir, intent.spec_id)
-        self._state_store = state_store
-
-        mode_controller = ModeController(intent.mode)
-        escalation_handler = EscalationHandler(str(self._escalation_dir))
-
-        # Initialize state
-        import uuid
-        run_id = str(uuid.uuid4())
-        context = self._resolve_run_context(intent)
+        """Compose the enabled Delivery phases for one locked run."""
         target_repo_name = context.target_repo_name
         target_repo_path = context.target_repo_path
         workspace_root = context.workspace_root
@@ -1219,7 +1226,6 @@ class DeliveryController:
         spec_dir = context.spec_dir
         spec_file = context.spec_file
         tasks_file = context.tasks_file
-        state_store.acquire_lock(run_id)
 
         try:
             existing = state_store.read()
@@ -1532,11 +1538,12 @@ class DeliveryController:
                 resumed_phase,
             )[0]
             if current_phase == "implementation":
-                implementation_result = (
-                    reentry_implementation
-                    or controller.resume_verified_publication()
-                    if should_resume_verified_publication
-                    else reentry_implementation
+                implementation_result = reentry_implementation or (
+                    self._dispatch_verified_publication(
+                        state_store=state_store,
+                        ralph=controller,
+                        resume=should_resume_verified_publication,
+                    )
                 )
                 if implementation_result is None:
                     implementation_result = controller.run_loop(
@@ -2125,9 +2132,35 @@ class DeliveryController:
                 tokens_used=implementation.tokens_used,
                 diagnostic=str(exc),
             )
+
+    def _run_delivery(
+        self,
+        intent: RunIntent,
+        budget: Optional[int],
+    ) -> DeliveryResult:
+        """Open one locked Delivery run and dispatch its phase composition."""
+        state_store = StateStore(self._state_dir, intent.spec_id)
+        self._state_store = state_store
+        mode_controller = ModeController(intent.mode)
+        escalation_handler = EscalationHandler(str(self._escalation_dir))
+
+        import uuid
+
+        run_id = str(uuid.uuid4())
+        context = self._resolve_run_context(intent)
+        state_store.acquire_lock(run_id)
+        try:
+            return self._run_delivery_phases(
+                intent=intent,
+                budget=budget,
+                state_store=state_store,
+                run_id=run_id,
+                mode_controller=mode_controller,
+                escalation_handler=escalation_handler,
+                context=context,
+            )
         finally:
             state_store.release_lock()
-
     def _build_stack_context(self, spec_dir: Path | None = None) -> str:
         """Render resolved Echelon stack context for selected project stacks."""
         return build_stack_context(
