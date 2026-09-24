@@ -58,6 +58,7 @@ class PhaseASpecStepEffects:
         telemetry_store: object,
         context_drawer_loader: Callable[..., object],
         completion_effect_applier: Callable[..., object] | None = None,
+        publication_effect_applier: Callable[..., object] | None = None,
     ) -> None:
         self._project_root = Path(project_root)
         self._squad_dir = Path(squad_dir)
@@ -65,6 +66,7 @@ class PhaseASpecStepEffects:
         self._telemetry_store = telemetry_store
         self._context_drawer_loader = context_drawer_loader
         self._completion_effect_applier = completion_effect_applier
+        self._publication_effect_applier = publication_effect_applier
 
     def _receipt(
         self,
@@ -126,7 +128,11 @@ class PhaseASpecStepEffects:
         }
         try:
             if effect == "publication":
-                result = self._publication(prepared)
+                result = (
+                    self._publication_effect_applier(prepared, state)
+                    if self._publication_effect_applier is not None
+                    else self._publication(prepared)
+                )
                 if self._completion_effect_applier is not None:
                     result = self._completion_effect_applier(
                         prepared,

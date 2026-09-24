@@ -4119,16 +4119,18 @@ class TestAgentResultIntegrity:
         elif retry_tamper == "mode":
             (inputs / "manifest.json").chmod(0o600)
 
-        recovery = ctrl._drain_pending_controller_completion()
+        recovery = ctrl._drain_pending_spec_step()
 
         if retry_tamper is None:
-            assert recovery.recovered
+            assert recovery.recovered and not recovery.blocked
             assert immutable_product_input_tree_digest(published / "inputs") == expected_hash
+            assert PENDING_SPEC_STEP_KEY not in store.load()
             assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
         else:
-            assert not recovery.recovered
+            assert recovery.recovered and recovery.blocked
             assert self._visible_tree_bytes(published) == before
-            assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
+            assert PENDING_SPEC_STEP_KEY in store.load()
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
 
     def test_terminal_reconciliation_commits_marker_before_visible_write(
         self,
@@ -4147,10 +4149,11 @@ class TestAgentResultIntegrity:
         calls: list[str] = []
 
         def marker_guard(publication):
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == publication.marker.to_dict()
-            )
+            pending = store.load()
+            assert pending[PENDING_SPEC_STEP_KEY]["origin"] == "terminal"
+            assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in pending
+            assert PENDING_CONTROLLER_COMPLETION_KEY not in pending
             assert self._visible_tree_bytes(published) == before
             calls.append("publish")
             return publish(publication)
@@ -4324,7 +4327,7 @@ class TestAgentResultIntegrity:
             saved = save(next_state)
             if (
                 not injected
-                and PENDING_EXTERNAL_PUBLICATION_KEY in next_state
+                and PENDING_SPEC_STEP_KEY in next_state
             ):
                 injected = True
                 raise OSError("injected post-save marker exception")
@@ -4389,9 +4392,10 @@ class TestAgentResultIntegrity:
         failed = store.load()
         assert first.status == "blocked"
         assert failed["phase"] == "DONE"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"]["code"] == "publish_io"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in failed
+        assert failed["blocked_reason"] == "spec_step_pending"
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == "publish_io"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in failed
         assert "phase_a_readiness_failed" not in json.dumps(failed)
 
         monkeypatch.setattr(
@@ -4402,6 +4406,7 @@ class TestAgentResultIntegrity:
         recovered = ctrl.run("msg", "banzai")
 
         assert recovered.status == "done"
+        assert PENDING_SPEC_STEP_KEY not in store.load()
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
         assert "external_publication_failure" not in store.load()
         assert checkpoint.call_count == 0
@@ -4432,10 +4437,11 @@ class TestAgentResultIntegrity:
         failed = store.load()
         assert first.status == "blocked"
         assert failed["phase"] == "DONE"
-        assert failed["blocked_reason"] == "controller_completion_pending"
+        assert failed["blocked_reason"] == "spec_step_pending"
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in failed
-        assert PENDING_CONTROLLER_COMPLETION_KEY in failed
-        assert failed["controller_completion_failure"]["code"] == "stage_io"
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in failed
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "mining"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == "stage_io"
         assert "phase_a_readiness_failed" not in json.dumps(failed)
 
         fresh, _ = _controller(tmp_path)
@@ -4444,6 +4450,7 @@ class TestAgentResultIntegrity:
         assert recovered.status == "done"
         assert recovered.phase == "DONE"
         completed = store.load()
+        assert PENDING_SPEC_STEP_KEY not in completed
         assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
         assert "controller_completion_failure" not in completed
         assert (published / "spec.md").read_text(encoding="utf-8").startswith(
@@ -4483,10 +4490,8 @@ class TestAgentResultIntegrity:
         failed = store.load()
         assert first.status == "blocked"
         assert failed["phase"] == "DONE"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-            "complete"
-        )
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "mining"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert "last_terminal_completion" not in failed
@@ -4507,6 +4512,83 @@ class TestAgentResultIntegrity:
                 "phase_a_published_postimage_sha256"
             ]
         ) == 64
+
+    def test_terminal_spec_step_commit_failure_retries_only_commit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, _ = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        publish = PreparedSquadPublication.publish
+        published: list[str] = []
+
+        def observe_publication(publication):
+            published.append(publication.marker.transaction_id)
+            return publish(publication)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            observe_publication,
+        )
+        apply_effect = ctrl._apply_controller_completion_effect
+        applied: list[str] = []
+
+        def observe_effect(prepared, current_state):
+            applied.append(prepared.marker.step)
+            return apply_effect(prepared, current_state)
+
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_controller_completion_effect",
+            observe_effect,
+        )
+        complete = store.complete_spec_step
+        commit_attempts = 0
+
+        def fail_first_commit(prepared):
+            nonlocal commit_attempts
+            commit_attempts += 1
+            if commit_attempts == 1:
+                raise StateAdvanceError(
+                    "injected terminal commit failure",
+                    json_path="$.state",
+                    validator="state_finalize",
+                )
+            return complete(prepared)
+
+        monkeypatch.setattr(
+            store,
+            "complete_spec_step",
+            fail_first_commit,
+        )
+
+        first = ctrl.run("msg", "banzai")
+
+        pending = store.load()
+        assert first.status == "blocked"
+        assert pending[PENDING_SPEC_STEP_KEY]["origin"] == "terminal"
+        assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "commit"
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in pending
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in pending
+        completed_effects = tuple(applied)
+        completed_publications = tuple(published)
+
+        recovered = ctrl.run("msg", "banzai")
+
+        assert recovered.status == "done"
+        assert commit_attempts == 2
+        assert tuple(applied) == completed_effects
+        assert tuple(published) == completed_publications
+        completed = store.load()
+        assert PENDING_SPEC_STEP_KEY not in completed
+        assert completed["last_terminal_completion"]["completion_id"]
 
     def test_phase_a_publication_staging_uses_staged_product_evidence(
         self,

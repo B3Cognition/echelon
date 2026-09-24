@@ -2247,10 +2247,18 @@ class SquadController:
                 raise CompletionError("intent_mismatch")
             next_step = plan[0] if plan else "complete"
             next_marker = {**marker, "step": next_step}
-            return {
+            result = {
                 **dict(publication_receipt),
                 "completion_marker": next_marker,
             }
+            if prepared.intent.origin == "terminal" and next_step == "complete":
+                digests = self._phase_a_inventory_digests(
+                    prepared.intent.final_state
+                )
+                if digests is None:
+                    raise CompletionError("receipts_mismatch")
+                result["phase_a_inventory_digests"] = list(digests)
+            return result
         if marker.get("step") != prepared.marker.cursor:
             raise CompletionError("intent_mismatch")
         # Existing routed effects historically ran after state.advance().
@@ -2282,10 +2290,72 @@ class SquadController:
             "receipts_sha256": hashlib.sha256(receipts_bytes).hexdigest(),
             "step": next_step,
         }
-        return {
+        result = {
             "schema_version": 1,
             "completion_receipt": one_ahead.receipts["effects"][prepared.marker.cursor],
             "completion_marker": next_marker,
+        }
+        if prepared.intent.origin == "terminal" and next_step == "complete":
+            digests = self._phase_a_inventory_digests(
+                prepared.intent.final_state
+            )
+            if digests is None:
+                raise CompletionError("receipts_mismatch")
+            result["phase_a_inventory_digests"] = list(digests)
+        return result
+
+    def _apply_spec_step_publication(
+        self,
+        prepared: PreparedSpecStep,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Authenticate and publish one step-bound external transaction."""
+        marker = prepared.intent.publication
+        if (
+            marker is None
+            or marker.get("transaction_id") != prepared.marker.step_id
+        ):
+            raise PublicationError("manifest_invalid")
+        staged = load_prepared_publication(
+            self._project_root,
+            self._squad_dir,
+            marker,
+        )
+        if (
+            prepared.intent.origin == "terminal"
+            or prepared.intent.route.get("from_phase") == "phase4-document"
+        ):
+            self._authenticate_phase_a_product_input_snapshot(staged, state)
+        self._authenticate_quality_debt_publication_stage(staged, state)
+        authenticate_pending_product_input_mutation(
+            self._project_root,
+            state,
+            marker,
+            staged._manifest["operations"],
+            staged_inputs=(staged._transaction_root / "work/product-inputs"),
+        )
+        staged.publish()
+        require_product_input_mutation_postimage(
+            self._project_root,
+            state,
+            marker,
+        )
+        if (
+            prepared.intent.origin == "terminal"
+            or prepared.intent.route.get("from_phase") == "phase4-document"
+        ):
+            self._phase_a_published_this_run = True
+        return {
+            "schema_version": 1,
+            "marker": staged.marker.to_dict(),
+            "operations": [
+                {
+                    "action": operation["action"],
+                    "target": operation["target"],
+                    "postimage": dict(operation["postimage"]),
+                }
+                for operation in staged._manifest["operations"]
+            ],
         }
 
     def _drain_pending_spec_step(self) -> SpecStepRecoveryOutcome:
@@ -2296,6 +2366,7 @@ class SquadController:
             telemetry_store=self._telemetry_store,
             context_drawer_loader=self._retrieve_mempalace_context_drawers,
             completion_effect_applier=self._apply_companion_completion_effect,
+            publication_effect_applier=self._apply_spec_step_publication,
         )
         try:
             return drain_pending_spec_step(
@@ -8034,7 +8105,8 @@ class SquadController:
             if readiness is not None and not readiness.ready:
                 pending_state = self._state_store.load()
                 if (
-                    PENDING_CONTROLLER_COMPLETION_KEY
+                    PENDING_SPEC_STEP_KEY in pending_state
+                    or PENDING_CONTROLLER_COMPLETION_KEY
                     in pending_state
                     or PENDING_EXTERNAL_PUBLICATION_KEY in pending_state
                 ):
@@ -8152,7 +8224,8 @@ class SquadController:
                     if readiness is not None and not readiness.ready:
                         pending_state = self._state_store.load()
                         if (
-                            PENDING_CONTROLLER_COMPLETION_KEY
+                            PENDING_SPEC_STEP_KEY in pending_state
+                            or PENDING_CONTROLLER_COMPLETION_KEY
                             in pending_state
                             or PENDING_EXTERNAL_PUBLICATION_KEY in pending_state
                         ):
@@ -10417,18 +10490,53 @@ class SquadController:
             record_completion=True,
             publication_marker=publication_marker,
             origin="terminal",
+            completion_id=(
+                prepared.marker.transaction_id
+                if prepared is not None
+                else None
+            ),
+        )
+        final_state = snapshot.state
+        final_state.update(planned_updates)
+        final_state["status"] = "done"
+        final_state.pop("blocked_reason", None)
+        final_state.pop("external_publication_failure", None)
+        final_state.pop("controller_completion_failure", None)
+        final_state.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
+        final_state.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
+        effects = list(completion.intent.effect_plan)
+        if prepared is not None:
+            effects.insert(0, "publication")
+        step = prepare_spec_step(
+            self._squad_dir,
+            step_id=completion.marker.completion_id,
+            origin="terminal",
+            expected_state_revision=snapshot.state_revision,
+            expected_previous_dispatch_sha256=(
+                snapshot.previous_dispatch_sha256
+            ),
+            route=completion.intent.route,
+            effects=tuple(effects),
+            publication=publication_marker,
+            final_state=final_state,
+            provenance={
+                "completion_marker": completion.marker.to_dict(),
+            },
         )
         try:
-            self._state_store.begin_terminal_controller_completion(
-                completion,
+            self._state_store.begin_spec_step(
+                step,
                 snapshot=snapshot,
-                state_updates=planned_updates,
             )
         except StateAdvanceError:
             self._discard_publication_without_authority(prepared)
             self._discard_controller_completion_without_authority(
                 completion.marker.to_dict()
             )
+            try:
+                step.discard()
+            except SpecStepError:
+                pass
             return PhaseAReadinessResult(
                 ready=False,
                 blockers=[
@@ -10437,10 +10545,11 @@ class SquadController:
                 missing={},
                 ready_spec_dir=None,
             )
-        recovery = self._drain_pending_controller_completion()
+        recovery = self._drain_pending_spec_step()
         if (
             not recovery.recovered
-            or recovery.completion_id
+            or recovery.blocked
+            or recovery.step_id
             != completion.marker.completion_id
         ):
             return PhaseAReadinessResult(
@@ -10448,6 +10557,16 @@ class SquadController:
                 blockers=["terminal completion remains pending"],
                 missing={},
                 ready_spec_dir=None,
+            )
+        try:
+            if prepared is not None:
+                prepared.discard()
+            completion.discard()
+            step.discard()
+        except (CompletionError, PublicationError, SpecStepError):
+            logger.warning(
+                "Could not discard completed terminal spec-step staging",
+                exc_info=True,
             )
         if prepared is not None:
             self._phase_a_published_this_run = True

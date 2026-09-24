@@ -5420,6 +5420,108 @@ class SquadStateStore:
                 final_state[
                     "proportional_quality_candidate_evidence"
                 ] = updated_evidence
+        route = loaded.intent.route
+        if loaded.intent.origin == "terminal":
+            companion = loaded.intent.provenance.get("completion_marker")
+            if not isinstance(companion, Mapping):
+                raise StateAdvanceError(
+                    "terminal spec step provenance is invalid",
+                    json_path="$.last_terminal_completion",
+                    validator="completion_binding",
+                )
+            completion_marker = dict(companion)
+            inventory: object = None
+            retarget_receipt: object = None
+            for effect_receipt in loaded.receipts:
+                candidate = effect_receipt.payload.get("completion_marker")
+                if isinstance(candidate, Mapping):
+                    completion_marker = dict(candidate)
+                candidate_inventory = effect_receipt.payload.get(
+                    "phase_a_inventory_digests"
+                )
+                if candidate_inventory is not None:
+                    inventory = candidate_inventory
+                if effect_receipt.effect == "retarget":
+                    retarget_receipt = effect_receipt.payload.get(
+                        "completion_receipt"
+                    )
+            if (
+                completion_marker.get("completion_id")
+                != loaded.marker.step_id
+                or completion_marker.get("step") != "complete"
+                or not isinstance(inventory, list)
+                or len(inventory) != 2
+                or any(
+                    not _valid_completion_sha256(value)
+                    for value in inventory
+                )
+            ):
+                raise StateAdvanceError(
+                    "terminal spec step receipts are incomplete",
+                    json_path="$.last_terminal_completion",
+                    validator="completion_binding",
+                )
+            final_state["status"] = "done"
+            final_state.pop("blocked_reason", None)
+            final_state["last_terminal_completion"] = {
+                "schema_version": 1,
+                "completion_id": loaded.marker.step_id,
+                "intent_sha256": completion_marker.get("intent_sha256"),
+                "receipts_sha256": completion_marker.get("receipts_sha256"),
+                "publication_binding_sha256": completion_marker.get(
+                    "publication_binding_sha256"
+                ),
+                "terminal_phase": route.get("terminal_phase"),
+                "phase_a_active_source_sha256": inventory[0],
+                "phase_a_published_postimage_sha256": inventory[1],
+            }
+            if "retarget" in loaded.intent.effects:
+                from echelon.spec_retarget_finalization import (
+                    validate_finalization_receipt,
+                )
+
+                try:
+                    checked = validate_finalization_receipt(
+                        retarget_receipt
+                    )
+                except Exception as exc:
+                    raise StateAdvanceError(
+                        "retarget completion receipt identity is invalid",
+                        json_path="$.retarget.finalization_receipt",
+                        validator="completion_binding",
+                    ) from exc
+                retarget = final_state.get("retarget")
+                if (
+                    not isinstance(retarget, dict)
+                    or retarget.get("status") != "finalizing"
+                    or checked.get("completion_id")
+                    != loaded.marker.step_id
+                ):
+                    raise StateAdvanceError(
+                        "retarget completion state is invalid",
+                        json_path="$.retarget.status",
+                        validator="completion_binding",
+                    )
+                updated_retarget = deepcopy(retarget)
+                updated_retarget["status"] = "complete"
+                updated_retarget["replacement_commit"] = checked[
+                    "replacement_commit"
+                ]
+                updated_retarget["finalization_receipt"] = checked
+                updated_retarget["comparison_pending_completion_id"] = (
+                    loaded.marker.step_id
+                )
+                updated_retarget["comparison_event_id"] = (
+                    "retarget-comparison-" + loaded.marker.step_id
+                )
+                updated_retarget["comparison_command"] = (
+                    "Compare old and replacement artifacts:\n"
+                    f"  git diff {retarget['checkpoint_commit']}.."
+                    f"{checked['replacement_commit']} -- "
+                    f"specs/{final_state['spec_id']}"
+                )
+                updated_retarget.pop("memory_excluded", None)
+                final_state["retarget"] = updated_retarget
         if PENDING_SPEC_STEP_KEY in final_state:
             raise StateAdvanceError(
                 "spec step final state retains its marker",
@@ -5427,13 +5529,15 @@ class SquadStateStore:
                 validator="completion_binding",
             )
         dispatch = final_state.get("last_dispatch")
-        if not isinstance(dispatch, Mapping) or dispatch.get("dispatch_id") != loaded.marker.step_id:
+        if loaded.intent.origin != "terminal" and (
+            not isinstance(dispatch, Mapping)
+            or dispatch.get("dispatch_id") != loaded.marker.step_id
+        ):
             raise StateAdvanceError(
                 "spec step final dispatch identity is invalid",
                 json_path="$.last_dispatch.dispatch_id",
                 validator="completion_binding",
             )
-        route = loaded.intent.route
         from_phase = str(route.get("from_phase") or route.get("terminal_phase") or "")
         to_phase = str(route.get("to_phase") or final_state.get("phase") or "")
         with self._lock(exclusive=True):
@@ -5480,7 +5584,15 @@ class SquadStateStore:
         return AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
-            completed_at=str(dispatch.get("completed_at") or saved.get("updated_at") or ""),
+            completed_at=str(
+                (
+                    dispatch.get("completed_at")
+                    if isinstance(dispatch, Mapping)
+                    else None
+                )
+                or saved.get("updated_at")
+                or ""
+            ),
             controller_contract=None,
             controller_contract_sha256=None,
             conditional_skip=bool(route.get("conditional_skip", False)),
