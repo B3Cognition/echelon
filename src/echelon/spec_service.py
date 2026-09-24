@@ -5051,6 +5051,10 @@ def _cmd_run(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+    from harness.phase_a_state_version import (
+        UnsupportedPhaseAStateError,
+        require_current_phase_a_state,
+    )
     from echelon.spec_authoring import (
         SpecAuthoringModeError,
         resolve_spec_authoring_mode,
@@ -5272,14 +5276,12 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
-    if not is_fresh and not isinstance(existing_state.get("phase"), str):
-        # Older interrupted verify-spec runs can predate routing-state
-        # persistence. They have no trustworthy partial phase to resume, so
-        # restart them at the deterministic no-op init node.
-        existing_state["phase"] = "init"
-        state_store.save(existing_state)
-        existing_state = state_store.load()
-        print("[squad] restored missing routing phase to init", flush=True)
+    if not is_fresh:
+        try:
+            require_current_phase_a_state(existing_state)
+        except UnsupportedPhaseAStateError as exc:
+            print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
     try:
         spec_authoring_mode = resolve_spec_authoring_mode(
             existing_state,
@@ -5289,12 +5291,6 @@ def _cmd_run(
     except SpecAuthoringModeError as exc:
         print(f"✗ echelon spec run: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
-    if existing_state.get("spec_authoring_mode") != spec_authoring_mode:
-        existing_state["spec_authoring_mode"] = spec_authoring_mode
-        state_store.save(existing_state)
-        # save() advances the optimistic state revision. Reload before any
-        # further migration write in this invocation.
-        existing_state = state_store.load()
     run_message = message
     if not is_fresh:
         existing_message = str(existing_state.get("user_message") or "").strip()
@@ -5343,14 +5339,10 @@ def _cmd_run(
     stack_contract: dict[str, object] | None = None
     if is_fresh:
         stack_contract = _fresh_stack_contract_or_exit(project_root)
-    elif not isinstance(existing_state.get("stack_contract"), dict):
-        # Runs created before stack contracts existed have no immutable stack
-        # authority to preserve. Freeze the current valid selection once and
-        # make the migration visible; all later resumes use state.json only.
-        stack_contract = _fresh_stack_contract_or_exit(project_root)
-        existing_state["stack_contract"] = stack_contract
-        state_store.save(existing_state)
-        print("[squad] captured selected stack contract for legacy run", flush=True)
+    else:
+        persisted_stack_contract = existing_state.get("stack_contract")
+        if isinstance(persisted_stack_contract, dict):
+            stack_contract = dict(persisted_stack_contract)
     provider = SquadCliProvider(config)
     from harness.phase_graph import load_workspace_phase_graph
     graph, ext_dir = load_workspace_phase_graph(project_root)

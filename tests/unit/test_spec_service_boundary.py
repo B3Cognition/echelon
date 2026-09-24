@@ -6,9 +6,12 @@ import sys
 import ast
 import inspect
 import textwrap
+import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 from typer.testing import CliRunner
 
 
@@ -314,3 +317,78 @@ def test_active_spec_and_phase_surfaces_do_not_import_legacy_cli():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert not definitions & forbidden
+
+
+@pytest.mark.parametrize(
+    "persisted_version",
+    [pytest.param(None, id="unversioned"), pytest.param(2, id="future_version")],
+)
+def test_spec_run_rejects_non_current_state_before_provider_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    persisted_version: object,
+) -> None:
+    from echelon import spec_service
+    from echelon.spec_service import SpecRunRequest
+
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("{}\n", encoding="utf-8")
+    squad_dir = tmp_path / "runs" / "spec-current"
+    squad_dir.mkdir(parents=True)
+    state = {
+        "run_id": squad_dir.name,
+        "status": "running",
+        "phase": "phase1-what",
+        "user_message": "build notes",
+    }
+    if persisted_version is not None:
+        state["phase_a_state_version"] = persisted_version
+    state_path = squad_dir / "state.json"
+    state_path.write_bytes(json.dumps(state, sort_keys=True).encode("utf-8"))
+    before = state_path.read_bytes()
+    provider_constructions: list[object] = []
+
+    monkeypatch.setattr(
+        spec_service,
+        "_installed_phase_runtime_or_exit",
+        lambda _root: tmp_path / "runtime",
+    )
+    monkeypatch.setattr(spec_service, "_project_echelon_config", lambda _root: config_path)
+    monkeypatch.setattr(spec_service, "_require_provider_capability", lambda *_a, **_k: None)
+    monkeypatch.setattr(spec_service, "_spec_summary_session", lambda *_a, **_k: nullcontext())
+    monkeypatch.setattr(spec_service, "_enforce_project_config_compatibility", lambda *_a: None)
+    monkeypatch.setattr(spec_service, "_workspace_git_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        spec_service,
+        "_workspace_git_preflight_for_squad_run",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        spec_service,
+        "_resolve_spec_run_implementation_targets",
+        lambda *_a, **_k: ["."],
+    )
+    monkeypatch.setattr(spec_service, "_find_current_run_dir", lambda *_a: squad_dir)
+    monkeypatch.setattr(
+        spec_service,
+        "_select_squad_dir",
+        lambda *_a, **_k: (squad_dir, False),
+    )
+    monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda config: provider_constructions.append(config),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        spec_service.run_spec(
+            tmp_path,
+            SpecRunRequest(description="build notes"),
+        )
+
+    assert error.value.code == 2
+    assert state_path.read_bytes() == before
+    assert provider_constructions == []
+    assert "echelon spec run --reset" in capsys.readouterr().err

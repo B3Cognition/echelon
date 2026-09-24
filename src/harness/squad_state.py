@@ -52,6 +52,7 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
+from harness.phase_a_state_version import CURRENT_PHASE_A_STATE_VERSION
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -5019,6 +5020,7 @@ class SquadStateStore:
         ts = datetime.now(timezone.utc).isoformat()
         authoring_mode = normalize_spec_authoring_mode(spec_authoring_mode)
         initial_state = {
+            "phase_a_state_version": CURRENT_PHASE_A_STATE_VERSION,
             "run_id": run_id,
             "status": "running",
             "phase": entry_phase,

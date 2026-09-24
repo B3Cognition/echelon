@@ -143,6 +143,14 @@ def _raw_result(verdict="DONE", updates=None) -> SquadAgentResult:
     )
 
 
+def test_initialize_marks_current_phase_a_state(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    store.initialize("run-001", "greenfield", "do stuff", 0, "init")
+
+    assert store.load()["phase_a_state_version"] == 1
+
+
 def _result(
     verdict="DONE",
     updates=None,

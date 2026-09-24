@@ -1043,6 +1043,7 @@ def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     ctrl, store = _controller(tmp_path)
     store.save(
         {
+            "phase_a_state_version": 1,
             "run_id": "prepared-run",
             "status": "preparing",
             "user_message": "Build carefully",
@@ -1069,6 +1070,33 @@ def _managed_identity_state_record():
         "context_id": "source", "spec_path": "squad/run-test/specs/demo",
         "source_registration_operation_id": "source-registration", "source_manifest_sha256": "a" * 64,
     }
+
+
+@pytest.mark.parametrize("entry_point", ["run", "run_single_phase"])
+def test_controller_rejects_unversioned_state_before_provider_dispatch(
+    tmp_path: Path,
+    entry_point: str,
+) -> None:
+    from harness.phase_a_state_version import UnsupportedPhaseAStateError
+
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    store.save(
+        {
+            "run_id": "historical-run",
+            "status": "running",
+            "phase": "phase1-what",
+            "user_message": "Build carefully",
+        }
+    )
+
+    with pytest.raises(UnsupportedPhaseAStateError):
+        if entry_point == "run":
+            ctrl.run("Build carefully", "semi")
+        else:
+            ctrl.run_single_phase("phase1-what", "Build carefully", "semi")
+
+    provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
@@ -5555,6 +5583,7 @@ class TestSquadControllerBasics:
             "status": "checkpointed",
         }
         prepared = {
+            "phase_a_state_version": 1,
             "run_id": "run-test",
             "status": "preparing",
             "phase": "phase0-constitution",
@@ -16125,6 +16154,7 @@ THEN: The dashboard is visible
         state = store.load()
         state.update(
             {
+                "phase_a_state_version": 1,
                 "phase": node.id,
                 "iteration": 0,
                 "max_iterations": 3,
@@ -16228,6 +16258,7 @@ THEN: The dashboard is visible
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state.update({
+            "phase_a_state_version": 1,
             "phase": node.id,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
             "implementation_targets": ["sources/app"],

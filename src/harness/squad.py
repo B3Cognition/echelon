@@ -81,6 +81,7 @@ from harness.human_input import (
     v2_automatic_decision_is_registered,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_a_state_version import require_current_phase_a_state
 from harness.checkpoint_policy import (
     CheckpointPolicyError,
     checkpoint_additional_owned_paths,
@@ -6900,6 +6901,9 @@ class SquadController:
         managed_discovery: Mapping[str, object] | None = None,
         create_managed_discovery: bool = False,
     ) -> SquadResult:
+        existing_state = self._state_store.load()
+        if existing_state:
+            require_current_phase_a_state(existing_state)
         # Internal, independently selected capability. CLI/default selection is
         # deliberately absent until the remaining managed producers are ready.
         if managed_discovery is not None:
@@ -8583,6 +8587,9 @@ class SquadController:
         mode: str = "semi",
         initial_state_updates: dict | None = None,
     ) -> SquadResult:
+        existing_state = self._state_store.load()
+        if existing_state:
+            require_current_phase_a_state(existing_state)
         return self._run_with_execution_lease(
             lambda: self._run_single_phase_locked(
                 phase_id,
