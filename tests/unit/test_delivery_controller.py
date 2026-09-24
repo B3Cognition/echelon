@@ -300,6 +300,118 @@ class TestSingleStrategy:
         ralph.return_value.run_loop.assert_not_called()
         assert result.status == "converged"
 
+    def test_verified_publish_resume_precedes_pending_review_repair(
+        self, tmp_path: Path
+    ) -> None:
+        """A verified publication checkpoint must not redispatch review repair."""
+        coord = _make_controller(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "implementation",
+                "termination_reason": "publish_failed",
+                "verified_publish_checkpoint": {
+                    "schema_version": 1,
+                    "stage": "push",
+                },
+                "pending_review_reentry": {
+                    "attempt_id": "attempt-1",
+                    "task_ids": ["T-001"],
+                    "artifact_paths": [],
+                    "phase1_verified": False,
+                },
+            },
+        )
+        verified = ImplementationResult(
+            "verified",
+            "converged",
+            1,
+            0,
+            None,
+            80,
+            VerifyResult(passed=True),
+            branch="feature",
+        )
+
+        with patch("harness.delivery_controller.RalphController") as ralph, patch(
+            "harness.delivery_controller.ReviewLoopController"
+        ) as review:
+            ralph.return_value.resume_verified_publication.return_value = verified
+            ralph.return_value.run_loop.return_value = verified
+            review.return_value.complete_published_batch.return_value = True
+            result = coord.run(
+                RunIntent(
+                    spec_id="spec-001",
+                    max_outer=2,
+                    max_inner=1,
+                    resume=True,
+                )
+            )
+
+        ralph.return_value.resume_verified_publication.assert_called_once_with()
+        ralph.return_value.run_loop.assert_not_called()
+        assert result.status == "converged"
+        assert result.tokens_used == 80
+
+    def test_failed_publish_resume_falls_through_to_one_pending_review_repair(
+        self, tmp_path: Path
+    ) -> None:
+        """A failed publication resume attempts exactly one review repair."""
+        coord = _make_controller(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "implementation",
+                "termination_reason": "publish_failed",
+                "verified_publish_checkpoint": {
+                    "schema_version": 1,
+                    "stage": "push",
+                },
+                "pending_review_reentry": {
+                    "attempt_id": "attempt-1",
+                    "task_ids": ["T-001"],
+                    "artifact_paths": [],
+                    "phase1_verified": False,
+                },
+            },
+        )
+        repaired = ImplementationResult(
+            "verified",
+            "converged",
+            1,
+            0,
+            None,
+            100,
+            VerifyResult(passed=True),
+            branch="feature",
+        )
+
+        with patch("harness.delivery_controller.RalphController") as ralph, patch(
+            "harness.delivery_controller.ReviewLoopController"
+        ) as review:
+            ralph.return_value.resume_verified_publication.return_value = None
+            ralph.return_value.run_loop.return_value = repaired
+            review.return_value.complete_published_batch.return_value = True
+            result = coord.run(
+                RunIntent(
+                    spec_id="spec-001",
+                    max_outer=2,
+                    max_inner=1,
+                    resume=True,
+                )
+            )
+
+        ralph.return_value.resume_verified_publication.assert_called_once_with()
+        ralph.return_value.run_loop.assert_called_once()
+        assert result.status == "converged"
+        assert result.tokens_used == 100
+
     def test_worktree_head_reads_the_registered_worktree(self, tmp_path: Path) -> None:
         """Finalization provenance is read from the delivery worktree, not harness cwd."""
         worktree = tmp_path / "worktree"
