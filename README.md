@@ -1016,6 +1016,13 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 
 ### Harness Architecture
 
+`DeliveryController` owns one run: open/resume, persisted-phase dispatch,
+bounded review re-entry or verified publication, then one finalization.
+`RalphController` owns one implementation iteration: pending-slice recovery,
+worktree preparation, controlled-slice dispatch, progress checkpointing, and
+candidate verification. These are explicit controller boundaries, not a
+general workflow engine.
+
 ```
 +-------------------------------+       +---------------------------+
 |        HOST (LLM side)        |       |    DOCKER SANDBOX         |

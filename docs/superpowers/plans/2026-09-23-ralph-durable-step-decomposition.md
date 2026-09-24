@@ -1170,7 +1170,7 @@ git commit -m "refactor: flatten single Delivery controller"
 - Consumes: completed Tasks 1-9 and the fixed S4 design.
 - Produces: current architecture guidance, completed S4 work queue, and repository-bound verification evidence.
 
-- [ ] **Step 1: Update current architecture documentation**
+- [x] **Step 1: Update current architecture documentation**
 
 Document the final control flow without claiming a new framework:
 
@@ -1192,7 +1192,7 @@ RalphController
 In `docs/simplification-control.md`, record focused counts and leave S4 `ACTIVE`
 until the repository gate passes. Do not edit historical findings or receipts.
 
-- [ ] **Step 2: Run static contract checks**
+- [x] **Step 2: Run static contract checks**
 
 Run:
 
@@ -1205,7 +1205,7 @@ git diff --check
 
 Expected: every command exits zero.
 
-- [ ] **Step 3: Run focused verification**
+- [x] **Step 3: Run focused verification**
 
 Run:
 
@@ -1227,7 +1227,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit the completed decomposition**
+- [x] **Step 4: Commit the completed decomposition**
 
 ```bash
 git add AGENTS.md README.md docs/simplification-control.md \
