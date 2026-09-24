@@ -75,6 +75,7 @@ from harness.squad_completion import (
     persist_completion_effect_receipt,
     prepare_controller_completion,
 )
+from harness.spec_step import load_prepared_spec_step, prepare_spec_step
 from harness.squad_state import (
     AdvanceReceipt,
     StateAdvanceError,
@@ -84,6 +85,7 @@ from harness.squad_state import (
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    PENDING_SPEC_STEP_KEY,
 )
 from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.phase_timing import record_phase_start
@@ -5239,7 +5241,7 @@ class TestAgentResultIntegrity:
             "stage_missing"
         )
 
-    def test_routed_publication_orders_marker_before_publish_and_success_work(
+    def test_routed_spec_step_publication_orders_marker_before_publish_and_success_work(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -5251,7 +5253,6 @@ class TestAgentResultIntegrity:
         route = ctrl._coordinate_transition_routing
         advance = store.advance
         publish = PreparedSquadPublication.publish
-        handoff = store.handoff_external_publication
 
         def stage(*_args, **_kwargs):
             calls.append("stage")
@@ -5263,33 +5264,19 @@ class TestAgentResultIntegrity:
 
         def record_advance(*args, **kwargs):
             receipt = advance(*args, **kwargs)
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == prepared.marker.to_dict()
-            )
-            assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-            calls.append("advance")
+            assert kwargs.get("_prepare_only") is True
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+            assert PENDING_SPEC_STEP_KEY not in store.load()
+            calls.append("preview")
             return receipt
 
         def record_publish(publication):
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == prepared.marker.to_dict()
-            )
-            assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY][
-                "step"
-            ] == "awaiting_publication"
+            assert PENDING_SPEC_STEP_KEY in store.load()
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
             calls.append("publish")
             return publish(publication)
-
-        def record_handoff(marker, completion):
-            result = handoff(marker, completion)
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-            assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY][
-                "step"
-            ] != "awaiting_publication"
-            calls.append("handoff")
-            return result
 
         monkeypatch.setattr(ctrl, "_prepare_external_phase_effects", stage)
         monkeypatch.setattr(
@@ -5306,7 +5293,9 @@ class TestAgentResultIntegrity:
         monkeypatch.setattr(
             store,
             "handoff_external_publication",
-            record_handoff,
+            lambda *_args, **_kwargs: pytest.fail(
+                "spec-step publication must not use the retired handoff"
+            ),
         )
 
         ctrl.run_single_phase(
@@ -5318,10 +5307,10 @@ class TestAgentResultIntegrity:
         assert calls == [
             "stage",
             "route",
-            "advance",
+            "preview",
             "publish",
-            "handoff",
         ]
+        assert PENDING_SPEC_STEP_KEY not in store.load()
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
         assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
         assert store.load()["last_dispatch"][
@@ -5386,7 +5375,7 @@ class TestAgentResultIntegrity:
                 nonlocal injected
                 if (
                     not injected
-                    and PENDING_EXTERNAL_PUBLICATION_KEY in state
+                    and PENDING_SPEC_STEP_KEY in state
                 ):
                     injected = True
                     raise OSError("injected routing save failure")
@@ -5453,11 +5442,10 @@ class TestAgentResultIntegrity:
             )
 
         assert first.status == "blocked"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-        completion_id = store.load()[
-            PENDING_CONTROLLER_COMPLETION_KEY
-        ]["completion_id"]
+        assert PENDING_SPEC_STEP_KEY in store.load()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        completion_id = store.load()[PENDING_SPEC_STEP_KEY]["step_id"]
 
         monkeypatch.setattr(
             PreparedSquadPublication,
@@ -5489,6 +5477,7 @@ class TestAgentResultIntegrity:
             assert locked_runner.call_count == 0
 
         recovered = store.load()
+        assert PENDING_SPEC_STEP_KEY not in recovered
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
         assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
         assert recovered["last_dispatch"]["dispatch_id"] == completion_id
@@ -8994,7 +8983,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ctrl.run("msg", "semi")
 
         interrupted = store.load()
-        assert interrupted[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
+        assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == (
             "quality"
         )
         assert crashed is True
@@ -9024,6 +9013,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
+        assert PENDING_SPEC_STEP_KEY not in recovered
         assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
         assert recovered["blocked_reason"] == (
             "proportional_quality_budget_exhausted"
@@ -9099,8 +9089,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert injected is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert subprocess.run(
@@ -9169,8 +9159,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         failed = fresh_store.load()
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert index_path.is_symlink()
@@ -9220,8 +9210,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert injected is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert target.read_bytes() == drift
@@ -9335,7 +9325,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         with pytest.raises(KeyboardInterrupt, match="process death"):
             ctrl.run("prepare a recoverable restore", "semi")
 
-        marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
+        step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            store.load()[PENDING_SPEC_STEP_KEY],
+        )
+        marker = step.intent.provenance["completion_marker"]
         prepared = load_prepared_controller_completion(
             tmp_path,
             ctrl._squad_dir,
@@ -9461,7 +9455,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
                 effect,
                 completion_id=prepared.intent.completion_id,
                 project_root=tmp_path,
-                state=store.load(),
+                state=step.intent.final_state,
                 route=prepared.intent.route,
                 preceding_checkpoint_receipt=(
                     prepared.receipts["effects"].get("checkpoint")
@@ -9502,8 +9496,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
-        assert recovered[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert recovered["controller_completion_failure"]["code"] == (
+        assert recovered[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert recovered[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert journal.read_bytes() == journal_before
@@ -9568,7 +9562,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             real_materialize,
         )
 
-        marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
+        step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            store.load()[PENDING_SPEC_STEP_KEY],
+        )
+        marker = step.intent.provenance["completion_marker"]
         prepared = load_prepared_controller_completion(
             tmp_path,
             ctrl._squad_dir,
@@ -9700,7 +9698,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
                 effect,
                 completion_id=prepared.intent.completion_id,
                 project_root=tmp_path,
-                state=store.load(),
+                state=step.intent.final_state,
                 route=prepared.intent.route,
                 preceding_checkpoint_receipt=(
                     prepared.receipts["effects"].get("checkpoint")
@@ -9772,8 +9770,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert replaced is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert spec_path.read_bytes() == source_before
@@ -9831,8 +9829,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
         assert replaced is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert failed["proportional_quality_candidate_evidence"][
@@ -9950,8 +9948,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert replaced is True
         assert before_effect is not None
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert spec_path.read_text(encoding="utf-8") == current_text
@@ -10507,23 +10505,23 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         ctrl, store, _calls = _run_proportional_quality_loop(tmp_path)
-        real_advance = store.advance_controller_completion
+        real_advance = store.advance_spec_step
         failed = False
 
-        def fail_after_quality_effect(prepared: object) -> None:
+        def fail_after_quality_effect(current: object, advanced: object) -> None:
             nonlocal failed
-            marker = getattr(prepared, "marker", None)
-            if not failed and getattr(marker, "step", None) == "quality":
+            marker = getattr(current, "cursor", None)
+            if not failed and marker == "quality":
                 failed = True
                 raise StateAdvanceError(
                     "injected quality receipt state finalization failure",
                     validator="stale_state",
                 )
-            real_advance(prepared)
+            real_advance(current, advanced)
 
         monkeypatch.setattr(
             store,
-            "advance_controller_completion",
+            "advance_spec_step",
             fail_after_quality_effect,
         )
 
@@ -10532,11 +10530,15 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         assert failed is True
         assert first.status == "blocked"
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        completion_id = state[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
+        assert state[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        completion_id = state[PENDING_SPEC_STEP_KEY][
+            "step_id"
         ]
-        assert state["phase1_quality_repair"]["candidate_ids"] == [
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            state[PENDING_SPEC_STEP_KEY],
+        )
+        assert sealed_step.intent.final_state["phase1_quality_repair"]["candidate_ids"] == [
             "quality-candidate-0"
         ]
         assert (
@@ -10709,23 +10711,23 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         store.save(state)
         ctrl._provider.exec_agent.side_effect = None
         ctrl._provider.exec_agent.return_value = current
-        real_advance = store.advance_controller_completion
+        real_advance = store.advance_spec_step
         injected = False
 
-        def fail_after_restore_effect(prepared: object) -> None:
+        def fail_after_restore_effect(current: object, advanced: object) -> None:
             nonlocal injected
-            marker = getattr(prepared, "marker", None)
-            if not injected and getattr(marker, "step", None) == "quality":
+            marker = getattr(current, "cursor", None)
+            if not injected and marker == "quality":
                 injected = True
                 raise StateAdvanceError(
                     "injected restored receipt finalization failure",
                     validator="stale_state",
                 )
-            real_advance(prepared)
+            real_advance(current, advanced)
 
         monkeypatch.setattr(
             store,
-            "advance_controller_completion",
+            "advance_spec_step",
             fail_after_restore_effect,
         )
 
@@ -10735,9 +10737,9 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         pending = store.load()
         assert injected is True
         assert first.status == "blocked"
-        assert pending[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        completion_id = pending[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
+        assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        completion_id = pending[PENDING_SPEC_STEP_KEY][
+            "step_id"
         ]
         outbox_receipts = json.loads(
             (
@@ -10756,7 +10758,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert re.fullmatch(r"[0-9a-f]{64}", restore_receipt["plan_sha256"])
         assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
         calls = ctrl._provider.exec_agent.call_count
-        decision = pending["blocked_decision"]
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        decision = sealed_step.intent.final_state["blocked_decision"]
         with pytest.raises(HumanInputPolicyError, match="completion.*pending"):
             ctrl.apply_human_input_resolution(
                 decision["id"],
@@ -10769,16 +10775,17 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             )
         after_rejected = store.load()
         assert after_rejected == pending
-        assert after_rejected["phase1_quality_repair"][
+        assert sealed_step.intent.final_state["phase1_quality_repair"][
             "extension_authorized"
         ] == 0
-        assert after_rejected["blocked_decision"]["status"] == "awaiting_human"
+        assert decision["status"] == "awaiting_human"
 
         reconciled = ctrl.run("reconcile the pending restore", "semi")
 
         after_reconcile = store.load()
         assert reconciled.status == "blocked"
         assert PENDING_CONTROLLER_COMPLETION_KEY not in after_reconcile
+        assert PENDING_SPEC_STEP_KEY not in after_reconcile
         assert after_reconcile["phase1_quality_repair"][
             "extension_authorized"
         ] == 0
@@ -15411,19 +15418,30 @@ class TestLexiconGateGuardDeterminism:
 
         pending = store.load()
         assert debt_path.exists()
-        assert "spec_quality_debt_authorization" not in pending
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
-        assert pending["blocked_reason"] == "controller_completion_pending"
+        assert "spec_quality_debt_authorization" in pending
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        assert (
+            "spec_quality_debt_authorization"
+            not in sealed_step.intent.final_state
+        )
+        assert pending["blocked_reason"] == "spec_step_pending"
 
         monkeypatch.setattr(
             squad_module,
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
         assert recovered.recovered is True
         assert not debt_path.exists()
         assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        assert PENDING_SPEC_STEP_KEY not in store.load()
+        assert "spec_quality_debt_authorization" not in store.load()
 
     def test_what_debt_removal_unlinks_owned_symlink_without_following_target(
         self,
@@ -16260,6 +16278,8 @@ THEN: The dashboard is visible
         state.update({
             "phase_a_state_version": 1,
             "phase": node.id,
+            "run_id": "run-test",
+            "spec_id": "001-demo",
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
             "implementation_targets": ["sources/app"],
             "quality_scores": [{"pass": True, "source": "harness:understanding"}],
@@ -17903,15 +17923,10 @@ class TestControllerCompletionOrchestration:
 
         def crash_at_route_save(candidate):
             nonlocal injected
-            pending = candidate.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
-            )
-            dispatch = candidate.get("last_dispatch")
+            pending = candidate.get(PENDING_SPEC_STEP_KEY)
             if (
                 not injected
                 and isinstance(pending, dict)
-                and isinstance(dispatch, dict)
-                and dispatch.get("post_dispatch_complete") is False
             ):
                 injected = True
                 if save_then_raise:
@@ -17941,13 +17956,18 @@ class TestControllerCompletionOrchestration:
         ]
         assert len(staged) == 1
         completion_id = staged[0].name
+        spec_step_root = (
+            ctrl._squad_dir
+            / ".spec-step-outbox"
+            / completion_id
+        )
+        assert spec_step_root.is_dir()
         interrupted = store.load()
         assert (
-            PENDING_CONTROLLER_COMPLETION_KEY in interrupted
+            PENDING_SPEC_STEP_KEY in interrupted
         ) is save_then_raise
-        assert (
-            PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
-        ) is (save_then_raise and with_publication)
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in interrupted
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in interrupted
         del ctrl
 
         fresh, fresh_store = _controller(tmp_path)
@@ -17962,10 +17982,12 @@ class TestControllerCompletionOrchestration:
 
         completed = fresh_store.load()
         assert runner.call_count == 1
+        assert PENDING_SPEC_STEP_KEY not in completed
         assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
         assert completed["token_usage"] == 0
         assert not staged[0].exists()
+        assert not spec_step_root.exists()
         if publication_root is not None:
             assert not publication_root.exists()
         if save_then_raise:
@@ -18578,6 +18600,54 @@ class TestControllerCompletionOrchestration:
             not in fresh_store.load()
         )
 
+    def test_manual_spec_step_replay_recovers_and_stops_without_redispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+        snapshot = store.capture_routing_snapshot(expected_phase="phase1-what")
+        step_id = "d" * 32
+        final_state = snapshot.state
+        final_state["phase"] = "phase1-why1"
+        final_state["last_dispatch"] = {
+            "dispatch_id": step_id,
+            "completed_at": "2026-09-24T00:00:00+00:00",
+            "manual_phase_run": True,
+            "post_dispatch_complete": True,
+        }
+        prepared = prepare_spec_step(
+            ctrl._squad_dir,
+            step_id=step_id,
+            origin="routed",
+            expected_state_revision=snapshot.state_revision,
+            expected_previous_dispatch_sha256=snapshot.previous_dispatch_sha256,
+            route={
+                "kind": "routed",
+                "from_phase": "phase1-what",
+                "to_phase": "phase1-why1",
+                "manual_phase_run": True,
+            },
+            effects=(),
+            publication=None,
+            final_state=final_state,
+            provenance={"routing_decision_sha256": "e" * 64},
+        )
+        store.begin_spec_step(prepared, snapshot=snapshot)
+        del ctrl
+        fresh, fresh_store = _controller(tmp_path)
+        callback = MagicMock(
+            side_effect=AssertionError("manual recovery redispatched provider work")
+        )
+        monkeypatch.setattr(fresh, "_run_single_phase_locked", callback)
+
+        result = fresh.run_single_phase("phase1-what", "msg", "banzai")
+
+        assert result.phase == "phase1-why1"
+        assert callback.call_count == 0
+        assert PENDING_SPEC_STEP_KEY not in fresh_store.load()
+
     def test_routing_seals_completion_and_publication_in_one_decision(
         self,
         tmp_path: Path,
@@ -18657,15 +18727,16 @@ class TestControllerCompletionOrchestration:
             "_prepare_external_phase_effects",
             lambda *_args, **_kwargs: publication,
         )
-        handoff = store.handoff_external_publication
+        advance_step = store.advance_spec_step
 
-        def crash_after_handoff(marker, completion):
-            handoff(marker, completion)
-            raise KeyboardInterrupt("simulated post-handoff crash")
+        def crash_after_handoff(current, advanced):
+            advance_step(current, advanced)
+            if current.cursor == "publication":
+                raise KeyboardInterrupt("simulated post-handoff crash")
 
         monkeypatch.setattr(
             store,
-            "handoff_external_publication",
+            "advance_spec_step",
             crash_after_handoff,
         )
 
@@ -18678,9 +18749,8 @@ class TestControllerCompletionOrchestration:
 
         handed = store.load()
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in handed
-        assert handed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] != (
-            "awaiting_publication"
-        )
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in handed
+        assert handed[PENDING_SPEC_STEP_KEY]["cursor"] != "publication"
 
         fresh, _ = _controller(tmp_path)
         runner = MagicMock(
@@ -18694,6 +18764,7 @@ class TestControllerCompletionOrchestration:
 
         assert runner.call_count == 1
         recovered = store.load()
+        assert PENDING_SPEC_STEP_KEY not in recovered
         assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
         assert "controller_completion_failure" not in recovered
         assert recovered["last_dispatch"][
@@ -19349,8 +19420,7 @@ class TestControllerCompletionOrchestration:
             saved = original_save(state)
             if (
                 not injected
-                and PENDING_CONTROLLER_COMPLETION_KEY in state
-                and isinstance(state.get("last_dispatch"), dict)
+                and PENDING_SPEC_STEP_KEY in state
             ):
                 injected = True
                 raise OSError("injected route save ambiguity")

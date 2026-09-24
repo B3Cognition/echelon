@@ -884,6 +884,35 @@ class TestSquadStateStore:
         assert receipt.from_phase == receipt.to_phase == "repair"
         assert store.load()["phase"] == "repair"
 
+    def test_prepare_advance_postimage_is_exact_and_does_not_publish_state(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 100, "init")
+        snapshot = store.capture_routing_snapshot(expected_phase="init")
+        decision = store.prepare_routing_decision(
+            _result("DONE"),
+            snapshot=snapshot,
+            from_phase="init",
+            to_phase="phase1-discover",
+            token_usage_delta=7,
+        )
+        before = store.load()
+
+        final_state, receipt = store.prepare_advance_postimage(
+            "init",
+            "phase1-discover",
+            decision,
+        )
+
+        assert store.load() == before
+        assert final_state["phase"] == "phase1-discover"
+        assert final_state["token_usage"] == before["token_usage"] + 7
+        assert final_state["last_dispatch"]["dispatch_id"] == decision.dispatch_id
+        assert final_state["state_revision"] == before["state_revision"]
+        assert receipt.dispatch_id == decision.dispatch_id
+
     def test_old_state_without_pending_publication_still_advances(
         self,
         tmp_path,

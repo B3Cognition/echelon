@@ -218,7 +218,7 @@ redispatches the provider.
 An intent contains only the effects required by its route, in canonical order:
 
 ```text
-publication -> journal -> timing -> quality -> checkpoint
+publication -> journal -> timing -> checkpoint -> quality
             -> context -> mining -> retarget -> commit
 ```
 

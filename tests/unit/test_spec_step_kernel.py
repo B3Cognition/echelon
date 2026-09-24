@@ -94,7 +94,7 @@ def test_recovery_never_reapplies_a_receipted_effect(tmp_path: Path) -> None:
 
 
 def test_drain_applies_every_declared_cursor_once(tmp_path: Path) -> None:
-    effects = ("journal", "timing", "quality", "checkpoint", "context", "mining", "retarget")
+    effects = ("journal", "timing", "checkpoint", "quality", "context", "mining", "retarget")
     fixture = _fixture(tmp_path, effects)
     calls: list[str] = []
 

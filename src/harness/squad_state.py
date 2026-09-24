@@ -5284,7 +5284,11 @@ class SquadStateStore:
             attempts = 1
             if expected.failure is not None:
                 attempts = min(expected.failure.attempts + 1, 1_000_000)
-            resume_status = state.get("status")
+            resume_status = (
+                expected.failure.resume_status
+                if expected.failure is not None
+                else state.get("status")
+            )
             if resume_status not in {"running", "blocked"}:
                 resume_status = "running"
             updated = SpecStepMarker(
@@ -5299,6 +5303,8 @@ class SquadStateStore:
             )
             desired = deepcopy(state)
             desired[PENDING_SPEC_STEP_KEY] = updated.to_dict()
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = "spec_step_pending"
             self._save_exact_state_unlocked(
                 state,
                 desired,
@@ -5384,6 +5390,36 @@ class SquadStateStore:
                 validator="completion_binding",
             )
         final_state = loaded.intent.final_state
+        for effect_receipt in loaded.receipts:
+            if effect_receipt.effect != "quality":
+                continue
+            wrapped = effect_receipt.payload.get("completion_receipt")
+            candidate = (
+                wrapped.get("candidate")
+                if isinstance(wrapped, Mapping)
+                else None
+            )
+            evidence = final_state.get(
+                "proportional_quality_candidate_evidence"
+            )
+            if (
+                isinstance(candidate, Mapping)
+                and isinstance(evidence, Mapping)
+                and candidate.get("candidate_id")
+                == evidence.get("current_candidate_id")
+                and evidence.get("selected_candidate_id")
+                in {None, evidence.get("current_candidate_id")}
+                and _valid_completion_sha256(
+                    candidate.get("manifest_sha256")
+                )
+            ):
+                updated_evidence = deepcopy(dict(evidence))
+                updated_evidence["candidate_manifest_sha256"] = candidate[
+                    "manifest_sha256"
+                ]
+                final_state[
+                    "proportional_quality_candidate_evidence"
+                ] = updated_evidence
         if PENDING_SPEC_STEP_KEY in final_state:
             raise StateAdvanceError(
                 "spec step final state retains its marker",
@@ -5434,6 +5470,10 @@ class SquadStateStore:
                 saved = self._save_exact_state_unlocked(
                     state,
                     final_state,
+                    allow_human_input_authority_update=any(
+                        state.get(key) != final_state.get(key)
+                        for key in _HUMAN_INPUT_PAIR_AUTHORITY_KEYS
+                    ),
                     json_path="$.state",
                     error_message="atomic spec step completion failed",
                 )
@@ -5700,7 +5740,8 @@ class SquadStateStore:
             "awaiting_human",
         ]
         | None = None,
-    ) -> AdvanceReceipt:
+        _prepare_only: bool = False,
+    ) -> AdvanceReceipt | tuple[dict[str, Any], AdvanceReceipt]:
         if (human_input is None) != (human_input_initial_status is None):
             raise StateAdvanceError(
                 "human-input request and initial status must be supplied together",
@@ -5988,14 +6029,17 @@ class SquadStateStore:
                     initial_status=str(human_input_initial_status),
                 )
 
-            saved_state = self._save_exact_state_unlocked(
-                state,
-                next_state,
-                allow_human_input_authority_update=human_input is not None,
-                json_path="$.state",
-                error_message="atomic state save failed",
-            )
-        return AdvanceReceipt(
+            if _prepare_only:
+                saved_state = {**next_state, "state_revision": revision + 1}
+            else:
+                saved_state = self._save_exact_state_unlocked(
+                    state,
+                    next_state,
+                    allow_human_input_authority_update=human_input is not None,
+                    json_path="$.state",
+                    error_message="atomic state save failed",
+                )
+        receipt = AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
             completed_at=completed_at,
@@ -6006,6 +6050,35 @@ class SquadStateStore:
             state_revision=saved_state["state_revision"],
             routing_decision_sha256=decision.routing_sha256,
         )
+        if _prepare_only:
+            return next_state, receipt
+        return receipt
+
+    def prepare_advance_postimage(
+        self,
+        from_phase: str,
+        to_phase: str,
+        decision: PreparedRoutingDecision,
+        *,
+        human_input: PreparedHumanInput | None = None,
+        human_input_initial_status: Literal["pending", "awaiting_human"] | None = None,
+    ) -> tuple[dict[str, Any], AdvanceReceipt]:
+        """Compute and validate an advance without making it externally visible."""
+        result = self.advance(
+            from_phase,
+            to_phase,
+            decision,
+            human_input=human_input,
+            human_input_initial_status=human_input_initial_status,
+            _prepare_only=True,
+        )
+        if not isinstance(result, tuple):
+            raise StateAdvanceError(
+                "state advance preparation did not return a receipt",
+                json_path="$.advance_receipt",
+                validator="receipt",
+            )
+        return result
 
     def merge_advance_failure_diagnostic(
         self,

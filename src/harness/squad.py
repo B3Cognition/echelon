@@ -170,6 +170,7 @@ from harness.squad_executors import (
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_completion import (
     CompletionError,
+    CompletionMarker,
     PreparedControllerCompletion,
     apply_or_verify_completion_journal,
     apply_or_verify_completion_mining,
@@ -182,6 +183,17 @@ from harness.squad_completion import (
     prepare_completion_journal_plan,
     prepare_controller_completion as prepare_controller_completion_stage,
     prepare_or_load_completion_context,
+)
+from harness.spec_step import (
+    PreparedSpecStep,
+    SpecStepError,
+    discard_unreferenced_spec_step_by_id,
+    prepare_spec_step,
+)
+from harness.spec_step_effects import PhaseASpecStepEffects
+from harness.spec_step_kernel import (
+    SpecStepRecoveryOutcome,
+    drain_pending_spec_step,
 )
 from harness.controller_lock_order import controller_lock_order
 from harness.squad_publication import (
@@ -210,6 +222,7 @@ from harness.squad_state import (
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    PENDING_SPEC_STEP_KEY,
     PRODUCT_INPUT_MUTATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
@@ -2157,6 +2170,159 @@ class SquadController:
                 continue
         return not retained_id
 
+    def _cleanup_spec_step_orphans(self) -> bool:
+        """Remove valid spec-step stages that have no durable state authority."""
+        try:
+            state = self._state_store.load()
+        except Exception:
+            return False
+        if PENDING_SPEC_STEP_KEY in state:
+            return False
+        outbox = self._squad_dir / ".spec-step-outbox"
+        try:
+            metadata = os.lstat(outbox)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+        ):
+            return False
+        try:
+            self._state_store.confirm_durable_state(state)
+            with os.scandir(outbox) as iterator:
+                entries = tuple(iterator)
+        except (OSError, StateDurabilityError):
+            return False
+        for entry in entries:
+            if re.fullmatch(r"[0-9a-f]{32}", entry.name) is None:
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if not discard_unreferenced_spec_step_by_id(
+                    self._squad_dir,
+                    entry.name,
+                ):
+                    return False
+            except SpecStepError:
+                continue
+        return True
+
+    @staticmethod
+    def _completion_marker_from_spec_step(
+        prepared: PreparedSpecStep,
+    ) -> dict[str, object]:
+        marker = prepared.intent.provenance.get("completion_marker")
+        if not isinstance(marker, Mapping):
+            raise CompletionError("intent_mismatch")
+        current = dict(marker)
+        for receipt in prepared.receipts:
+            candidate = receipt.payload.get("completion_marker")
+            if isinstance(candidate, Mapping):
+                current = dict(candidate)
+        if current.get("completion_id") != prepared.marker.step_id:
+            raise CompletionError("intent_mismatch")
+        return current
+
+    def _apply_companion_completion_effect(
+        self,
+        prepared: PreparedSpecStep,
+        state: Mapping[str, object],
+        *,
+        publication_receipt: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Run one existing effect under spec-step authority during cutover."""
+        marker = self._completion_marker_from_spec_step(prepared)
+        completion = load_prepared_controller_completion(
+            self._project_root,
+            self._squad_dir,
+            marker,
+        )
+        plan = completion.intent.effect_plan
+        if prepared.marker.cursor == "publication":
+            if publication_receipt is None or marker.get("step") != "awaiting_publication":
+                raise CompletionError("intent_mismatch")
+            next_step = plan[0] if plan else "complete"
+            next_marker = {**marker, "step": next_step}
+            return {
+                **dict(publication_receipt),
+                "completion_marker": next_marker,
+            }
+        if marker.get("step") != prepared.marker.cursor:
+            raise CompletionError("intent_mismatch")
+        # Existing routed effects historically ran after state.advance().
+        # During cutover they receive the sealed final projection instead of
+        # exposing that projection before the effect is durable.
+        self._apply_controller_completion_effect(
+            completion,
+            prepared.intent.final_state,
+        )
+        one_ahead = load_prepared_controller_completion(
+            self._project_root,
+            self._squad_dir,
+            marker,
+        )
+        current_index = plan.index(str(prepared.marker.cursor))
+        next_step = plan[current_index + 1] if current_index + 1 < len(plan) else "complete"
+        receipts_bytes = (
+            json.dumps(
+                one_ahead.receipts,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        next_marker = {
+            **marker,
+            "receipts_sha256": hashlib.sha256(receipts_bytes).hexdigest(),
+            "step": next_step,
+        }
+        return {
+            "schema_version": 1,
+            "completion_receipt": one_ahead.receipts["effects"][prepared.marker.cursor],
+            "completion_marker": next_marker,
+        }
+
+    def _drain_pending_spec_step(self) -> SpecStepRecoveryOutcome:
+        effects = PhaseASpecStepEffects(
+            project_root=self._project_root,
+            squad_dir=self._squad_dir,
+            phase_graph=self._graph,
+            telemetry_store=self._telemetry_store,
+            context_drawer_loader=self._retrieve_mempalace_context_drawers,
+            completion_effect_applier=self._apply_companion_completion_effect,
+        )
+        try:
+            return drain_pending_spec_step(
+                self._state_store,
+                self._squad_dir,
+                effects,
+            )
+        except (StateAdvanceError, StateDurabilityError):
+            state = self._state_store.load()
+            marker = state.get(PENDING_SPEC_STEP_KEY)
+            if isinstance(marker, Mapping):
+                try:
+                    self._state_store.record_spec_step_failure(
+                        marker,
+                        effect=str(marker.get("cursor") or "commit"),
+                        code="state_finalize",
+                    )
+                except (StateAdvanceError, StateDurabilityError):
+                    pass
+                return SpecStepRecoveryOutcome(
+                    recovered=True,
+                    blocked=True,
+                    step_id=str(marker.get("step_id") or ""),
+                    origin=str(marker.get("origin") or ""),
+                )
+            raise
+
     def _drain_pending_controller_completion(
         self,
     ) -> CompletionRecoveryOutcome:
@@ -2541,12 +2707,21 @@ class SquadController:
                             run_id=self._squad_dir.name,
                             summary=LEGACY_IDENTITY_EXECUTION_BLOCKED,
                         )
+                    spec_recovery = (
+                        self._drain_pending_spec_step()
+                        if PENDING_SPEC_STEP_KEY in state
+                        else SpecStepRecoveryOutcome(False)
+                    )
                     recovery = (
                         self._drain_pending_controller_completion()
+                        if not spec_recovery.recovered
+                        else CompletionRecoveryOutcome(False)
                     )
                     self._emit_pending_retarget_comparison()
                     recovered_state = self._state_store.load()
                     if (
+                        PENDING_SPEC_STEP_KEY in recovered_state
+                        or
                         PENDING_CONTROLLER_COMPLETION_KEY
                         in recovered_state
                         or PENDING_EXTERNAL_PUBLICATION_KEY
@@ -2557,10 +2732,18 @@ class SquadController:
                         return SquadResult.from_state(recovered_state)
                     if (
                         stop_after_recovered_manual
-                        and recovery.recovered
-                        and recovery.manual_phase_run
+                        and (
+                            (spec_recovery.recovered and spec_recovery.manual)
+                            or (recovery.recovered and recovery.manual_phase_run)
+                        )
                     ):
                         return SquadResult.from_state(recovered_state)
+                    if not self._cleanup_spec_step_orphans():
+                        if managed_discovery is not None:
+                            return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
+                        return SquadResult.from_state(
+                            self._state_store.load()
+                        )
                     if not self._cleanup_controller_completion_orphans():
                         if managed_discovery is not None:
                             return self._managed_discovery_stop("managed_discovery_completion_requires_reconciliation")
@@ -5467,7 +5650,10 @@ class SquadController:
             and self._managed_why2_completion_wait(state))
         if self._legacy_identity_execution_blocked(state) and not (managed_tracker or managed_policy or managed_checkpoint):
             raise HumanInputPolicyError(LEGACY_IDENTITY_EXECUTION_BLOCKED)
-        if PENDING_CONTROLLER_COMPLETION_KEY in state:
+        if (
+            PENDING_CONTROLLER_COMPLETION_KEY in state
+            or PENDING_SPEC_STEP_KEY in state
+        ):
             raise HumanInputPolicyError(
                 "controller completion is pending human-input resolution"
             )
@@ -13522,33 +13708,113 @@ class SquadController:
                         ),
                         validator="ownership",
                     )
-            if human_input is None:
-                receipt = self._state_store.advance(
-                    decision.from_phase,
-                    decision.to_phase,
-                    decision,
-                )
-            else:
-                receipt = self._state_store.advance(
-                    decision.from_phase,
-                    decision.to_phase,
-                    decision,
-                    human_input=human_input,
-                    human_input_initial_status=human_input_initial_status,
-                )
+            final_state, receipt = self._state_store.prepare_advance_postimage(
+                decision.from_phase,
+                decision.to_phase,
+                decision,
+                human_input=human_input,
+                human_input_initial_status=human_input_initial_status,
+            )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
-                    "state advance did not return a receipt",
+                    "state advance preparation did not return a receipt",
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
-            recovery = self._drain_pending_controller_completion()
+            completion = load_prepared_controller_completion(
+                self._project_root,
+                self._squad_dir,
+                completion_marker,
+            )
+            final_state.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
+            final_state.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
+            dispatch = final_state.get("last_dispatch")
+            if not isinstance(dispatch, dict):
+                raise StateAdvanceError(
+                    "prepared route has no final dispatch",
+                    json_path="$.last_dispatch",
+                    validator="completion_binding",
+                )
+            dispatch.pop("completion_intent_sha256", None)
+            dispatch.pop("completion_origin", None)
+            dispatch.pop("completion_publication_binding_sha256", None)
+            dispatch["post_dispatch_complete"] = True
+            dispatch["spec_step_id"] = completion_id
+            dispatch["state_revision"] = decision.expected_state_revision + 2
+            effects = list(completion.intent.effect_plan)
+            publication = None
+            if prepared_publication is not None:
+                effects.insert(0, "publication")
+                publication = prepared_publication.marker.to_dict()
+            step = prepare_spec_step(
+                self._squad_dir,
+                step_id=completion_id,
+                origin="routed",
+                expected_state_revision=decision.expected_state_revision,
+                expected_previous_dispatch_sha256=(
+                    decision.expected_previous_dispatch_sha256
+                ),
+                route={
+                    **completion.intent.route,
+                    "conditional_skip": decision.conditional_skip,
+                },
+                effects=tuple(effects),
+                publication=publication,
+                final_state=final_state,
+                provenance={
+                    "completion_marker": dict(completion_marker),
+                    "prepared_result_sha256": (
+                        decision.prepared_result.preparation_sha256
+                    ),
+                    "routing_decision_sha256": decision.routing_sha256,
+                    "judgment_payload_sha256": list(
+                        decision.judgment_payload_sha256
+                    ),
+                    "token_usage_delta": decision.token_usage_delta,
+                },
+            )
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=decision.from_phase,
+            )
+            self._state_store.begin_spec_step(step, snapshot=snapshot)
+            recovery = self._drain_pending_spec_step()
             if (
                 not recovery.recovered
-                or recovery.completion_id != completion_id
+                or recovery.step_id != completion_id
+                or recovery.blocked
             ):
                 return None
+            try:
+                if prepared_publication is not None:
+                    prepared_publication.discard()
+                completion.discard()
+                step.discard()
+            except (CompletionError, PublicationError, SpecStepError):
+                logger.warning(
+                    "Could not discard completed spec-step staging",
+                    exc_info=True,
+                )
             return receipt
+        except SpecStepError as exc:
+            exc = StateAdvanceError(
+                "spec step preparation failed",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator=exc.code,
+            )
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
+            self._discard_controller_completion_without_authority(
+                completion_marker,
+            )
+            self._block_after_state_advance_failure(
+                node,
+                decision.from_phase,
+                exc,
+                decision=decision,
+                token_usage_delta=failure_usage,
+            )
+            return None
         except StateAdvanceError as exc:
             self._discard_publication_without_authority(
                 prepared_publication,
@@ -15311,6 +15577,10 @@ class SquadController:
         publication_marker = transaction_updates.get(
             PENDING_EXTERNAL_PUBLICATION_KEY
         )
+        if completion_id is None and isinstance(publication_marker, Mapping):
+            candidate_id = publication_marker.get("transaction_id")
+            if isinstance(candidate_id, str):
+                completion_id = candidate_id
         # Review handoff records the blocked attempt, not successful PLAN
         # completion. The eventual normal planning/consensus path owns that.
         record_completion = source != "phase3_planner_review"

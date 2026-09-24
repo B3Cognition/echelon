@@ -18,8 +18,8 @@ SpecStepEffect = Literal[
     "publication",
     "journal",
     "timing",
-    "quality",
     "checkpoint",
+    "quality",
     "context",
     "mining",
     "retarget",
@@ -39,8 +39,8 @@ _EFFECT_ORDER = (
     "publication",
     "journal",
     "timing",
-    "quality",
     "checkpoint",
+    "quality",
     "context",
     "mining",
     "retarget",
@@ -870,4 +870,72 @@ def discard_unreferenced_spec_step(squad_dir: Path, marker: object) -> bool:
         return False
     prepared = load_prepared_spec_step(squad, expected)
     _discard_exact(outbox, expected.step_id, prepared._transaction_identity, missing_ok=True)
+    return True
+
+
+def discard_unreferenced_spec_step_by_id(
+    squad_dir: Path,
+    step_id: str,
+) -> bool:
+    """Validate and discard one orphan stage when no state marker exists."""
+    identifier = _valid_step_id(step_id, "stage_corrupt")
+    squad = _real_directory(squad_dir, missing_code="stage_missing")
+    outbox_path = squad / _OUTBOX_DIRECTORY
+    if not outbox_path.exists():
+        return False
+    outbox = _real_directory(outbox_path, missing_code="stage_missing")
+    root_path = outbox / identifier
+    if not root_path.exists():
+        return False
+    root = _real_directory(root_path, missing_code="stage_missing")
+    intent_bytes = _read_regular(
+        root / _INTENT_NAME,
+        maximum=_MAX_INTENT_BYTES,
+        code="intent_invalid",
+    )
+    receipts_bytes = _read_regular(
+        root / _RECEIPTS_NAME,
+        maximum=_MAX_RECEIPTS_BYTES,
+        code="receipts_invalid",
+    )
+    intent = _validate_intent(
+        _decode_canonical(intent_bytes, code="intent_invalid")
+    )
+    _, receipts = _validate_receipts(
+        _decode_canonical(receipts_bytes, code="receipts_invalid"),
+        intent=intent,
+    )
+    if intent["step_id"] != identifier:
+        _raise("intent_mismatch")
+    effects = tuple(intent["effects"])
+    cursor: SpecStepEffect = (
+        effects[len(receipts)]
+        if len(receipts) < len(effects)
+        else "commit"
+    )
+    publication_bytes = _canonical_json(
+        intent["publication"],
+        code="intent_invalid",
+    )
+    marker = SpecStepMarker(
+        1,
+        identifier,
+        hashlib.sha256(intent_bytes).hexdigest(),
+        hashlib.sha256(receipts_bytes).hexdigest(),
+        cursor,
+        intent["origin"],
+        (
+            hashlib.sha256(publication_bytes).hexdigest()
+            if intent["publication"] is not None
+            else None
+        ),
+        None,
+    )
+    prepared = load_prepared_spec_step(squad, marker)
+    _discard_exact(
+        outbox,
+        identifier,
+        prepared._transaction_identity,
+        missing_ok=True,
+    )
     return True
