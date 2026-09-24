@@ -371,6 +371,11 @@ def _marker_from(value: object) -> SpecStepMarker:
     )
 
 
+def validate_spec_step_marker(value: object) -> SpecStepMarker:
+    """Return one detached exact-schema marker for state-store ownership."""
+    return _marker_from(value)
+
+
 def _validate_publication(value: object, *, step_id: str) -> dict[str, object] | None:
     if value is None:
         return None

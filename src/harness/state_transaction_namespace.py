@@ -10,6 +10,7 @@ from harness.element_identity_state import MANAGED_IDENTITY_KEY
 
 PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
 PENDING_CONTROLLER_COMPLETION_KEY = "pending_controller_completion"
+PENDING_SPEC_STEP_KEY = "pending_spec_step"
 PRODUCT_INPUT_MUTATION_KEY = "product_input_mutation"
 _PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
     {
@@ -148,6 +149,7 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "tasks_lexicon_gate_exhausted",
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
+        PENDING_SPEC_STEP_KEY,
         "external_publication_failure",
         PRODUCT_INPUT_MUTATION_KEY,
     }
@@ -225,6 +227,7 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "quality_gate_remediation_no_artifact_progress",
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
+        PENDING_SPEC_STEP_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
         "product_inputs",
         *PHASE_A_IDENTITY_KEYS,
@@ -239,6 +242,7 @@ TRUSTED_ROUTING_REMOVAL_KEYS = (
     - {
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
+        PENDING_SPEC_STEP_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
         "product_inputs",
     }

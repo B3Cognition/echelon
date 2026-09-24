@@ -53,6 +53,13 @@ from harness.prepared_phase_result import (
     verify_prepared_routing_decision_attestation,
 )
 from harness.phase_a_state_version import CURRENT_PHASE_A_STATE_VERSION
+from harness.spec_step import (
+    PreparedSpecStep,
+    SpecStepFailure,
+    SpecStepMarker,
+    load_prepared_spec_step,
+    validate_spec_step_marker,
+)
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -73,6 +80,7 @@ from harness.squad_completion import (
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    PENDING_SPEC_STEP_KEY,
     PHASE_A_IDENTITY_KEYS,
     PRODUCT_INPUT_MUTATION_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
@@ -3141,6 +3149,14 @@ class SquadStateStore:
     def save(self, state: dict) -> None:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
+            if current.get(PENDING_SPEC_STEP_KEY) != state.get(
+                PENDING_SPEC_STEP_KEY
+            ):
+                raise StateAdvanceError(
+                    "pending spec step requires its owning transition",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="ownership",
+                )
             if self._path.exists():
                 current_revision = current.get("state_revision", 0)
                 candidate_revision = state.get("state_revision", 0)
@@ -5175,6 +5191,263 @@ class SquadStateStore:
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=False,
+            ),
+        )
+
+    def begin_spec_step(
+        self,
+        prepared: PreparedSpecStep,
+        *,
+        snapshot: RoutingStateSnapshot,
+    ) -> None:
+        """Persist one sealed step marker against its exact routing snapshot."""
+        if type(prepared) is not PreparedSpecStep or type(snapshot) is not RoutingStateSnapshot:
+            raise StateAdvanceError(
+                "spec step begin requires prepared authority",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            )
+        intent = prepared.intent
+        if (
+            intent.expected_state_revision != snapshot.state_revision
+            or intent.expected_previous_dispatch_sha256
+            != snapshot.previous_dispatch_sha256
+        ):
+            raise StateAdvanceError(
+                "spec step snapshot binding changed",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="stale_state",
+            )
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            if current != snapshot.state:
+                raise StateAdvanceError(
+                    "state changed before spec step begin",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+            if PENDING_SPEC_STEP_KEY in current:
+                raise StateAdvanceError(
+                    "pending spec step already exists",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="ownership",
+                )
+            if (
+                current.get("state_revision", 0) != snapshot.state_revision
+                or _last_dispatch_sha256(current)
+                != snapshot.previous_dispatch_sha256
+            ):
+                raise StateAdvanceError(
+                    "state changed before spec step begin",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+            desired = deepcopy(current)
+            desired[PENDING_SPEC_STEP_KEY] = prepared.marker.to_dict()
+            self._save_exact_state_unlocked(
+                current,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                error_message="atomic spec step begin failed",
+            )
+
+    def record_spec_step_failure(
+        self,
+        marker: object,
+        *,
+        effect: str,
+        code: str,
+    ) -> None:
+        """Replace the bounded failure attached to one exact pending marker."""
+        try:
+            expected = validate_spec_step_marker(marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step marker is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            ) from exc
+        if effect != expected.cursor or type(code) is not str or not code or len(code) > 128:
+            raise StateAdvanceError(
+                "spec step failure does not match its cursor",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.failure",
+                validator="ownership",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if state.get(PENDING_SPEC_STEP_KEY) != expected.to_dict():
+                raise StateAdvanceError(
+                    "spec step marker changed before failure record",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="stale_state",
+                )
+            attempts = 1
+            if expected.failure is not None:
+                attempts = min(expected.failure.attempts + 1, 1_000_000)
+            resume_status = state.get("status")
+            if resume_status not in {"running", "blocked"}:
+                resume_status = "running"
+            updated = SpecStepMarker(
+                expected.schema_version,
+                expected.step_id,
+                expected.intent_sha256,
+                expected.receipts_sha256,
+                expected.cursor,
+                expected.origin,
+                expected.publication_binding_sha256,
+                SpecStepFailure(expected.cursor, code, attempts, resume_status),
+            )
+            desired = deepcopy(state)
+            desired[PENDING_SPEC_STEP_KEY] = updated.to_dict()
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.failure",
+                error_message="atomic spec step failure record failed",
+            )
+
+    def advance_spec_step(self, current: object, advanced: object) -> None:
+        """Advance one marker only after its exact next receipt is durable."""
+        try:
+            expected = validate_spec_step_marker(current)
+            next_marker = validate_spec_step_marker(advanced)
+            current_prepared = load_prepared_spec_step(self._squad_dir, expected)
+            next_prepared = load_prepared_spec_step(self._squad_dir, next_marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step receipt marker is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            ) from exc
+        effects = current_prepared.intent.effects
+        if expected.cursor == "commit" or expected.cursor not in effects:
+            raise StateAdvanceError(
+                "spec step cursor cannot advance",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.cursor",
+                validator="completion_binding",
+            )
+        index = effects.index(expected.cursor)
+        wanted = effects[index + 1] if index + 1 < len(effects) else "commit"
+        if (
+            next_marker.step_id != expected.step_id
+            or next_marker.intent_sha256 != expected.intent_sha256
+            or next_marker.origin != expected.origin
+            or next_marker.publication_binding_sha256
+            != expected.publication_binding_sha256
+            or next_marker.cursor != wanted
+            or next_marker.receipts_sha256 == expected.receipts_sha256
+            or next_marker.failure is not None
+            or len(next_prepared.receipts) != len(current_prepared.receipts)
+        ):
+            raise StateAdvanceError(
+                "spec step receipt advance is not exact",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.receipts_sha256",
+                validator="completion_binding",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if state.get(PENDING_SPEC_STEP_KEY) != expected.to_dict():
+                raise StateAdvanceError(
+                    "spec step marker changed before advance",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="stale_state",
+                )
+            desired = deepcopy(state)
+            desired[PENDING_SPEC_STEP_KEY] = next_marker.to_dict()
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                error_message="atomic spec step advance failed",
+            )
+
+    def complete_spec_step(self, prepared: PreparedSpecStep) -> AdvanceReceipt:
+        """Install one sealed final postimage and remove its exact marker."""
+        if type(prepared) is not PreparedSpecStep:
+            raise StateAdvanceError(
+                "spec step completion requires prepared authority",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            )
+        try:
+            loaded = load_prepared_spec_step(self._squad_dir, prepared.marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step completion evidence is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            ) from exc
+        if loaded.marker.cursor != "commit":
+            raise StateAdvanceError(
+                "spec step effects are incomplete",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.cursor",
+                validator="completion_binding",
+            )
+        final_state = loaded.intent.final_state
+        if PENDING_SPEC_STEP_KEY in final_state:
+            raise StateAdvanceError(
+                "spec step final state retains its marker",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            )
+        dispatch = final_state.get("last_dispatch")
+        if not isinstance(dispatch, Mapping) or dispatch.get("dispatch_id") != loaded.marker.step_id:
+            raise StateAdvanceError(
+                "spec step final dispatch identity is invalid",
+                json_path="$.last_dispatch.dispatch_id",
+                validator="completion_binding",
+            )
+        route = loaded.intent.route
+        from_phase = str(route.get("from_phase") or route.get("terminal_phase") or "")
+        to_phase = str(route.get("to_phase") or final_state.get("phase") or "")
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            marker_value = state.get(PENDING_SPEC_STEP_KEY)
+            if marker_value is None:
+                comparable = deepcopy(final_state)
+                comparable["state_revision"] = state.get("state_revision")
+                comparable["updated_at"] = state.get("updated_at")
+                if comparable != state:
+                    raise StateAdvanceError(
+                        "completed spec step postimage changed",
+                        json_path="$.state",
+                        validator="stale_state",
+                    )
+                saved = self._confirm_durable_state_unlocked(state)
+            else:
+                if marker_value != loaded.marker.to_dict():
+                    raise StateAdvanceError(
+                        "spec step marker changed before completion",
+                        json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                        validator="stale_state",
+                    )
+                if (
+                    state.get("phase") != from_phase
+                    or _last_dispatch_sha256(state)
+                    != loaded.intent.expected_previous_dispatch_sha256
+                ):
+                    raise StateAdvanceError(
+                        "spec step source state changed before completion",
+                        json_path="$.state",
+                        validator="stale_state",
+                    )
+                saved = self._save_exact_state_unlocked(
+                    state,
+                    final_state,
+                    json_path="$.state",
+                    error_message="atomic spec step completion failed",
+                )
+        return AdvanceReceipt(
+            from_phase=from_phase,
+            to_phase=to_phase,
+            completed_at=str(dispatch.get("completed_at") or saved.get("updated_at") or ""),
+            controller_contract=None,
+            controller_contract_sha256=None,
+            conditional_skip=bool(route.get("conditional_skip", False)),
+            dispatch_id=loaded.marker.step_id,
+            state_revision=int(saved.get("state_revision") or 0),
+            routing_decision_sha256=str(
+                loaded.intent.provenance.get("routing_decision_sha256") or ""
             ),
         )
 
