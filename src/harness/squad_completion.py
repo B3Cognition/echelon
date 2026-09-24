@@ -240,6 +240,24 @@ def _raise(code: str) -> None:
     raise CompletionError(code)
 
 
+def _unadapted_step_effect(*_args: object, **_kwargs: object) -> dict[str, object]:
+    """Fail closed until a cutover supplies the effect's sealed input shape."""
+    _raise("intent_invalid")
+
+
+# Stable, narrow names used by the spec-step adapter.  Each cutover replaces
+# its fail-closed body with the existing effect algorithm once that origin's
+# exact sealed inputs are available.  The old production lifecycle remains the
+# sole caller of the completion-specific functions below until then.
+apply_or_verify_step_journal = _unadapted_step_effect
+apply_or_verify_step_timing = _unadapted_step_effect
+apply_or_verify_step_quality = _unadapted_step_effect
+create_or_recover_step_checkpoint = _unadapted_step_effect
+install_or_verify_step_context = _unadapted_step_effect
+apply_or_verify_step_mining = _unadapted_step_effect
+apply_or_verify_step_retarget = _unadapted_step_effect
+
+
 def _clone_json(value: Any) -> Any:
     if value is None or type(value) in (bool, int, float, str):
         return value
