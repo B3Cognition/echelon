@@ -1076,6 +1076,7 @@ class DeliveryController:
         token_budget: int | None,
         delivery_context: str,
         base_prompt: str,
+        recovered_implementation: ImplementationResult | None = None,
     ) -> ReviewReentryOutcome:
         """Process at most one persisted review repair re-entry."""
         if pending_reentry is None:
@@ -1141,14 +1142,16 @@ class DeliveryController:
             spec_dir=spec_dir,
             published_artifacts=artifacts,
         )
-        implementation = ralph.run_loop(
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            build_command="echelon build",
-            delivery_context=delivery_context,
-            build_prompt=prompt,
-        )
+        implementation = recovered_implementation
+        if implementation is None:
+            implementation = ralph.run_loop(
+                max_outer=max_outer,
+                max_inner=max_inner,
+                token_budget=token_budget,
+                build_command="echelon build",
+                delivery_context=delivery_context,
+                build_prompt=prompt,
+            )
         if implementation.status != "verified":
             return ReviewReentryOutcome(validated, artifacts, implementation)
 
@@ -1498,6 +1501,12 @@ class DeliveryController:
                 resume_worktree_path=resume_repaired_worktree,
             )
 
+            publication_implementation = self._dispatch_verified_publication(
+                state_store=state_store,
+                ralph=controller,
+                resume=should_resume_verified_publication,
+            )
+
             reentry_outcome = self._process_review_reentry(
                 state_store=state_store,
                 pending_reentry=state_store.read().get("pending_review_reentry"),
@@ -1510,6 +1519,7 @@ class DeliveryController:
                 token_budget=budget,
                 delivery_context=delivery_context,
                 base_prompt=arguments,
+                recovered_implementation=publication_implementation,
             )
             if reentry_outcome.blocked_result is not None:
                 return reentry_outcome.blocked_result
@@ -1538,12 +1548,8 @@ class DeliveryController:
                 resumed_phase,
             )[0]
             if current_phase == "implementation":
-                implementation_result = reentry_implementation or (
-                    self._dispatch_verified_publication(
-                        state_store=state_store,
-                        ralph=controller,
-                        resume=should_resume_verified_publication,
-                    )
+                implementation_result = (
+                    reentry_implementation or publication_implementation
                 )
                 if implementation_result is None:
                     implementation_result = controller.run_loop(
