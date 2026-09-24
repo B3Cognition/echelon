@@ -1235,7 +1235,7 @@ git add AGENTS.md README.md docs/simplification-control.md \
 git commit -m "docs: document durable Delivery step decomposition"
 ```
 
-- [ ] **Step 5: Run the repository gate**
+- [x] **Step 5: Run the repository gate**
 
 Use the committed design as the approved base and preserve the gate-reported
 receipt path for the evidence commit:
@@ -1254,7 +1254,7 @@ Expected: zero failures. Record tested commit, tree, passed/deselected counts,
 elapsed time, and receipt path in `docs/simplification-control.md`. Mark S4
 `DONE` only after this gate is green; set S5 as the sole `ACTIVE` milestone.
 
-- [ ] **Step 6: Commit verification evidence**
+- [x] **Step 6: Commit verification evidence**
 
 ```bash
 receipt_path=$(cat "$(git rev-parse --git-dir)/last-s4-receipt")
