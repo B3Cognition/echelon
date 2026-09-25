@@ -56,6 +56,7 @@ from echelon.spec_switch import (
 )
 from echelon.strict_json import loads_strict_json
 from echelon.target_normalization import normalize_target_set
+from harness.phase_a_state_version import CURRENT_PHASE_A_STATE_VERSION
 from harness.published_re_context import explicit_re_sources
 
 
@@ -319,6 +320,7 @@ def _expected_retarget_prepared_state(
         raise PhaseAStartError("baseline run has no canonical published spec directory")
     installed_spec_dir = run_dir / "specs" / baseline.spec_id
     return {
+        "phase_a_state_version": CURRENT_PHASE_A_STATE_VERSION,
         "run_id": replacement_run_id,
         "status": "preparing",
         "phase": "phase0-constitution",
@@ -1039,6 +1041,7 @@ def _write_prepared_state(
     (run_dir / "staging").mkdir()
     (run_dir / "specs" / bootstrap.spec_id).mkdir(parents=True)
     payload: dict[str, object] = {
+        "phase_a_state_version": CURRENT_PHASE_A_STATE_VERSION,
         "run_id": run_id,
         "status": "preparing",
         "user_message": description,

@@ -3206,6 +3206,101 @@ class StagedParallelExecutor(PhaseExecutor):
                 return phase
         return "phase1-what"
 
+    @staticmethod
+    def _why3_targeted_repair_phases_from_issues(
+        issues_text: str,
+    ) -> tuple[str, ...]:
+        """Return a bounded local-repair queue for purely mechanical findings.
+
+        A WHY3 report can name findings owned by several producers. Collapsing
+        those findings to the earliest producer replays every downstream phase
+        and lets unrelated producers rewrite an otherwise fixed candidate.
+        Queueing is deliberately conservative: every finding must be low or
+        medium severity, require no user decision or inferred value, and carry
+        an explicit Banzai eligibility certificate. Anything else retains the
+        existing full-corridor repair route.
+        """
+        from harness.proportional_quality import (
+            QualityCandidateIntegrityError,
+            _parse_authoritative_sage_assessment_bytes,
+            validate_sage_resolution_guidance,
+        )
+
+        strict_headings = list(
+            re.finditer(
+                r"(?m)^###\s+(ISS-[A-Za-z0-9-]+):\s*([^\n]+)\s*$",
+                issues_text,
+            )
+        )
+        broad_headings = re.findall(
+            r"(?m)^###\s+ISS-[^\n]*$",
+            issues_text,
+        )
+        if not strict_headings or len(broad_headings) != len(strict_headings):
+            return ()
+
+        try:
+            verdict, parsed_issues = _parse_authoritative_sage_assessment_bytes(
+                issues_text.encode("utf-8")
+            )
+            validate_sage_resolution_guidance(issues_text)
+        except (QualityCandidateIntegrityError, UnicodeError):
+            return ()
+        if verdict != "FAIL" or len(parsed_issues) != len(strict_headings):
+            return ()
+
+        phase_order = (
+            "phase1-discover",
+            "phase1-what",
+            "phase3-how",
+            "phase3-sentinel",
+            "phase3-plan",
+        )
+        owners: set[str] = set()
+        for index, heading in enumerate(strict_headings):
+            end = (
+                strict_headings[index + 1].start()
+                if index + 1 < len(strict_headings)
+                else len(issues_text)
+            )
+            body = issues_text[heading.end():end]
+            issue = parsed_issues[index]
+            if (
+                issue.get("issue_id") != heading.group(1)
+                or issue.get("severity") not in {"LOW", "MEDIUM"}
+            ):
+                return ()
+
+            fields: dict[str, list[str]] = {}
+            for label in (
+                "Decision required",
+                "Values not inferable",
+                "Banzai eligible",
+            ):
+                fields[label] = re.findall(
+                    rf"(?mi)^-\s*\*\*{re.escape(label)}:\*\*\s*([^\n]+?)\s*$",
+                    body,
+                )
+            if any(len(values) != 1 for values in fields.values()):
+                return ()
+            if (
+                fields["Decision required"][0].strip().casefold()
+                != "no user decision — agent repair".casefold()
+            ):
+                return ()
+            if fields["Values not inferable"][0].strip().lower() != "none":
+                return ()
+            if fields["Banzai eligible"][0].strip().lower() != "yes":
+                return ()
+            owner = StagedParallelExecutor._why3_repair_phase_from_issues(
+                body
+            )
+            if owner not in phase_order:
+                return ()
+            owners.add(owner)
+
+        return tuple(phase for phase in phase_order if phase in owners)
+
     def _persist_why3_repair_phase(
         self,
         state_store: "SquadStateStore",
@@ -3219,8 +3314,15 @@ class StagedParallelExecutor(PhaseExecutor):
         """
         state = state_store.load()
         if str(state.get("why3_verdict") or "").upper() != "FAIL":
-            if "why3_repair_phase" in state:
-                state.pop("why3_repair_phase", None)
+            changed = False
+            for key in (
+                "why3_repair_phase",
+                "why3_targeted_repair_queue",
+            ):
+                if key in state:
+                    state.pop(key)
+                    changed = True
+            if changed:
                 state_store.save(state)
             return
 
@@ -3238,9 +3340,22 @@ class StagedParallelExecutor(PhaseExecutor):
                 issues_text = issues_path.read_text(encoding="utf-8")
             except OSError:
                 pass
-        state["why3_repair_phase"] = self._why3_repair_phase_from_issues(
+        repair_phase = self._why3_repair_phase_from_issues(issues_text)
+        targeted_queue = self._why3_targeted_repair_phases_from_issues(
             issues_text
         )
+        state["why3_repair_phase"] = repair_phase
+        if targeted_queue:
+            state["why3_targeted_repair_queue"] = list(targeted_queue)
+            counts = state.get("phase_dispatch_counts")
+            if isinstance(counts, dict):
+                state["phase_dispatch_counts"] = {
+                    phase: count
+                    for phase, count in counts.items()
+                    if phase not in targeted_queue
+                }
+        else:
+            state.pop("why3_targeted_repair_queue", None)
         state_store.save(state)
 
     @staticmethod

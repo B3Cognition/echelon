@@ -8516,6 +8516,18 @@ class SquadController:
         if phase not in downstream:
             return phase
         state = self._state_store.load()
+        targeted_queue = state.get("why3_targeted_repair_queue")
+        if (
+            str(state.get("why3_verdict") or "").upper() == "FAIL"
+            and self._valid_phase3_targeted_repair_queue(targeted_queue)
+            and targeted_queue[0] == phase
+        ):
+            # The fixed candidate will receive fresh Phase 1 deterministic,
+            # qualitative, Lexicon, and final consensus certification after
+            # every bounded owner has applied its local repair. Do not let a
+            # spec edit strand later owners before they can consume the WHY3
+            # report that assigned their work.
+            return phase
         if has_current_spec_lexicon_evidence(
             state,
             project_root=self._project_root,
@@ -14171,6 +14183,99 @@ class SquadController:
                 return None, {}
             return PHASE_TERMINAL_BLOCKED, {"status": "blocked", "blocked_reason": "repair_context_incomplete"}
 
+    @staticmethod
+    def _valid_phase3_targeted_repair_queue(queue: object) -> bool:
+        """Authenticate the bounded owner queue before it grants routing rights."""
+        allowed_order = (
+            "phase1-discover",
+            "phase1-what",
+            "phase3-how",
+            "phase3-sentinel",
+            "phase3-plan",
+        )
+        return (
+            isinstance(queue, list)
+            and bool(queue)
+            and all(isinstance(phase, str) for phase in queue)
+            and queue == [phase for phase in allowed_order if phase in queue]
+        )
+
+    @staticmethod
+    def _phase3_targeted_repair_route(
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        state: Mapping[str, object],
+        *,
+        spec_lexicon_gate_enabled: bool = True,
+        certification_updates: Mapping[str, object] | None = None,
+    ) -> tuple[str | None, dict[str, object]]:
+        """Advance only the certified producer queue, then review once.
+
+        The queue exists only when WHY3 certified every finding as a bounded,
+        mechanical repair. A producer failure falls back to its ordinary phase
+        routing and leaves the queue intact for diagnosis.
+        """
+        queue = state.get("why3_targeted_repair_queue")
+        effective_updates = {
+            **prepared.state_updates,
+            **dict(certification_updates or {}),
+        }
+        successful = (prepared.verdict or "").upper() in {
+            "DONE",
+            "COMPLETE",
+            "PASS",
+        }
+        if (
+            str(state.get("why3_verdict") or "").upper() == "FAIL"
+            and state.get("why3_targeted_repair_recertification") is True
+            and successful
+        ):
+            if node.id == "phase1-why2":
+                if isinstance(
+                    effective_updates.get(
+                        "spec_quality_certificate"
+                    ),
+                    Mapping,
+                ):
+                    return "phase1-lexicon-derive", {}
+                return None, {}
+            if node.id == "phase1-lexicon":
+                lexicon_passed = (
+                    prepared.state_updates.get("lexicon_evaluation")
+                    == "passed"
+                    and prepared.state_updates.get("lexicon_pass") is True
+                )
+                lexicon_explicitly_disabled = (
+                    spec_lexicon_gate_enabled is False
+                    and prepared.state_updates.get("lexicon_evaluation")
+                    == "pending"
+                    and "lexicon_pass" not in prepared.state_updates
+                )
+                if lexicon_passed or lexicon_explicitly_disabled:
+                    return "phase3-understanding", {
+                        "why3_targeted_repair_recertification": None,
+                    }
+                return None, {}
+        if (
+            str(state.get("why3_verdict") or "").upper() != "FAIL"
+            or not SquadController._valid_phase3_targeted_repair_queue(queue)
+            or node.id != queue[0]
+            or not successful
+        ):
+            return None, {}
+
+        remaining = queue[1:]
+        if remaining:
+            return remaining[0], {
+                "why3_repair_phase": remaining[0],
+                "why3_targeted_repair_queue": remaining,
+            }
+        return "phase1-understanding", {
+            "why3_repair_phase": None,
+            "why3_targeted_repair_queue": [],
+            "why3_targeted_repair_recertification": True,
+        }
+
     def _phase3_work_routing(self, state: Mapping[str, object]) -> tuple[str | None, dict]:
         from harness.phase3_repair_context import capture_review_inputs, read_repair_issues
         from harness.phase3_repair_routing import phase3_work_route, has_phase3_repairs
@@ -15289,6 +15394,49 @@ class SquadController:
         source = "transition"
         transition_index: int | None = None
         routed_human_input: PreparedHumanInput | None = None
+        precomputed_why_routing: tuple[
+            str | None,
+            dict[str, object],
+            PreparedHumanInput | None,
+        ] | None = None
+        targeted_certification_updates: Mapping[str, object] | None = None
+        if (
+            node.id == "phase1-why2"
+            and snapshot.state.get("why3_targeted_repair_recertification")
+            is True
+            and not prepared.routing_override
+        ):
+            # Proportional WHY2 derives its quality certificate in the routing
+            # coordinator, after result preparation. Compute that policy once
+            # before the bounded recertification route is selected, then retain
+            # all of its effects in the sealed decision.
+            precomputed_why_routing = self._coordinate_why_transition_state(
+                node,
+                prepared,
+                snapshot,
+                **(
+                    {"publication_sources": publication_sources}
+                    if publication_sources is not None
+                    else {}
+                ),
+            )
+            why_route, why_updates, why_input = precomputed_why_routing
+            if why_route is None and why_input is None:
+                targeted_certification_updates = why_updates
+        targeted_repair_route, targeted_repair_updates = (
+            self._phase3_targeted_repair_route(
+                node,
+                prepared,
+                snapshot.state,
+                spec_lexicon_gate_enabled=(
+                    self._lexicon_gate_config()
+                    .get("lexicon_gate", {})
+                    .get("spec_enabled")
+                    is True
+                ),
+                certification_updates=targeted_certification_updates,
+            )
+        )
         work_route, work_updates = self._phase3_work_routing(snapshot.state)
         planner_route, planner_updates = self._phase3_planner_block_routing(node, prepared, snapshot)
         if proportional_what_human_input is not None:
@@ -15305,6 +15453,12 @@ class SquadController:
                 snapshot,
             )
             source = "controller_override"
+        elif targeted_repair_route:
+            if precomputed_why_routing is not None:
+                merge_effects(precomputed_why_routing[1])
+            merge_effects(targeted_repair_updates)
+            next_phase = targeted_repair_route
+            source = "phase3_targeted_repair"
         elif planner_route:
             merge_effects(planner_updates)
             next_phase = planner_route
@@ -15314,14 +15468,23 @@ class SquadController:
             next_phase = work_route
             source = "phase3_technical_work"
         else:
-            why_override, why_updates, routed_human_input = (
-                self._coordinate_why_transition_state(
-                    node,
-                    prepared,
-                    snapshot,
-                    **({"publication_sources": publication_sources} if publication_sources is not None else {}),
+            if precomputed_why_routing is not None:
+                why_override, why_updates, routed_human_input = (
+                    precomputed_why_routing
                 )
-            )
+            else:
+                why_override, why_updates, routed_human_input = (
+                    self._coordinate_why_transition_state(
+                        node,
+                        prepared,
+                        snapshot,
+                        **(
+                            {"publication_sources": publication_sources}
+                            if publication_sources is not None
+                            else {}
+                        ),
+                    )
+                )
             merge_effects(why_updates)
             if why_override:
                 next_phase = why_override

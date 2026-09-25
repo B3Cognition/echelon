@@ -18,6 +18,7 @@ from echelon.phase_a_start import (
 )
 from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRun, resolve_active_spec_run
 from harness.human_input import HumanInputPolicyRegistry
+from harness.phase_a_state_version import CURRENT_PHASE_A_STATE_VERSION
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -190,6 +191,7 @@ def test_first_spec_starts_on_sibling_branch_and_selects_discoverable_run(
     assert (repo / "runs" / ".current").read_text().strip() == "run-b"
     state = json.loads((outcome.run_dir / "state.json").read_text())
     assert state["status"] == "preparing"
+    assert state["phase_a_state_version"] == CURRENT_PHASE_A_STATE_VERSION == 1
     assert state["run_id"] == "run-b"
     assert state["checkpoint_policy_version"] == CHECKPOINT_POLICY_VERSION == 2
     assert state["phase_completion_outcomes"] == []
@@ -432,6 +434,7 @@ def test_retarget_bootstrap_keeps_spec_and_branch_but_creates_new_run(
     assert set(_git(repo, "branch", "--format=%(refname:short)").splitlines()) == before_branches
     assert (repo / "runs" / ".current").read_text(encoding="utf-8").strip() == "squad-retarget-1"
     assert state["implementation_targets"] == ["apps/web", "services/api"]
+    assert state["phase_a_state_version"] == CURRENT_PHASE_A_STATE_VERSION == 1
     assert state["checkpoint_policy_version"] == CHECKPOINT_POLICY_VERSION
     assert state["phase_completion_outcomes"] == []
     assert state["retarget"]["baseline_run_id"] == baseline.run_id

@@ -521,7 +521,8 @@ def _parse_authoritative_sage_assessment_bytes(
 def is_actionable_sage_issue(issue: Mapping[str, object]) -> bool:
     """Return whether an authoritative SAGE issue requires follow-up.
 
-    Explicit advisory findings use ``None`` or ``None — advisory…``. Missing
+    Explicit advisory findings use ``None``, ``None — advisory…``, or the
+    equivalent bounded gate wording ``None for WHY<n> advancement…``. Missing
     or malformed action metadata remains actionable so degraded evidence
     cannot silently bypass the repair-route contract.
     """
@@ -529,7 +530,10 @@ def is_actionable_sage_issue(issue: Mapping[str, object]) -> bool:
     if not isinstance(action_required, str):
         return True
     return re.fullmatch(
-        r"none(?:\s*(?:—|--|-)\s*advisory\b.*)?",
+        r"none(?:"
+        r"\s*(?:—|--|-)\s*advisory\b.*"
+        r"|\s+for\s+why[123]\s+advancement\b.*"
+        r")?",
         action_required.strip(),
         flags=re.IGNORECASE,
     ) is None
