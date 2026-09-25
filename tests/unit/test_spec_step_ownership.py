@@ -99,3 +99,45 @@ def test_secure_publication_transaction_remains_without_import_cycle() -> None:
     for token in RETIRED_STATE_NAMES:
         assert token not in publication
         assert token not in snapshot
+
+
+def test_controller_shape_run_locked_delegates_to_one_step_loop() -> None:
+    tree = ast.parse(_source("squad.py"), filename="squad.py")
+    controller = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "SquadController"
+    )
+    methods = {
+        node.name: node
+        for node in controller.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "_run_current_phase_step" in methods
+    run_locked = methods["_run_locked"]
+    calls = {
+        node.func.attr
+        for node in ast.walk(run_locked)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "_run_current_phase_step" in calls
+    assert not calls & {
+        "_prepare_external_phase_effects",
+        "_advance_prepared_result_or_block",
+        "_apply_spec_step_publication",
+        "_apply_companion_completion_effect",
+    }
+    constants = {
+        node.value
+        for node in ast.walk(run_locked)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert not constants & {
+        "publication",
+        "journal",
+        "timing",
+        "quality",
+        "checkpoint",
+        "context",
+        "mining",
+    }

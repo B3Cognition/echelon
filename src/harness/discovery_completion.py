@@ -935,19 +935,38 @@ def _release(root, run, state_store, completion):
         dispatch = dict(post_dispatch_complete=True, dispatch_id=receipt.get("completion_id"),
             completion_intent_sha256=receipt.get("intent_sha256"), completion_receipts_sha256=receipt.get("receipts_sha256"),
             completed_publication_binding_sha256=receipt.get("publication_binding_sha256"))
-    _require("_spec_step_effect_plan" not in state and "_spec_step_publication_plan" not in state
-        and marker.step == "complete" and dispatch.get("post_dispatch_complete") is True
+    _require(
+        "_spec_step_effect_plan" not in state
+        and "_spec_step_publication_plan" not in state
+        and marker.step == "complete"
+        and dispatch.get("post_dispatch_complete") is True
         and dispatch.get("dispatch_id") == marker.completion_id
-        and dispatch.get("completion_intent_sha256") == marker.intent_sha256
-        and dispatch.get("completion_receipts_sha256") == marker.receipts_sha256
-        and dispatch.get("completed_publication_binding_sha256") == marker.publication_binding_sha256)
+    )
+    if binding.resolution_publication:
+        _require(
+            dispatch.get("completion_intent_sha256") == marker.intent_sha256
+            and dispatch.get("completion_receipts_sha256") == marker.receipts_sha256
+            and dispatch.get("completed_publication_binding_sha256")
+            == marker.publication_binding_sha256
+        )
+    else:
+        _require(dispatch.get("spec_step_id") == marker.completion_id)
     store = IdentityStore.open(root)
     retained = store.identity_publication(spec_id=binding.spec_id, operation_id=binding.operation_id)
     _require(retained is not None)
     # A release is immutable, including when cleanup resumes under newer code.
     # Its old encoding is replayed exactly; it is never upgraded in storage.
-    version = _document(retained["completion_payload"])["version"] if retained["state"] == "released" else 3
-    payload = _release_payload(completion, version)
+    version = _document(retained["completion_payload"])["version"] if retained["state"] == "released" else 4
+    source = {
+        key: dispatch.get(key)
+        for key in (
+            "dispatch_id",
+            "completion_intent_sha256",
+            "completion_receipts_sha256",
+            "completed_publication_binding_sha256",
+        )
+    }
+    payload = _release_payload(completion, version, source=source)
     if retained["state"] == "released":
         _require(retained["completion_payload"] == payload)
     else:
@@ -967,15 +986,28 @@ def _release(root, run, state_store, completion):
             publication.discard()
 
 
-def _release_payload(completion, version):
+def _release_payload(completion, version, *, source=None):
     from harness.squad_completion import validate_retained_completion_proof
-    _require(type(version) is int and version in {1, 2, 3})
+    _require(type(version) is int and version in {1, 2, 3, 4})
     result = dict(version=version, completion=completion.marker.to_dict())
     if version != 1:
-        _require(version == 3 or "checkpoint" in completion.intent.effect_plan)
+        _require(version in {3, 4} or "checkpoint" in completion.intent.effect_plan)
         proof = dict(intent=completion.intent.to_dict(), receipts=completion.receipts)
         validate_retained_completion_proof(result["completion"], proof["intent"], proof["receipts"])
         result["checkpoint" if version == 2 else "proof"] = proof
+    if version == 4:
+        _require(
+            type(source) is dict
+            and set(source) == {
+                "dispatch_id",
+                "completion_intent_sha256",
+                "completion_receipts_sha256",
+                "completed_publication_binding_sha256",
+            }
+            and source["dispatch_id"] == completion.marker.completion_id
+            and all(type(value) is str for value in source.values())
+        )
+        result["source"] = source
     return _json(result)
 
 
@@ -1297,9 +1329,14 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
     row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
     _require(row is not None and row["state"] == "released")
     proof = _document(row["completion_payload"])
-    _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3})
+    _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3, 4})
     field = "checkpoint" if proof["version"] == 2 else "proof"
-    _closed(proof, ("version", "completion", field))
+    _closed(
+        proof,
+        ("version", "completion", field, "source")
+        if proof["version"] == 4
+        else ("version", "completion", field),
+    )
     _closed(proof[field], ("intent", "receipts"))
     marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
         proof[field]["intent"], proof[field]["receipts"])
@@ -1309,10 +1346,17 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
         if required_origin == "routed":
             _require(intent.route["manual_phase_run"] is False and intent.route["record_completion"] is True)
     if source is not None:
-        _require(source == dict(dispatch_id=marker.completion_id,
-            completion_intent_sha256=marker.intent_sha256,
-            completion_receipts_sha256=marker.receipts_sha256,
-            completed_publication_binding_sha256=marker.publication_binding_sha256))
+        expected_source = (
+            proof["source"]
+            if proof["version"] == 4
+            else dict(
+                dispatch_id=marker.completion_id,
+                completion_intent_sha256=marker.intent_sha256,
+                completion_receipts_sha256=marker.receipts_sha256,
+                completed_publication_binding_sha256=marker.publication_binding_sha256,
+            )
+        )
+        _require(source == expected_source)
     _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
     if intent.origin == "resolution" and intent.route["from_phase"] == "checkpoint-assess":
         # This row is already released with an authenticated native completion

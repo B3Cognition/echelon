@@ -178,6 +178,7 @@ from harness.squad_completion import (
     create_or_recover_completion_checkpoint,
     discard_unreferenced_controller_completion,
     install_or_verify_completion_context,
+    load_completed_spec_step_effects,
     load_prepared_spec_step_effects,
     persist_completion_effect_receipt,
     prepare_completion_journal_plan,
@@ -2215,6 +2216,96 @@ class SquadController:
             )
         return state
 
+    @staticmethod
+    def _require_companion_effect_provenance(
+        state: dict[str, object],
+        marker: Mapping[str, object],
+        intent: Mapping[str, object],
+    ) -> None:
+        """Authenticate the sealed compatibility view outside state storage."""
+        from harness.discovery_completion import decode_binding, require_tracker_skip
+
+        publication = intent["publication"]
+        if publication == {"kind": "none"} and "managed_identity" in state:
+            require_tracker_skip(state, dict(intent))
+        else:
+            decode_binding(
+                publication,
+                completion_id=str(marker["completion_id"]),
+                state=state,
+            )
+        route = intent["route"]
+        origin = marker["origin"]
+        if origin == "terminal":
+            if (
+                not isinstance(route, Mapping)
+                or set(route) != {"kind", "terminal_phase"}
+                or route.get("kind") != "terminal"
+                or not isinstance(route.get("terminal_phase"), str)
+                or state.get("phase") != route.get("terminal_phase")
+            ):
+                raise CompletionError("intent_mismatch")
+            return
+        if origin == "resolution":
+            decision = state.get("blocked_decision")
+            if (
+                not isinstance(route, Mapping)
+                or set(route) != {"kind", "decision_id", "from_phase", "to_phase"}
+                or route.get("kind") != "resolution"
+                or state.get("phase") != route.get("to_phase")
+                or not isinstance(decision, Mapping)
+                or decision.get("id") != route.get("decision_id")
+                or decision.get("status") != "resolved"
+            ):
+                raise CompletionError("intent_mismatch")
+            return
+        routed_keys = {
+            "kind",
+            "from_phase",
+            "to_phase",
+            "manual_phase_run",
+            "record_completion",
+        }
+        versioned = isinstance(route, Mapping) and "checkpoint_policy_version" in route
+        if versioned:
+            routed_keys.update(
+                {"checkpoint_policy_version", "checkpoint_policy", "rewind_policy"}
+            )
+        if (
+            not isinstance(route, Mapping)
+            or set(route) != routed_keys
+            or route.get("kind") != "routed"
+            or not isinstance(route.get("from_phase"), str)
+            or not isinstance(route.get("to_phase"), str)
+            or not isinstance(route.get("manual_phase_run"), bool)
+            or not isinstance(route.get("record_completion"), bool)
+            or state.get("phase") != route.get("to_phase")
+            or (
+                versioned
+                and state.get("checkpoint_policy_version")
+                != route.get("checkpoint_policy_version")
+            )
+        ):
+            raise CompletionError("intent_mismatch")
+        dispatch = state.get("last_dispatch")
+        if (
+            not isinstance(dispatch, Mapping)
+            or dispatch.get("dispatch_id") != marker.get("completion_id")
+            or dispatch.get("phase_id") != route.get("from_phase")
+            or dispatch.get("next_phase") != route.get("to_phase")
+            or dispatch.get("post_dispatch_complete") is not False
+            or dispatch.get("completion_intent_sha256") != marker.get("intent_sha256")
+            or dispatch.get("completion_origin") != "routed"
+            or dispatch.get("completion_publication_binding_sha256")
+            != marker.get("publication_binding_sha256")
+            or dispatch.get("record_completion") is not route.get("record_completion")
+            or dispatch.get("manual_phase_run", False)
+            is not route.get("manual_phase_run")
+            or dispatch.get("judgment_payload_sha256")
+            != intent.get("judgment_payload_sha256")
+        ):
+            raise CompletionError("intent_mismatch")
+
     def _apply_companion_completion_effect(
         self,
         prepared: PreparedSpecStep,
@@ -2240,7 +2331,7 @@ class SquadController:
         managed = None
         if "managed_identity" in effect_state:
             from harness import discovery_completion
-            self._state_store._require_controller_completion_provenance(
+            self._require_companion_effect_provenance(
                 effect_state,
                 dict(marker),
                 completion.intent.to_dict(),
@@ -2407,7 +2498,7 @@ class SquadController:
                 companion,
                 completion,
             )
-            self._state_store._require_controller_completion_provenance(
+            self._require_companion_effect_provenance(
                 effect_state,
                 dict(companion),
                 completion.intent.to_dict(),
@@ -2478,6 +2569,9 @@ class SquadController:
                     "completion_marker"
                 )
                 if isinstance(companion, Mapping):
+                    companion = self._completion_marker_from_spec_step(
+                        pending_step
+                    )
                     candidate_completion = load_prepared_spec_step_effects(
                         self._project_root,
                         self._squad_dir,
@@ -2524,39 +2618,8 @@ class SquadController:
             ):
                 from harness import discovery_completion
                 try:
-                    completed_state = self._state_store.load()
-                    if managed_completion.intent.origin == "resolution":
-                        receipt = completed_state.get(
-                            "last_human_input_completion"
-                        )
-                    else:
-                        receipt = completed_state.get("last_dispatch")
-                    if not isinstance(receipt, Mapping):
-                        raise CompletionError("intent_mismatch")
-                    complete_marker = {
-                        "schema_version": 1,
-                        "completion_id": managed_completion.marker.completion_id,
-                        "intent_sha256": receipt.get(
-                            "intent_sha256",
-                            receipt.get("completion_intent_sha256"),
-                        ),
-                        "publication_binding_sha256": receipt.get(
-                            "publication_binding_sha256",
-                            receipt.get(
-                                "completed_publication_binding_sha256"
-                            ),
-                        ),
-                        "receipts_sha256": receipt.get(
-                            "receipts_sha256",
-                            receipt.get("completion_receipts_sha256"),
-                        ),
-                        "origin": managed_completion.intent.origin,
-                        "step": "complete",
-                    }
-                    managed_completion = load_prepared_spec_step_effects(
-                        self._project_root,
-                        self._squad_dir,
-                        complete_marker,
+                    managed_completion = load_completed_spec_step_effects(
+                        managed_completion
                     )
                     discovery_completion.release(
                         self._project_root,
@@ -7892,420 +7955,435 @@ class SquadController:
             self._ensure_telemetry_manifest()
 
         while True:
-            phase = self._state_store.current_phase()
-            phase = self._guard_spec_lexicon_evidence(phase)
-            phase = self._guard_phase1_quality_evidence(phase)
-            phase = self._guard_understanding_evidence(phase)
-            guarded_phase = self._apply_phase_recommendation_guard(phase)
-            if guarded_phase != phase:
-                phase = guarded_phase
-            guarded_phase = self._guard_constitution_provenance(phase)
-            if guarded_phase != phase:
-                phase = guarded_phase
+            outcome = self._run_current_phase_step(
+                mode=mode,
+                next_phase_override=next_phase_override,
+            )
+            if outcome is not None:
+                return outcome
 
-            if phase in TERMINAL_PHASES:
-                state = self._state_store.load()
-                # ``terminal-blocked`` is not finalization.  It is a hard stop
-                # requested by a guard, and must never be converted into a
-                # readiness check or a successful completion merely because an
-                # earlier banzai handler temporarily set status=running.
-                if phase == PHASE_TERMINAL_BLOCKED:
-                    if state.get("status") != "blocked":
-                        state["status"] = "blocked"
-                        state["blocked_reason"] = (
-                            state.get("blocked_reason") or "terminal_blocked"
-                        )
-                        self._state_store.save(state)
-                    return SquadResult.from_state(self._state_store.load())
-                # Preserve "blocked" status set by guards (e.g. consecutive-fail).
-                # Only write "done" when not already in a terminal-blocked state.
+    def _run_current_phase_step(
+        self,
+        *,
+        mode: str,
+        next_phase_override: str,
+    ) -> SquadResult | None:
+        """Execute one current phase; return ``None`` to continue."""
+        _ = mode, next_phase_override
+        phase = self._state_store.current_phase()
+        phase = self._guard_spec_lexicon_evidence(phase)
+        phase = self._guard_phase1_quality_evidence(phase)
+        phase = self._guard_understanding_evidence(phase)
+        guarded_phase = self._apply_phase_recommendation_guard(phase)
+        if guarded_phase != phase:
+            phase = guarded_phase
+        guarded_phase = self._guard_constitution_provenance(phase)
+        if guarded_phase != phase:
+            phase = guarded_phase
+
+        if phase in TERMINAL_PHASES:
+            state = self._state_store.load()
+            # ``terminal-blocked`` is not finalization.  It is a hard stop
+            # requested by a guard, and must never be converted into a
+            # readiness check or a successful completion merely because an
+            # earlier banzai handler temporarily set status=running.
+            if phase == PHASE_TERMINAL_BLOCKED:
                 if state.get("status") != "blocked":
-                    readiness = self._publish_terminal_phase_a_artifacts_if_available()
-                    if readiness is not None and not readiness.ready:
-                        pending_state = self._state_store.load()
-                        if (
-                            PENDING_SPEC_STEP_KEY in pending_state
-                            or SPEC_STEP_EFFECT_PLAN_KEY
-                            in pending_state
-                            or SPEC_STEP_PUBLICATION_PLAN_KEY in pending_state
-                        ):
-                            return SquadResult.from_state(pending_state)
-                        self._block_after_phase_a_readiness_failure(readiness)
-                        return SquadResult.from_state(self._state_store.load())
-                    state = self._state_store.load()
-                    state["status"] = "done"
+                    state["status"] = "blocked"
+                    state["blocked_reason"] = (
+                        state.get("blocked_reason") or "terminal_blocked"
+                    )
                     self._state_store.save(state)
                 return SquadResult.from_state(self._state_store.load())
-
-            if self._cancelled:
+            # Preserve "blocked" status set by guards (e.g. consecutive-fail).
+            # Only write "done" when not already in a terminal-blocked state.
+            if state.get("status") != "blocked":
+                readiness = self._publish_terminal_phase_a_artifacts_if_available()
+                if readiness is not None and not readiness.ready:
+                    pending_state = self._state_store.load()
+                    if (
+                        PENDING_SPEC_STEP_KEY in pending_state
+                        or SPEC_STEP_EFFECT_PLAN_KEY
+                        in pending_state
+                        or SPEC_STEP_PUBLICATION_PLAN_KEY in pending_state
+                    ):
+                        return SquadResult.from_state(pending_state)
+                    self._block_after_phase_a_readiness_failure(readiness)
+                    return SquadResult.from_state(self._state_store.load())
                 state = self._state_store.load()
-                state["status"] = "interrupted"
-                state["phase"] = phase
-                state["interrupted_phase"] = phase
-                state["blocked_reason"] = None
+                state["status"] = "done"
                 self._state_store.save(state)
-                return SquadResult.from_state(self._state_store.load())
+            return SquadResult.from_state(self._state_store.load())
 
-            if self._budget_exhausted():
-                self._state_store.set_blocked("token_budget_exhausted")
-                self._record_blocker_event(phase, "token_budget_exhausted")
-                return SquadResult(
-                    status="budget_exhausted",
-                    phase=phase,
-                    run_id=self._state_store.load().get("run_id", ""),
-                )
+        if self._cancelled:
+            state = self._state_store.load()
+            state["status"] = "interrupted"
+            state["phase"] = phase
+            state["interrupted_phase"] = phase
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            return SquadResult.from_state(self._state_store.load())
 
-            node = self._graph.get(phase)
-
-            if self._skip_phase_if_condition_false(node):
-                continue
-
-            self._start_declared_phase_timing(node)
-
-            # Per-phase dispatch cap — prevents runaway loops on any phase.
-            # Iterative authoring and verification phases use max_iterations;
-            # one-shot phases use the lower general cap.
-            dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
-            phase_limit = _phase_dispatch_limit(
-                phase,
-                max_iterations=self._max_iterations,
+        if self._budget_exhausted():
+            self._state_store.set_blocked("token_budget_exhausted")
+            self._record_blocker_event(phase, "token_budget_exhausted")
+            return SquadResult(
+                status="budget_exhausted",
+                phase=phase,
+                run_id=self._state_store.load().get("run_id", ""),
             )
-            if dispatch_count > phase_limit:
-                cap_state = self._state_store.load()
-                try:
-                    candidates = self._banzai_issue_resolution_candidates(
-                        cap_state
-                    )
-                    cap_options = self._dispatch_cap_options(candidates)
-                except _DispatchCapEvidenceError as exc:
-                    self._record_blocker_event(phase, exc.reason_code)
-                    self._block_unresolvable_dispatch_cap(
-                        phase,
-                        cap_state,
-                        exc.reason_code,
-                    )
-                    return SquadResult.from_state(
-                        self._state_store.load()
-                    )
-                except HumanInputPolicyError:
-                    reason_code = (
-                        "phase_dispatch_limit_option_contract_failed"
-                    )
-                    self._record_blocker_event(phase, reason_code)
-                    self._block_unresolvable_dispatch_cap(
-                        phase,
-                        cap_state,
-                        reason_code,
-                    )
-                    return SquadResult.from_state(
-                        self._state_store.load()
-                    )
-                escalation_q = (
-                    f"Phase {phase!r} has been dispatched {dispatch_count} times "
-                    f"(limit {phase_limit}) without converging or advancing. "
-                    "Select exactly one sealed evidence-backed issue resolution."
-                )
-                request = self._human_input_registry.prepare_controller(
-                    source_kind="controller_safeguard",
-                    producer_id="phase_dispatch_limit",
-                    phase_id=phase,
-                    reason_code="phase_dispatch_limit",
-                    question=escalation_q,
-                    source_state_revision=cap_state["state_revision"],
-                    option_contract=cap_options,
-                )
-                self._record_blocker_event(phase, "phase_dispatch_limit")
-                print(
-                    f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
-                    f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
-                    flush=True,
-                )
-                if self.handle_human_input(request):
-                    continue
-                return SquadResult.from_state(self._state_store.load())
 
+        node = self._graph.get(phase)
+
+        if self._skip_phase_if_condition_false(node):
+            return None
+
+        self._start_declared_phase_timing(node)
+
+        # Per-phase dispatch cap — prevents runaway loops on any phase.
+        # Iterative authoring and verification phases use max_iterations;
+        # one-shot phases use the lower general cap.
+        dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
+        phase_limit = _phase_dispatch_limit(
+            phase,
+            max_iterations=self._max_iterations,
+        )
+        if dispatch_count > phase_limit:
+            cap_state = self._state_store.load()
+            try:
+                candidates = self._banzai_issue_resolution_candidates(
+                    cap_state
+                )
+                cap_options = self._dispatch_cap_options(candidates)
+            except _DispatchCapEvidenceError as exc:
+                self._record_blocker_event(phase, exc.reason_code)
+                self._block_unresolvable_dispatch_cap(
+                    phase,
+                    cap_state,
+                    exc.reason_code,
+                )
+                return SquadResult.from_state(
+                    self._state_store.load()
+                )
+            except HumanInputPolicyError:
+                reason_code = (
+                    "phase_dispatch_limit_option_contract_failed"
+                )
+                self._record_blocker_event(phase, reason_code)
+                self._block_unresolvable_dispatch_cap(
+                    phase,
+                    cap_state,
+                    reason_code,
+                )
+                return SquadResult.from_state(
+                    self._state_store.load()
+                )
+            escalation_q = (
+                f"Phase {phase!r} has been dispatched {dispatch_count} times "
+                f"(limit {phase_limit}) without converging or advancing. "
+                "Select exactly one sealed evidence-backed issue resolution."
+            )
+            request = self._human_input_registry.prepare_controller(
+                source_kind="controller_safeguard",
+                producer_id="phase_dispatch_limit",
+                phase_id=phase,
+                reason_code="phase_dispatch_limit",
+                question=escalation_q,
+                source_state_revision=cap_state["state_revision"],
+                option_contract=cap_options,
+            )
+            self._record_blocker_event(phase, "phase_dispatch_limit")
             print(
-                format_phase_dispatch_line(node, self._graph, self._ext_dir),
+                f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
+                f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
                 flush=True,
             )
+            if self.handle_human_input(request):
+                return None
+            return SquadResult.from_state(self._state_store.load())
 
-            if node.type == "human_gate":
-                if self._intercept_human_gate(node):
-                    continue
-                return SquadResult.from_state(self._state_store.load())
+        print(
+            format_phase_dispatch_line(node, self._graph, self._ext_dir),
+            flush=True,
+        )
 
-            executor = self._executors.get(node.type)
-            try:
-                node = self._materialize_controller_phase_inputs(node)
-                if executor is None:
-                    result = self._judgment_dispatch(
-                        f"Unknown phase type {node.type!r} for phase {phase!r}",
-                        node,
-                    )
-                else:
-                    with self._telemetry_provider.dispatch(
-                        DispatchContext(
-                            phase=phase,
-                            agent=str(node.agent or node.type),
-                            kind=(
-                                "repair"
-                                if dispatch_count > 1
-                                else "phase"
-                            ),
-                            attempt=dispatch_count,
-                            reason=self._dispatch_reason(
-                                phase,
-                                dispatch_count,
-                            ),
-                        )
-                    ):
-                        result = executor.execute(
-                            node,
-                            self._state_store,
-                        )
-            except ControllerStateContractViolation as exc:
-                self._block_after_executor_contract_failure(node, exc)
-                return SquadResult.from_state(self._state_store.load())
+        if node.type == "human_gate":
+            if self._intercept_human_gate(node):
+                return None
+            return SquadResult.from_state(self._state_store.load())
 
-            # SIGINT is deferred until the executor returns so we never tear
-            # down an in-flight filesystem operation.  Once it has returned,
-            # cancellation must win over result interpretation: a trailing
-            # BLOCKED envelope must not start a COMMANDER decision loop after
-            # the operator asked to stop.
-            if self._cancelled:
-                state = self._state_store.load()
-                state["status"] = "interrupted"
-                state["phase"] = phase
-                state["interrupted_phase"] = phase
-                state["blocked_reason"] = None
-                self._state_store.save(state)
-                return SquadResult.from_state(self._state_store.load())
-
-            if isinstance(result, ExecutorBlockedResult):
-                snapshot = self._state_store.capture_routing_snapshot(
-                    expected_phase=node.id,
+        executor = self._executors.get(node.type)
+        try:
+            node = self._materialize_controller_phase_inputs(node)
+            if executor is None:
+                result = self._judgment_dispatch(
+                    f"Unknown phase type {node.type!r} for phase {phase!r}",
+                    node,
                 )
-                self._block_after_executor_failure(
+            else:
+                with self._telemetry_provider.dispatch(
+                    DispatchContext(
+                        phase=phase,
+                        agent=str(node.agent or node.type),
+                        kind=(
+                            "repair"
+                            if dispatch_count > 1
+                            else "phase"
+                        ),
+                        attempt=dispatch_count,
+                        reason=self._dispatch_reason(
+                            phase,
+                            dispatch_count,
+                        ),
+                    )
+                ):
+                    result = executor.execute(
+                        node,
+                        self._state_store,
+                    )
+        except ControllerStateContractViolation as exc:
+            self._block_after_executor_contract_failure(node, exc)
+            return SquadResult.from_state(self._state_store.load())
+
+        # SIGINT is deferred until the executor returns so we never tear
+        # down an in-flight filesystem operation.  Once it has returned,
+        # cancellation must win over result interpretation: a trailing
+        # BLOCKED envelope must not start a COMMANDER decision loop after
+        # the operator asked to stop.
+        if self._cancelled:
+            state = self._state_store.load()
+            state["status"] = "interrupted"
+            state["phase"] = phase
+            state["interrupted_phase"] = phase
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            return SquadResult.from_state(self._state_store.load())
+
+        if isinstance(result, ExecutorBlockedResult):
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id,
+            )
+            self._block_after_executor_failure(
+                phase,
+                result.reason,
+                result.result,
+                snapshot=snapshot,
+                recovery_instruction=trusted_executor_block_recovery(
                     phase,
                     result.reason,
-                    result.result,
-                    snapshot=snapshot,
-                    recovery_instruction=trusted_executor_block_recovery(
-                        phase,
-                        result.reason,
-                    ),
-                )
-                if self._schedule_phase_output_retry(phase, result.reason):
-                    continue
-                return SquadResult.from_state(self._state_store.load())
+                ),
+            )
+            if self._schedule_phase_output_retry(phase, result.reason):
+                return None
+            return SquadResult.from_state(self._state_store.load())
 
-            if result.timed_out:
-                snapshot = self._state_store.capture_routing_snapshot(
-                    expected_phase=node.id,
-                )
-                self._block_after_executor_failure(
+        if result.timed_out:
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id,
+            )
+            self._block_after_executor_failure(
+                phase,
+                "agent_timeout",
+                result,
+                snapshot=snapshot,
+                recovery_instruction=retry_phase_recovery(
                     phase,
                     "agent_timeout",
-                    result,
-                    snapshot=snapshot,
-                    recovery_instruction=retry_phase_recovery(
-                        phase,
-                        "agent_timeout",
-                    ),
+                ),
+            )
+            return SquadResult.from_state(self._state_store.load())
+
+        if node.id == "phase4-document":
+            self._enter_retarget_finalizing(self._state_store.load())
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
+        prepared = self._prepare_phase_result_or_block(
+            node,
+            result,
+            snapshot,
+        )
+        if prepared is None:
+            return SquadResult.from_state(self._state_store.load())
+        prepared_result = prepared.as_squad_agent_result()
+
+        blocked_result = self._blocked_executor_reason(
+            prepared_result,
+            prepared.control_updates,
+        )
+        if blocked_result:
+            if (self._phase3_planner_block_routing(node, prepared, snapshot)[0]
+                    or (blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0])):
+                routing = self._construct_routing_decision_or_block(node, prepared, snapshot)
+                if routing is None or self._advance_prepared_result_or_block(node, routing.decision) is None:
+                    return SquadResult.from_state(self._state_store.load())
+                return None
+            # A bare BLOCKED result has no material ambiguity.  It is a
+            # retryable dispatch failure (and is a common provider shape
+            # after an interrupted turn), not a reason to manufacture a
+            # clarification request.
+            if (
+                blocked_result == "agent_blocked"
+                and self._route_banzai_consensus_issue_repair(
+                    node,
+                    snapshot,
                 )
-                return SquadResult.from_state(self._state_store.load())
-
-            if node.id == "phase4-document":
-                self._enter_retarget_finalizing(self._state_store.load())
-            snapshot = self._state_store.capture_routing_snapshot(
-                expected_phase=node.id
-            )
-            prepared = self._prepare_phase_result_or_block(
-                node,
-                result,
-                snapshot,
-            )
-            if prepared is None:
-                return SquadResult.from_state(self._state_store.load())
-            prepared_result = prepared.as_squad_agent_result()
-
-            blocked_result = self._blocked_executor_reason(
-                prepared_result,
-                prepared.control_updates,
-            )
-            if blocked_result:
-                if (self._phase3_planner_block_routing(node, prepared, snapshot)[0]
-                        or (blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0])):
-                    routing = self._construct_routing_decision_or_block(node, prepared, snapshot)
-                    if routing is None or self._advance_prepared_result_or_block(node, routing.decision) is None:
-                        return SquadResult.from_state(self._state_store.load())
-                    continue
-                # A bare BLOCKED result has no material ambiguity.  It is a
-                # retryable dispatch failure (and is a common provider shape
-                # after an interrupted turn), not a reason to manufacture a
-                # clarification request.
-                if (
-                    blocked_result == "agent_blocked"
-                    and self._route_banzai_consensus_issue_repair(
-                        node,
-                        snapshot,
-                    )
-                ):
-                    continue
-                if (
-                    node.type == "agent"
-                    and blocked_result != "agent_blocked"
-                    and self._route_agent_block_to_commander(
-                        node,
-                        blocked_result,
-                        prepared_result,
-                        snapshot,
-                    )
-                ):
-                    continue
-                self._block_after_executor_failure(
-                    phase,
+            ):
+                return None
+            if (
+                node.type == "agent"
+                and blocked_result != "agent_blocked"
+                and self._route_agent_block_to_commander(
+                    node,
                     blocked_result,
                     prepared_result,
-                    snapshot=snapshot,
-                    recovery_instruction=(
-                        retry_phase_recovery(phase, blocked_result)
-                        if blocked_result == "agent_blocked"
-                        else None
-                    ),
+                    snapshot,
                 )
-                return SquadResult.from_state(self._state_store.load())
-
-            constitution_promotion_error = self._promote_constitution_draft(
-                node
+            ):
+                return None
+            self._block_after_executor_failure(
+                phase,
+                blocked_result,
+                prepared_result,
+                snapshot=snapshot,
+                recovery_instruction=(
+                    retry_phase_recovery(phase, blocked_result)
+                    if blocked_result == "agent_blocked"
+                    else None
+                ),
             )
-            if constitution_promotion_error is not None:
-                self._block_after_executor_failure(
+            return SquadResult.from_state(self._state_store.load())
+
+        constitution_promotion_error = self._promote_constitution_draft(
+            node
+        )
+        if constitution_promotion_error is not None:
+            self._block_after_executor_failure(
+                phase,
+                constitution_promotion_error,
+                prepared_result,
+                snapshot=snapshot,
+                recovery_instruction=retry_phase_recovery(
                     phase,
                     constitution_promotion_error,
-                    prepared_result,
-                    snapshot=snapshot,
-                    recovery_instruction=retry_phase_recovery(
-                        phase,
-                        constitution_promotion_error,
-                    ),
-                )
-                return SquadResult.from_state(self._state_store.load())
-
-            prepared_publication: PreparedSquadPublication | None = None
-            try:
-                prepared_publication = (
-                    self._prepare_external_phase_effects(
-                        prepared_result,
-                        phase,
-                        snapshot.state,
-                        manual_phase_run=False,
-                    )
-                )
-            except _ProductInputCommitError as exc:
-                product_input_error = exc.reason
-                if self._schedule_product_input_mapping_repair(
-                    phase,
-                    product_input_error,
-                    prepared_result,
-                    snapshot=snapshot,
-                ):
-                    continue
-                self._block_after_executor_failure(
-                    phase,
-                    product_input_error,
-                    prepared_result,
-                    snapshot=snapshot,
-                )
-                return SquadResult.from_state(self._state_store.load())
-            except _PhaseAReadinessCommitError as exc:
-                self._block_after_phase_a_readiness_failure(
-                    exc.readiness,
-                    snapshot=snapshot,
-                )
-                return SquadResult.from_state(self._state_store.load())
-
-            routing_updates = self._planned_phase_a_publication_updates(
-                phase,
-                snapshot.state,
+                ),
             )
-            if node.id == "phase1-constitution":
-                # CHIEF is deliberately denied writes to .echelon.  This
-                # controller-owned state update is emitted only after the
-                # validated run-local draft has been atomically promoted.
-                routing_updates["constitution_status"] = "exists"
-            if prepared_publication is not None:
-                routing_updates.update(
-                    self._product_input_publication_state_updates(
-                        prepared_publication
-                    )
+            return SquadResult.from_state(self._state_store.load())
+
+        prepared_publication: PreparedSquadPublication | None = None
+        try:
+            prepared_publication = (
+                self._prepare_external_phase_effects(
+                    prepared_result,
+                    phase,
+                    snapshot.state,
+                    manual_phase_run=False,
                 )
-                routing_updates[SPEC_STEP_PUBLICATION_PLAN_KEY] = (
-                    prepared_publication.marker.to_dict()
+            )
+        except _ProductInputCommitError as exc:
+            product_input_error = exc.reason
+            if self._schedule_product_input_mapping_repair(
+                phase,
+                product_input_error,
+                prepared_result,
+                snapshot=snapshot,
+            ):
+                return None
+            self._block_after_executor_failure(
+                phase,
+                product_input_error,
+                prepared_result,
+                snapshot=snapshot,
+            )
+            return SquadResult.from_state(self._state_store.load())
+        except _PhaseAReadinessCommitError as exc:
+            self._block_after_phase_a_readiness_failure(
+                exc.readiness,
+                snapshot=snapshot,
+            )
+            return SquadResult.from_state(self._state_store.load())
+
+        routing_updates = self._planned_phase_a_publication_updates(
+            phase,
+            snapshot.state,
+        )
+        if node.id == "phase1-constitution":
+            # CHIEF is deliberately denied writes to .echelon.  This
+            # controller-owned state update is emitted only after the
+            # validated run-local draft has been atomically promoted.
+            routing_updates["constitution_status"] = "exists"
+        if prepared_publication is not None:
+            routing_updates.update(
+                self._product_input_publication_state_updates(
+                    prepared_publication
                 )
-            routing = self._construct_routing_decision_or_block(
+            )
+            routing_updates[SPEC_STEP_PUBLICATION_PLAN_KEY] = (
+                prepared_publication.marker.to_dict()
+            )
+        routing = self._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+            additional_state_updates=routing_updates,
+        )
+        if routing is None:
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
+            return SquadResult.from_state(self._state_store.load())
+        decision = routing.decision
+        next_phase = decision.to_phase
+
+        human_input_result = (
+            self._handle_prepared_human_input_or_block(
                 node,
                 prepared,
                 snapshot,
-                additional_state_updates=routing_updates,
+                routing,
+                prepared_publication,
             )
-            if routing is None:
-                self._discard_publication_without_authority(
-                    prepared_publication,
-                )
-                return SquadResult.from_state(self._state_store.load())
-            decision = routing.decision
-            next_phase = decision.to_phase
+        )
+        if human_input_result is not None:
+            if human_input_result:
+                return None
+            return SquadResult.from_state(self._state_store.load())
 
-            human_input_result = (
-                self._handle_prepared_human_input_or_block(
-                    node,
-                    prepared,
-                    snapshot,
-                    routing,
-                    prepared_publication,
-                )
-            )
-            if human_input_result is not None:
-                if human_input_result:
-                    continue
-                return SquadResult.from_state(self._state_store.load())
+        receipt = self._advance_prepared_result_or_block(
+            node,
+            decision,
+            prepared_publication=prepared_publication,
+        )
+        if receipt is None:
+            return SquadResult.from_state(self._state_store.load())
 
-            receipt = self._advance_prepared_result_or_block(
-                node,
-                decision,
-                prepared_publication=prepared_publication,
-            )
-            if receipt is None:
-                return SquadResult.from_state(self._state_store.load())
-
-            # Inline escalation check — fires when _evaluate_transitions detected
-            # escalation_question in state_updates and returned the current phase.
-            # Handles it in the same run() invocation rather than requiring a
-            # re-invocation to reach the top-of-loop escalation block.
+        # Inline escalation check — fires when _evaluate_transitions detected
+        # escalation_question in state_updates and returned the current phase.
+        # Handles it in the same run() invocation rather than requiring a
+        # re-invocation to reach the top-of-loop escalation block.
+        state_now = self._state_store.load()
+        if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
+            if self.resume_pending_human_input():
+                return None
             state_now = self._state_store.load()
-            if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
-                if self.resume_pending_human_input():
-                    continue
-                state_now = self._state_store.load()
-                _blocked_banner(
-                    phase=phase,
-                    reason=state_now.get("blocked_reason", ""),
-                    question=state_now.get("escalation_question", ""),
-                )
-                return SquadResult(
-                    status="blocked",
-                    phase=phase,
-                    run_id=state_now.get("run_id", ""),
-                )
-            else:
-                print(
-                    format_phase_transition_line(
-                        node.id, next_phase, self._graph, self._ext_dir
-                    ),
-                    flush=True,
-                )
-                continue
+            _blocked_banner(
+                phase=phase,
+                reason=state_now.get("blocked_reason", ""),
+                question=state_now.get("escalation_question", ""),
+            )
+            return SquadResult(
+                status="blocked",
+                phase=phase,
+                run_id=state_now.get("run_id", ""),
+            )
+        else:
+            print(
+                format_phase_transition_line(
+                    node.id, next_phase, self._graph, self._ext_dir
+                ),
+                flush=True,
+            )
+            return None
 
     def _guard_understanding_evidence(
         self,

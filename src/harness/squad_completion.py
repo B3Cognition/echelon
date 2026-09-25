@@ -1552,6 +1552,28 @@ def load_prepared_spec_step_effects(
     )
 
 
+def load_completed_spec_step_effects(
+    prepared: PreparedSpecStepEffects,
+) -> PreparedSpecStepEffects:
+    """Reload the exact completed companion after step-owned effects finish."""
+    _verify_prepared_completion_identity(prepared)
+    receipts = _read_regular(
+        prepared._transaction_root / _RECEIPTS_NAME,
+        maximum=_MAX_RECEIPTS_BYTES,
+        code="receipts_invalid",
+    )
+    marker = {
+        **prepared.marker.to_dict(),
+        "receipts_sha256": hashlib.sha256(receipts).hexdigest(),
+        "step": "complete",
+    }
+    return load_prepared_spec_step_effects(
+        prepared._project_root,
+        prepared._squad_dir,
+        marker,
+    )
+
+
 def validate_retained_completion_proof(marker_value, intent_value, receipts_value):
     """Validate detached completion proof retained by an existing durable owner.
 
