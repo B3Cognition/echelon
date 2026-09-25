@@ -131,6 +131,7 @@ def test_agent_phase_metadata_limits_writes_to_declared_outputs(tmp_path: Path) 
     assert metadata["tool_write_paths"] == [
         str(spec_dir / "issues.md"),
         str(spec_dir / "quality-gates.md"),
+        str(tmp_path / "squad" / "run-test" / "kb-proposals" / "sage-decision-phase1-why2-rev-0.yaml"),
     ]
 
 
@@ -168,6 +169,7 @@ def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> 
     assert metadata["tool_write_paths"] == [
         str(spec_dir / "issues.md"),
         str(spec_dir / "quality-gates.md"),
+        str(tmp_path / "squad" / "run-test" / "kb-proposals" / "sage-decision-phase1-why2-rev-2.yaml"),
     ]
 
 
@@ -187,7 +189,31 @@ def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> No
     assert metadata["tool_write_paths"] == [
         str(spec_dir / "issues.md"),
         str(spec_dir / "quality-gates.md"),
+        str(tmp_path / "squad" / "run-test" / "kb-proposals" / "sage-decision-phase3-consensus-rev-0.yaml"),
     ]
+
+
+def test_sage_prompt_names_exact_authorized_decision_proposal_path(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    state = {
+        "spec_dir": "specs/001-demo",
+        "state_revision": 17,
+    }
+
+    context = executor._sage_output_path_context(
+        PhaseNode(id="phase3-consensus", type="staged_parallel"),
+        state,
+        agent_id="echelon.sage",
+    )
+
+    assert str(
+        tmp_path
+        / "squad"
+        / "run-test"
+        / "kb-proposals"
+        / "sage-decision-phase3-consensus-rev-17.yaml"
+    ) in context
+    assert "use this exact path" in context
 
 
 def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
@@ -2405,6 +2431,55 @@ def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
 
     assert result.verdict == "PASS"
     assert "why3_repair_phase" not in state_store.load()
+
+
+def test_staged_why3_requires_current_review_reports_in_output_files(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text("# stale issues\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# stale gates\n", encoding="utf-8"
+    )
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="PASS")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon.sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
+        "issues.md",
+        "quality-gates.md",
+    ]
+    assert "output_files" in result.result.raw_output
 
 
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):

@@ -1560,6 +1560,40 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _sage_decision_proposal_path(self, node: "PhaseNode", state: dict) -> Path:
+        revision = _normalized_attempts(state.get("state_revision"))
+        return (
+            self._squad_dir
+            / "kb-proposals"
+            / f"sage-decision-{node.id}-rev-{revision}.yaml"
+        ).resolve(strict=False)
+
+    def _sage_output_path_context(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        *,
+        agent_id: str | None = None,
+    ) -> str:
+        resolved_agent = str(agent_id or node.agent or "").strip()
+        if resolved_agent != "echelon.sage" or node.id not in {
+            "phase1-why2",
+            "phase3-consensus",
+        }:
+            return ""
+        proposal = self._sage_decision_proposal_path(node, state)
+        return (
+            "\n## Required SAGE output paths\n"
+            "Write the current review to `issues.md` and `quality-gates.md` "
+            "in the active spec directory, then list both exact paths in "
+            "`echelon_result.output_files`. Existing files are not evidence "
+            "of publication by this dispatch.\n"
+            "If this review produces a blocking decision, use this exact path "
+            "for the required run-local `sage_decision` proposal:\n"
+            f"`{proposal}`\n"
+            "Do not choose another proposal filename or write through staging.\n"
+        )
+
     def _phase_prompt_metadata(
         self,
         node: "PhaseNode",
@@ -1602,10 +1636,12 @@ class PhaseExecutor(ABC):
                 if isinstance(declared, str):
                     filenames.update(_DECLARED_OUTPUT_FILE_RE.findall(declared))
 
-        metadata["tool_write_paths"] = [
+        write_paths = [
             str((spec_dir / filename).resolve(strict=False))
             for filename in sorted(filenames)
         ]
+        write_paths.append(str(self._sage_decision_proposal_path(node, state)))
+        metadata["tool_write_paths"] = sorted(write_paths)
         # `:workspace` is normally writable. Codex consumes this explicit flag
         # to make the declared reports the only writable product paths.
         metadata["tool_write_scope_exclusive"] = True
@@ -2414,6 +2450,7 @@ class AgentExecutor(PhaseExecutor):
             return ExecutorBlockedResult(reason="repair_context_incomplete", result=SquadAgentResult(
                 exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_context_incomplete"}},
                 raw_output=str(exc), duration_ms=0, timed_out=False))
+        prompt += self._sage_output_path_context(node, state)
         result_contract = self._result_contract(node)
         prompt_metadata: dict[str, object] = {}
         if node.agent:
@@ -2884,6 +2921,69 @@ class StagedParallelExecutor(PhaseExecutor):
     """
 
     _FINAL_REPORTS = ("issues.md", "quality-gates.md", "implementability-report.md")
+
+    def _missing_sage_review_outputs(
+        self,
+        state: dict,
+        result: "SquadAgentResult",
+    ) -> list[str]:
+        """Require WHY3 to publish and declare both current review reports."""
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(), self._project_root
+        )
+        if not spec_dir_ref:
+            return list(_SAGE_REVIEW_OUTPUTS)
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+
+        payload = result.echelon_result or {}
+        raw_outputs = payload.get("output_files")
+        claimed: set[Path] = set()
+        if isinstance(raw_outputs, list):
+            for raw in raw_outputs:
+                if not isinstance(raw, str) or not raw.strip():
+                    continue
+                candidate = Path(raw.strip().rstrip("/"))
+                candidates = [candidate] if candidate.is_absolute() else [
+                    self._project_root / candidate,
+                    spec_dir / candidate,
+                ]
+                claimed.update(path.resolve(strict=False) for path in candidates)
+
+        return [
+            filename
+            for filename in _SAGE_REVIEW_OUTPUTS
+            if not (spec_dir / filename).is_file()
+            or (spec_dir / filename).resolve(strict=False) not in claimed
+        ]
+
+    @staticmethod
+    def _missing_review_outputs_block(missing: list[str]):
+        from harness.squad_provider import SquadAgentResult
+
+        detail = (
+            "SAGE must write the current WHY3 review reports and list them in "
+            f"echelon_result.output_files; missing declarations: {', '.join(missing)}"
+        )
+        return ExecutorBlockedResult(
+            reason="missing_phase_outputs",
+            result=SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": "missing_phase_outputs",
+                        "missing_outputs": missing,
+                        "recovery_state_updates": {},
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=detail,
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
 
     def _final_review_inputs(self, node, state, spec_dir):
         """Fingerprint full inputs, not bounded model renderings or report revisions.
@@ -3586,6 +3686,9 @@ class StagedParallelExecutor(PhaseExecutor):
                     controller_context=getattr(node, "controller_context", ""),
                     required_context=required_review,
                 )
+                prompt += self._sage_output_path_context(
+                    node, state, agent_id=agent_id
+                )
                 prompt_metadata: dict[str, object] = {}
                 if agent_id == "echelon.sage":
                     rel = self._graph.agent_file(agent_id)
@@ -3643,6 +3746,10 @@ class StagedParallelExecutor(PhaseExecutor):
                     elif agent_id != "echelon.sage" or label != "WHY3":
                         return ExecutorBlockedResult(reason="invalid_phase_outputs", result=SquadAgentResult(
                             exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "invalid_phase_outputs"}}, raw_output="unsolicited or non-SAGE issue review", duration_ms=0, timed_out=False))
+                if agent_id == "echelon.sage" and label == "WHY3":
+                    missing = self._missing_sage_review_outputs(state, result)
+                    if missing:
+                        return self._missing_review_outputs_block(missing)
                 stage1_results[label] = result
                 payload = result.echelon_result or {}
                 product_input_updates.extend(payload.get("product_input_updates") or [])

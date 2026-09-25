@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -176,6 +177,7 @@ class ClaudeCliBackend:
                         read_only_roots=(str(Path(request.cwd).resolve()), *read_roots)
                         if exclusive_write_scope else (),
                         preserve_forbidden_children=explicit_write_scope,
+                        allow_atomic_writes=exclusive_write_scope,
                     ),
                     *cmd,
                 ]
@@ -609,7 +611,18 @@ def _prompt_scope_paths(
 
 
 def _claude_absolute_rule_path(path: str) -> str:
-    return f"/{path}" if path.startswith("/") else path
+    return path if path.startswith("/") else f"/{path}"
+
+
+def _atomic_write_sibling_regex(path: str) -> str:
+    """Match only temp siblings derived from one authorized output name."""
+    candidate = Path(path)
+    parent = re.escape(str(candidate.parent)).replace(r"\-", "-").replace(r"\ ", " ")
+    filename = re.escape(candidate.name).replace(r"\-", "-")
+    pattern = rf"^{parent}/[.]?{filename}([.][^/]+)?$"
+    # SBPL's #"..." regex form is already raw; JSON-style double escaping
+    # changes the pattern and silently prevents the intended match.
+    return f'(regex #"{pattern}")'
 
 
 def host_workspace_synthesis_boundary_available() -> bool:
@@ -630,6 +643,7 @@ def _workspace_sandbox_profile(
     operational_metadata_paths: tuple[str, ...] = (),
     read_only_roots: tuple[str, ...] = (),
     preserve_forbidden_children: bool = False,
+    allow_atomic_writes: bool = False,
 ) -> str:
     exclusions: list[str] = []
     for root in forbidden_roots:
@@ -680,6 +694,13 @@ def _workspace_sandbox_profile(
             for path in write_paths
             for rule in (
                 f"(allow file-read* (literal {json.dumps(path)}))",
+                *(
+                    (
+                        f"(allow file-write* {_atomic_write_sibling_regex(path)})",
+                    )
+                    if allow_atomic_writes
+                    else ()
+                ),
                 f"(allow file-write* (literal {json.dumps(str(Path(path).parent))}))",
                 f"(allow file-write* (literal {json.dumps(path)}))",
             )

@@ -14,7 +14,9 @@ The regression surface includes:
 1. preserving resolved human-decision authority during later issue repair;
 2. replaying pending controller-owned completion;
 3. persisting explicit autonomy-mode changes before recovery routing; and
-4. exposing and routing structured Phase 3 consensus blockers.
+4. exposing and routing structured Phase 3 consensus blockers; and
+5. preserving SAGE's bounded write capability and rejecting unpublished review
+   reports.
 
 ## 1. Preserve decision authority during issue repair
 
@@ -183,11 +185,53 @@ test_consensus_agent_block_recovery_exposes_owner_and_required_repair
 test_banzai_consensus_agent_block_recovery_explains_automatic_route
 ```
 
+## 5. Keep SAGE review writes bounded and usable
+
+### Failure
+
+WHY3 tells SAGE to update `issues.md` and `quality-gates.md`, but the Claude
+adapter combines `dontAsk` with an OS sandbox that permits only direct writes to
+the final filenames. Claude's Write/Edit implementation uses a temporary sibling
+and atomic rename, so both writes fail with `EPERM`. Absolute paths in Claude's
+tool allowlist are also rendered with an extra leading slash. A blocking SAGE
+decision is told to publish a run-local KB proposal, but no proposal path is
+authorized.
+
+The staged consensus executor then accepts `output_files: []`. Pre-existing
+reports make the run look complete even though they are stale, and consensus
+can retry indefinitely without presenting the actual publication failure.
+
+### Required invariant
+
+For an exclusive SAGE review dispatch:
+
+- Claude tool rules MUST contain canonical absolute paths;
+- the OS sandbox MUST permit only temporary siblings derived from each exact
+  authorized filename for atomic replacement, while Claude's tool allowlist
+  remains restricted to the exact final paths;
+- the controller MUST inject one deterministic, exact run-local KB proposal
+  path and authorize it; and
+- WHY3 MUST block with `missing_phase_outputs` unless both review files exist
+  and are declared in that dispatch's `echelon_result.output_files`.
+
+Stale files from an earlier dispatch MUST NOT satisfy the declaration check.
+The failure text MUST name the missing reports and the `output_files` contract.
+
+Current regression tests:
+
+```text
+test_claude_backend_enforces_prompt_file_scopes
+test_claude_workspace_sandbox_allows_atomic_replace_for_declared_output
+test_claude_exclusive_scope_wires_atomic_write_profile
+test_sage_prompt_names_exact_authorized_decision_proposal_path
+test_staged_why3_requires_current_review_reports_in_output_files
+```
+
 ## Verification procedure for a refactored repository
 
 1. Locate the durable state writer, recovery classifier, continuation command,
    and Phase 3 repair router. Do not assume their old names or locations.
-2. Confirm that all four invariants above have a single state owner and that
+2. Confirm that all five invariants above have a single state owner and that
    presentation code does not silently discard structured recovery data.
 3. Port or locate the named regression tests and run them.
 4. Run the broader continuation, status, and controller-routing suites.

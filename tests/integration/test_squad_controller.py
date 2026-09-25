@@ -2689,9 +2689,22 @@ class TestConsensusCannotBeSkipped:
 
         def consensus_result(_project_root: str, prompt: str, **_kwargs):
             if "Operate in **WHY3** mode" in prompt:
+                (spec_dir / "issues.md").write_text(
+                    "# Issues\n", encoding="utf-8"
+                )
+                (spec_dir / "quality-gates.md").write_text(
+                    "# Quality Gates\n", encoding="utf-8"
+                )
                 return SquadAgentResult(
                     0,
-                    {"verdict": "PASS", "state_updates": {}},
+                    {
+                        "verdict": "PASS",
+                        "state_updates": {},
+                        "output_files": [
+                            str(spec_dir / "issues.md"),
+                            str(spec_dir / "quality-gates.md"),
+                        ],
+                    },
                     "",
                     1,
                     False,
@@ -6015,6 +6028,10 @@ class TestSquadControllerBasics:
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "issues.md").write_text("# Issues\n", encoding="utf-8")
+        (spec_dir / "quality-gates.md").write_text(
+            "# Quality Gates\n", encoding="utf-8"
+        )
         (spec_dir / "implementability-report.md").write_text(
             "# implementability-report.md\n",
             encoding="utf-8",
@@ -6023,6 +6040,10 @@ class TestSquadControllerBasics:
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
+        default_result.echelon_result["output_files"] = [
+            str(spec_dir / "issues.md"),
+            str(spec_dir / "quality-gates.md"),
+        ]
         _install_passing_understanding(monkeypatch)
 
         result = ctrl.run("msg", "semi")
