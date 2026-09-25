@@ -187,6 +187,9 @@ test_banzai_consensus_agent_block_recovery_explains_automatic_route
 
 ## 5. Keep SAGE review writes bounded and usable
 
+For the graph-wide artifact-publication audit and refactor acceptance criteria,
+see [Provider Output Publication Regression Audit](provider-output-publication-regression-audit.md).
+
 ### Failure
 
 WHY3 tells SAGE to update `issues.md` and `quality-gates.md`, but the Claude
