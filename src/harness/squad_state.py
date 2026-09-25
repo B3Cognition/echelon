@@ -4734,6 +4734,7 @@ class SquadStateStore:
         prepared_completion: PreparedControllerCompletion | None = None,
         resolved_at: str | None = None,
         resolved_decision_postimage: Mapping[str, object] | None = None,
+        prepare_only: bool = False,
     ) -> dict[str, Any]:
         if type(resolution) is not AppliedHumanInputResolution:
             raise StateAdvanceError(
@@ -4986,9 +4987,10 @@ class SquadStateStore:
                         ),
                         validator="completion_binding",
                     )
-                desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
-                    completion_marker
-                )
+                if not prepare_only:
+                    desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
+                        completion_marker
+                    )
                 if "managed_discovery" in completion_intent["publication"]:
                     from harness.discovery_completion import decode_binding
                     binding = decode_binding(completion_intent["publication"],
@@ -5006,7 +5008,10 @@ class SquadStateStore:
                     if binding.recovery["version"] == 41 and token_usage_delta != (
                             binding.recovery["commander_receipt"] or {}).get("token_usage", 0):
                         raise StateAdvanceError("native answer charge changed", validator="completion_binding")
-                    desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
+                    if not prepare_only:
+                        desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
+            if prepare_only:
+                return desired
             return self._commit_human_input_state_unlocked(
                 before,
                 desired,
@@ -5522,6 +5527,106 @@ class SquadStateStore:
                 )
                 updated_retarget.pop("memory_excluded", None)
                 final_state["retarget"] = updated_retarget
+        elif loaded.intent.origin == "routed":
+            companion = loaded.intent.provenance.get("completion_marker")
+            dispatch = final_state.get("last_dispatch")
+            if companion is not None:
+                if not isinstance(companion, Mapping):
+                    raise StateAdvanceError(
+                        "routed spec step provenance is invalid",
+                        json_path="$.last_dispatch",
+                        validator="completion_binding",
+                    )
+                completion_marker = dict(companion)
+                for effect_receipt in loaded.receipts:
+                    candidate = effect_receipt.payload.get(
+                        "completion_marker"
+                    )
+                    if isinstance(candidate, Mapping):
+                        completion_marker = dict(candidate)
+                if (
+                    completion_marker.get("completion_id")
+                    != loaded.marker.step_id
+                    or completion_marker.get("step") != "complete"
+                    or not isinstance(dispatch, dict)
+                ):
+                    raise StateAdvanceError(
+                        "routed spec step receipts are incomplete",
+                        json_path="$.last_dispatch",
+                        validator="completion_binding",
+                    )
+                dispatch.update(
+                    {
+                        "post_dispatch_complete": True,
+                        "completion_intent_sha256": completion_marker.get(
+                            "intent_sha256"
+                        ),
+                        "completion_receipts_sha256": completion_marker.get(
+                            "receipts_sha256"
+                        ),
+                        "completed_publication_binding_sha256": (
+                            completion_marker.get(
+                                "publication_binding_sha256"
+                            )
+                        ),
+                    }
+                )
+        elif loaded.intent.origin == "resolution":
+            decision = final_state.get("blocked_decision")
+            if (
+                route.get("kind") != "resolution"
+                or not isinstance(decision, Mapping)
+                or decision.get("id") != route.get("decision_id")
+                or decision.get("status") != "resolved"
+                or final_state.get("phase") != route.get("to_phase")
+            ):
+                raise StateAdvanceError(
+                    "human-input spec step identity is invalid",
+                    json_path="$.blocked_decision",
+                    validator="completion_binding",
+                )
+            companion = loaded.intent.provenance.get("completion_marker")
+            if companion is not None:
+                if not isinstance(companion, Mapping):
+                    raise StateAdvanceError(
+                        "human-input completion provenance is invalid",
+                        json_path="$.last_human_input_completion",
+                        validator="completion_binding",
+                    )
+                completion_marker = dict(companion)
+                for effect_receipt in loaded.receipts:
+                    candidate = effect_receipt.payload.get(
+                        "completion_marker"
+                    )
+                    if isinstance(candidate, Mapping):
+                        completion_marker = dict(candidate)
+                if (
+                    completion_marker.get("completion_id")
+                    != loaded.marker.step_id
+                    or completion_marker.get("step") != "complete"
+                ):
+                    raise StateAdvanceError(
+                        "human-input completion receipts are incomplete",
+                        json_path="$.last_human_input_completion",
+                        validator="completion_binding",
+                    )
+                final_state["last_human_input_completion"] = {
+                    "schema_version": 1,
+                    "completion_id": loaded.marker.step_id,
+                    "intent_sha256": completion_marker.get(
+                        "intent_sha256"
+                    ),
+                    "receipts_sha256": completion_marker.get(
+                        "receipts_sha256"
+                    ),
+                    "decision_id": route.get("decision_id"),
+                }
+                if loaded.intent.publication is not None:
+                    final_state["last_human_input_completion"][
+                        "publication_binding_sha256"
+                    ] = completion_marker.get(
+                        "publication_binding_sha256"
+                    )
         if PENDING_SPEC_STEP_KEY in final_state:
             raise StateAdvanceError(
                 "spec step final state retains its marker",
@@ -5529,7 +5634,7 @@ class SquadStateStore:
                 validator="completion_binding",
             )
         dispatch = final_state.get("last_dispatch")
-        if loaded.intent.origin != "terminal" and (
+        if loaded.intent.origin == "routed" and (
             not isinstance(dispatch, Mapping)
             or dispatch.get("dispatch_id") != loaded.marker.step_id
         ):

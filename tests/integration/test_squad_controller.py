@@ -11074,14 +11074,22 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             raising=False,
         )
         provider_calls = ctrl._provider.exec_agent.call_count
+        decision_id = str(store.load()["blocked_decision"]["id"])
 
         assert ctrl.resume_with_human_input("continue_with_debt") is False
 
         debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
         pending = store.load()
         assert not debt_path.exists()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
-        assert pending["blocked_reason"] == "controller_completion_pending"
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in pending
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
+        sealed = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        assert sealed.intent.origin == "resolution"
+        assert sealed.intent.route["decision_id"] == decision_id
         ctrl.run("must reconcile before downstream", "semi")
         assert ctrl._provider.exec_agent.call_count == provider_calls
         assert effect_calls >= 2
@@ -11092,10 +11100,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
         assert recovered.recovered is True
         assert debt_path.is_file()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        completed = store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
+        assert PENDING_SPEC_STEP_KEY not in completed
 
     def test_stop_removes_stale_debt_artifact_through_recoverable_effect(
         self,
@@ -15642,7 +15652,8 @@ class TestLexiconGateGuardDeterminism:
 
         assert ctrl.resume_with_human_input("continue_with_debt") is False
         pending = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
         assert debt_path.read_bytes() != stale
 
         monkeypatch.setattr(
@@ -15650,11 +15661,12 @@ class TestLexiconGateGuardDeterminism:
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
 
         assert recovered.recovered is True
         accepted = store.load()
         assert PENDING_CONTROLLER_COMPLETION_KEY not in accepted
+        assert PENDING_SPEC_STEP_KEY not in accepted
         assert accepted["spec_quality_debt_authorization"][
             "debt_artifact_sha256"
         ] == hashlib.sha256(debt_path.read_bytes()).hexdigest()

@@ -109,15 +109,17 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
                 patch.setattr(PreparedSquadPublication, "_promote", interrupted)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     writes = package.sources.publication.operations
     # Gate publication may leave graph bytes unchanged. The real hook proves
     # partial report/graph promotion, or completion of the sole bypass write.
     assert interruptions == [1] and len(writes) == (2 if has_report else 1)
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
-    pending = store.load()
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    actual_pending = store.load()
+    pending, completion, _ = pending_spec_companion(ctrl)
     for key in ("iteration", "max_iterations", "feasibility_structural_attempts",
             "intent_alignment_check_structural_attempts", "intent_alignment_verdict", "structural_action"):
         changed = deepcopy(pending)
@@ -128,7 +130,7 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
         changed = deepcopy(pending)
         changed[key] = float(changed[key])
         with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
-    assert store.load() == pending
+    assert store.load() == actual_pending
     apply = IdentityStore.apply_identity_publication
     def after_apply(*args, **kwargs):
         apply(*args, **kwargs)

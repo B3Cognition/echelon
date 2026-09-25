@@ -130,7 +130,7 @@ def prepare(controller, state, decision, selected, resolution, effects, *, token
     resolved_at = datetime.now(timezone.utc).isoformat()
     resolved = build_human_input_resolution_postimage(decision, resolution, resolved_at=resolved_at)
     payload = state_effects(resolved)
-    _require(effects.completion is None and effects.resolved_at is None and effects.resolved_decision_postimage is None
+    _require(effects.completion is None and effects.legacy_completion is None and effects.resolved_at is None and effects.resolved_decision_postimage is None
         and effects.state_updates == payload["state_updates"] and not effects.state_removals and effects.route == payload["route"])
     require_native_choice(root, state, resolved, policy)
     from harness.managed_commander import resolution_receipt
@@ -161,7 +161,7 @@ def prepare(controller, state, decision, selected, resolution, effects, *, token
         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
         completion_id=completion_id, managed_discovery_request=encode_publication_request(request))
-    return replace(effects, completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
+    return replace(effects, legacy_completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
 
 
 def decode_binding(publication, request, recovery, completion_id, state):

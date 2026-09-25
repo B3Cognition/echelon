@@ -305,7 +305,13 @@ def prepare(root, state_store, *, state, resolved, completion_id, producer="trac
     staged = _inspect(provisional, original, writes, modes)
     graph = _graph(staged, history, selection)
     writes[spec_path + "/spec-artifact-graph.json"] = graph
-    publication = _seal(root, state_store.squad_dir, writes, modes)
+    publication = _seal(
+        root,
+        state_store.squad_dir,
+        writes,
+        modes,
+        transaction_id=completion_id,
+    )
     sources = _inspect(publication, original, writes, modes)
     if _graph(sources, history, selection) != graph or state_store.load() != state:
         raise ValueError("clarification inputs changed")

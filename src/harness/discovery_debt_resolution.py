@@ -11,7 +11,7 @@ from pathlib import Path
 def state_effects(decision, effects, quality_effect):
     from harness.discovery_completion import _require
     from harness.discovery_policy_resolution import supported_decision
-    _require(supported_decision(decision) and effects.completion is None
+    _require(supported_decision(decision) and effects.completion is None and effects.legacy_completion is None
         and effects.resolved_at is None and effects.resolved_decision_postimage is None)
     choice = decision["selected_option_id"]
     if choice == "continue_with_debt":

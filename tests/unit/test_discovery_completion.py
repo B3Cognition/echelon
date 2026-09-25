@@ -11,7 +11,9 @@ from harness.element_identity_publication import encode_publication_request
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_completion import CompletionError, load_prepared_controller_completion
+from harness.spec_step import load_prepared_spec_step
 from harness.squad_publication import PreparedSquadPublication
+from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
 from harness.element_identity_store import IdentityStore
 from tests.unit.test_discovery_publication import (
     case, enrolled, turn_prepared, prepared, execute, DiscoveryExecutor, prepare,
@@ -41,7 +43,29 @@ def completion(prepared, executor, *, managed=True, request=None):
 def drain(ctrl):
     with PhaseAExecutionLock.acquire(ctrl._project_root, "test-completion"):
         with SpecRunExecutionLock.acquire(ctrl._squad_dir, "test-completion"):
+            if PENDING_SPEC_STEP_KEY in ctrl._state_store.load():
+                return ctrl._drain_pending_spec_step()
             return ctrl._drain_pending_controller_completion()
+
+
+def pending_spec_companion(ctrl):
+    """Return the sealed compatibility view under spec-step authority."""
+    state = ctrl._state_store.load()
+    step = load_prepared_spec_step(
+        ctrl._squad_dir,
+        state[PENDING_SPEC_STEP_KEY],
+    )
+    marker = step.intent.provenance["completion_marker"]
+    completion = load_prepared_controller_completion(
+        ctrl._project_root,
+        ctrl._squad_dir,
+        marker,
+    )
+    return (
+        ctrl._legacy_completion_effect_state(step, marker, completion),
+        completion,
+        step,
+    )
 
 
 def test_completion_retains_exact_reviewed_publication_and_read_set(prepared):

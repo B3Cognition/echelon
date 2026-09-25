@@ -10,6 +10,7 @@ from harness.discovery_completion import decode_binding
 from harness.discovery_publication import prepare_discovery_publication
 from harness.element_identity_publication import encode_publication_request
 from harness.squad_completion import CompletionError
+from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
 from tests.unit.test_managed_feasibility import (
     case, enrolled, turn_prepared, prepared, checkpoint_case,
     test_feasibility_parent_is_real_native_checkpoint as complete_review,
@@ -156,7 +157,9 @@ def assert_feasibility_handoff(case, package, provider):
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision,
                         prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    interrupted = store.load()
+    assert interrupted["last_dispatch"] == before["last_dispatch"]
+    assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == spec_bytes
     interruptions = []
     def after_one_promotion(*args, **kwargs):
@@ -169,7 +172,9 @@ def assert_feasibility_handoff(case, package, provider):
         patch.setattr(PreparedSquadPublication, "_promote", after_one_promotion)
         with pytest.raises(Interrupted):
             drain(controller(case, executor))
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    interrupted = store.load()
+    assert interrupted["last_dispatch"] == before["last_dispatch"]
+    assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
     writes = package.sources.publication.operations
     # Repair publications can preserve most documents byte-for-byte. The
     # publisher's actual operation hook proves the partial promotion boundary.

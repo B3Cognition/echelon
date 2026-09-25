@@ -10,6 +10,7 @@ from harness.discovery_completion import decode_binding, _json, _hash
 from harness.discovery_publication import prepare_discovery_publication
 from harness.element_identity_publication import encode_publication_request
 from harness.squad_completion import CompletionError
+from tests.unit.test_discovery_completion import controller
 from tests.unit.test_managed_feasibility_publication import envelope
 from tests.unit.test_managed_alignment_execution import (
     case, enrolled, turn_prepared, prepared, checkpoint_case, AlignmentExecutor,
@@ -20,6 +21,7 @@ from tests.unit.test_managed_alignment_execution import (
 def assert_alignment_publication(case, provider, verdict="ALIGNED"):
     root, store, identity, _ = case
     executor = AlignmentExecutor(provider, verdict)
+    ctrl = controller(case, executor)
     before, history = store.load(), identity.identity_history(spec_id="game")
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
     with PhaseAExecutionLock.acquire(root, "test-alignment-publication"):
@@ -109,9 +111,20 @@ def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
                 patch.setattr(PreparedSquadPublication, "_promote", before_promotion)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
-    assert store.load()["token_usage"] == before["token_usage"] + 21
+    assert pending["token_usage"] == before["token_usage"]
+    from harness.spec_step import load_prepared_spec_step
+    sealed_step = load_prepared_spec_step(
+        store.squad_dir,
+        pending["pending_spec_step"],
+    )
+    assert (
+        sealed_step.intent.final_state["token_usage"]
+        == before["token_usage"] + 21
+    )
     assert store.load()["phase_dispatch_counts"] == before["phase_dispatch_counts"]
     assert identity.identity_history(spec_id="game") == history
     assert_alignment_pending_recovery(case, package, provider, verdict)
@@ -120,7 +133,6 @@ def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
 def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"):
     """Recover the actual pending completion, including a retained failure diagnostic."""
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from tests.unit.test_discovery_completion import controller, drain
@@ -129,10 +141,12 @@ def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"
     before, history = store.load(), identity.identity_history(spec_id="game")
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
     executor = AlignmentExecutor(provider, verdict)
+    ctrl = controller(case, executor)
     completion_id = json.loads(package.request.recovery_payload)["completion_id"]
     promote = PreparedSquadPublication._promote
-    pending = store.load()
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    actual_pending = store.load()
+    pending, completion, step = pending_spec_companion(ctrl)
     assert authenticate(root, store.squad_dir, pending, completion).producer == "alignment"
     changed = deepcopy(pending)
     changed["intent_alignment_verdict"] = "DRIFT" if verdict == "ALIGNED" else "ALIGNED"
@@ -156,13 +170,17 @@ def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"
             changed = deepcopy(pending)
             changed[key] = value
             with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
-    assert store.load() == pending
+    assert store.load() == actual_pending
     if json.loads(package.request.recovery_payload)["version"] == 42:
         from tests.unit.test_managed_alignment_answer_publication import assert_answer_handoff_refusals
         assert_answer_handoff_refusals(case, completion)
-    if json.loads(package.request.recovery_payload)["version"] in {38, 42} and "controller_completion_failure" not in pending:
-        store.record_controller_completion_failure(pending["pending_controller_completion"], "intent_mismatch")
-        assert store.load()["blocked_reason"] == "controller_completion_pending"
+    if json.loads(package.request.recovery_payload)["version"] in {38, 42} and step.marker.failure is None:
+        store.record_spec_step_failure(
+            step.marker,
+            effect=step.marker.cursor,
+            code="intent_mismatch",
+        )
+        assert store.load()["blocked_reason"] == "spec_step_pending"
     interruptions = []
     def after_one_promotion(*args, **kwargs):
         def interrupt(position):
@@ -188,7 +206,7 @@ def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"
     assert after["status"] == "running" and "controller_completion_failure" not in after
     assert after["intent_alignment_verdict"] == verdict
     assert "governance_gate_exhausted" not in after and "blocked_reason" not in after
-    assert after["token_usage"] == before["token_usage"]
+    assert after["token_usage"] == before["token_usage"] + 21
     assert after["phase_dispatch_counts"] == before["phase_dispatch_counts"]
     for key in ("iteration", "max_iterations", "feasibility_verdict", "feasibility_structural_attempts"):
         assert after[key] == before[key]

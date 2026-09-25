@@ -104,12 +104,14 @@ def assert_strategy_handoff(case, package, provider):
                 patch.setattr(PreparedSquadPublication, "_promote", before_promotion)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
-    pending = store.load()
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    actual_pending = store.load()
+    pending, completion, _ = pending_spec_companion(ctrl)
     for key in ("iteration", "max_iterations", "feasibility_structural_attempts", "feasibility_verdict", "structural_action"):
         changed = deepcopy(pending)
         changed[key] = changed[key] + 1 if type(changed[key]) is int else "forged"
@@ -118,7 +120,7 @@ def assert_strategy_handoff(case, package, provider):
         changed = deepcopy(pending)
         changed[key] = float(changed[key])
         with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
-    assert store.load() == pending
+    assert store.load() == actual_pending
     interruptions = []
     def after_one_promotion(*args, **kwargs):
         def interrupt(position):

@@ -104,7 +104,9 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
                 patch.setattr(PreparedSquadPublication, "_promote", interrupted)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     writes = package.sources.publication.operations
     # Gate publication may leave graph bytes unchanged. The real hook proves
     # partial report/graph promotion, or completion of the sole bypass write.

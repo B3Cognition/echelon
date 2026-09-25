@@ -306,7 +306,13 @@ def prepare_lexicon_gate_publication(root, state_store, *, completion_id, max_it
     projected = _inspect(provisional, before, writes, modes)
     graph = _graph(projected, history, selection)
     writes[spec.path + "/spec-artifact-graph.json"] = graph
-    publication = _seal(root, run, writes, modes)
+    publication = _seal(
+        root,
+        run,
+        writes,
+        modes,
+        transaction_id=completion_id,
+    )
     sources = _inspect(publication, before, writes, modes)
     baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
     recovery = dict(version=29, producer="lexicon_gate", completion_id=completion_id,

@@ -85,8 +85,12 @@ def _inspect(publication, original, writes, modes):
     return sources
 
 
-def _seal(root, run, writes, modes):
-    transaction = SquadPublicationTransaction.begin(root, run, uuid.uuid4().hex)
+def _seal(root, run, writes, modes, *, transaction_id=None):
+    transaction = SquadPublicationTransaction.begin(
+        root,
+        run,
+        uuid.uuid4().hex if transaction_id is None else transaction_id,
+    )
     owned = {Path(path) for path in writes}
     for index, (target, content) in enumerate(sorted(writes.items())):
         staged = transaction.build_path(f"artifact-{index}")
@@ -150,7 +154,13 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     source_only = _inspect(provisional, original, writes, modes)
     graph = _graph(source_only, candidate.history, selection)
     writes[selection["spec_path"] + "/spec-artifact-graph.json"] = graph
-    publication = _seal(root, state_store.squad_dir, writes, modes)
+    publication = _seal(
+        root,
+        state_store.squad_dir,
+        writes,
+        modes,
+        transaction_id=completion_id,
+    )
     sources = _inspect(publication, original, writes, modes)
     if _graph(sources, candidate.history, selection) != graph:
         raise ValueError("final projected graph changed")

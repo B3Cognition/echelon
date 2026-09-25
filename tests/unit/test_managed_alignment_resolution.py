@@ -262,10 +262,13 @@ def assert_answer_source_refusals(case):
 def assert_answer_application(case, provider, *, commander=False):
     """Exercise the public answer API and durable completion, without an author."""
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
-    from tests.unit.test_discovery_completion import controller, drain
+    from tests.unit.test_discovery_completion import (
+        controller,
+        drain,
+        pending_spec_companion,
+    )
     from tests.unit.test_managed_alignment_question import Interrupted
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
@@ -289,21 +292,27 @@ def assert_answer_application(case, provider, *, commander=False):
     with PhaseAExecutionLock.acquire(root, "test-alignment-answer-application"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-answer-application"):
             with pytest.MonkeyPatch.context() as patch:
-                patch.setattr(ctrl, "_drain_pending_controller_completion", interrupted)
+                patch.setattr(ctrl, "_drain_pending_spec_step", interrupted)
                 patch.setattr(store, "apply_human_input_state_resolution", checked_apply)
                 with pytest.raises(Interrupted):
                     if commander:
                         ctrl.resume_pending_human_input()
                     else:
                         ctrl.resume_with_human_input("Use WASD")
-    pending = store.load()
+    actual_pending = store.load()
+    assert "pending_spec_step" in actual_pending
+    assert actual_pending["blocked_decision"] == before["blocked_decision"]
+    pending, completion, _ = pending_spec_companion(ctrl)
     assert pending["blocked_decision"]["status"] == "resolved"
     assert pending["blocked_decision"]["answer_text"] == "Use WASD"
     assert pending["blocked_decision"]["resolved_by"] == ("COMMANDER" if commander else "user")
     assert pending["token_usage"] == before["token_usage"] + (7 if commander else 0)
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
     binding = authenticate(root, store.squad_dir, pending, completion)
-    assert_native_answer_guards(case, completion.intent.publication)
+    assert_native_answer_guards(
+        case,
+        completion.intent.publication,
+        state=pending,
+    )
     assert binding.clarification and binding.recovery["version"] == 41
     assert completion.intent.effect_plan == ("context",)
     promote = PreparedSquadPublication._promote
@@ -328,8 +337,9 @@ def assert_answer_application(case, provider, *, commander=False):
     from harness import discovery_completion
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(discovery_completion, "release", interrupted)
-        with pytest.raises(Interrupted): drain(ctrl)
-    assert "pending_controller_completion" not in store.load()
+        with pytest.raises(Interrupted):
+            drain(ctrl)
+    assert "pending_spec_step" not in store.load()
     assert identity.pending_identity_publication(spec_id="game")["state"] == "applied"
     with PhaseAExecutionLock.acquire(root, "test-alignment-answer-release"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-answer-release"):
@@ -359,12 +369,14 @@ def assert_answer_application(case, provider, *, commander=False):
     assert store.load() == after and len(executor.calls) == expected_calls
 
 
-def assert_native_answer_guards(case, publication):
+def assert_native_answer_guards(case, publication, *, state=None):
     from harness.discovery_completion import decode_binding, _json, CompletionError
     from harness.element_identity_publication import encode_publication_request
     from harness.tracker_clarification import require_parent
     root, store, identity, _ = case
-    state = store.load()
+    durable_state = store.load()
+    if state is None:
+        state = durable_state
     binding = decode_binding(publication, state=state)
     # An actual pending/resolving alignment question still has the checkpoint
     # as its latest completed answer. Relabeling that receipt is not supersession.
@@ -422,7 +434,7 @@ def assert_native_answer_guards(case, publication):
         with pytest.raises(FileNotFoundError):
             require_alignment_question_evidence(root, store.squad_dir, binding.recovery["before"],
                 binding.recovery["source_completion"])
-    assert store.load() == state
+    assert store.load() == durable_state
 
 
 @pytest.mark.parametrize("provider,mode", [("codex", "guided"), ("claude", "banzai")])

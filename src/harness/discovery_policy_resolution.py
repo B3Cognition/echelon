@@ -175,7 +175,7 @@ def prepare(controller, state, decision, selected, resolution, effects, *, quali
         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
         completion_id=completion_id, managed_discovery_request=encode_publication_request(request), quality_effect=quality_effect)
-    return replace(effects, completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
+    return replace(effects, legacy_completion=completion, resolved_at=resolved_at, resolved_decision_postimage=resolved)
 
 
 def _require_resolved_effects(state, recovery, publication):
@@ -422,7 +422,7 @@ def state_only_effects(state, decision, selected, effects):
     checked = validate_blocked_decision(decision)
     _require(checked == decision and checked["source_phase"] == "phase1-why2"
         and checked["source_kind"] == "controller_safeguard"
-        and effects.completion is None and effects.resolved_at is None
+        and effects.completion is None and effects.legacy_completion is None and effects.resolved_at is None
         and effects.resolved_decision_postimage is None
         and effects.state_removals == (frozenset({"quality_gate_remediation"}) if issue_decision(checked) else frozenset()))
     handler = checked["resolution_handler"]

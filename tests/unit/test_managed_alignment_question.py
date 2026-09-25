@@ -89,6 +89,7 @@ def assert_question_publication(case, provider):
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     executor = AlignmentExecutor(provider, routing=question())
+    ctrl = controller(case, executor)
     with PhaseAExecutionLock.acquire(root, "test-alignment-question"):
         with SpecRunExecutionLock.acquire(store.squad_dir, "test-alignment-question"):
             package = prepare_discovery_publication(root, store, executor, completion_id=uuid4().hex, producer="alignment")
@@ -141,14 +142,22 @@ def assert_question_handoff(case, package, provider):
                         human_input=human, human_input_initial_status=select_initial_decision_status(
                             before["autonomy_mode"], ctrl._validate_prepared_human_input(human), human))
     pending = store.load()
-    decision = deepcopy(pending["blocked_decision"])
-    assert pending["phase"] == node.id and pending["status"] == "blocked"
-    assert pending["last_dispatch"]["post_dispatch_complete"] is False
-    assert pending["token_usage"] == before["token_usage"] + 21
+    from harness.spec_step import load_prepared_spec_step
+    step = load_prepared_spec_step(
+        store.squad_dir,
+        pending["pending_spec_step"],
+    )
+    projected = step.intent.final_state
+    decision = deepcopy(projected["blocked_decision"])
+    assert pending["phase"] == node.id and pending["status"] == "running"
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
+    assert pending["token_usage"] == before["token_usage"]
+    assert projected["token_usage"] == before["token_usage"] + 21
     assert decision["question"] == "Which movement controls?" and decision["answer_text"] is None
     assert decision["source_phase"] == node.id and decision["resolution_handler"] == "clarification_resume"
     assert decision["status"] == ("pending" if before["autonomy_mode"] == "banzai" else "awaiting_human")
-    assert "intent_alignment_verdict" not in pending
+    assert "intent_alignment_verdict" not in projected
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     assert_question_recovery(case, package, provider)
     after = store.load()
@@ -173,7 +182,9 @@ def assert_question_recovery(case, package, provider):
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     executor = AlignmentExecutor(provider, routing=question())
-    completion = load_prepared_controller_completion(root, store.squad_dir, before["pending_controller_completion"])
+    ctrl = controller(case, executor)
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    before, completion, _ = pending_spec_companion(ctrl)
     assert authenticate(root, store.squad_dir, before, completion).candidate["routing"] == question()
     for key, value in (("question", "Forged question"), ("recommended_answer", "Use WASD"),
             ("risk_level", "critical"), ("source_phase", "phase1-tracker")):
