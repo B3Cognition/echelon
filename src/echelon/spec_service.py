@@ -38,10 +38,12 @@ from harness.recovery_instruction import (
     validate_recovery_instruction,
 )
 from harness.squad_state import (
+    SquadStateStore,
     StateAdvanceError,
     validate_banzai_default_reassessment_record,
     validate_banzai_evidence_reassessment_record,
 )
+from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
 from harness.stacks.errors import StackError
 from echelon.stack_selection import StackSelectionError, get_stack_selection
 
@@ -468,14 +470,14 @@ def _resolve_issue(project_root: Path, *, issue_id: str, decision: str) -> None:
         }
     state["phase"] = repair_phase
     state["status"] = "running"
-    for key in (
+    cleared_keys = [
         "blocked_reason",
-        "escalation_question",
-        "escalation_options",
-        "blocked_decision",
         "phase_dispatch_limit",
         "phase_dispatch_limit_phase",
-    ):
+    ]
+    if "blocked_decision" not in state:
+        cleared_keys.extend(("escalation_question", "escalation_options"))
+    for key in cleared_keys:
         state.pop(key, None)
     state["phase_dispatch_limit_recovery"] = {
         "phase": repair_phase,
@@ -1013,6 +1015,52 @@ def _recovery_action_from_instruction(
             and instruction.phase == "phase3-consensus"
             and run_state.get("autonomy_mode") == "banzai"
         )
+        phase3_blocker = run_state.get("phase3_last_blocker")
+        actionable_phase3_blocker = (
+            phase3_blocker
+            if (
+                kind == RecoveryKind.RETRY_PHASE
+                and instruction.reason_code == "agent_blocked"
+                and instruction.phase == "phase3-consensus"
+                and isinstance(phase3_blocker, Mapping)
+                and str(phase3_blocker.get("issue_id") or "").strip()
+                and str(phase3_blocker.get("owner_phase") or "").strip()
+                in {"phase3-how", "phase3-sentinel", "phase3-plan"}
+                and str(phase3_blocker.get("detail") or "").strip()
+                and str(phase3_blocker.get("next_action") or "").strip()
+            )
+            else None
+        )
+        if actionable_phase3_blocker is not None:
+            issue_id = str(actionable_phase3_blocker["issue_id"]).strip()
+            owner = str(actionable_phase3_blocker["owner_phase"]).strip()
+            detail = str(actionable_phase3_blocker["detail"]).strip()
+            next_action = str(actionable_phase3_blocker["next_action"]).strip()
+            blocker_note = (
+                f"{issue_id}; owner {owner}. Problem: {detail} "
+                f"Required repair: {next_action}"
+            )
+            if not is_banzai_consensus_repair:
+                return _RunRecoveryAction(
+                    "manual_recovery",
+                    reason=reason,
+                    phase=owner,
+                    command=_command_display(
+                        "echelon phase run",
+                        [owner, "--message", next_action],
+                    ),
+                    note=blocker_note,
+                )
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase=phase,
+                command="echelon spec continue",
+                note=(
+                    "will retry Phase 3 consensus and automatically route "
+                    f"{issue_id} to {owner}. {blocker_note}"
+                ),
+            )
         return _RunRecoveryAction(
             "retry_phase",
             reason=reason,
@@ -2312,6 +2360,15 @@ def _classify_run_recovery(
 
     if status != "blocked":
         return _RunRecoveryAction("advance")
+
+    if PENDING_SPEC_STEP_KEY in run_state:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="spec_step_pending",
+            phase=str(run_state.get("phase") or "").strip(),
+            command="echelon spec continue",
+            note="will replay and finalize the pending durable spec step",
+        )
 
     if reason in {"repair_no_progress", "repair_action_unclassified", "repair_review_stale",
                   "repair_review_missing", "repair_context_incomplete", "repair_budget_exhausted",
@@ -6370,14 +6427,8 @@ def _cmd_continue_impl(
             _json.dumps(state, indent=2, ensure_ascii=False)
         )
     user_message = state.get("user_message", "")
-    mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
-    _register_spec_summary_run(
-        project_root,
-        squad_dir,
-        mode=mode,
-        message=user_message,
-        implementation_targets=state.get("implementation_targets") or (),
-    )
+    pending_spec_step = PENDING_SPEC_STEP_KEY in state
+    mode = state.get("autonomy_mode") or state.get("mode", "semi")
     try:
         decision = _active_versioned_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
@@ -6387,6 +6438,39 @@ def _cmd_continue_impl(
         # A sealed decision owns its autonomy policy.  A continue-time flag may
         # still apply to legacy runs, but cannot reclassify this decision.
         mode = str(decision["autonomy_mode"])
+    elif mode_override and not pending_spec_step:
+        mode = mode_override
+        if state.get("autonomy_mode") != mode_override:
+            previous_mode = str(state.get("autonomy_mode") or "").strip() or "unset"
+            state["autonomy_mode"] = mode_override
+            store = SquadStateStore(squad_dir)
+            store.save(state)
+            state = store.load()
+            print(
+                f"[squad] autonomy mode changed: {previous_mode} → {mode_override}",
+                flush=True,
+            )
+
+    def resume_run_args() -> list[str]:
+        """Reconstruct the original execution scope from controller-owned state."""
+        targets = state.get("implementation_targets")
+        stored_targets = (
+            [str(value).strip() for value in targets if str(value).strip()]
+            if isinstance(targets, list)
+            else []
+        )
+        run_args = [user_message, "--mode", str(mode)]
+        for target in stored_targets:
+            run_args.extend(["--target", target])
+        return run_args
+
+    _register_spec_summary_run(
+        project_root,
+        squad_dir,
+        mode=str(mode),
+        message=user_message,
+        implementation_targets=state.get("implementation_targets") or (),
+    )
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
     if not _workspace_git_present(project_root):
@@ -6401,6 +6485,13 @@ def _cmd_continue_impl(
             )
 
     action = _classify_run_recovery(state, project_root=project_root)
+    if pending_spec_step:
+        print(
+            "[squad] replaying the pending durable spec step through the controller.",
+            flush=True,
+        )
+        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
+        return
     if (
         decision is not None
         and action.kind == "retry_phase"
@@ -6416,18 +6507,11 @@ def _cmd_continue_impl(
         )
     if decision is not None:
         if action.kind == "resolve_decision":
-            run_args = [user_message, "--mode", mode]
-            targets = state.get("implementation_targets")
-            if isinstance(targets, list):
-                for target in targets:
-                    target = str(target).strip()
-                    if target:
-                        run_args.extend(["--target", target])
             print(
                 "[squad] continuing through the controller-owned decision resolver.",
                 flush=True,
             )
-            _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
+            _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
             return
         if action.kind == "human_resume":
             fields = [
@@ -6473,19 +6557,6 @@ def _cmd_continue_impl(
         "phase3-plan":         "ORCHESTRATOR (task breakdown)",
         "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
     }
-
-    def resume_run_args() -> list[str]:
-        """Reconstruct the original execution scope from controller-owned state."""
-        targets = state.get("implementation_targets")
-        stored_targets = (
-            [str(value).strip() for value in targets if str(value).strip()]
-            if isinstance(targets, list)
-            else []
-        )
-        run_args = [user_message, "--mode", mode]
-        for target in stored_targets:
-            run_args.extend(["--target", target])
-        return run_args
 
     def start_phase(next_phase: str, *, verb: str, clear_recovery: bool = False) -> None:
         nonlocal state

@@ -614,6 +614,67 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 1}
 
 
+def test_resolve_preserves_prior_resolved_decision_authority(
+    tmp_path: Path,
+) -> None:
+    from echelon.spec_service import _resolve_issue
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-046: Requirements omit the resolved boundary policy
+- **Severity:** CRITICAL
+- **Action Required:** Apply the recorded clarification to the specification.
+""",
+        encoding="utf-8",
+    )
+    prior_decision = build_blocked_decision_v2(
+        decision_id="dec-prior-clarification",
+        status="resolved",
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        source_phase="phase1-why2",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which boundary policy applies?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="clarification_resume",
+        autonomy_mode="semi",
+        source_state_revision=4,
+        answer_text="Use the governing work-location timezone.",
+        resolved_by="user",
+        now="2026-09-23T10:00:00+00:00",
+        resolved_at="2026-09-23T10:01:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase_a_state_version": 1,
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_candidate_integrity_failed",
+            "spec_dir": str(spec_dir),
+            "blocked_decision": prior_decision,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-046",
+        decision="Apply the recorded clarification.",
+    )
+
+    resolved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resolved["blocked_decision"] == prior_decision
+    assert resolved["selected_issue_resolution"] == "ISS-046"
+    assert resolved["status"] == "running"
+    assert resolved["phase"] == "phase1-what"
+
+
 def test_resolve_same_selected_decision_is_idempotent(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
