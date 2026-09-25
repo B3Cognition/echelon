@@ -69,7 +69,7 @@ def assert_closed_strategy_binding(case, package):
 def assert_strategy_handoff(case, package, provider):
     from harness.squad_provider import SquadAgentResult
     from tests.unit.test_discovery_completion import controller, drain
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from harness.squad_state import StateAdvanceError
@@ -85,7 +85,7 @@ def assert_strategy_handoff(case, package, provider):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for destination in ("phase3-specialists", "done", "phase2-feasibility-structural", "phase1-what"):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=destination,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=destination,
                         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id="9" * 32,
                         managed_discovery_request=encode_publication_request(package.request))
@@ -94,7 +94,7 @@ def assert_strategy_handoff(case, package, provider):
                 raw_output="", duration_ms=0, timed_out=False)
             prepared_result = ctrl._prepare_phase_result(node, result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id="9" * 32,
                 token_usage_delta=21)
             assert routing is not None, store.load()

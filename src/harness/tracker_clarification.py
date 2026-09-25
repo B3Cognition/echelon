@@ -377,8 +377,8 @@ def _require_alignment_effects(recovery, prepared, run_path, publication, state)
     changing = set(effects.state_updates) | set(effects.state_removals) | {
         "blocked_decision", "recovery_instruction", "token_usage", "state_revision", "updated_at",
         "blocked_reason", "escalation_question", "escalation_options", "escalation_resolved",
-        "autonomous_default_candidate", "pending_controller_completion", "pending_external_publication",
-        "external_publication_failure", "controller_completion_failure", "last_human_input_completion"}
+        "autonomous_default_candidate", "_spec_step_effect_plan", "_spec_step_publication_plan",
+        "spec_step_publication_failure", "spec_step_effect_failure", "last_human_input_completion"}
     _require(_json({key: value for key, value in state.items() if key not in changing})
         == _json({key: value for key, value in before.items() if key not in changing}))
 
@@ -453,9 +453,9 @@ def require_alignment_author_effects(state, binding, answer, completion, run):
         and _json(recovery["resolution"]["decision"]) == _json(parent["resolution"])
         and recovery["predecessor"] == parent["operation"]["binding"]["operation_id"])
     observed = dict(_alignment_answer_entry_state(state, parent))
-    for key in ("external_publication_failure", "controller_completion_failure"):
+    for key in ("spec_step_publication_failure", "spec_step_effect_failure"):
         if key in observed:
-            _require((state.get("pending_controller_completion") or {}).get("completion_id") == recovery["completion_id"])
+            _require((state.get("_spec_step_effect_plan") or {}).get("completion_id") == recovery["completion_id"])
             SquadStateStore._restore_failure_lifecycle(observed, diagnostic_key=key)
     expected = {**parent["before"], **parent["effects"]["state_updates"],
         "blocked_decision": parent["resolution"], "last_human_input_completion": recovery["resolution"]["completion"],
@@ -485,8 +485,8 @@ def require_alignment_author_effects(state, binding, answer, completion, run):
         and dispatch["verdict"] == binding.candidate["routing"]["verdict"])
     # Native completion owns its durable lifecycle, not the inherited author
     # rounds, resolution, budgets, policy or accounting compared here.
-    lifecycle = {"state_revision", "updated_at", "last_dispatch", "pending_controller_completion",
-        "pending_external_publication", "external_publication_failure", "controller_completion_failure"}
+    lifecycle = {"state_revision", "updated_at", "last_dispatch", "_spec_step_effect_plan",
+        "_spec_step_publication_plan", "spec_step_publication_failure", "spec_step_effect_failure"}
     _require(_json({key: value for key, value in observed.items() if key not in lifecycle})
         == _json({key: value for key, value in expected.items() if key not in lifecycle}))
 

@@ -177,7 +177,7 @@ def test_why2_wait_recovers_exact_completed_stage_before_release(tmp_path, monke
             publication_binding_sha256=source["completed_publication_binding_sha256"], origin="routed", step="complete")
         seen.append("stage")
         return prepared
-    monkeypatch.setattr(squad, "load_prepared_controller_completion", load)
+    monkeypatch.setattr(squad, "load_prepared_spec_step_effects", load)
     def authenticate(root, run, current, value):
         assert value is prepared and current == state
         seen.append("authenticate")
@@ -462,7 +462,7 @@ def interrupt_answer_publication(case, executor, monkeypatch, answer=None, *, op
     for point in points[len(already_seen):]:
         ctrl = controller(case, executor)
         target, method = {
-            "staged": (ctrl, "_prepare_controller_completion"),
+            "staged": (ctrl, "_prepare_spec_step_effects"),
             "resolved": (store, "apply_human_input_state_resolution"),
             "promoted": (IdentityStore, "apply_identity_publication"),
             "quality": (ctrl, "_apply_controller_completion_effect"),
@@ -493,9 +493,9 @@ def interrupt_answer_publication(case, executor, monkeypatch, answer=None, *, op
                 # not merely an exception that leaves the lifecycle unchanged.
                 resume()
                 failed = store.load()
-                assert failed["controller_completion_failure"]["code"] == "stage_io"
-                assert failed["pending_controller_completion"]["step"] == "quality"
-                assert "pending_external_publication" not in failed
+                assert failed["spec_step_effect_failure"]["code"] == "stage_io"
+                assert failed["_spec_step_effect_plan"]["step"] == "quality"
+                assert "_spec_step_publication_plan" not in failed
             else:
                 with pytest.raises(Interrupted):
                     resume()
@@ -1412,7 +1412,7 @@ def test_managed_why2_restores_best_candidate_with_forward_history(checkpoint_ca
     result = run_restoration_interruptions(checkpoint_case, executor, selected, monkeypatch)
     state = store.load()
     assert result.phase == "terminal-blocked", (result, state.get("controller_contract_error"))
-    assert "pending_controller_completion" not in state, result
+    assert "_spec_step_effect_plan" not in state, result
     assert state["blocked_reason"] == "proportional_quality_budget_exhausted"
     assert state["phase1_quality_repair"]["automatic_consumed"] == 3
     assert len(state["phase1_quality_repair"]["candidate_ids"]) == 4

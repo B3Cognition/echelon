@@ -148,7 +148,7 @@ def test_first_selection_requires_exact_settled_approval_shape(approved, damage)
     elif damage == "blocked": state["status"] = "blocked"
     elif damage == "wrong_phase": state["phase"] = "phase3-specialists"
     elif damage == "wrong_parent": state["last_dispatch"]["phase_id"] = "phase2-feasibility-structural"
-    else: state["pending_controller_completion"] = {}
+    else: state["_spec_step_effect_plan"] = {}
     store._path.write_text(json.dumps(state))
     with pytest.raises(StateAdvanceError):
         store.prepare_spec_round("feasibility", source("a"), expected_state=state)

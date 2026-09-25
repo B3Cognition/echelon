@@ -44,7 +44,7 @@ def test_new_completion_retains_full_proof_after_cleanup(prepared, checkpoint_ca
     damaged["intent"]["route"]["to_phase"] = "phase1-what"
     with pytest.raises(CompletionError):
         validate_retained_completion_proof(proof["completion"], damaged["intent"], damaged["receipts"])
-    assert not list((prepared[1].squad_dir / ".completion-outbox").iterdir())
+    assert not list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -79,7 +79,7 @@ def test_old_release_retry_preserves_exact_payload(prepared, checkpoint_case, mo
     row = prepared[2].identity_publication(spec_id="game",
         operation_id="discovery-completion-" + state["last_dispatch"]["dispatch_id"])
     assert row["completion_payload"] == saved[0]
-    assert not list((prepared[1].squad_dir / ".completion-outbox").iterdir())
+    assert not list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
     assert len(executor.calls) == 3 and state["token_usage"] == 21
     if version == 1:
         with pytest.raises(CompletionError):

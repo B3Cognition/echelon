@@ -112,7 +112,7 @@ def test_released_checkpoint_projection_survives_outbox_cleanup(checkpoint_case)
     root, store, identity, _ = checkpoint_case
     state = store.load()
     assert state["last_dispatch"]["post_dispatch_complete"] is True
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
     project = discovery_completion.released_checkpoint_projector(root, store.squad_dir, state)
     with inspect_project_tree(root, "specs/game") as sources:
         assert any(item.path.endswith("/checkpoints.json") for item in sources.files)

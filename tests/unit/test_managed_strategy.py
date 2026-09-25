@@ -48,7 +48,7 @@ def assert_strategy_parent(case, *, admitted=True):
             elif damage == "typed_iteration": changed["iteration"] = float(before["iteration"])
             elif damage == "cap": changed["max_iterations"] += 1
             elif damage == "override": changed["governance"] = {"enabled": False}
-            else: changed["pending_controller_completion"] = {}
+            else: changed["_spec_step_effect_plan"] = {}
             with pytest.raises((ValueError, CompletionError)):
                 parent(case, changed, source)
     else:

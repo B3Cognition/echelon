@@ -26,12 +26,12 @@ import harness.squad_completion as completion_module
 from harness.squad_completion import (
     CompletionError,
     CompletionMarker,
-    load_prepared_controller_completion,
-    prepare_controller_completion,
+    load_prepared_spec_step_effects,
+    prepare_spec_step_effects,
     persist_completion_effect_receipt,
 )
 from harness.state_transaction_namespace import (
-    validate_pending_controller_completion,
+    validate_spec_step_effect_plan,
 )
 
 
@@ -78,50 +78,6 @@ VALID_PUBLICATION_MARKER = {
 }
 
 
-@pytest.mark.parametrize(
-    "restore_receipt",
-    (
-        {
-            "schema_version": 1,
-            "candidate_id": "quality-candidate-0",
-            "artifact_preimage_digests": {"spec.md": "a" * 64},
-            "artifact_postimage_digests": {"spec.md": "b" * 64},
-            "checkpoint": {"commit": "c" * 40},
-        },
-        {
-            "schema_version": 1,
-            "candidate_id": "quality-candidate-0",
-            "artifact_preimage_digests": {"spec.md": "a" * 64},
-            "artifact_postimage_digests": {"spec.md": "b" * 64},
-            "restore_protocol": "git_first_v1",
-            "plan_sha256": "d" * 64,
-            "target_commit": "e" * 40,
-            "checkpoint": {"commit": "e" * 40},
-        },
-    ),
-)
-def test_schema_v1_outbox_accepts_legacy_and_git_first_restore_receipts(
-    restore_receipt: dict[str, object],
-) -> None:
-    value = {
-        "schema_version": 1,
-        "completion_id": COMPLETION_ID,
-        "effects": {
-            "quality": {
-                "schema_version": 1,
-                "operation": "restore",
-                "restore": restore_receipt,
-            }
-        },
-    }
-
-    assert completion_module._validate_receipts(
-        value,
-        intent={
-            "completion_id": COMPLETION_ID,
-            "effect_plan": ["quality"],
-        },
-    ) == value
 
 
 @pytest.mark.parametrize(
@@ -140,7 +96,7 @@ def test_schema_v1_outbox_accepts_legacy_and_git_first_restore_receipts(
 )
 def test_completion_marker_is_exact(mutation) -> None:
     with pytest.raises(ValueError):
-        validate_pending_controller_completion(
+        validate_spec_step_effect_plan(
             mutation(VALID_COMPLETION_MARKER)
         )
 
@@ -148,7 +104,7 @@ def test_completion_marker_is_exact(mutation) -> None:
 def test_completion_marker_returns_an_exact_detached_record() -> None:
     marker = dict(VALID_COMPLETION_MARKER)
 
-    validated = validate_pending_controller_completion(marker)
+    validated = validate_spec_step_effect_plan(marker)
     marker["step"] = "complete"
 
     assert validated == VALID_COMPLETION_MARKER
@@ -165,7 +121,7 @@ def test_completion_marker_rejects_every_missing_field(
     marker.pop(missing)
 
     with pytest.raises(ValueError):
-        validate_pending_controller_completion(marker)
+        validate_spec_step_effect_plan(marker)
 
 
 def test_completion_marker_rejects_dict_and_string_subclasses() -> None:
@@ -176,7 +132,7 @@ def test_completion_marker_rejects_dict_and_string_subclasses() -> None:
         pass
 
     with pytest.raises(ValueError):
-        validate_pending_controller_completion(
+        validate_spec_step_effect_plan(
             DictSubclass(VALID_COMPLETION_MARKER)
         )
     for field in (
@@ -190,7 +146,7 @@ def test_completion_marker_rejects_dict_and_string_subclasses() -> None:
         marker = dict(VALID_COMPLETION_MARKER)
         marker[field] = StringSubclass(marker[field])
         with pytest.raises(ValueError):
-            validate_pending_controller_completion(marker)
+            validate_spec_step_effect_plan(marker)
 
 
 @pytest.mark.parametrize("origin", ["routed", "terminal"])
@@ -216,7 +172,7 @@ def test_completion_marker_accepts_every_legal_origin_and_step(
         "step": step,
     }
 
-    assert validate_pending_controller_completion(marker) == marker
+    assert validate_spec_step_effect_plan(marker) == marker
 
 
 @pytest.mark.parametrize(
@@ -273,7 +229,7 @@ def _prepare_minimal(
     return (
         project_root,
         squad_dir,
-        prepare_controller_completion(
+        prepare_spec_step_effects(
             project_root,
             squad_dir,
             **arguments,
@@ -293,7 +249,7 @@ def test_prepare_completion_seals_exact_canonical_intent_and_empty_receipts(
 ) -> None:
     project_root, squad_dir, prepared = _prepare_minimal(tmp_path)
     transaction_root = (
-        squad_dir / ".completion-outbox" / COMPLETION_ID
+        squad_dir / ".spec-step-effects" / COMPLETION_ID
     )
     intent_bytes = (transaction_root / "intent.json").read_bytes()
     receipts_bytes = (transaction_root / "receipts.json").read_bytes()
@@ -334,10 +290,10 @@ def test_prepare_completion_seals_exact_canonical_intent_and_empty_receipts(
         step="complete",
     )
     assert prepared.marker.to_dict() == (
-        validate_pending_controller_completion(prepared.marker.to_dict())
+        validate_spec_step_effect_plan(prepared.marker.to_dict())
     )
 
-    loaded = load_prepared_controller_completion(
+    loaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker.to_dict(),
@@ -381,7 +337,7 @@ def test_prepare_completion_accepts_sha1_or_sha256_checkpoint_head(
         squad_dir = project_root / "runs" / "spec-1"
         squad_dir.mkdir(parents=True)
 
-        prepared = prepare_controller_completion(
+        prepared = prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=f"{index:x}" * 32,
@@ -1044,7 +1000,7 @@ def test_prepare_completion_rejects_aggregate_intent_over_four_mib(
         / "project"
         / "runs"
         / "spec-1"
-        / ".completion-outbox"
+        / ".spec-step-effects"
         / COMPLETION_ID
     ).exists()
 
@@ -1059,7 +1015,7 @@ def test_prepare_completion_rejects_transaction_reuse_without_overwrite(
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             tmp_path / "project",
             tmp_path / "project" / "runs" / "spec-1",
             completion_id=COMPLETION_ID,
@@ -1090,7 +1046,7 @@ def test_load_completion_rejects_missing_intent_or_receipts(
 
         _assert_completion_error(
             "stage_missing",
-            lambda: load_prepared_controller_completion(
+            lambda: load_prepared_spec_step_effects(
                 project_root,
                 squad_dir,
                 prepared.marker,
@@ -1098,44 +1054,6 @@ def test_load_completion_rejects_missing_intent_or_receipts(
         )
 
 
-@pytest.mark.parametrize("origin", ["routed", "terminal"])
-def test_load_previous_release_schema_v1_intent_without_quality_effect(
-    tmp_path: Path,
-    origin: str,
-) -> None:
-    route = (
-        ROUTED_ROUTE
-        if origin == "routed"
-        else {"kind": "terminal", "terminal_phase": "DONE"}
-    )
-    project_root, squad_dir, prepared = _prepare_minimal(
-        tmp_path,
-        origin=origin,
-        route=route,
-    )
-    intent_path = prepared._transaction_root / "intent.json"
-    legacy_intent = json.loads(intent_path.read_bytes())
-    assert legacy_intent.pop("quality_effect") == {"kind": "none"}
-    legacy_bytes = (
-        json.dumps(legacy_intent, sort_keys=True, separators=(",", ":"))
-        + "\n"
-    ).encode("utf-8")
-    intent_path.write_bytes(legacy_bytes)
-    marker = replace(
-        prepared.marker,
-        intent_sha256=hashlib.sha256(legacy_bytes).hexdigest(),
-        origin=origin,
-    )
-
-    loaded = load_prepared_controller_completion(
-        project_root,
-        squad_dir,
-        marker,
-    )
-
-    assert loaded.intent.quality_effect == {"kind": "none"}
-    assert "quality_effect" not in loaded.intent.to_dict()
-    assert loaded.marker.intent_sha256 == hashlib.sha256(legacy_bytes).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -1165,7 +1083,7 @@ def test_load_does_not_reinterpret_malformed_schema_v1_without_quality_effect(
 
     _assert_completion_error(
         "intent_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1198,7 +1116,7 @@ def test_load_completion_rejects_noncanonical_stage_documents(
 
     _assert_completion_error(
         expected_code,
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1231,7 +1149,7 @@ def test_load_completion_rejects_non_exact_intent_top_level(
 
     _assert_completion_error(
         "intent_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1278,7 +1196,7 @@ def test_load_completion_reapplies_intent_detachment_bounds(
 
     _assert_completion_error(
         "intent_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1317,7 +1235,7 @@ def test_load_completion_bounds_json_integer_digit_conversion(
 
     _assert_completion_error(
         "intent_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1342,7 +1260,7 @@ def test_load_completion_rejects_marker_document_digest_mismatch(
 
     _assert_completion_error(
         expected_code,
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             prepared.marker,
@@ -1397,7 +1315,7 @@ def test_load_completion_rejects_marker_intent_binding_mismatch(
 
     _assert_completion_error(
         "intent_mismatch",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1536,7 +1454,7 @@ def test_load_completion_rejects_invalid_receipt_prefix_or_marker_step(
 
     _assert_completion_error(
         expected_code,
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1563,7 +1481,7 @@ def test_load_completion_accepts_exact_one_ahead_receipt_prefix(
         receipts_bytes
     )
 
-    loaded = load_prepared_controller_completion(
+    loaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -1606,7 +1524,7 @@ def test_load_completion_rejects_one_ahead_receipt_with_unbound_prior_prefix(
 
     _assert_completion_error(
         "receipts_mismatch",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             unbound_marker,
@@ -1645,7 +1563,7 @@ def test_load_completion_reapplies_receipt_detachment_bounds(
 
     _assert_completion_error(
         "receipts_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             prepared.marker,
@@ -1701,7 +1619,7 @@ def test_load_completion_rejects_oversized_stage_documents_without_reading(
 
     _assert_completion_error(
         expected_code,
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             marker,
@@ -1728,7 +1646,7 @@ def test_load_completion_rejects_non_regular_intent_without_blocking(
 
     _assert_completion_error(
         "intent_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             prepared.marker,
@@ -1756,7 +1674,7 @@ def test_load_completion_rejects_non_regular_receipts_without_blocking(
 
     _assert_completion_error(
         "receipts_invalid",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             prepared.marker,
@@ -1784,7 +1702,7 @@ def test_load_completion_rejects_replaced_transaction_root(
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: load_prepared_controller_completion(
+        lambda: load_prepared_spec_step_effects(
             project_root,
             squad_dir,
             prepared.marker,
@@ -1818,7 +1736,7 @@ def test_completion_views_return_detached_values(
     judgments[0]["echelon_result"]["verdict"] = "MUTATED"
     receipts["effects"]["forged"] = {}
 
-    loaded = load_prepared_controller_completion(
+    loaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -1839,14 +1757,14 @@ def test_prepare_completion_rejects_symlinked_outbox(
     project_root, squad_dir = _roots(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (squad_dir / ".completion-outbox").symlink_to(
+    (squad_dir / ".spec-step-effects").symlink_to(
         outside,
         target_is_directory=True,
     )
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -1921,7 +1839,7 @@ def test_prepare_completion_replace_failure_cleans_unreferenced_stage(
 
     _assert_completion_error(
         "stage_io",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -1937,7 +1855,7 @@ def test_prepare_completion_replace_failure_cleans_unreferenced_stage(
         ),
     )
     assert not (
-        squad_dir / ".completion-outbox" / COMPLETION_ID
+        squad_dir / ".spec-step-effects" / COMPLETION_ID
     ).exists()
 
 
@@ -1964,7 +1882,7 @@ def test_prepare_completion_second_replace_failure_cleans_partial_stage(
 
     _assert_completion_error(
         "stage_io",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -1981,7 +1899,7 @@ def test_prepare_completion_second_replace_failure_cleans_partial_stage(
     )
     assert calls == 2
     assert not (
-        squad_dir / ".completion-outbox" / COMPLETION_ID
+        squad_dir / ".spec-step-effects" / COMPLETION_ID
     ).exists()
 
 
@@ -2008,7 +1926,7 @@ def test_prepare_completion_transaction_directory_fsync_failure_cleans_stage(
 
     _assert_completion_error(
         "stage_io",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -2025,7 +1943,7 @@ def test_prepare_completion_transaction_directory_fsync_failure_cleans_stage(
     )
     assert calls >= 3
     assert not (
-        squad_dir / ".completion-outbox" / COMPLETION_ID
+        squad_dir / ".spec-step-effects" / COMPLETION_ID
     ).exists()
 
 
@@ -2042,7 +1960,7 @@ def test_prepare_completion_reread_failure_cleans_unreferenced_stage(
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -2058,7 +1976,7 @@ def test_prepare_completion_reread_failure_cleans_unreferenced_stage(
         ),
     )
     assert not (
-        squad_dir / ".completion-outbox" / COMPLETION_ID
+        squad_dir / ".spec-step-effects" / COMPLETION_ID
     ).exists()
 
 
@@ -2074,7 +1992,7 @@ def test_prepare_failure_cleanup_rejects_real_directory_replacement(
         nonlocal original_root, sentinel
         transaction_root = (
             loaded_squad_dir
-            / ".completion-outbox"
+            / ".spec-step-effects"
             / marker.completion_id
         )
         original_root = transaction_root.with_name(
@@ -2088,13 +2006,13 @@ def test_prepare_failure_cleanup_rejects_real_directory_replacement(
 
     monkeypatch.setattr(
         completion_module,
-        "load_prepared_controller_completion",
+        "load_prepared_spec_step_effects",
         swap_root_then_fail,
     )
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -2159,7 +2077,7 @@ def test_prepare_second_document_write_rejects_transaction_root_swap(
 
     _assert_completion_error(
         "stage_corrupt",
-        lambda: prepare_controller_completion(
+        lambda: prepare_spec_step_effects(
             project_root,
             squad_dir,
             completion_id=COMPLETION_ID,
@@ -2291,7 +2209,7 @@ def test_completion_journal_strips_spoofed_metadata_and_attests_content(
         "journal",
         receipt,
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         tmp_path,
         squad_dir,
         prepared.marker,
@@ -2502,7 +2420,7 @@ def _prepare_completion_checkpoint(
         "rev-parse",
         "HEAD",
     )
-    prepared = prepare_controller_completion(
+    prepared = prepare_spec_step_effects(
         project_root,
         squad_dir,
         completion_id=COMPLETION_ID,
@@ -2543,7 +2461,7 @@ def test_versioned_required_checkpoint_forces_no_change_commit(
 ) -> None:
     project_root, spec_dir, legacy = _prepare_completion_checkpoint(tmp_path)
     base = _git_for_completion_checkpoint(project_root, "rev-parse", "HEAD")
-    prepared = prepare_controller_completion(
+    prepared = prepare_spec_step_effects(
         project_root,
         legacy._squad_dir,
         completion_id="f" * 32,
@@ -3300,7 +3218,7 @@ def test_completion_context_freezes_one_ahead_before_visibility_and_replays(
     )
     assert receipts["effects"]["context"] == receipt
 
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3353,7 +3271,7 @@ def test_completion_context_recovers_partial_visible_install(
         prepared_at="2026-07-23T10:11:12Z",
         generator=_completion_context_generator([]),
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3451,7 +3369,7 @@ def test_completion_context_target_drift_fails_before_any_install(
     visible.mkdir()
     drifted = visible / "stale-memory-report.md"
     drifted.write_bytes(b"unbound drift\n")
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3482,7 +3400,7 @@ def test_completion_context_final_replace_rechecks_bound_preimage(
         prepared_at="2026-07-23T10:11:12Z",
         generator=_completion_context_generator([]),
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3875,7 +3793,7 @@ def test_completion_context_rejects_symlinked_visible_root_before_child_read(
         outside,
         target_is_directory=True,
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3939,7 +3857,7 @@ def test_completion_context_rejects_missing_or_corrupt_frozen_substage(
         staged.unlink()
     else:
         staged.write_bytes(b"changed after receipt\n")
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -3977,7 +3895,7 @@ def test_completion_context_rejects_non_fixed_receipt_path(
             + "\n"
         ).encode("utf-8")
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4207,7 +4125,7 @@ def test_completion_mining_receipted_best_effort_outcome_never_retries(
         run_id="run-test",
         miner_factory=factory,
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4283,7 +4201,7 @@ def test_completion_mining_receipted_partial_failure_never_retries_backend(
     )
     assert first.outcome == "failed"
     assert first.drawer_ids == (first_id,)
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4327,7 +4245,7 @@ def test_completion_mining_rejects_forged_partial_failed_receipt_offline(
             "drawer_ids": [forged_id],
         },
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4369,7 +4287,7 @@ def test_completion_mining_replays_empty_failed_receipt_after_local_plan_error(
     )
     assert first.outcome == "failed"
     assert first.drawer_ids == ()
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4400,7 +4318,7 @@ def test_completion_mining_one_ahead_written_receipt_verifies_without_mining(
         run_id="run-test",
         miner_factory=lambda: first_miner,
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,
@@ -4434,7 +4352,7 @@ def test_completion_mining_rejects_canonical_spec_drift(
         run_id="run-test",
         miner_factory=lambda: _CompletionMiner(outcome="written"),
     )
-    reloaded = load_prepared_controller_completion(
+    reloaded = load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         prepared.marker,

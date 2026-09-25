@@ -127,7 +127,7 @@ def test_constitution_interrupted_boundaries_keep_one_dispatch(checkpoint_case, 
     ctrl = controller(checkpoint_case, executor)
     request = {**selection(checkpoint_case), "through_phase": "phase1-constitution"}
     targets = [(store, "advance_discovery_operation", "accepted"),
-        (ctrl, "_prepare_controller_completion", "staged"), (store, "advance", "routed"),
+        (ctrl, "_prepare_spec_step_effects", "staged"), (store, "advance", "routed"),
         (IdentityStore, "apply_identity_publication", "promoted"),
         (ctrl, "_apply_controller_completion_effect", "context"),
         (store, "complete_controller_completion", "completed"),

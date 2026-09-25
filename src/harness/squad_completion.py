@@ -30,13 +30,13 @@ from harness.reasoning_journal_store import (
     reasoning_journal_lock as _store_reasoning_journal_lock,
 )
 from harness.state_transaction_namespace import (
-    validate_pending_controller_completion,
-    validate_pending_external_publication,
+    validate_spec_step_effect_plan,
+    validate_spec_step_publication_plan,
 )
 
 
 _SCHEMA_VERSION = 1
-_OUTBOX_DIRECTORY = ".completion-outbox"
+_OUTBOX_DIRECTORY = ".spec-step-effects"
 _INTENT_NAME = "intent.json"
 _RECEIPTS_NAME = "receipts.json"
 _MAX_INTENT_BYTES = 4_194_304
@@ -168,7 +168,7 @@ class CompletionIntent:
 
 
 @dataclass(frozen=True)
-class PreparedControllerCompletion:
+class PreparedSpecStepEffects:
     """A loaded completion stage bound to its exact marker and intent."""
 
     marker: CompletionMarker
@@ -361,7 +361,7 @@ def _validate_publication(value: object) -> dict[str, object]:
         managed = "managed_discovery" in value
         _validate_exact_dict(value, frozenset({"kind", "marker"} | ({"managed_discovery"} if managed else set())))
         try:
-            marker = validate_pending_external_publication(
+            marker = validate_spec_step_publication_plan(
                 dict.__getitem__(value, "marker")
             )
         except ValueError:
@@ -828,7 +828,7 @@ def _intent_view(
 
 def _marker_from(value: object) -> CompletionMarker:
     try:
-        marker = validate_pending_controller_completion(
+        marker = validate_spec_step_effect_plan(
             value.to_dict()
             if type(value) is CompletionMarker
             else value
@@ -1287,7 +1287,7 @@ def _detach_loaded_json(
         _raise(code)
 
 
-def prepare_controller_completion(
+def prepare_spec_step_effects(
     project_root: Path,
     squad_dir: Path,
     *,
@@ -1302,7 +1302,7 @@ def prepare_controller_completion(
     judgment_payload_sha256: object,
     judgments: object,
     quality_effect: object = None,
-) -> PreparedControllerCompletion:
+) -> PreparedSpecStepEffects:
     """Detach, validate, durably seal, and reread one completion intent."""
     completion_id = _validate_completion_id(completion_id)
     quality_effect = (
@@ -1381,7 +1381,7 @@ def prepare_controller_completion(
             origin=str(intent["origin"]),
             step=step,
         )
-        loaded = load_prepared_controller_completion(
+        loaded = load_prepared_spec_step_effects(
             project,
             squad,
             marker,
@@ -1402,11 +1402,11 @@ def prepare_controller_completion(
         raise
 
 
-def load_prepared_controller_completion(
+def load_prepared_spec_step_effects(
     project_root: Path,
     squad_dir: Path,
     marker: object,
-) -> PreparedControllerCompletion:
+) -> PreparedSpecStepEffects:
     """Load one exact state-authorized completion stage without regeneration."""
     expected_marker = _marker_from(marker)
     project, squad = _validate_roots(project_root, squad_dir)
@@ -1541,7 +1541,7 @@ def load_prepared_controller_completion(
         != transaction_identity
     ):
         _raise("stage_corrupt")
-    return PreparedControllerCompletion(
+    return PreparedSpecStepEffects(
         marker=expected_marker,
         intent=_intent_view(intent, sealed_value=sealed_intent),
         _project_root=project,
@@ -2741,9 +2741,9 @@ def create_or_recover_completion_checkpoint(
 
 
 def _verify_prepared_completion_identity(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> None:
-    if type(prepared) is not PreparedControllerCompletion:
+    if type(prepared) is not PreparedSpecStepEffects:
         _raise("intent_invalid")
     root = prepared._transaction_root
     if (
@@ -2768,7 +2768,7 @@ def _verify_prepared_completion_identity(
 
 
 def _require_prepared_project_root(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     project_root: Path,
 ) -> Path:
     if not isinstance(project_root, Path):
@@ -2783,7 +2783,7 @@ def _require_prepared_project_root(
 
 
 def _current_completion_effect_receipt(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     effect: str,
 ) -> tuple[dict[str, object], dict[str, object] | None]:
     """Read a marker-bound prefix or its one exact current receipt."""
@@ -2842,7 +2842,7 @@ def _current_completion_effect_receipt(
 
 
 def _persist_current_completion_receipt(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     effect: str,
     receipt: dict[str, object],
 ) -> dict[str, object]:
@@ -2900,7 +2900,7 @@ def _persist_current_completion_receipt(
 
 
 def persist_completion_effect_receipt(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     effect: str,
     receipt: dict[str, object],
 ) -> dict[str, object]:
@@ -2913,14 +2913,14 @@ def persist_completion_effect_receipt(
 
 
 def _context_stage_paths(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> tuple[Path, Path]:
     stage = prepared._transaction_root / _CONTEXT_STAGE_NAME
     return stage, stage / _CONTEXT_FILES_NAME
 
 
 def _remove_unreceipted_context_stage(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> None:
     stage, _ = _context_stage_paths(prepared)
     try:
@@ -2957,7 +2957,7 @@ def _remove_unreceipted_context_stage(
 
 
 def _create_context_stage(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> Path:
     stage, files = _context_stage_paths(prepared)
     try:
@@ -2974,7 +2974,7 @@ def _create_context_stage(
 
 
 def _read_context_stage(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> dict[str, bytes]:
     stage, files = _context_stage_paths(prepared)
     _require_real_directory(stage, missing_code="stage_missing")
@@ -3002,7 +3002,7 @@ def _read_context_stage(
 
 
 def _sync_context_stage(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> dict[str, bytes]:
     content = _read_context_stage(prepared)
     _, files = _context_stage_paths(prepared)
@@ -3048,7 +3048,7 @@ def _context_file_descriptor(path: Path) -> dict[str, object]:
 
 
 def _capture_context_preimages(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> dict[str, dict[str, object]]:
     target = prepared._squad_dir / "context"
     try:
@@ -3108,7 +3108,7 @@ def _validate_context_preimage(value: object) -> dict[str, object]:
 def _validate_completion_context_receipt(
     receipt: object,
     *,
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     staged: Mapping[str, bytes],
 ) -> dict[str, object]:
     return validate_completion_context_images(receipt,
@@ -3200,7 +3200,7 @@ def validate_completion_context_images(
 
 
 def prepare_or_load_completion_context(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     *,
     project_root: Path,
     source_state_revision: int,
@@ -3308,7 +3308,7 @@ def prepare_or_load_completion_context(
 
 
 def install_or_verify_completion_context(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     *,
     expected_receipt: object | None = None,
     fault_hook: Callable[[str], None] | None = None,
@@ -3455,7 +3455,7 @@ def _validate_mining_drawer_ids(
 def _validate_completion_mining_receipt(
     receipt: object,
     *,
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> CompletionMiningOutcome:
     record = _validate_exact_dict(
         receipt,
@@ -3503,7 +3503,7 @@ def _validate_completion_mining_receipt(
 
 
 def _completion_mining_spec_snapshot(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     *,
     project_root: Path,
     spec_file: Path,
@@ -3649,7 +3649,7 @@ def _verify_completion_mining_postimage(
 
 
 def _persist_completion_mining_outcome(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     outcome: CompletionMiningOutcome,
 ) -> CompletionMiningOutcome:
     persisted = _persist_current_completion_receipt(
@@ -3664,7 +3664,7 @@ def _persist_completion_mining_outcome(
 
 
 def apply_or_verify_completion_mining(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     *,
     project_root: Path,
     spec_file: Path | None,

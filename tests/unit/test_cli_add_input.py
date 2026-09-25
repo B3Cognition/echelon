@@ -157,7 +157,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     from harness.squad_publication import PreparedSquadPublication
     from harness.squad_state import SquadStateStore
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -236,11 +236,11 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
 
     interrupted = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     if fault_boundary == "before_intent":
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in interrupted
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
         assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
         assert immutable_product_input_tree_digest(resolution.inputs_dir) == old_hash
     else:
-        assert interrupted[PENDING_EXTERNAL_PUBLICATION_KEY]["transaction_id"]
+        assert interrupted[SPEC_STEP_PUBLICATION_PLAN_KEY]["transaction_id"]
         assert interrupted[PRODUCT_INPUT_MUTATION_KEY]["kind"] == "add_input"
 
     recovered = add_input_to_active_run(
@@ -251,7 +251,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     final = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert recovered.added_count == 1
     assert recovered.attachment_id == "001"
-    assert PENDING_EXTERNAL_PUBLICATION_KEY not in final
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in final
     assert PRODUCT_INPUT_MUTATION_KEY not in final
     assert final["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(resolution.inputs_dir)

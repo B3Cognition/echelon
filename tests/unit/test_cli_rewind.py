@@ -1239,7 +1239,7 @@ def test_traceability_repair_resumes_finalization_without_replanning(
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(run_dir / "inputs")
     )
-    assert "pending_external_publication" not in state
+    assert "_spec_step_publication_plan" not in state
     assert "product_input_mutation" not in state
     assert "TRACEABILITY REPAIRED" in capsys.readouterr().out
 
@@ -1335,7 +1335,7 @@ def test_traceability_repair_recovers_transaction_crash_prefixes(
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(run_dir / "inputs")
     )
-    assert "pending_external_publication" not in state
+    assert "_spec_step_publication_plan" not in state
     assert "product_input_mutation" not in state
 
 
@@ -1367,5 +1367,5 @@ def test_traceability_repair_authenticates_staged_package_before_copy(
 
     assert traceability.read_bytes() == before
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert "pending_external_publication" in state
+    assert "_spec_step_publication_plan" in state
     assert "product_input_mutation" in state

@@ -116,7 +116,7 @@ def test_alignment_gate_refuses_invalid_state_before_reading_sources(damage):
     if damage == "counter": state["intent_alignment_check_structural_attempts"] = -1
     elif damage == "cancelled": state["cancel_requested"] = True
     elif damage == "phase": state["phase"] = "phase2-tracker-alignment"
-    else: state["pending_controller_completion"] = {}
+    else: state["_spec_step_effect_plan"] = {}
     store = SimpleNamespace(squad_dir=Path("/absent/runs/first"), load=lambda: state)
     with pytest.raises(ValueError):
         prepare_alignment_gate_publication(Path("/absent"), store, completion_id="9" * 32, max_iterations=5)

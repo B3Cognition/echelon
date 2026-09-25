@@ -270,7 +270,7 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
     old_history = identity.identity_history(spec_id="game")
     answer = AppliedHumanInputResolution(None, "Use arrow keys", "user")
     target, method = {
-        "staged": (ctrl, "_prepare_controller_completion"),
+        "staged": (ctrl, "_prepare_spec_step_effects"),
         "resolved": (store, "apply_human_input_state_resolution"),
         "promoted": (IdentityStore, "apply_identity_publication"),
         "context": (ctrl, "_apply_controller_completion_effect"),
@@ -358,7 +358,7 @@ def test_tracker_stop_restart_preserves_decision_and_charge(checkpoint_case, mon
     ctrl = controller(checkpoint_case, executor)
     request = {**selection(checkpoint_case), "through_phase": "phase1-tracker"}
     target, method = {
-        "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_controller_completion"),
+        "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_spec_step_effects"),
         "routed": (store, "advance"), "promoted": (IdentityStore, "apply_identity_publication"),
         "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_controller_completion"),
         "released": (IdentityStore, "release_identity_publication"),
@@ -537,13 +537,13 @@ def test_clarification_source_change_after_staging_cannot_promote(checkpoint_cas
     artifact = root / "specs/game/user-intent.md"
     original_text = artifact.read_bytes()
     history = identity.identity_history(spec_id="game")
-    original_prepare = ctrl._prepare_controller_completion
+    original_prepare = ctrl._prepare_spec_step_effects
     def changed_source(*args, **kwargs):
         completion = original_prepare(*args, **kwargs)
         artifact.write_text("Unproven replacement\n")
         return completion
     with monkeypatch.context() as patch:
-        patch.setattr(ctrl, "_prepare_controller_completion", changed_source)
+        patch.setattr(ctrl, "_prepare_spec_step_effects", changed_source)
         assert not ctrl.apply_human_input_resolution(before["blocked_decision"]["id"],
             expected_state_revision=before["state_revision"], resolution=AppliedHumanInputResolution(None, "Use arrow keys", "user"))
     assert not (store.staging_dir / "user-clarifications.md").exists()

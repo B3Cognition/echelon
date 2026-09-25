@@ -157,7 +157,7 @@ def prepare(controller, state, decision, selected, resolution, effects, *, token
     decode_binding(dict(kind="external", marker=publication.marker.to_dict()), request, recovery, completion_id, state)
     snapshot = controller._state_store.capture_routing_snapshot(expected_phase="checkpoint-assess")
     _require(snapshot.state == state)
-    completion = controller._prepare_controller_completion(from_phase="checkpoint-assess", to_phase=effects.route,
+    completion = controller._prepare_spec_step_effects(from_phase="checkpoint-assess", to_phase=effects.route,
         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
         completion_id=completion_id, managed_discovery_request=encode_publication_request(request))

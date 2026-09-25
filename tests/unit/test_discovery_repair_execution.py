@@ -162,7 +162,7 @@ def test_repair_completion_cannot_use_unreviewed_discovery_as_parent(prepared):
     assert outcome.status == "reviewed", outcome
     package = prepare_discovery_publication(prepared[0], store, executor, completion_id="a" * 32, repair_unit=unit)
     ctrl = controller(prepared, executor)
-    completion = ctrl._prepare_controller_completion(from_phase="phase1-discover", to_phase="phase1-why1",
+    completion = ctrl._prepare_spec_step_effects(from_phase="phase1-discover", to_phase="phase1-why1",
         snapshot=store.capture_routing_snapshot(expected_phase="phase1-discover"), manual_phase_run=False,
         conditional_skip=False, record_completion=True, publication_marker=package.publication.marker.to_dict(),
         completion_id="a" * 32, managed_discovery_request=encode_publication_request(package.request))
@@ -286,7 +286,7 @@ def test_repair_recovery_does_not_repeat_provider_or_publication(checkpoint_case
     assert next(iter(saved["managed_discovery_repairs"]["units"].values()))["attempts"] == attempts
     assert saved["token_usage"] == 105 and len(executor.calls) == 15
     assert identity.pending_identity_publication(spec_id="game") is None
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 @pytest.mark.parametrize("progress,attempts,reason", [(False, 2, "discovery_no_progress"), (True, 3, "discovery_attempts_exhausted")])

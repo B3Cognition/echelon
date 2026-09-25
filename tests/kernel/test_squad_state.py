@@ -41,9 +41,9 @@ from harness.recovery_instruction import (
     controller_contract_recovery,
 )
 from harness.squad_completion import (
-    PreparedControllerCompletion,
-    load_prepared_controller_completion,
-    prepare_controller_completion,
+    PreparedSpecStepEffects,
+    load_prepared_spec_step_effects,
+    prepare_spec_step_effects,
 )
 from harness.squad_state import (
     StateAdvanceError,
@@ -52,8 +52,8 @@ from harness.squad_state import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
 )
 
 DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
@@ -685,7 +685,7 @@ def _prepare_completion(
     effect_plan: tuple[str, ...] = ("journal", "timing"),
     from_phase: str = "init",
     to_phase: str = "next",
-) -> PreparedControllerCompletion:
+) -> PreparedSpecStepEffects:
     route = (
         {
             "kind": "routed",
@@ -705,7 +705,7 @@ def _prepare_completion(
         if external_publication
         else {"kind": "none"}
     )
-    return prepare_controller_completion(
+    return prepare_spec_step_effects(
         tmp_path,
         store.squad_dir,
         completion_id=completion_id,
@@ -723,13 +723,13 @@ def _prepare_completion(
 
 def _commit_routed_completion(
     store: SquadStateStore,
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> None:
     transaction_updates = {
-        PENDING_CONTROLLER_COMPLETION_KEY: prepared.marker.to_dict(),
+        SPEC_STEP_EFFECT_PLAN_KEY: prepared.marker.to_dict(),
     }
     if prepared.intent.publication["kind"] == "external":
-        transaction_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        transaction_updates[SPEC_STEP_PUBLICATION_PLAN_KEY] = VALID_MARKER
     route = prepared.intent.route
     _advance(
         store,
@@ -744,9 +744,9 @@ def _commit_routed_completion(
 def _rewrite_completion_receipts(
     tmp_path: Path,
     store: SquadStateStore,
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     effects: dict[str, object],
-) -> PreparedControllerCompletion:
+) -> PreparedSpecStepEffects:
     receipt_document = {
         "schema_version": 1,
         "completion_id": prepared.marker.completion_id,
@@ -762,11 +762,11 @@ def _rewrite_completion_receipts(
     ).encode("utf-8")
     (
         store.squad_dir
-        / ".completion-outbox"
+        / ".spec-step-effects"
         / prepared.marker.completion_id
         / "receipts.json"
     ).write_bytes(content)
-    return load_prepared_controller_completion(
+    return load_prepared_spec_step_effects(
         tmp_path,
         store.squad_dir,
         prepared.marker,
@@ -929,7 +929,7 @@ class TestSquadStateStore:
 
         advanced = store.load()
         assert advanced["phase"] == "phase1-discover"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in advanced
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in advanced
 
     def test_trusted_pending_publication_marker_commits_with_advance(
         self,
@@ -944,11 +944,11 @@ class TestSquadStateStore:
             "phase1-discover",
             _result("DONE"),
             transaction_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+                SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER
             },
         )
 
-        assert store.load()[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+        assert store.load()[SPEC_STEP_PUBLICATION_PLAN_KEY] == VALID_MARKER
 
     def test_invalid_pending_publication_marker_cannot_advance(
         self,
@@ -967,7 +967,7 @@ class TestSquadStateStore:
                 "phase1-discover",
                 _result("DONE"),
                 transaction_state_updates={
-                    PENDING_EXTERNAL_PUBLICATION_KEY: {
+                    SPEC_STEP_PUBLICATION_PLAN_KEY: {
                         **VALID_MARKER,
                         "schema_version": True,
                     }
@@ -983,7 +983,7 @@ class TestSquadStateStore:
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
         state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        state[SPEC_STEP_PUBLICATION_PLAN_KEY] = VALID_MARKER
         store.save(state)
         before = store.load()
 
@@ -994,14 +994,14 @@ class TestSquadStateStore:
                 "phase1-discover",
                 _result("DONE"),
                 transaction_state_removals={
-                    PENDING_EXTERNAL_PUBLICATION_KEY
+                    SPEC_STEP_PUBLICATION_PLAN_KEY
                 },
             )
 
         assert raised.value.validator == "ownership"
         assert raised.value.json_path == (
             "$.transaction_state_removals."
-            f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+            f"{SPEC_STEP_PUBLICATION_PLAN_KEY}"
         )
         assert store.load() == before
 
@@ -1053,7 +1053,7 @@ class TestSquadStateStore:
         )
         before = store.load()
         updates = {
-            PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+            SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER,
             "product_inputs": {
                 "inputs_dir": "runs/r/inputs",
                 "tree_hash": "sha256:" + "b" * 64,
@@ -1093,7 +1093,7 @@ class TestSquadStateStore:
             "phase1-discover",
             _result("DONE"),
             transaction_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+                SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER,
                 "product_inputs": {
                     "inputs_dir": "runs/r/inputs",
                     "tree_hash": "sha256:" + "b" * 64,
@@ -1106,375 +1106,18 @@ class TestSquadStateStore:
         assert state["product_inputs"]["tree_hash"] == "sha256:" + "b" * 64
         assert state["product_input_mutation"] == VALID_PRODUCT_INPUT_MUTATION
 
-    def test_record_external_publication_failure_blocks_and_preserves_marker(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
-        store.save(state)
 
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "target_drift",
-        )
 
-        failed = store.load()
-        assert failed["status"] == "blocked"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"]["code"] == "target_drift"
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-        assert failed["external_publication_failure"] == {
-            "schema_version": 1,
-            "code": "target_drift",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
 
-    def test_repeated_external_publication_failure_updates_only_bounded_code(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state.update(
-            {
-                "status": "blocked",
-                "blocked_reason": "needs_judgment",
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
-            }
-        )
-        store.save(state)
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "stage_missing",
-        )
-        original_diagnostic = store.load()["external_publication_failure"]
 
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "publish_io",
-        )
 
-        repeated = store.load()
-        assert repeated["external_publication_failure"] == {
-            **original_diagnostic,
-            "code": "publish_io",
-        }
-        assert repeated["status"] == "blocked"
-        assert repeated["blocked_reason"] == "external_publication_pending"
 
-    def test_external_publication_failure_replaces_corrupt_diagnostic(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state.update(
-            {
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
-                "status": "blocked",
-                "blocked_reason": "external_publication_pending",
-                "external_publication_failure": {"raw": "corrupt"},
-            }
-        )
-        store.save(state)
 
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "stage_missing",
-        )
 
-        assert store.load()["external_publication_failure"] == {
-            "schema_version": 1,
-            "code": "stage_missing",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
 
-    @pytest.mark.parametrize(
-        "marker",
-        [
-            None,
-            {
-                "schema_version": 1,
-                "transaction_id": "bad",
-                "manifest_sha256": "b" * 64,
-            },
-        ],
-    )
-    def test_malformed_external_publication_failure_uses_exact_raw_marker_cas(
-        self,
-        tmp_path,
-        marker,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
-        store.save(state)
 
-        store.record_malformed_external_publication_failure(marker)
 
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["status"] == "blocked"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"] == {
-            "schema_version": 1,
-            "code": "manifest_invalid",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
 
-    def test_malformed_external_publication_failure_rejects_marker_mismatch(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        malformed = {
-            "schema_version": 1,
-            "transaction_id": "bad",
-            "manifest_sha256": "b" * 64,
-        }
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = malformed
-        store.save(state)
-        before = store.load()
-
-        with pytest.raises(StateAdvanceError):
-            store.record_malformed_external_publication_failure(None)
-
-        assert store.load() == before
-
-    def test_malformed_external_publication_replaces_corrupt_diagnostic(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        malformed = {
-            "schema_version": 1,
-            "transaction_id": "bad",
-            "manifest_sha256": "b" * 64,
-        }
-        state = store.load()
-        state.update(
-            {
-                PENDING_EXTERNAL_PUBLICATION_KEY: malformed,
-                "status": "blocked",
-                "blocked_reason": "external_publication_pending",
-                "external_publication_failure": {"raw": "corrupt"},
-            }
-        )
-        store.save(state)
-
-        store.record_malformed_external_publication_failure(malformed)
-
-        assert store.load()["external_publication_failure"] == {
-            "schema_version": 1,
-            "code": "manifest_invalid",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-
-    @pytest.mark.parametrize(
-        "method_name,args",
-        [
-            (
-                "record_external_publication_failure",
-                ("target_drift",),
-            ),
-            ("complete_external_publication", ()),
-        ],
-    )
-    def test_external_publication_marker_mismatch_cannot_record_or_clear(
-        self,
-        tmp_path,
-        method_name,
-        args,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
-        store.save(state)
-        before = store.load()
-        mismatched = {
-            **VALID_MARKER,
-            "transaction_id": "c" * 32,
-        }
-
-        with pytest.raises(StateAdvanceError):
-            getattr(store, method_name)(mismatched, *args)
-
-        assert store.load() == before
-
-    @pytest.mark.parametrize(
-        "code",
-        [
-            "unknown",
-            True,
-            "",
-            "manifest-invalid",
-        ],
-    )
-    def test_external_publication_failure_rejects_unbounded_code(
-        self,
-        tmp_path,
-        code,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
-        store.save(state)
-        before = store.load()
-
-        with pytest.raises((ValueError, StateAdvanceError)):
-            store.record_external_publication_failure(VALID_MARKER, code)
-
-        assert store.load() == before
-
-    def test_complete_external_publication_restores_lifecycle_in_one_save(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state.update(
-            {
-                "status": "blocked",
-                "blocked_reason": "needs_judgment",
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
-            }
-        )
-        store.save(state)
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "stage_missing",
-        )
-
-        with patch.object(
-            store,
-            "_save_unlocked",
-            wraps=store._save_unlocked,
-        ) as save:
-            store.complete_external_publication(VALID_MARKER)
-
-        completed = store.load()
-        assert save.call_count == 1
-        assert completed["status"] == "blocked"
-        assert completed["blocked_reason"] == "needs_judgment"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert "external_publication_failure" not in completed
-
-    def test_legacy_publication_clear_rejects_coupled_completion_marker(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        completion_marker = {
-            **VALID_COMPLETION_MARKER,
-            "step": "awaiting_publication",
-        }
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
-        state[PENDING_CONTROLLER_COMPLETION_KEY] = completion_marker
-        store.save(state)
-        before = store.load()
-
-        with pytest.raises(StateAdvanceError) as raised:
-            store.complete_external_publication(VALID_MARKER)
-
-        assert raised.value.validator == "completion_binding"
-        assert store.load() == before
-
-    def test_begin_external_publication_exact_cas_preserves_lifecycle(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        state = store.load()
-        state["status"] = "done"
-        store.save(state)
-        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
-        before = store.load()
-
-        with patch.object(
-            store,
-            "_save_unlocked",
-            wraps=store._save_unlocked,
-        ) as save:
-            store.begin_external_publication(
-                VALID_MARKER,
-                snapshot=snapshot,
-                state_updates={
-                    "published_spec_dir": "specs/001-demo",
-                },
-            )
-
-        started = store.load()
-        assert save.call_count == 1
-        assert started[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-        assert started["published_spec_dir"] == "specs/001-demo"
-        assert started["phase"] == before["phase"]
-        assert started["status"] == before["status"]
-        assert started.get("blocked_reason") == before.get("blocked_reason")
-
-    def test_begin_external_publication_rejects_stale_snapshot_without_marker(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
-        concurrent = store.load()
-        concurrent["concurrent_marker"] = "kept"
-        store.save(concurrent)
-        before = store.load()
-
-        with pytest.raises(StateAdvanceError) as raised:
-            store.begin_external_publication(
-                VALID_MARKER,
-                snapshot=snapshot,
-            )
-
-        assert raised.value.validator == "stale_state"
-        assert store.load() == before
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-
-    def test_begin_external_publication_save_failure_leaves_marker_absent(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
-        before = store.load()
-
-        with patch.object(
-            store,
-            "_save_unlocked",
-            side_effect=OSError("injected save failure"),
-        ):
-            with pytest.raises(StateAdvanceError) as raised:
-                store.begin_external_publication(
-                    VALID_MARKER,
-                    snapshot=snapshot,
-                )
-
-        assert raised.value.validator == "save"
-        assert store.load() == before
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
 
     def test_advance_save_failure_never_durably_installs_publication_marker(
         self,
@@ -1489,7 +1132,7 @@ class TestSquadStateStore:
             from_phase="repair",
             to_phase="next",
             transaction_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+                SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER,
             },
         )
         before = store.load()
@@ -1504,7 +1147,7 @@ class TestSquadStateStore:
 
         assert raised.value.validator == "save"
         assert store.load() == before
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
 
     def test_snapshot_bound_failure_diagnostic_rejects_same_phase_new_revision(
         self,
@@ -1748,7 +1391,7 @@ class TestSquadStateStore:
             _result("DONE"),
             dispatch_id=VALID_COMPLETION_MARKER["completion_id"],
             transaction_state_updates={
-                PENDING_CONTROLLER_COMPLETION_KEY: (
+                SPEC_STEP_EFFECT_PLAN_KEY: (
                     VALID_COMPLETION_MARKER
                 )
             },
@@ -1756,7 +1399,7 @@ class TestSquadStateStore:
 
         state = store.load()
         assert receipt.dispatch_id == VALID_COMPLETION_MARKER["completion_id"]
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+        assert state[SPEC_STEP_EFFECT_PLAN_KEY] == (
             VALID_COMPLETION_MARKER
         )
         assert state["last_dispatch"][
@@ -1809,14 +1452,14 @@ class TestSquadStateStore:
             _result("DONE"),
             dispatch_id=completion_marker["completion_id"],
             transaction_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
-                PENDING_CONTROLLER_COMPLETION_KEY: completion_marker,
+                SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER,
+                SPEC_STEP_EFFECT_PLAN_KEY: completion_marker,
             },
         )
 
         state = store.load()
-        assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == completion_marker
+        assert state[SPEC_STEP_PUBLICATION_PLAN_KEY] == VALID_MARKER
+        assert state[SPEC_STEP_EFFECT_PLAN_KEY] == completion_marker
 
     def test_no_publication_completion_starts_at_first_bound_effect(
         self,
@@ -1830,844 +1473,27 @@ class TestSquadStateStore:
 
         state = store.load()
         assert prepared.marker.step == "journal"
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+        assert state[SPEC_STEP_EFFECT_PLAN_KEY] == (
             prepared.marker.to_dict()
         )
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in state
 
-    def test_publication_handoff_restores_lifecycle_and_advances_once(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            external_publication=True,
-        )
-        _commit_routed_completion(store, prepared)
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "stage_missing",
-        )
 
-        with patch.object(
-            store,
-            "_save_unlocked",
-            wraps=store._save_unlocked,
-        ) as save:
-            store.handoff_external_publication(VALID_MARKER, prepared)
 
-        state = store.load()
-        assert save.call_count == 1
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
-        assert "external_publication_failure" not in state
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == {
-            **prepared.marker.to_dict(),
-            "step": "journal",
-        }
-        assert state["status"] == "running"
-        assert "blocked_reason" not in state
 
-    def test_controller_completion_advances_only_with_one_ahead_receipt(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        prepared = _prepare_completion(tmp_path, store)
-        _commit_routed_completion(store, prepared)
-        before = store.load()
 
-        with pytest.raises(StateAdvanceError):
-            store.advance_controller_completion(prepared)
-        assert store.load() == before
 
-        one_ahead = _rewrite_completion_receipts(
-            tmp_path,
-            store,
-            prepared,
-            {"journal": {"schema_version": 1}},
-        )
-        store.advance_controller_completion(one_ahead)
 
-        state = store.load()
-        receipts_path = (
-            store.squad_dir
-            / ".completion-outbox"
-            / prepared.marker.completion_id
-            / "receipts.json"
-        )
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == {
-            **prepared.marker.to_dict(),
-            "receipts_sha256": hashlib.sha256(
-                receipts_path.read_bytes()
-            ).hexdigest(),
-            "step": "timing",
-        }
-        after = store.load()
-        with pytest.raises(StateAdvanceError):
-            store.advance_controller_completion(one_ahead)
-        assert store.load() == after
 
-    def test_versioned_controller_completion_advances_with_bound_policy(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state["checkpoint_policy_version"] = 2
-        state["phase_completion_outcomes"] = []
-        store.save(state)
-        prepared = prepare_controller_completion(
-            tmp_path,
-            store.squad_dir,
-            completion_id="c" * 32,
-            origin="routed",
-            publication={"kind": "none"},
-            route={
-                "kind": "routed",
-                "from_phase": "init",
-                "to_phase": "next",
-                "manual_phase_run": False,
-                "record_completion": True,
-                "checkpoint_policy_version": 2,
-                "checkpoint_policy": "none",
-                "rewind_policy": "none",
-            },
-            effect_plan=("journal",),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="versioned state transition test",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        _commit_routed_completion(store, prepared)
-        one_ahead = _rewrite_completion_receipts(
-            tmp_path,
-            store,
-            prepared,
-            {"journal": {"schema_version": 1}},
-        )
 
-        store.advance_controller_completion(one_ahead)
 
-        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-            "complete"
-        )
 
-    def test_routed_controller_completion_final_clear_is_exact(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            effect_plan=("journal",),
-        )
-        _commit_routed_completion(store, prepared)
-        before = store.load()
 
-        with pytest.raises(StateAdvanceError):
-            store.complete_controller_completion(prepared)
-        assert store.load() == before
 
-        one_ahead = _rewrite_completion_receipts(
-            tmp_path,
-            store,
-            prepared,
-            {"journal": {"schema_version": 1}},
-        )
-        store.advance_controller_completion(one_ahead)
-        completed_marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
-        completed = load_prepared_controller_completion(
-            tmp_path,
-            store.squad_dir,
-            completed_marker,
-        )
-        store.complete_controller_completion(completed)
 
-        state = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in state
-        assert state["last_dispatch"]["post_dispatch_complete"] is True
-        assert state["last_dispatch"]["completion_intent_sha256"] == (
-            completed.marker.intent_sha256
-        )
-        assert state["last_dispatch"]["completion_receipts_sha256"] == (
-            completed.marker.receipts_sha256
-        )
-        assert state["last_dispatch"][
-            "completed_publication_binding_sha256"
-        ] == completed.marker.publication_binding_sha256
 
-    def test_terminal_controller_completion_writes_bounded_receipt_and_done(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        state = store.load()
-        state["status"] = "blocked"
-        state["blocked_reason"] = "terminal_reconciliation"
-        state[PENDING_CONTROLLER_COMPLETION_KEY] = (
-            prepared.marker.to_dict()
-        )
-        store.save(state)
 
-        store.complete_controller_completion(prepared)
 
-        completed = store.load()
-        assert completed["status"] == "done"
-        assert "blocked_reason" not in completed
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert completed["last_terminal_completion"] == {
-            "schema_version": 1,
-            "completion_id": prepared.marker.completion_id,
-            "intent_sha256": prepared.marker.intent_sha256,
-            "receipts_sha256": prepared.marker.receipts_sha256,
-            "publication_binding_sha256": (
-                prepared.marker.publication_binding_sha256
-            ),
-            "terminal_phase": "DONE",
-        }
-
-    def test_terminal_retarget_completion_adopts_only_a_verified_receipt(
-        self,
-        tmp_path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            effect_plan=("mining", "retarget"),
-            from_phase="DONE",
-        )
-        state = store.load()
-        state["spec_id"] = "001-demo"
-        state["retarget"] = {
-            "status": "finalizing",
-            "revision_id": "retarget-1",
-            "checkpoint_commit": "b" * 40,
-            "memory_excluded": True,
-        }
-        state[PENDING_CONTROLLER_COMPLETION_KEY] = prepared.marker.to_dict()
-        store.save(state)
-        receipt = {
-            "completion_id": "c" * 32,
-            "replacement_commit": "a" * 40,
-            "status": "complete",
-        }
-        mined = _rewrite_completion_receipts(
-            tmp_path,
-            store,
-            prepared,
-            {"mining": {"status": "not_applicable"}},
-        )
-        store.advance_controller_completion(mined)
-        retarget_marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
-        retarget_prepared = load_prepared_controller_completion(
-            tmp_path, store.squad_dir, retarget_marker
-        )
-        complete_receipts = _rewrite_completion_receipts(
-            tmp_path,
-            store,
-            retarget_prepared,
-            {"mining": {"status": "not_applicable"}, "retarget": receipt},
-        )
-        store.advance_controller_completion(complete_receipts)
-        completed = load_prepared_controller_completion(
-            tmp_path,
-            store.squad_dir,
-            store.load()[PENDING_CONTROLLER_COMPLETION_KEY],
-        )
-        monkeypatch.setattr(
-            "echelon.spec_retarget_finalization.verify_retarget_finalization_receipt",
-            lambda *_args: receipt,
-        )
-
-        store.complete_controller_completion(completed)
-
-        retarget = store.load()["retarget"]
-        assert retarget["status"] == "complete"
-        assert retarget["replacement_commit"] == "a" * 40
-        assert retarget["finalization_receipt"] == receipt
-        assert retarget["comparison_pending_completion_id"] == "c" * 32
-        assert "memory_excluded" not in retarget
-
-    def test_terminal_controller_completion_records_reconciled_inventories(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-        store.begin_terminal_controller_completion(
-            prepared,
-            snapshot=snapshot,
-        )
-
-        store.complete_controller_completion(
-            prepared,
-            phase_a_active_source_sha256="1" * 64,
-            phase_a_published_postimage_sha256="2" * 64,
-        )
-
-        terminal = store.load()["last_terminal_completion"]
-        assert terminal["phase_a_active_source_sha256"] == "1" * 64
-        assert (
-            terminal["phase_a_published_postimage_sha256"]
-            == "2" * 64
-        )
-
-    @pytest.mark.parametrize("external_publication", [False, True])
-    def test_terminal_controller_completion_begins_with_one_atomic_save(
-        self,
-        tmp_path,
-        external_publication,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            external_publication=external_publication,
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-
-        with patch.object(
-            store,
-            "_save_unlocked",
-            wraps=store._save_unlocked,
-        ) as save:
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-                state_updates={"published_spec_dir": "specs/001-demo"},
-            )
-
-        state = store.load()
-        assert save.call_count == 1
-        assert state["phase"] == "DONE"
-        assert state["published_spec_dir"] == "specs/001-demo"
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
-            prepared.marker.to_dict()
-        )
-        if external_publication:
-            assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-        else:
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
-
-    def test_terminal_controller_completion_begin_resolves_saved_then_raised(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            external_publication=True,
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-        original_save = store._save_unlocked
-
-        def save_then_raise(state):
-            original_save(state)
-            raise OSError("injected save ambiguity")
-
-        with patch.object(
-            store,
-            "_save_unlocked",
-            side_effect=save_then_raise,
-        ):
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-            )
-
-        state = store.load()
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
-            prepared.marker.to_dict()
-        )
-        assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-
-    def test_phase4_completion_records_exact_inventory_digests(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase4-document",
-        )
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            effect_plan=(),
-            from_phase="phase4-document",
-            to_phase="DONE",
-        )
-        _commit_routed_completion(store, prepared)
-
-        store.complete_controller_completion(
-            prepared,
-            phase_a_active_source_sha256="1" * 64,
-            phase_a_published_postimage_sha256="2" * 64,
-        )
-
-        state = store.load()
-        assert state["phase_a_active_source_sha256"] == "1" * 64
-        assert state["phase_a_published_postimage_sha256"] == "2" * 64
-
-    def test_phase4_completion_requires_both_inventory_digests(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase4-document",
-        )
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            effect_plan=(),
-            from_phase="phase4-document",
-            to_phase="DONE",
-        )
-        _commit_routed_completion(store, prepared)
-        before = store.load()
-
-        with pytest.raises(StateAdvanceError) as raised:
-            store.complete_controller_completion(prepared)
-
-        assert raised.value.validator == "completion_binding"
-        assert store.load() == before
-
-    def test_controller_completion_failure_uses_exact_raw_marker_cas(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        malformed = {"schema_version": 1, "completion_id": None}
-        state = store.load()
-        state[PENDING_CONTROLLER_COMPLETION_KEY] = malformed
-        state["controller_completion_failure"] = {"raw": "corrupt"}
-        store.save(state)
-
-        store.record_controller_completion_failure(
-            malformed,
-            "intent_invalid",
-        )
-
-        failed = store.load()
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY] == malformed
-        assert failed["status"] == "blocked"
-        assert failed["blocked_reason"] == "controller_completion_pending"
-        assert failed["controller_completion_failure"] == {
-            "schema_version": 1,
-            "code": "intent_invalid",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-        before = store.load()
-        with pytest.raises(StateAdvanceError):
-            store.record_controller_completion_failure(
-                None,
-                "intent_invalid",
-            )
-        assert store.load() == before
-
-    def test_controller_completion_failure_preserves_lifecycle_until_final(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state["status"] = "blocked"
-        state["blocked_reason"] = "needs_judgment"
-        store.save(state)
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            effect_plan=(),
-        )
-        _commit_routed_completion(store, prepared)
-
-        store.record_controller_completion_failure(
-            prepared.marker.to_dict(),
-            "stage_io",
-        )
-        first = store.load()["controller_completion_failure"]
-        store.record_controller_completion_failure(
-            prepared.marker.to_dict(),
-            "stage_missing",
-        )
-
-        failed = store.load()
-        assert failed["controller_completion_failure"] == {
-            **first,
-            "code": "stage_missing",
-        }
-        store.complete_controller_completion(prepared)
-        completed = store.load()
-        assert completed["status"] == "blocked"
-        assert completed["blocked_reason"] == "needs_judgment"
-        assert "controller_completion_failure" not in completed
-
-    def test_nested_publication_and_completion_failures_restore_once(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            external_publication=True,
-            effect_plan=(),
-        )
-        _commit_routed_completion(store, prepared)
-        store.record_external_publication_failure(
-            VALID_MARKER,
-            "stage_missing",
-        )
-        store.record_controller_completion_failure(
-            prepared.marker.to_dict(),
-            "intent_invalid",
-        )
-
-        nested = store.load()
-        assert nested["controller_completion_failure"] == {
-            "schema_version": 1,
-            "code": "intent_invalid",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-        store.handoff_external_publication(VALID_MARKER, prepared)
-        handed_off = store.load()
-        assert handed_off["status"] == "blocked"
-        assert handed_off["blocked_reason"] == (
-            "controller_completion_pending"
-        )
-        next_prepared = load_prepared_controller_completion(
-            tmp_path,
-            store.squad_dir,
-            handed_off[PENDING_CONTROLLER_COMPLETION_KEY],
-        )
-        store.complete_controller_completion(next_prepared)
-        completed = store.load()
-        assert completed["status"] == "running"
-        assert "blocked_reason" not in completed
-
-    def test_completion_missing_failure_requires_publication_authority(
-        self,
-        tmp_path,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
-        store.save(state)
-
-        store.record_controller_completion_failure(
-            None,
-            "completion_missing",
-        )
-
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
-        assert failed["controller_completion_failure"]["code"] == (
-            "completion_missing"
-        )
-        state = store.load()
-        state.pop(PENDING_EXTERNAL_PUBLICATION_KEY)
-        store.save(state)
-        before = store.load()
-        with pytest.raises(StateAdvanceError):
-            store.record_controller_completion_failure(
-                None,
-                "completion_missing",
-            )
-        assert store.load() == before
-
-    @pytest.mark.parametrize(
-        "tampering",
-        [
-            "intent",
-            "marker",
-            "receipts",
-            "future_receipts",
-            "oversized_receipts",
-            "malformed_state_marker",
-            "state_marker_mismatch",
-            "dispatch_id",
-            "dispatch_judgments",
-        ],
-    )
-    def test_controller_completion_tampering_writes_nothing(
-        self,
-        tmp_path,
-        tampering,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        prepared = _prepare_completion(tmp_path, store)
-        _commit_routed_completion(store, prepared)
-        action = lambda: store.advance_controller_completion(prepared)
-        if tampering == "intent":
-            prepared = replace(
-                prepared,
-                intent=replace(
-                    prepared.intent,
-                    context_reason="forged",
-                ),
-            )
-            action = lambda: store.advance_controller_completion(prepared)
-        elif tampering == "marker":
-            prepared = replace(
-                prepared,
-                marker=replace(
-                    prepared.marker,
-                    receipts_sha256="0" * 64,
-                ),
-            )
-            action = lambda: store.advance_controller_completion(prepared)
-        elif tampering == "receipts":
-            prepared = replace(
-                prepared,
-                _receipts_json=b'{"raw":"corrupt"}',
-            )
-            action = lambda: store.advance_controller_completion(prepared)
-        elif tampering == "future_receipts":
-            prepared = replace(
-                prepared,
-                _receipts_json=json.dumps(
-                    {
-                        "schema_version": 1,
-                        "completion_id": prepared.marker.completion_id,
-                        "effects": {
-                            "journal": {"schema_version": 1},
-                            "timing": {"schema_version": 1},
-                        },
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8"),
-            )
-            action = lambda: store.advance_controller_completion(prepared)
-        elif tampering == "oversized_receipts":
-            prepared = replace(
-                prepared,
-                _receipts_json=json.dumps(
-                    {
-                        "schema_version": 1,
-                        "completion_id": prepared.marker.completion_id,
-                        "effects": {
-                            "journal": {
-                                "padding": "x" * 1_048_576,
-                            },
-                        },
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8"),
-            )
-            action = lambda: store.advance_controller_completion(prepared)
-        elif tampering in {
-            "malformed_state_marker",
-            "state_marker_mismatch",
-        }:
-            one_ahead = _rewrite_completion_receipts(
-                tmp_path,
-                store,
-                prepared,
-                {"journal": {"schema_version": 1}},
-            )
-            state = store.load()
-            state[PENDING_CONTROLLER_COMPLETION_KEY] = (
-                None
-                if tampering == "malformed_state_marker"
-                else {
-                    **prepared.marker.to_dict(),
-                    "receipts_sha256": "1" * 64,
-                }
-            )
-            store.save(state)
-            action = lambda: store.advance_controller_completion(
-                one_ahead
-            )
-        elif tampering == "dispatch_id":
-            state = store.load()
-            state["last_dispatch"]["dispatch_id"] = "1" * 32
-            store.save(state)
-            one_ahead = _rewrite_completion_receipts(
-                tmp_path,
-                store,
-                prepared,
-                {"journal": {"schema_version": 1}},
-            )
-            action = lambda: store.advance_controller_completion(
-                one_ahead
-            )
-        else:
-            state = store.load()
-            state["last_dispatch"]["judgment_payload_sha256"] = [
-                "0" * 64
-            ]
-            store.save(state)
-            one_ahead = _rewrite_completion_receipts(
-                tmp_path,
-                store,
-                prepared,
-                {"journal": {"schema_version": 1}},
-            )
-            action = lambda: store.advance_controller_completion(
-                one_ahead
-            )
-        before = store.load()
-
-        with pytest.raises(StateAdvanceError):
-            action()
-
-        assert store.load() == before
-
-    @pytest.mark.parametrize(
-        ("method_name", "save_then_raise"),
-        [
-            ("handoff", False),
-            ("handoff", True),
-            ("advance", False),
-            ("advance", True),
-            ("record", False),
-            ("record", True),
-            ("complete", False),
-            ("complete", True),
-        ],
-    )
-    def test_controller_completion_state_save_ambiguity(
-        self,
-        tmp_path,
-        method_name,
-        save_then_raise,
-    ) -> None:
-        store = _store(tmp_path)
-        store.initialize("r", "greenfield", "msg", 0, "init")
-        if method_name == "handoff":
-            prepared = _prepare_completion(
-                tmp_path,
-                store,
-                external_publication=True,
-            )
-            _commit_routed_completion(store, prepared)
-            operation = lambda: store.handoff_external_publication(
-                VALID_MARKER,
-                prepared,
-            )
-        elif method_name == "advance":
-            original = _prepare_completion(tmp_path, store)
-            _commit_routed_completion(store, original)
-            prepared = _rewrite_completion_receipts(
-                tmp_path,
-                store,
-                original,
-                {"journal": {"schema_version": 1}},
-            )
-            operation = lambda: store.advance_controller_completion(
-                prepared
-            )
-        elif method_name == "record":
-            prepared = _prepare_completion(tmp_path, store)
-            _commit_routed_completion(store, prepared)
-            operation = lambda: store.record_controller_completion_failure(
-                prepared.marker.to_dict(),
-                "stage_io",
-            )
-        else:
-            prepared = _prepare_completion(
-                tmp_path,
-                store,
-                effect_plan=(),
-            )
-            _commit_routed_completion(store, prepared)
-            operation = lambda: store.complete_controller_completion(
-                prepared
-            )
-        before = store.load()
-        original_save = store._save_unlocked
-
-        def injected_save(state):
-            if save_then_raise:
-                original_save(state)
-            raise OSError("injected save ambiguity")
-
-        with patch.object(store, "_save_unlocked", side_effect=injected_save):
-            if save_then_raise:
-                operation()
-            else:
-                with pytest.raises(StateAdvanceError):
-                    operation()
-
-        after = store.load()
-        if not save_then_raise:
-            assert after == before
-        elif method_name == "handoff":
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in after
-            assert after[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-                "journal"
-            )
-        elif method_name == "advance":
-            assert after[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-                "timing"
-            )
-        elif method_name == "record":
-            assert after["controller_completion_failure"]["code"] == (
-                "stage_io"
-            )
-        else:
-            assert PENDING_CONTROLLER_COMPLETION_KEY not in after
-            assert after["last_dispatch"]["post_dispatch_complete"] is True
 
     def test_routed_advance_accepts_only_exact_saved_then_raised_state(
         self,
@@ -2702,10 +1528,10 @@ class TestSquadStateStore:
                     prepared_completion.marker.completion_id
                 ),
                 transaction_state_updates={
-                    PENDING_CONTROLLER_COMPLETION_KEY: (
+                    SPEC_STEP_EFFECT_PLAN_KEY: (
                         prepared_completion.marker.to_dict()
                     ),
-                    PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+                    SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER,
                 },
             )
 
@@ -2716,10 +1542,10 @@ class TestSquadStateStore:
         assert state["token_usage"] == 17
         assert state["last_dispatch"]["dispatch_id"] == receipt.dispatch_id
         assert state["last_dispatch"]["post_dispatch_complete"] is False
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+        assert state[SPEC_STEP_EFFECT_PLAN_KEY] == (
             prepared_completion.marker.to_dict()
         )
-        assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+        assert state[SPEC_STEP_PUBLICATION_PLAN_KEY] == VALID_MARKER
 
     def test_advance_records_completed_phase_provenance(self, tmp_path):
         store = _store(tmp_path)
@@ -3143,7 +1969,7 @@ class TestSquadStateStore:
                 checkpoint_policy="required",
                 dispatch_id=first.marker.completion_id,
                 transaction_state_updates={
-                    PENDING_CONTROLLER_COMPLETION_KEY: first.marker.to_dict(),
+                    SPEC_STEP_EFFECT_PLAN_KEY: first.marker.to_dict(),
                 },
             )
 
@@ -3163,7 +1989,7 @@ class TestSquadStateStore:
             checkpoint_policy="required",
             dispatch_id=second.marker.completion_id,
             transaction_state_updates={
-                PENDING_CONTROLLER_COMPLETION_KEY: second.marker.to_dict(),
+                SPEC_STEP_EFFECT_PLAN_KEY: second.marker.to_dict(),
             },
         )
 
@@ -3234,7 +2060,7 @@ class TestSquadStateStore:
                 checkpoint_policy="required",
                 dispatch_id=completion.marker.completion_id,
                 transaction_state_updates={
-                    PENDING_CONTROLLER_COMPLETION_KEY: completion.marker.to_dict(),
+                    SPEC_STEP_EFFECT_PLAN_KEY: completion.marker.to_dict(),
                 },
             )
 
@@ -3889,80 +2715,7 @@ class TestDurableStateAuthority:
 
         assert calls == ["file_fsync", "dir_fsync"]
 
-    def test_post_replace_parent_sync_failure_is_not_adopted(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r1", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            external_publication=True,
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-        real_fsync = os.fsync
 
-        def fail_parent_sync(descriptor):
-            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-                raise OSError(errno.EIO, "injected parent sync failure")
-            real_fsync(descriptor)
-
-        with (
-            patch(
-                "harness.squad_state.os.fsync",
-                side_effect=fail_parent_sync,
-            ),
-            pytest.raises(StateDurabilityError) as raised,
-        ):
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-            )
-
-        assert raised.value.stage == "post_replace"
-        assert prepared._transaction_root.is_dir()
-
-    def test_external_marker_post_replace_failure_stays_distinct(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize(
-            "r1",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="phase1-what",
-        )
-        real_fsync = os.fsync
-
-        def fail_parent_sync(descriptor):
-            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-                raise OSError(errno.EIO, "injected parent sync failure")
-            real_fsync(descriptor)
-
-        with (
-            patch(
-                "harness.squad_state.os.fsync",
-                side_effect=fail_parent_sync,
-            ),
-            pytest.raises(StateDurabilityError) as raised,
-        ):
-            store.begin_external_publication(
-                VALID_MARKER,
-                snapshot=snapshot,
-            )
-
-        assert raised.value.stage == "post_replace"
 
     def test_confirm_durable_state_rejects_symlink(self, tmp_path):
         store = _store(tmp_path)
@@ -4013,51 +2766,6 @@ class TestDurableStateAuthority:
 
         assert raised.value.stage == "confirm"
 
-    def test_true_save_then_raise_adoption_uses_exact_confirmation(
-        self,
-        tmp_path,
-    ):
-        store = _store(tmp_path)
-        store.initialize("r1", "greenfield", "msg", 0, "DONE")
-        prepared = _prepare_completion(
-            tmp_path,
-            store,
-            origin="terminal",
-            external_publication=True,
-            effect_plan=(),
-            from_phase="DONE",
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-        original_save = store._save_unlocked
-        original_confirm = store._confirm_durable_state_unlocked
-
-        def save_then_raise(state):
-            original_save(state)
-            raise OSError("injected outer ambiguity")
-
-        with (
-            patch.object(
-                store,
-                "_save_unlocked",
-                side_effect=save_then_raise,
-            ),
-            patch.object(
-                store,
-                "_confirm_durable_state_unlocked",
-                wraps=original_confirm,
-            ) as confirm,
-        ):
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-            )
-
-        assert confirm.call_count == 1
-        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY] == (
-            prepared.marker.to_dict()
-        )
 
     def test_no_stale_tmp_file_after_save(self, tmp_path):
         store = SquadStateStore(tmp_path / "squad/run-test")

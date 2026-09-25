@@ -9,7 +9,7 @@ from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 from harness.discovery_completion import authenticate, decode_binding
 from harness.discovery_publication import prepare_discovery_publication
 from harness.element_identity_publication import encode_publication_request
-from harness.squad_completion import CompletionError, load_prepared_controller_completion
+from harness.squad_completion import CompletionError, load_prepared_spec_step_effects
 from harness.squad_publication import PreparedSquadPublication
 from tests.unit.test_managed_alignment_execution import (
     case, enrolled, turn_prepared, prepared, checkpoint_case, complete_strategy,
@@ -108,7 +108,7 @@ def assert_question_handoff(case, package, provider):
     from harness.human_input import select_initial_decision_status, HumanInputPolicyError
     from harness.squad_provider import SquadAgentResult
     from harness.squad_state import StateAdvanceError
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     documents = {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()}
@@ -121,14 +121,14 @@ def assert_question_handoff(case, package, provider):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for target in ("phase3-specialists", "phase2-intent-alignment-structural", "phase1-what", "done"):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=target,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=target,
                         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id=completion_id,
                         managed_discovery_request=encode_publication_request(package.request))
             result = SquadAgentResult(exit_code=0, echelon_result=question(), raw_output="", duration_ms=0, timed_out=False)
             prepared = ctrl._prepare_phase_result(node, result, snapshot)
             routed = ctrl._construct_routing_decision_or_block(node, prepared, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id,
                 token_usage_delta=21)
             assert routed is not None, store.load()

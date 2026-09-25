@@ -142,7 +142,7 @@ def test_synthesis_restart_preserves_charges_and_checkpoint_prefix(accepted, mon
     ctrl = controller(case, executor)
     target, method = {
         "accepted": (case[1], "advance_discovery_operation"),
-        "sealed": (ctrl, "_prepare_controller_completion"),
+        "sealed": (ctrl, "_prepare_spec_step_effects"),
         "routed": (case[1], "advance"),
         "context": (squad, "install_or_verify_completion_context"),
         "completed": (case[1], "complete_controller_completion"),

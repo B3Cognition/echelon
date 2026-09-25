@@ -8,7 +8,7 @@ import pytest
 
 import harness.spec_step_effects as effects_module
 from harness.spec_step import prepare_spec_step
-from harness.spec_step_effects import PhaseASpecStepEffects
+from harness.spec_step_effects import PhaseASpecStepEffects, step_effect_intent
 from harness.spec_step_kernel import SpecStepEffectError
 from harness.squad_publication import SquadPublicationTransaction
 
@@ -48,12 +48,92 @@ def _prepared(
         origin="routed",
         expected_state_revision=7,
         expected_previous_dispatch_sha256="b" * 64,
-        route={"kind": "routed", "from_phase": "phase1", "to_phase": "phase2"},
+        route={
+            "kind": "routed",
+            "from_phase": "phase1",
+            "to_phase": "phase2",
+            "manual_phase_run": False,
+            "record_completion": True,
+        },
         effects=(effect,),
         publication=publication,
         final_state={"phase_a_state_version": 1, "phase": "phase2"},
         provenance={"effects": {effect: {"sealed": True}}},
     )
+
+
+def _effect_intent(effect: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "completion_id": STEP_ID,
+        "origin": "routed",
+        "publication": {"kind": "none"},
+        "route": {
+            "kind": "routed",
+            "from_phase": "phase1",
+            "to_phase": "phase2",
+            "manual_phase_run": False,
+            "record_completion": True,
+        },
+        "effect_plan": [effect],
+        "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {"kind": "none"},
+        "context_reason": "phase transition",
+        "mine_phase_a": effect == "mining",
+        "judgment_payload_sha256": [],
+        "judgments": [],
+    }
+
+
+def test_step_effect_intent_is_sealed_by_the_step(tmp_path: Path) -> None:
+    _project_root, squad_dir = _roots(tmp_path)
+    prepared = prepare_spec_step(
+        squad_dir,
+        step_id=STEP_ID,
+        origin="routed",
+        expected_state_revision=7,
+        expected_previous_dispatch_sha256="b" * 64,
+        route={
+            "kind": "routed",
+            "from_phase": "phase1",
+            "to_phase": "phase2",
+            "manual_phase_run": False,
+            "record_completion": True,
+        },
+        effects=("journal",),
+        publication=None,
+        final_state={"phase_a_state_version": 1, "phase": "phase2"},
+        provenance={"effect_intent": _effect_intent("journal")},
+    )
+
+    intent = step_effect_intent(prepared)
+
+    assert intent.completion_id == prepared.marker.step_id
+    assert intent.origin == prepared.intent.origin
+    assert intent.route["to_phase"] == prepared.intent.route["to_phase"]
+    assert intent.effect_plan == ("journal",)
+
+
+def test_step_effect_intent_rejects_identity_drift(tmp_path: Path) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    del project_root
+    intent = _effect_intent("journal")
+    intent["completion_id"] = "c" * 32
+    prepared = prepare_spec_step(
+        squad_dir,
+        step_id=STEP_ID,
+        origin="routed",
+        expected_state_revision=7,
+        expected_previous_dispatch_sha256="b" * 64,
+        route={"kind": "routed", "from_phase": "phase1", "to_phase": "phase2"},
+        effects=("journal",),
+        publication=None,
+        final_state={"phase_a_state_version": 1, "phase": "phase2"},
+        provenance={"effect_intent": intent},
+    )
+
+    with pytest.raises(SpecStepEffectError, match="intent_mismatch"):
+        step_effect_intent(prepared)
 
 
 def _adapter(project_root: Path, squad_dir: Path) -> PhaseASpecStepEffects:
@@ -93,6 +173,43 @@ def test_effect_adapter_returns_one_bound_receipt(
     assert receipt.step_id == STEP_ID
     assert receipt.effect == effect
     assert receipt.payload == {"effect": effect, "saved": True}
+
+
+@pytest.mark.parametrize("effect", ("journal", "timing", "checkpoint", "quality"))
+def test_step_owned_effects_do_not_use_completion_companion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effect: str,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    prepared = _prepared(squad_dir, effect)
+    calls: list[str] = []
+
+    def primitive(**_kwargs):
+        calls.append("step")
+        return {"effect": effect, "saved": True}
+
+    def companion(*_args, **_kwargs):
+        calls.append("companion")
+        return {"effect": effect, "saved": True}
+
+    monkeypatch.setattr(
+        effects_module,
+        PRIMITIVE_NAMES.get(effect, f"apply_or_verify_step_{effect}"),
+        primitive,
+    )
+    adapter = PhaseASpecStepEffects(
+        project_root=project_root,
+        squad_dir=squad_dir,
+        phase_graph=object(),
+        telemetry_store=object(),
+        context_drawer_loader=lambda *_args: [],
+        completion_effect_applier=companion,
+    )
+
+    adapter.apply(prepared, {"state_revision": 7})
+
+    assert calls == ["step"]
 
 
 def _publication_step(tmp_path: Path):

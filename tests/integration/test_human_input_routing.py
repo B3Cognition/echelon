@@ -3965,7 +3965,7 @@ def test_debt_acceptance_aborts_before_publication_on_postimage_divergence(
     assert state["blocked_decision"]["status"] == "awaiting_human"
     assert "spec_quality_debt_authorization" not in state
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 def test_debt_acceptance_aborts_on_completion_receipt_divergence(
@@ -4008,7 +4008,7 @@ def test_debt_acceptance_aborts_on_completion_receipt_divergence(
     state = store.load()
     assert state == before
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 @pytest.mark.parametrize(
@@ -4064,10 +4064,10 @@ def test_debt_acceptance_rejects_unbound_effect_postimage_before_commit(
 
     assert state_path.read_bytes() == before
     state = store.load()
-    assert "pending_controller_completion" not in state
+    assert "_spec_step_effect_plan" not in state
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
     assert not (tmp_path / alternate_path).exists()
-    assert not list((store.squad_dir / ".completion-outbox").glob("*"))
+    assert not list((store.squad_dir / ".spec-step-effects").glob("*"))
 
 
 def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(

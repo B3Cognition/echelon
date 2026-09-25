@@ -43,7 +43,7 @@ from harness.squad_publication import (
     load_prepared_publication,
 )
 from harness.state_transaction_namespace import (
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
     is_valid_product_input_attachment_id,
 )
 
@@ -441,7 +441,7 @@ def _discard_publication_without_authority(
 ) -> None:
     try:
         marker = prepared.marker.to_dict()
-        if store.load().get(PENDING_EXTERNAL_PUBLICATION_KEY) == marker:
+        if store.load().get(SPEC_STEP_PUBLICATION_PLAN_KEY) == marker:
             return
         prepared.discard()
     except Exception:
@@ -459,7 +459,7 @@ def _recover_pending_mutation(
         raise SpecAddInputError(str(exc)) from exc
     if mutation is None:
         return None
-    marker = state[PENDING_EXTERNAL_PUBLICATION_KEY]
+    marker = state[SPEC_STEP_PUBLICATION_PLAN_KEY]
     try:
         durable = store.confirm_durable_state(state)
         prepared = load_prepared_publication(

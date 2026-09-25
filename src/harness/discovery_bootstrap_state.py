@@ -96,8 +96,8 @@ def advance_bootstrap_state(state, selection, step, payload=None):
     if (state.get("run_id") != selection["run_id"] or state.get("squad_dir") != selection["run_dir"]
             or state.get("spec_id") not in (None, selection["spec_id"])
             or state.get("phase") != "phase1-discover" or state.get("status") != "running"
-            or state.get("pending_controller_completion") is not None
-            or state.get("pending_external_publication") is not None):
+            or state.get("_spec_step_effect_plan") is not None
+            or state.get("_spec_step_publication_plan") is not None):
         raise ValueError("bootstrap is outside selected fresh discovery state")
     if current is not None and current["selection"] != selection:
         raise ValueError("discovery bootstrap selection is immutable")

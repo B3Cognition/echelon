@@ -10,7 +10,7 @@ from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 from harness.element_identity_publication import encode_publication_request
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
-from harness.squad_completion import CompletionError, load_prepared_controller_completion
+from harness.squad_completion import CompletionError, load_prepared_spec_step_effects
 from harness.spec_step import load_prepared_spec_step
 from harness.squad_publication import PreparedSquadPublication
 from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
@@ -33,7 +33,7 @@ def completion(prepared, executor, *, managed=True, request=None):
     package = prepare(prepared, executor)
     ctrl = controller(prepared, executor)
     extra = dict(managed_discovery_request=encode_publication_request(package.request) if request is None else request) if managed else {}
-    sealed = ctrl._prepare_controller_completion(from_phase="phase1-discover", to_phase="phase1-what",
+    sealed = ctrl._prepare_spec_step_effects(from_phase="phase1-discover", to_phase="phase1-what",
         snapshot=prepared[1].capture_routing_snapshot(expected_phase="phase1-discover"),
         manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=package.publication.marker.to_dict(), completion_id="a" * 32, **extra)
@@ -45,7 +45,7 @@ def drain(ctrl):
         with SpecRunExecutionLock.acquire(ctrl._squad_dir, "test-completion"):
             if PENDING_SPEC_STEP_KEY in ctrl._state_store.load():
                 return ctrl._drain_pending_spec_step()
-            return ctrl._drain_pending_controller_completion()
+            return ctrl._drain__spec_step_effect_plan()
 
 
 def pending_spec_companion(ctrl):
@@ -56,7 +56,7 @@ def pending_spec_companion(ctrl):
         state[PENDING_SPEC_STEP_KEY],
     )
     marker = step.intent.provenance["completion_marker"]
-    completion = load_prepared_controller_completion(
+    completion = load_prepared_spec_step_effects(
         ctrl._project_root,
         ctrl._squad_dir,
         marker,
@@ -73,7 +73,7 @@ def test_completion_retains_exact_reviewed_publication_and_read_set(prepared):
     assert execute(prepared, executor, create=True).status == "reviewed"
     before = prepared[1].load()
     ctrl, package, sealed = completion(prepared, executor)
-    loaded = load_prepared_controller_completion(ctrl._project_root, ctrl._squad_dir, sealed.marker)
+    loaded = load_prepared_spec_step_effects(ctrl._project_root, ctrl._squad_dir, sealed.marker)
     assert loaded.intent.publication["managed_discovery"] == dict(version=1, request=encode_publication_request(package.request))
     assert loaded.marker.step == "awaiting_publication"
     assert len(executor.calls) == 3 and prepared[1].load() == before
@@ -176,7 +176,7 @@ def test_existing_completion_owner_publishes_applies_and_releases(prepared, prov
     state = prepared[1].load()
     assert state["phase"] == "phase1-what" and state["last_dispatch"]["post_dispatch_complete"] is True
     assert state["token_usage"] == 21
-    assert "pending_controller_completion" not in state and "pending_external_publication" not in state
+    assert "_spec_step_effect_plan" not in state and "_spec_step_publication_plan" not in state
     assert prepared[2].identity_history(spec_id="game") == package.candidate.history
     row = prepared[2].identity_publication(spec_id="game", operation_id="discovery-completion-" + sealed.marker.completion_id)
     assert row["state"] == "released" and row["completion_payload"]
@@ -205,7 +205,7 @@ def test_input_drift_blocks_before_publication_intent(prepared):
     assert not drain(ctrl).recovered
     assert list((prepared[0] / "specs/game").iterdir()) == []
     assert prepared[2].pending_identity_publication(spec_id="game") is None
-    assert "pending_controller_completion" in prepared[1].load() and len(executor.calls) == 3
+    assert "_spec_step_effect_plan" in prepared[1].load() and len(executor.calls) == 3
 
 
 @pytest.mark.parametrize("boundary", ["prepare_identity_publication", "_promote", "apply_identity_publication",
@@ -298,7 +298,7 @@ def test_changed_context_after_receipted_effect_blocks_release(prepared, monkeyp
     advance = type(prepared[1]).advance_controller_completion
     def interrupt(*args, **kwargs):
         result = advance(*args, **kwargs)
-        if prepared[1].load()["pending_controller_completion"]["step"] == "complete": raise Interrupted()
+        if prepared[1].load()["_spec_step_effect_plan"]["step"] == "complete": raise Interrupted()
         return result
     with monkeypatch.context() as patch:
         patch.setattr(type(prepared[1]), "advance_controller_completion", interrupt)
@@ -356,7 +356,7 @@ def test_forged_request_never_becomes_publication_authority(prepared, damage):
     request = replace(package.request, recovery_payload=raw,
         operations=() if damage == "operations" else package.request.operations)
     with pytest.raises(CompletionError) as caught:
-        forged = ctrl._prepare_controller_completion(from_phase="phase1-discover", to_phase="phase1-what",
+        forged = ctrl._prepare_spec_step_effects(from_phase="phase1-discover", to_phase="phase1-what",
             snapshot=prepared[1].capture_routing_snapshot(expected_phase="phase1-discover"),
             manual_phase_run=False, conditional_skip=False, record_completion=True,
             publication_marker=package.publication.marker.to_dict(), completion_id="a" * 32,
@@ -428,9 +428,9 @@ def test_partial_context_install_reuses_frozen_captured_projection(prepared, mon
     with monkeypatch.context() as patch:
         patch.setattr(squad, "install_or_verify_completion_context", partial_context)
         with pytest.raises(Interrupted): drain(ctrl)
-    marker = prepared[1].load()["pending_controller_completion"]
+    marker = prepared[1].load()["_spec_step_effect_plan"]
     assert marker["step"] == "context"
-    loaded = load_prepared_controller_completion(prepared[0], prepared[1].squad_dir, marker)
+    loaded = load_prepared_spec_step_effects(prepared[0], prepared[1].squad_dir, marker)
     frozen_receipt = loaded.receipts["effects"]["context"]
     context = prepared[1].squad_dir / "context/current-feature-context.md"
     assert "U-000001: Camera choice" in context.read_text()

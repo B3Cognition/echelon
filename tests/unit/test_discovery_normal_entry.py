@@ -84,7 +84,7 @@ def test_normal_restart_replays_receipts_without_dispatch_or_usage_duplication(p
     ctrl = controller(prepared, executor)
     target, method = {
         "accepted_operation": (prepared[1], "advance_discovery_operation"),
-        "sealed_completion": (ctrl, "_prepare_controller_completion"),
+        "sealed_completion": (ctrl, "_prepare_spec_step_effects"),
         "routed": (prepared[1], "advance"),
         "handoff": (prepared[1], "handoff_external_publication"),
         "completed": (prepared[1], "complete_controller_completion"),
@@ -128,7 +128,7 @@ def test_routing_preparation_failure_does_not_charge_receipt_usage(prepared, mon
     def unavailable(*args, **kwargs):
         raise StateAdvanceError("checkpoint prestate unavailable", json_path="$.checkpoint_prestate", validator="checkpoint_prestate")
     with monkeypatch.context() as patch:
-        patch.setattr(ctrl, "_prepare_controller_completion", unavailable)
+        patch.setattr(ctrl, "_prepare_spec_step_effects", unavailable)
         result = ctrl.run(managed_discovery=selection(prepared), create_managed_discovery=True)
     assert result.status == "blocked"
     assert prepared[1].load()["token_usage"] == 0
@@ -159,12 +159,12 @@ def test_orphan_cleanup_can_resume_after_publication_stage_disposal(prepared, mo
     from harness.squad_publication import PreparedSquadPublication
     executor = FullDiscoveryExecutor()
     ctrl = controller(prepared, executor)
-    prepare = ctrl._prepare_controller_completion
+    prepare = ctrl._prepare_spec_step_effects
     def stop_after_sealing(*args, **kwargs):
         prepare(*args, **kwargs)
         raise Interrupted()
     with monkeypatch.context() as patch:
-        patch.setattr(ctrl, "_prepare_controller_completion", stop_after_sealing)
+        patch.setattr(ctrl, "_prepare_spec_step_effects", stop_after_sealing)
         with pytest.raises(Interrupted):
             ctrl.run(managed_discovery=selection(prepared), create_managed_discovery=True)
     discard = PreparedSquadPublication.discard

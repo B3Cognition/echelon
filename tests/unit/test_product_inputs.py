@@ -2104,7 +2104,7 @@ def test_product_effect_staging_failure_keeps_visible_inputs_byte_identical(
         )
 
     assert {path: path.read_bytes() for path in visible} == before
-    assert "pending_external_publication" not in store.load()
+    assert "_spec_step_publication_plan" not in store.load()
 
 
 def test_product_effect_staging_changes_only_sealed_copies_until_publish(
@@ -2277,11 +2277,11 @@ def test_controller_product_effect_seals_exact_mixed_mode_old_tree(
 
 
 def _authorize_controller_product_publication(controller, store, prepared) -> None:
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
 
     state = store.load()
     state.update(controller._product_input_publication_state_updates(prepared))
-    state[PENDING_EXTERNAL_PUBLICATION_KEY] = prepared.marker.to_dict()
+    state[SPEC_STEP_PUBLICATION_PLAN_KEY] = prepared.marker.to_dict()
     store.save(state)
 
 
@@ -2290,7 +2290,7 @@ def test_controller_product_effect_clean_publication_commits_hash_and_receipt(
 ) -> None:
     from echelon.product_inputs import immutable_product_input_tree_digest
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2310,7 +2310,7 @@ def test_controller_product_effect_clean_publication_commits_hash_and_receipt(
     )
 
     state = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in state
     assert PRODUCT_INPUT_MUTATION_KEY not in state
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(visible[0].parent)
@@ -2325,7 +2325,7 @@ def test_controller_product_effect_replays_exact_crash_prefix(
 ) -> None:
     from harness.squad_publication import PreparedSquadPublication
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2360,13 +2360,13 @@ def test_controller_product_effect_replays_exact_crash_prefix(
         prepared.marker.to_dict(),
     )
     interrupted = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in interrupted
     assert PRODUCT_INPUT_MUTATION_KEY in interrupted
 
     monkeypatch.setattr(PreparedSquadPublication, "publish", original_publish)
-    assert controller._recover_pending_external_publication()
+    assert controller._recover__spec_step_publication_plan()
     recovered = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in recovered
     assert PRODUCT_INPUT_MUTATION_KEY not in recovered
     assert recovered["product_inputs"]["tree_hash"] != (
         interrupted[PRODUCT_INPUT_MUTATION_KEY]["old_tree_hash"]
@@ -2379,7 +2379,7 @@ def test_controller_product_effect_replays_after_postimage_before_state_finalize
 ) -> None:
     from echelon.product_inputs import immutable_product_input_tree_digest
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2408,15 +2408,15 @@ def test_controller_product_effect_replays_after_postimage_before_state_finalize
         prepared.marker.to_dict(),
     )
     interrupted = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in interrupted
     assert PRODUCT_INPUT_MUTATION_KEY in interrupted
     assert immutable_product_input_tree_digest(visible[0].parent) == (
         interrupted[PRODUCT_INPUT_MUTATION_KEY]["new_tree_hash"]
     )
 
-    assert controller._recover_pending_external_publication()
+    assert controller._recover__spec_step_publication_plan()
     recovered = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in recovered
     assert PRODUCT_INPUT_MUTATION_KEY not in recovered
 
 
@@ -2424,7 +2424,7 @@ def test_controller_product_effect_recovery_rejects_unrelated_package_drift(
     tmp_path: Path,
 ) -> None:
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2439,11 +2439,11 @@ def test_controller_product_effect_recovery_rejects_unrelated_package_drift(
     _authorize_controller_product_publication(controller, store, prepared)
     (visible[0].parent / "unowned-drift.bin").write_bytes(b"tampered")
 
-    assert not controller._recover_pending_external_publication()
+    assert not controller._recover__spec_step_publication_plan()
     retained = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
     assert PRODUCT_INPUT_MUTATION_KEY in retained
-    assert retained["external_publication_failure"]["code"] == "target_drift"
+    assert retained["spec_step_publication_failure"]["code"] == "target_drift"
 
 
 def _install_publication_operation(project_root: Path, prepared, operation: dict) -> None:
@@ -2469,7 +2469,7 @@ def _product_deletion_prefix_fixture(tmp_path: Path):
     )
     from harness.squad_publication import SquadPublicationTransaction
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2533,7 +2533,7 @@ def _product_deletion_prefix_fixture(tmp_path: Path):
     )
     state = {
         "product_inputs": updated,
-        PENDING_EXTERNAL_PUBLICATION_KEY: prepared.marker.to_dict(),
+        SPEC_STEP_PUBLICATION_PLAN_KEY: prepared.marker.to_dict(),
         PRODUCT_INPUT_MUTATION_KEY: mutation,
     }
     operations = list(prepared._manifest["operations"])
@@ -2653,7 +2653,7 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
     tmp_path: Path,
 ) -> None:
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2681,7 +2681,7 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
         if path.is_file()
     }
 
-    assert not controller._recover_pending_external_publication()
+    assert not controller._recover__spec_step_publication_plan()
 
     assert {
         path: (path.read_bytes(), path.stat().st_mode & 0o777)
@@ -2689,7 +2689,7 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
         if path.is_file()
     } == before_attempt
     retained = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
     assert PRODUCT_INPUT_MUTATION_KEY in retained
 
 
@@ -2728,7 +2728,7 @@ def test_controller_product_effect_recovers_every_exact_manifest_prefix(
                 operation,
             )
 
-        assert controller._recover_pending_external_publication()
+        assert controller._recover__spec_step_publication_plan()
         assert store.load()["product_inputs"]["tree_hash"] == (
             immutable_product_input_tree_digest(visible[0].parent)
         )
@@ -2738,7 +2738,7 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
     tmp_path: Path,
 ) -> None:
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -2760,7 +2760,7 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
         if path.is_file()
     }
 
-    assert not controller._recover_pending_external_publication()
+    assert not controller._recover__spec_step_publication_plan()
 
     assert {
         path: (path.read_bytes(), path.stat().st_mode & 0o777)
@@ -2768,5 +2768,5 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
         if path.is_file()
     } == before_attempt
     retained = store.load()
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
     assert PRODUCT_INPUT_MUTATION_KEY in retained

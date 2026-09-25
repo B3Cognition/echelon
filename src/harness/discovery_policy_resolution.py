@@ -171,7 +171,7 @@ def prepare(controller, state, decision, selected, resolution, effects, *, quali
     require_parent(root, run, state, binding, store)
     snapshot = controller._state_store.capture_routing_snapshot(expected_phase=state["phase"])
     _require(snapshot.state == state and bootstrap_from_state(state) is not None)
-    completion = controller._prepare_controller_completion(from_phase=state["phase"], to_phase=effects.route,
+    completion = controller._prepare_spec_step_effects(from_phase=state["phase"], to_phase=effects.route,
         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=publication.marker.to_dict(), origin="resolution", resolution_decision_id=decision["id"],
         completion_id=completion_id, managed_discovery_request=encode_publication_request(request), quality_effect=quality_effect)
@@ -183,12 +183,12 @@ def _require_resolved_effects(state, recovery, publication):
     from harness.discovery_completion import _require
     from harness.squad_state import SquadStateStore
     observed = dict(state)
-    for key in ("external_publication_failure", "controller_completion_failure"):
+    for key in ("spec_step_publication_failure", "spec_step_effect_failure"):
         if key not in observed:
             continue
-        _require((state.get("pending_controller_completion") or {}).get("completion_id") == recovery["completion_id"])
-        if key == "external_publication_failure":
-            _require(state.get("pending_external_publication") == publication["marker"])
+        _require((state.get("_spec_step_effect_plan") or {}).get("completion_id") == recovery["completion_id"])
+        if key == "spec_step_publication_failure":
+            _require(state.get("_spec_step_publication_plan") == publication["marker"])
         SquadStateStore._restore_failure_lifecycle(observed, diagnostic_key=key)
     payload = recovery["effects"]
     _require(all(observed.get(key) == value for key, value in payload["state_updates"].items())

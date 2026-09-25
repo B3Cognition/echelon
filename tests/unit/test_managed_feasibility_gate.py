@@ -68,7 +68,7 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from harness.squad_state import StateAdvanceError
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     executor = FeasibilityExecutor(provider)
@@ -83,13 +83,13 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for route in ({"phase2-decide", "phase2-strategic-overview", "phase3-specialists", "done"} - {destination}):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=route, snapshot=snapshot,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=route, snapshot=snapshot,
                         manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id=completion_id,
                         managed_discovery_request=encode_publication_request(package.request))
             prepared_result = ctrl._prepare_phase_result(node, package.result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id)
             assert routing is not None, store.load()
             promote = PreparedSquadPublication._promote

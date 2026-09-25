@@ -82,7 +82,7 @@ def managed_controller(tmp_path, *, mode="semi", graph=None):
 
 def observe_legacy_entry(monkeypatch, controller):
     calls = []
-    monkeypatch.setattr(controller, "_drain_pending_controller_completion", lambda: (
+    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", lambda: (
         calls.append("recovery") or SimpleNamespace(recovered=False, manual_phase_run=False)
     ))
     monkeypatch.setattr(controller, "_emit_pending_retarget_comparison", lambda: calls.append("retarget"))
@@ -163,7 +163,7 @@ def test_rejection_preserves_budget_dispatch_and_repair_state_with_real_phase_en
         pytest.fail("legacy writes must not be reached")
     for name in ("save", "claim_failed_automatic_decision_for_manual_phase_replay"):
         monkeypatch.setattr(state, name, unexpected)
-    monkeypatch.setattr(controller, "_drain_pending_controller_completion", unexpected)
+    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
     result = controller.run() if entry == "run" else controller.run_single_phase("DONE")
     assert result.summary == BLOCKED
     assert touched == []
@@ -336,7 +336,7 @@ def test_human_input_boundaries_raise_handled_refusal_before_decision_effects(
     for name in ("set_human_input_decision", "apply_human_input_state_resolution",
                  "reopen_failed_proportional_controller_decision", "recover_interrupted_human_input_decision"):
         monkeypatch.setattr(state, name, unexpected)
-    monkeypatch.setattr(controller, "_drain_pending_controller_completion", unexpected)
+    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
     with pytest.raises(HumanInputPolicyError) as raised:
         if entry == "handle":
             controller.handle_human_input(request)
@@ -362,7 +362,7 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
     tmp_path, monkeypatch, secure_posix, entry,
 ):
     from harness.human_input import HumanInputPolicyError
-    from harness.squad_completion import prepare_controller_completion
+    from harness.squad_completion import prepare_spec_step_effects
 
     controller, state, provider, _ = managed_controller(tmp_path)
     root = tmp_path.resolve()
@@ -374,7 +374,7 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
         owned_paths={Path("runs/first/specs/demo/spec.md")},
     )
     publication = transaction.seal()
-    prepared = prepare_controller_completion(
+    prepared = prepare_spec_step_effects(
         root, state.squad_dir, completion_id="9" * 32, origin="terminal",
         publication={"kind": "external", "marker": publication.marker.to_dict()},
         route={"kind": "terminal", "terminal_phase": "DONE"}, effect_plan=(),
@@ -390,7 +390,7 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
     def unexpected():
         calls.append("drain")
         pytest.fail("retained managed stages must not reach recovery")
-    monkeypatch.setattr(controller, "_drain_pending_controller_completion", unexpected)
+    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
     if entry == "run":
         assert controller.run().summary == BLOCKED
     else:

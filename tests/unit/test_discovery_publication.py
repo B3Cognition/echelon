@@ -72,7 +72,7 @@ def test_real_v3_source_owner_accepts_spec_baseline_with_full_read_guard(prepare
     assert store.identity_history(spec_id="game") == package.candidate.history
     assert (root / "specs/game/spec-artifact-graph.json").read_bytes() == package.graph
     assert store.pending_identity_publication(spec_id="game")["state"] == "applied"
-    assert "pending_controller_completion" not in state.load()
+    assert "_spec_step_effect_plan" not in state.load()
     assert len(executor.calls) == 3
 
 
@@ -105,7 +105,7 @@ def test_missing_or_changed_review_inputs_do_not_become_publication_authority(pr
     else: path.write_text("changed")
     with pytest.raises(ValueError): prepare(prepared, executor)
     assert len(executor.calls) == 3 and store.pending_identity_publication(spec_id="game") is None
-    assert "pending_external_publication" not in state.load()
+    assert "_spec_step_publication_plan" not in state.load()
 
 
 def test_preparation_retry_replays_review_without_new_model_work(prepared):

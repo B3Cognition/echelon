@@ -69,7 +69,7 @@ def test_alignment_selection_refuses_unsettled_or_detached_parent(gate, damage):
     elif damage == "cancelled": state["cancel_requested"] = True
     elif damage == "blocked": state["status"] = "blocked"
     elif damage == "source": state["last_dispatch"].update(source("b"))
-    else: state["pending_external_publication"] = {}
+    else: state["_spec_step_publication_plan"] = {}
     store._path.write_text(json.dumps(state))
     with pytest.raises(StateAdvanceError):
         store.prepare_spec_round("alignment", source("a"), expected_state=state)

@@ -77,7 +77,7 @@ def assert_closed_alignment_binding(case, package):
 def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
     from harness.squad_provider import SquadAgentResult
     from tests.unit.test_discovery_completion import controller
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     from harness.squad_publication import PreparedSquadPublication
     from harness.squad_state import StateAdvanceError
     from tests.unit.test_discovery_turns import Interrupted
@@ -93,7 +93,7 @@ def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for destination in ("phase3-specialists", "done", "phase2-feasibility-structural", "phase1-what"):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=destination,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=destination,
                         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id=completion_id,
                         managed_discovery_request=encode_publication_request(package.request))
@@ -102,7 +102,7 @@ def assert_alignment_handoff(case, package, provider, verdict="ALIGNED"):
                 raw_output="", duration_ms=0, timed_out=False)
             prepared_result = ctrl._prepare_phase_result(node, result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id,
                 token_usage_delta=21)
             assert routing is not None, store.load()
@@ -203,7 +203,7 @@ def assert_alignment_pending_recovery(case, package, provider, verdict="ALIGNED"
     assert drain(controller(case, executor)).recovered, store.load()
     after = store.load()
     assert after["phase"] == "phase2-intent-alignment-structural" and after["last_dispatch"]["post_dispatch_complete"] is True
-    assert after["status"] == "running" and "controller_completion_failure" not in after
+    assert after["status"] == "running" and "spec_step_effect_failure" not in after
     assert after["intent_alignment_verdict"] == verdict
     assert "governance_gate_exhausted" not in after and "blocked_reason" not in after
     assert after["token_usage"] == before["token_usage"] + 21

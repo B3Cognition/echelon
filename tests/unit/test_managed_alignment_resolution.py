@@ -227,7 +227,7 @@ def assert_answer_publication(case, *, resolver="user"):
     from tests.unit.test_discovery_completion import controller
     ctrl = controller(case, CommanderAnswerExecutor("claude" if resolver == "COMMANDER" else "codex"))
     with pytest.raises(StateAdvanceError, match="controller completion preparation failed"):
-        ctrl._prepare_controller_completion(from_phase=before["phase"], to_phase=before["phase"],
+        ctrl._prepare_spec_step_effects(from_phase=before["phase"], to_phase=before["phase"],
             snapshot=store.capture_routing_snapshot(expected_phase=before["phase"]),
             manual_phase_run=False, conditional_skip=False, record_completion=True,
             publication_marker=publication.marker.to_dict(), origin="resolution",
@@ -250,7 +250,7 @@ def assert_answer_source_refusals(case):
         elif damage == "status": state["status"] = "running"
         elif damage == "cancelled": state["cancel_requested"] = True
         elif damage == "unfinished": state["last_dispatch"]["post_dispatch_complete"] = False
-        elif damage == "pending": state["pending_controller_completion"] = {}
+        elif damage == "pending": state["_spec_step_effect_plan"] = {}
         elif damage == "source": selected["completion_receipts_sha256"] = "0" * 64
         elif damage == "question": state["blocked_decision"]["question"] = "Forged question"
         else: state["iteration"] = float(before["iteration"])

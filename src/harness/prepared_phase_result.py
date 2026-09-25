@@ -34,13 +34,13 @@ from harness.echelon_result_schema import (
 from harness.phase_graph import PhaseNode
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
     TRUSTED_ROUTING_REMOVAL_KEYS,
     store_owned_update_keys,
-    validate_pending_controller_completion,
+    validate_spec_step_effect_plan,
 )
 
 
@@ -1161,15 +1161,15 @@ def prepare_routing_decision(
             validator="ownership",
         )
     if (
-        PENDING_CONTROLLER_COMPLETION_KEY
+        SPEC_STEP_EFFECT_PLAN_KEY
         in detached_transaction_updates
     ):
         try:
             detached_transaction_updates[
-                PENDING_CONTROLLER_COMPLETION_KEY
-            ] = validate_pending_controller_completion(
+                SPEC_STEP_EFFECT_PLAN_KEY
+            ] = validate_spec_step_effect_plan(
                 detached_transaction_updates[
-                    PENDING_CONTROLLER_COMPLETION_KEY
+                    SPEC_STEP_EFFECT_PLAN_KEY
                 ]
             )
         except ValueError as exc:
@@ -1178,12 +1178,12 @@ def prepare_routing_decision(
                 contract="routing",
                 json_path=(
                     "$.transaction_state_updates."
-                    f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                    f"{SPEC_STEP_EFFECT_PLAN_KEY}"
                 ),
                 validator="type",
             ) from exc
         completion_marker = detached_transaction_updates[
-            PENDING_CONTROLLER_COMPLETION_KEY
+            SPEC_STEP_EFFECT_PLAN_KEY
         ]
         if (
             completion_marker["origin"] != "routed"
@@ -1194,7 +1194,7 @@ def prepare_routing_decision(
                 contract="routing",
                 json_path=(
                     "$.transaction_state_updates."
-                    f"{PENDING_CONTROLLER_COMPLETION_KEY}.completion_id"
+                    f"{SPEC_STEP_EFFECT_PLAN_KEY}.completion_id"
                 ),
                 validator="completion_binding",
             )

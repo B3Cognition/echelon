@@ -61,7 +61,7 @@ def test_managed_clarification_applies_native_quality_reset(monkeypatch, tmp_pat
     monkeypatch.setattr(ctrl, "_managed_tracker_human_input", lambda current: True)
     monkeypatch.setattr(ctrl, "_banzai_default_candidate_for_decision", lambda *args: object() if native_default else None)
     monkeypatch.setattr(ctrl, "_validate_human_input_route", lambda phase, *args, **kwargs: phase)
-    monkeypatch.setattr(ctrl, "_prepare_controller_completion", lambda **kwargs: "prepared")
+    monkeypatch.setattr(ctrl, "_prepare_spec_step_effects", lambda **kwargs: "prepared")
     monkeypatch.setattr(squad, "build_human_input_resolution_postimage", lambda *args, **kwargs: {"id": "decision"})
     monkeypatch.setattr(publication, "encode_publication_request", lambda request: request)
     monkeypatch.setattr(clarification, "prepare", lambda *args, **kwargs: (

@@ -635,7 +635,7 @@ def require_unpublished_orphan(root, run, state, intent):
         binding = decode_binding(intent["publication"], completion_id=intent["completion_id"], state=state)
         _require(binding is not None and state.get("phase") == (
             binding.recovery["from_phase"] if binding.policy_resolution else producer_phase(binding.producer))
-            and not any(key in state for key in ("pending_controller_completion", "pending_external_publication")))
+            and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan")))
         dispatch = state.get("last_dispatch") or {}
         _require(dispatch.get("dispatch_id") != intent["completion_id"]
             and dispatch.get("post_dispatch_complete") is not False)
@@ -935,7 +935,7 @@ def _release(root, run, state_store, completion):
         dispatch = dict(post_dispatch_complete=True, dispatch_id=receipt.get("completion_id"),
             completion_intent_sha256=receipt.get("intent_sha256"), completion_receipts_sha256=receipt.get("receipts_sha256"),
             completed_publication_binding_sha256=receipt.get("publication_binding_sha256"))
-    _require("pending_controller_completion" not in state and "pending_external_publication" not in state
+    _require("_spec_step_effect_plan" not in state and "_spec_step_publication_plan" not in state
         and marker.step == "complete" and dispatch.get("post_dispatch_complete") is True
         and dispatch.get("dispatch_id") == marker.completion_id
         and dispatch.get("completion_intent_sha256") == marker.intent_sha256
