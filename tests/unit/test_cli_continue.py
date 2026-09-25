@@ -332,6 +332,31 @@ def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
     assert "re-evaluate" in action.note
 
 
+def test_continue_retries_pending_controller_completion() -> None:
+    """Catch durable completion recovery being mislabeled as manual work."""
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-lexicon-derive",
+            "blocked_reason": "controller_completion_pending",
+            "pending_controller_completion": {
+                "schema_version": 1,
+                "completion_id": "0" * 32,
+                "intent_sha256": "1" * 64,
+                "publication_binding_sha256": "2" * 64,
+                "receipts_sha256": "3" * 64,
+                "origin": "routed",
+                "step": "quality",
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "controller_completion_pending"
+    assert action.phase == "phase1-lexicon-derive"
+    assert action.command == "echelon spec continue"
+
+
 def test_continue_requires_workspace_refresh_for_v1_protocol_upgrade(
     tmp_path: Path,
 ) -> None:
@@ -762,6 +787,112 @@ def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["blocked_decision"]["status"] == "pending"
     assert state["recovery_instruction"]["kind"] == "resolve_decision"
+
+
+def test_continue_persists_explicit_mode_override_for_unsealed_consensus_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "user_message": "repair the specification",
+            "autonomy_mode": "semi",
+            "blocked_reason": "agent_blocked",
+            "last_dispatch": {"phase_id": "phase3-consensus"},
+            "phase3_last_blocker": {
+                "issue_id": "ISS-001",
+                "owner_phase": "phase3-how",
+                "detail": "Assignment capacity predicates disagree.",
+                "next_action": "Apply the shared predicate to both constraints.",
+            },
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RETRY_PHASE,
+                reason_code="agent_blocked",
+                phase="phase3-consensus",
+                requires_human_input=False,
+            ).to_dict(),
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue(
+        ["--mode", "banzai"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    persisted = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert persisted["autonomy_mode"] == "banzai"
+    assert persisted["phase"] == "phase3-consensus"
+    assert calls == [["repair the specification", "--mode", "banzai"]]
+
+
+def test_consensus_agent_block_recovery_exposes_owner_and_required_repair() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "autonomy_mode": "semi",
+            "blocked_reason": "agent_blocked",
+            "phase3_last_blocker": {
+                "issue_id": "ISS-001",
+                "owner_phase": "phase3-how",
+                "detail": "Assignment capacity predicates disagree.",
+                "next_action": "Apply the shared predicate to both constraints.",
+            },
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RETRY_PHASE,
+                reason_code="agent_blocked",
+                phase="phase3-consensus",
+                requires_human_input=False,
+            ).to_dict(),
+        }
+    )
+
+    assert action.kind == "manual_recovery"
+    assert action.phase == "phase3-how"
+    assert action.command.startswith("echelon phase run phase3-how --message")
+    assert "ISS-001" in action.note
+    assert "Assignment capacity predicates disagree." in action.note
+    assert "Apply the shared predicate to both constraints." in action.note
+
+
+def test_banzai_consensus_agent_block_recovery_explains_automatic_route() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "autonomy_mode": "banzai",
+            "blocked_reason": "agent_blocked",
+            "phase3_last_blocker": {
+                "issue_id": "ISS-001",
+                "owner_phase": "phase3-how",
+                "detail": "Assignment capacity predicates disagree.",
+                "next_action": "Apply the shared predicate to both constraints.",
+            },
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RETRY_PHASE,
+                reason_code="agent_blocked",
+                phase="phase3-consensus",
+                requires_human_input=False,
+            ).to_dict(),
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.command == "echelon spec continue"
+    assert "ISS-001" in action.note
+    assert "phase3-how" in action.note
+    assert "automatically" in action.note
+    assert "Assignment capacity predicates disagree." in action.note
 
 
 @pytest.mark.parametrize("status", ("pending", "resolving"))

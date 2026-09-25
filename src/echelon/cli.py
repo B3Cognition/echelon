@@ -3693,6 +3693,52 @@ def _recovery_action_from_instruction(
             and instruction.phase == "phase3-consensus"
             and run_state.get("autonomy_mode") == "banzai"
         )
+        phase3_blocker = run_state.get("phase3_last_blocker")
+        actionable_phase3_blocker = (
+            phase3_blocker
+            if (
+                kind == RecoveryKind.RETRY_PHASE
+                and instruction.reason_code == "agent_blocked"
+                and instruction.phase == "phase3-consensus"
+                and isinstance(phase3_blocker, Mapping)
+                and str(phase3_blocker.get("issue_id") or "").strip()
+                and str(phase3_blocker.get("owner_phase") or "").strip()
+                in {"phase3-how", "phase3-sentinel", "phase3-plan"}
+                and str(phase3_blocker.get("detail") or "").strip()
+                and str(phase3_blocker.get("next_action") or "").strip()
+            )
+            else None
+        )
+        if actionable_phase3_blocker is not None:
+            issue_id = str(actionable_phase3_blocker["issue_id"]).strip()
+            owner = str(actionable_phase3_blocker["owner_phase"]).strip()
+            detail = str(actionable_phase3_blocker["detail"]).strip()
+            next_action = str(actionable_phase3_blocker["next_action"]).strip()
+            blocker_note = (
+                f"{issue_id}; owner {owner}. Problem: {detail} "
+                f"Required repair: {next_action}"
+            )
+            if not is_banzai_consensus_repair:
+                return _RunRecoveryAction(
+                    "manual_recovery",
+                    reason=reason,
+                    phase=owner,
+                    command=_command_display(
+                        "echelon phase run",
+                        [owner, "--message", next_action],
+                    ),
+                    note=blocker_note,
+                )
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase=phase,
+                command="echelon spec continue",
+                note=(
+                    "will retry Phase 3 consensus and automatically route "
+                    f"{issue_id} to {owner}. {blocker_note}"
+                ),
+            )
         return _RunRecoveryAction(
             "retry_phase",
             reason=reason,
@@ -5054,6 +5100,15 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    if reason == "controller_completion_pending":
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=str(run_state.get("phase") or "").strip(),
+            command="echelon spec continue",
+            note="will replay and finalize the pending durable controller completion",
+        )
+
     if reason in {"repair_no_progress", "repair_action_unclassified", "repair_review_stale",
                   "repair_review_missing", "repair_context_incomplete", "repair_budget_exhausted",
                   "repair_external_prerequisite", "repair_human_decision"}:
@@ -6049,14 +6104,14 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
         }
     state["phase"] = repair_phase
     state["status"] = "running"
-    for key in (
+    cleared_keys = [
         "blocked_reason",
-        "escalation_question",
-        "escalation_options",
-        "blocked_decision",
         "phase_dispatch_limit",
         "phase_dispatch_limit_phase",
-    ):
+    ]
+    if "blocked_decision" not in state:
+        cleared_keys.extend(("escalation_question", "escalation_options"))
+    for key in cleared_keys:
         state.pop(key, None)
     state["phase_dispatch_limit_recovery"] = {
         "phase": repair_phase,
@@ -10790,6 +10845,16 @@ def _cmd_continue_impl(
         # A sealed decision owns its autonomy policy.  A continue-time flag may
         # still apply to legacy runs, but cannot reclassify this decision.
         mode = str(decision["autonomy_mode"])
+    elif mode_override and state.get("autonomy_mode") != mode_override:
+        previous_mode = str(state.get("autonomy_mode") or "").strip() or "unset"
+        state["autonomy_mode"] = mode_override
+        (squad_dir / "state.json").write_text(
+            _json.dumps(state, indent=2, ensure_ascii=False)
+        )
+        print(
+            f"[squad] autonomy mode changed: {previous_mode} → {mode_override}",
+            flush=True,
+        )
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
     if not _workspace_git_present(project_root):
