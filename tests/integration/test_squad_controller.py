@@ -6968,6 +6968,84 @@ class TestProportionalQualityController:
         assert selected["previous_resolutions"] == [previous]
         ctrl._provider.exec_agent.assert_not_called()
 
+    def test_banzai_reused_issue_id_replaces_active_repaired_finding(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A changed fingerprint stays targeted while repair budget remains."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        base = (
+            issues_path.read_text(encoding="utf-8")
+            .replace("ISS-QUALITY-0", "ISS-002")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        old = base.replace(
+            "Residual quality debt",
+            "Compound criteria reduce atomicity and traceability",
+        )
+        issues_path.write_text(old, encoding="utf-8")
+        state = store.load()
+        old_candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        old_selection = ctrl._validate_banzai_issue_resolution_selection(
+            {
+                "issue_id": "ISS-002",
+                "decision": old_candidate["suggested_option"],
+                "rationale": old_candidate["evidence_basis"],
+                "confidence": "high",
+                "evidence_backed": True,
+            },
+            [old_candidate],
+        )
+        old_resolution = ctrl._issue_resolution_state_updates(
+            state,
+            old_selection,
+            source_phase="phase1-why2",
+        )
+        previous = old_resolution["issue_resolution_ledger"]["ISS-002"]
+        previous["status"] = "repaired"
+        state.update(updates)
+        state.update(old_resolution)
+        state["autonomy_mode"] = "banzai"
+        store.save(state)
+
+        current = (
+            base.replace(
+                "Residual quality debt",
+                "Data-collection negative check does not verify the prohibited behavior",
+            )
+            .replace("**Affected section:** Requirements", "**Affected section:** AC-000018")
+            .replace(
+                "Amend the specification.",
+                "Amend only AC-000018 to exclude collection and data flows.",
+            )
+        )
+        issues_path.write_text(current, encoding="utf-8")
+        current_candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        why2.echelon_result["state_updates"]["finding_routes"]["findings"][0][
+            "issue_id"
+        ] = "ISS-002"
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "terminal-blocked"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["status"] == "running"
+        assert "quality_gate_remediation" not in persisted
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+        assert persisted["selected_issue_resolution"] == "ISS-002"
+        selected = persisted["issue_resolution_ledger"]["ISS-002"]
+        assert selected["status"] == "selected"
+        assert selected["issue_fingerprint"] == current_candidate["issue_fingerprint"]
+        assert selected["previous_resolutions"] == [previous]
+        ctrl._provider.exec_agent.assert_not_called()
+
     def test_banzai_resolves_eligible_sage_issue_before_proportional_budget(
         self,
         tmp_path: Path,

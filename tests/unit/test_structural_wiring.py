@@ -162,6 +162,35 @@ def test_quality_remediation_context_requires_an_actual_spec_edit(tmp_path):
 
 
 @pytest.mark.unit
+def test_selected_issue_suppresses_conflicting_aggregate_quality_context():
+    from harness.squad_executors import (
+        _render_controller_repair_context,
+        _render_issue_resolution_context,
+    )
+
+    state = {
+        "selected_issue_resolution": "ISS-002",
+        "issue_resolution_ledger": {
+            "ISS-002": {
+                "status": "selected",
+                "title": "Repair only AC-000018",
+                "guidance": "Amend only AC-000018.",
+                "decision": "Exclude collection and data flows.",
+            },
+        },
+        "quality_gate_remediation": {
+            "kind": "proportional_quality",
+            "reason": "Rewrite all affected requirements.",
+        },
+    }
+
+    assert "Controller Quality-Gate Remediation" not in (
+        _render_controller_repair_context(state)
+    )
+    assert "Selected Issue Resolution" in _render_issue_resolution_context(state)
+
+
+@pytest.mark.unit
 def test_why_journal_context_honors_phase_type_filter_and_byte_bound(tmp_path):
     from harness.squad_executors import _render_context_candidate
 

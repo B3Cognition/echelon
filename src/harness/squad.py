@@ -14523,10 +14523,7 @@ class SquadController:
     ) -> PreparedHumanInput | None:
         """Prepare the next explicit semantic repair before loop accounting."""
         state = snapshot.state
-        if (
-            state.get("autonomy_mode") != "banzai"
-            or state.get("selected_issue_resolution")
-        ):
+        if state.get("autonomy_mode") != "banzai":
             return None
         from harness.proportional_quality import ProjectedSageEvidenceSnapshot
         sage_evidence = getattr(assessment, "sage_evidence", None)

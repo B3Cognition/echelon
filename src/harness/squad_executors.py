@@ -706,7 +706,18 @@ def _render_controller_repair_context(state: dict) -> str:
     )
     sections: list[str] = []
     quality_remediation = state.get("quality_gate_remediation")
-    if isinstance(quality_remediation, dict):
+    selected_issue_id = str(state.get("selected_issue_resolution") or "").strip()
+    issue_ledger = state.get("issue_resolution_ledger")
+    selected_issue = (
+        issue_ledger.get(selected_issue_id)
+        if selected_issue_id and isinstance(issue_ledger, dict)
+        else None
+    )
+    targeted_issue_active = (
+        isinstance(selected_issue, dict)
+        and selected_issue.get("status") in {"selected", "repaired"}
+    )
+    if isinstance(quality_remediation, dict) and not targeted_issue_active:
         evidence = quality_remediation.get("evidence")
         report = evidence.get("path") if isinstance(evidence, dict) else ""
         failed_gates: list[str] = []
