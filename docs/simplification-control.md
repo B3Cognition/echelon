@@ -6,7 +6,7 @@ starting another.
 **Design:**
 [`2026-09-21-harness-simplification-control-design.md`](superpowers/specs/2026-09-21-harness-simplification-control-design.md)
 
-**Current milestone:** S5 — Reduce spec authoring to one controller kernel and publication boundary
+**Current milestone:** None active — S5 is complete; S6 is next in the queue
 
 ## Status
 
@@ -17,7 +17,7 @@ starting another.
 | S2 | DONE | Make controlled delivery the sole supported delivery implementation. | Feature switch, feature-off execution, legacy runner/prompt modules, raw build command, and `build-*` phase graph are removed; 357 focused and 9,804 full-unit tests passed. | Current guidance names controlled delivery only; focused and repository verification gates pass. |
 | S3 | DONE | Complete the Typer CLI cutover. | Executable route recount: 104 public commands, all 104 using modular front doors, 23 hidden routes, and zero direct public or hidden `_legacy_cli()` consumers. Final structural gate: 27 passed. Repository gate against `bfdb744c`: 9,853 passed, 0 skipped, 11,438 deselected, 0 failures in 2,121.92s. `echelon.re_service` is the single quarantine adapter; `echelon.cli` retains the RE protocol kernel for S6. | User-facing commands invoke typed application services; compatibility aliases are isolated; the remaining RE kernel dependency is contained behind one named facade scheduled for S6. |
 | S4 | DONE | Remove the abandoned strategy dimension and decompose single-run Delivery orchestration around its durable checkpoints. | Durable-step decomposition complete: focused acceptance passed 287 tests; final repository gate passed 9,832 tests with 0 failures. `_run_delivery` is 28 lines and `_run_loop_inner` is 159 lines. | Delivery has no strategy option or identity; one `DeliveryController` owns one run and Ralph performs one explicit durable step at a time; focused delivery suite passes. |
-| S5 | ACTIVE | Reduce spec authoring to one controller kernel and publication boundary. | Implementation is complete: current state version 1, one durable `pending_spec_step`, one effect/recovery kernel, and no historical-run migration. Repository verification and its bound receipt remain. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
+| S5 | DONE | Reduce spec authoring to one controller kernel and publication boundary. | Current state version 1 has one durable `pending_spec_step`, one effect/recovery kernel, and no historical-run migration. Focused current-run checks and the 9,832-test repository gate passed; the receipt is bound to the exact candidate commit, tree, and implementation base. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in the RE kernel retained in `echelon.cli`; `echelon.re_service` is its single active route adapter. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
 | S7 | PENDING | Remove residual compatibility code and break large import cycles. | Static import analysis found production cycles far larger than a locally understandable component. | No production strongly connected import component contains more than five modules; full repository verification passes. |
 
@@ -78,6 +78,7 @@ starting another.
 | 2026-09-24 | S5 | Inventory found one routed result represented by a prepared result, routing decision, two pending state markers, two failure lifecycles, two outbox identities, an effect plan, receipts, and final dispatch state across approximately 42,900 lines of active spec-controller code. Approved direction: current-version runs only, one durable `pending_spec_step`, one recover-plan-execute-commit kernel, and publication as one step effect while retaining the existing descriptor-safe publication primitive. Design: `docs/superpowers/specs/2026-09-24-spec-step-kernel-design.md`. Focused pre-design baseline: 513 passed in 382.37s. Next action: review the written design, then write the implementation plan. |
 | 2026-09-24 | S5 | Implementation plan written as `docs/superpowers/plans/2026-09-24-spec-step-kernel.md`. Eleven independently green tasks establish the current-only state boundary, sealed step documents, atomic transitions, one recovery kernel, effect adapters, four cutovers, deletion guards, controller flattening, and repository-bound verification. Next action: review the plan and select Native or subagent-driven execution. |
 | 2026-09-25 | S5 | Implementation tasks 1–10 complete. Fresh Phase A state is version 1; `pending_spec_step` is the only durable in-flight step authority; routed, terminal, manual, human-resolution, and managed paths use the common recovery kernel; publication remains a descriptor-safe step effect. Historical and unversioned runs require reset rather than migration. Structural ownership and focused current-run suites pass; final repository-bound verification is next. |
+| 2026-09-25 | S5 | Completed. Candidate `f8c76b4db6e3b2d0778ca7095ec9ac1ae7e5b7b0`, tree `a64a7aa7506f78b589a6ff9841127c9f638d3c62`, was verified against implementation base `b24259611015ca9904c97e448acc823ce49bb95f`. Focused evidence includes the 1,056-test structural/kernel/current-run gate plus routed/manual/blocked/terminal/recovery, discovery-completion, and managed checkpoint source-chain checks. Repository merge verification ran `pytest -q -m unit`: 9,832 passed, 11,321 deselected, 0 failures in 2,045.61s (34m05s). Receipt: `tests/reports/merge-verification/receipt-f8c76b4db6e3-a83e939a427548e4ace3132e585e13cf.json`. S6 remains pending. |
 
 ## S2 Work Queue
 
@@ -140,7 +141,7 @@ starting another.
 - [x] Cut over routed, manual, terminal, human-resolution, and managed completion paths.
 - [x] Delete the retired completion/publication protocols and add structural ownership guards.
 - [x] Flatten the controller around one current-phase step loop.
-- [ ] Update current documentation, run focused verification, and record the repository receipt.
+- [x] Update current documentation, run focused verification, and record the repository receipt.
 
 ## Drift Guard
 
