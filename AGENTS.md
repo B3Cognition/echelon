@@ -61,6 +61,13 @@ When debugging, first determine whether the failure is bundle installation, Pros
 - **Phase A — spec authoring.** `echelon spec run` / `echelon spec bugfix` / `echelon spec change`. The squad publishes under `specs/{NNN-slug}/`; durable controller state stays under `runs/spec-*`. The Echelon constitution is `.echelon/constitution.md`.
 - **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. One `DeliveryController` owns each run. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
 
+Phase A supports current, versioned run state only. `pending_spec_step` is the
+single durable authority for an incomplete routed, terminal, or human-resolution
+step. Recovery replays that sealed step through one effect loop and commits its
+final state once. Publication is one step effect backed by the retained
+descriptor-safe publication transaction; it is not a second state authority.
+Old or unversioned Phase A runs are not migrated—reset them and start a new run.
+
 The current Phase B control flow follows durable checkpoints rather than a
 generic workflow framework. `DeliveryController` opens or resumes one run,
 dispatches its persisted phase, processes bounded review re-entry or verified

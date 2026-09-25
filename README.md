@@ -308,6 +308,14 @@ compatibility input and is never freshness or publication authority.
 
 ### Typical workflow
 
+Phase A run state is current-only and versioned. One sealed
+`pending_spec_step` record owns recovery for routing, terminal finalization,
+and human-input resolution. Journal, timing, quality, checkpoint, context,
+mining, retarget, and publication work execute as effects of that step;
+publication retains its hardened filesystem transaction but does not own a
+second lifecycle marker. Echelon does not migrate historical or unversioned
+Phase A runs—reset the old run and start a new one.
+
 ```bash
 # Optional — refresh published brownfield knowledge only when needed
 echelon re refresh
