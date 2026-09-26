@@ -61,6 +61,7 @@ class ResolvedProviderArtifactContract:
     contract: ProviderArtifactContract
     write_paths: tuple[Path, ...]
     read_paths: tuple[Path, ...]
+    shadow_write_paths: tuple[Path | None, ...] = ()
 
 
 def compile_provider_artifact_contract(
@@ -166,12 +167,19 @@ def resolve_provider_artifact_contract(
         )
         for rule in contract.read_inputs
     )
+    shadow_write_paths: tuple[Path | None, ...] = tuple(
+        _shadow_target(rule, roots=roots)
+        if contract.allow_shadow_recovery
+        else None
+        for rule in contract.artifacts
+    )
     return ResolvedProviderArtifactContract(
         assignment_id=assignment_id,
         contract_sha256=provider_artifact_contract_sha256(contract),
         contract=contract,
         write_paths=write_paths,
         read_paths=read_paths,
+        shadow_write_paths=shadow_write_paths,
     )
 
 
@@ -345,6 +353,27 @@ def _resolve_beneath_root(
             assignment_id,
             f"resolved path {relative_path!r} escapes root {root_name!r}",
         )
+    return target
+
+
+def _shadow_target(
+    rule: ProviderArtifactRule,
+    *,
+    roots: Mapping[str, Path],
+) -> Path | None:
+    if rule.root != "active_spec":
+        return None
+    active_spec = roots.get("active_spec")
+    squad = roots.get("squad")
+    if active_spec is None or squad is None:
+        return None
+    active_root = Path(active_spec).resolve(strict=False)
+    shadow_root = (
+        Path(squad).resolve(strict=False) / "specs" / active_root.name
+    )
+    target = (shadow_root / rule.path).resolve(strict=False)
+    if shadow_root != target and shadow_root not in target.parents:
+        return None
     return target
 
 
@@ -524,14 +553,19 @@ def _snapshot(path: Path, kind: str) -> _ArtifactSnapshot | None:
                 return None
             content_sha256 = _file_sha256(path)
             members: list[object] = []
+            identity: object = {"root": _metadata_identity(metadata)}
         else:
             if not stat.S_ISDIR(metadata.st_mode):
                 return None
             content_sha256, members = _directory_snapshot(path)
-        identity = {
-            "root": _metadata_identity(metadata),
-            "members": members,
-        }
+            leaf_members = [
+                member
+                for member in members
+                if isinstance(member, dict) and member.get("kind") == "file"
+            ]
+            if not leaf_members:
+                return None
+            identity = {"members": leaf_members}
         return _ArtifactSnapshot(
             identity_sha256=hashlib.sha256(
                 json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
