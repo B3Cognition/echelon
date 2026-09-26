@@ -578,8 +578,10 @@ def _mock_quality_first_flow_provider() -> MagicMock:
     """Return deterministic valid verdicts for the post-Understanding flow."""
     provider = _mock_provider()
     default_exec_agent = provider.exec_agent.side_effect
+    publication_serial = 0
 
     def phase_aware_exec_agent(*args, **kwargs):
+        nonlocal publication_serial
         prompt = str(args[1])
         if "# Phase: phase1-tracker" in prompt:
             return SquadAgentResult(
@@ -611,10 +613,21 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 timed_out=False,
             )
         if "# Phase: phase1-why2" in prompt:
+            publication_serial += 1
+            match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
+            assert match is not None
+            spec_dir = Path(match.group(1))
+            outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+            for output in outputs:
+                output.write_text(
+                    f"# {output.stem}\n\nfixture dispatch {publication_serial}\n",
+                    encoding="utf-8",
+                )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "PASS",
+                    "output_files": [str(output) for output in outputs],
                     "state_updates": {
                         "evidence_resolution_status": "not_required",
                         "finding_routes": {"findings": []},
@@ -624,6 +637,23 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 duration_ms=0,
                 timed_out=False,
             )
+        if "# Phase: phase1-what" in prompt:
+            publication_serial += 1
+            match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
+            assert match is not None
+            spec_dir = Path(match.group(1))
+            outputs = [spec_dir / "spec.md", spec_dir / "requirements-overview.md"]
+            for output in outputs:
+                output.write_text(
+                    output.read_text(encoding="utf-8")
+                    + f"\n<!-- fixture dispatch {publication_serial} -->\n",
+                    encoding="utf-8",
+                )
+            result = default_exec_agent(*args, **kwargs)
+            result.echelon_result["output_files"] = [
+                str(output) for output in outputs
+            ]
+            return result
         if "# Phase: phase2-decide" in prompt:
             return SquadAgentResult(
                 exit_code=0,
@@ -1752,6 +1782,11 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
             result.echelon_result["state_updates"] = {
                 "constitution_status": "exists"
             }
+        if phase == "phase1-what":
+            result.echelon_result["output_files"] = [
+                str(spec_dir / "spec.md"),
+                str(spec_dir / "requirements-overview.md"),
+            ]
         return result
 
     provider.exec_agent.side_effect = dispatch_with_artifacts
@@ -2394,6 +2429,9 @@ class TestConsensusCannotBeSkipped:
                     0,
                     {
                         "verdict": "BLOCKED",
+                        "output_files": [
+                            str(spec_dir / "implementability-report.md")
+                        ],
                         "state_updates": {
                             "gate_decision": "REJECTED",
                             "phase_recommendation": "phase3-how",
@@ -2766,7 +2804,7 @@ class TestAgentResultIntegrity:
         manual_phase_run: bool,
     ) -> None:
         provider = _mock_provider()
-        provider.exec_agent.return_value = SquadAgentResult(
+        agent_result = SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "DONE",
@@ -2793,7 +2831,27 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Demo\n", encoding="utf-8")
+        publications = 0
+
+        def publish_only_spec(*_args, **_kwargs):
+            nonlocal publications
+            publications += 1
+            active_spec_dir = Path(str(store.load()["spec_dir"]))
+            if not active_spec_dir.is_absolute():
+                active_spec_dir = tmp_path / active_spec_dir
+            active_spec_path = active_spec_dir / "spec.md"
+            active_spec_path.write_text(
+                f"# Demo {publications}\n",
+                encoding="utf-8",
+            )
+            agent_result.echelon_result["output_files"] = [
+                str(active_spec_path)
+            ]
+            return agent_result
+
+        provider.exec_agent.side_effect = publish_only_spec
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "specs/001-demo"
@@ -4984,6 +5042,31 @@ class TestSquadControllerBasics:
                     duration_ms=100,
                     timed_out=False,
                 )
+            if "Operate in **WHY3** mode" in prompt:
+                for output in (
+                    spec_dir / "issues.md",
+                    spec_dir / "quality-gates.md",
+                ):
+                    replacement = output.with_name(
+                        f".{output.name}.fixture-current"
+                    )
+                    replacement.write_bytes(output.read_bytes())
+                    replacement.replace(output)
+            if "Operate in **ASSESS2** mode" in prompt:
+                report = spec_dir / "implementability-report.md"
+                replacement = report.with_name(f".{report.name}.fixture-current")
+                replacement.write_bytes(report.read_bytes())
+                replacement.replace(report)
+                return SquadAgentResult(
+                    exit_code=default_result.exit_code,
+                    echelon_result={
+                        **default_result.echelon_result,
+                        "output_files": [str(report)],
+                    },
+                    raw_output=default_result.raw_output,
+                    duration_ms=default_result.duration_ms,
+                    timed_out=default_result.timed_out,
+                )
             return default_result
 
         provider.exec_agent.side_effect = consensus_result
@@ -6519,6 +6602,19 @@ def _proportional_assessment_fixture(
     }, why2_result
 
 
+def _publish_current_sage_reports(
+    spec_dir: Path,
+    result: SquadAgentResult,
+) -> SquadAgentResult:
+    outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+    for output in outputs:
+        replacement = output.with_name(f".{output.name}.fixture-current")
+        replacement.write_bytes(output.read_bytes())
+        replacement.replace(output)
+    result.echelon_result["output_files"] = [str(output) for output in outputs]
+    return result
+
+
 def _make_proportional_assessment_numerically_passing(
     updates: dict[str, object],
 ) -> None:
@@ -6677,7 +6773,7 @@ def _run_proportional_quality_loop(
                 ) from exc
         if "# Phase: phase1-why2" in prompt:
             calls["why2"] += 1
-            return SquadAgentResult(
+            result = SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "FAIL",
@@ -6698,6 +6794,10 @@ def _run_proportional_quality_loop(
                 duration_ms=0,
                 timed_out=False,
             )
+            return _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                result,
+            )
         if "# Phase: phase1-what" in prompt:
             calls["what"] += 1
             spec_dir = tmp_path / "runs/run-test/specs/001-demo"
@@ -6707,6 +6807,15 @@ def _run_proportional_quality_loop(
                     f"- FR-001: The system shall render repair {calls['what']}.\n",
                     encoding="utf-8",
                 )
+            else:
+                spec_path = spec_dir / "spec.md"
+                replacement = spec_dir / ".spec.md.fixture-current"
+                replacement.write_bytes(spec_path.read_bytes())
+                replacement.replace(spec_path)
+            overview = spec_dir / "requirements-overview.md"
+            replacement = spec_dir / ".requirements-overview.md.fixture-current"
+            replacement.write_bytes(overview.read_bytes())
+            replacement.replace(overview)
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
@@ -6802,8 +6911,10 @@ def _older_best_proportional_quality_loop(
     state = store.load()
     state.update(current_updates)
     store.save(state)
-    ctrl._provider.exec_agent.side_effect = None
-    ctrl._provider.exec_agent.return_value = current_result
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+        _publish_current_sage_reports(spec_dir, current_result)
+    )
     return ctrl, store, current_text
 
 
@@ -6849,7 +6960,7 @@ def _proportional_history_then_unchanged_what(
     store.save(state)
     spec_dir = tmp_path / "runs/run-test/specs/001-demo"
     ctrl._provider.exec_agent.side_effect = None
-    ctrl._provider.exec_agent.return_value = SquadAgentResult(
+    result = SquadAgentResult(
         exit_code=0,
         echelon_result={
             "verdict": "DONE",
@@ -6863,6 +6974,18 @@ def _proportional_history_then_unchanged_what(
         duration_ms=0,
         timed_out=False,
     )
+
+    def publish_unchanged_what(*_args, **_kwargs):
+        for output in (
+            spec_dir / "spec.md",
+            spec_dir / "requirements-overview.md",
+        ):
+            replacement = output.with_name(f".{output.name}.fixture-current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        return result
+
+    ctrl._provider.exec_agent.side_effect = publish_unchanged_what
     return ctrl, store
 
 
@@ -7795,7 +7918,9 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(updates)
         store.save(state)
         ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = result
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, result)
+        )
 
         run = ctrl.run("msg", "semi")
 
@@ -7825,7 +7950,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(updates)
         store.save(state)
         ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = result
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                result,
+            )
+        )
 
         run = ctrl.run("msg", "semi")
 
@@ -9100,7 +9230,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         state.update(updates)
         store.save(state)
-        provider.exec_agent.return_value = SquadAgentResult(
+        passing_result = SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "PASS",
@@ -9112,6 +9242,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             raw_output="",
             duration_ms=0,
             timed_out=False,
+        )
+        provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                passing_result,
+            )
         )
 
         ctrl.run("msg", "semi")
@@ -9717,8 +9853,10 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(current_updates)
         store.save(state)
         provider = ctrl._provider
-        provider.exec_agent.side_effect = None
-        provider.exec_agent.return_value = _result
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, _result)
+        )
         real_advance = store.advance
         failed = False
 
@@ -9801,8 +9939,10 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         state.update(current_updates)
         store.save(state)
-        ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = current
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, current)
+        )
         real_advance = store.advance_spec_step
         injected = False
 

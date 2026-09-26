@@ -49,7 +49,8 @@ def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=F
                 "outcome": "resolved", "reviewed_artifacts": envelope["input_manifest"], "rationale": "Verified requirements"}
         elif "Operate in **ASSESS2**" in prompt:
             (spec / "implementability-report.md").write_text("Feasible")
-            payload.update(verdict="PASS", state_updates={"gate_decision": "PASS",
+            payload.update(verdict="PASS", output_files=[str(spec / "implementability-report.md")],
+                state_updates={"gate_decision": "PASS",
                 "phase_recommendation": "proceed-to-build", "implementability_metrics": {}})
         else:
             assert "Operate in **PLAN2**" in prompt

@@ -59,6 +59,7 @@ def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", re
         elif "Operate in **ASSESS2**" in prompt:
             calls.append(("ASSESS2", final))
             (spec / "implementability-report.md").write_text(f"All tasks ready; review revision {len(calls)}")
+            payload["output_files"] = [str(spec / "implementability-report.md")]
             payload["state_updates"] = dict(gate_decision="PASS", phase_recommendation="proceed-to-build",
                                               implementability_metrics={})
         else:
@@ -140,7 +141,22 @@ def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(t
             return consensus_dispatch(cwd, prompt, **kwargs)
         if phase == "phase3-plan":
             calls.append(("PLAN", False))
-            return SquadAgentResult(exit_code=0, echelon_result=dict(verdict="COMPLETE", state_updates={}, journal_entries=[]),
+            plan_outputs = [
+                spec / name
+                for name in (
+                    "tasks.md",
+                    "critical-path.md",
+                    "risk-matrix.md",
+                    "dependencies.md",
+                )
+            ]
+            for output in plan_outputs:
+                replacement = output.with_name(f".{output.name}.current")
+                replacement.write_bytes(output.read_bytes())
+                replacement.replace(output)
+            return SquadAgentResult(exit_code=0, echelon_result=dict(
+                                        verdict="COMPLETE", state_updates={}, journal_entries=[],
+                                        output_files=[str(output) for output in plan_outputs]),
                                     raw_output="Tasks ready", duration_ms=0, timed_out=False)
         # Stop at the downstream boundary, not by replacing routing, guards or
         # checkpoint executors. No additional product work belongs to this test.
@@ -198,14 +214,35 @@ def test_normal_controller_routes_rejected_feasibility_with_its_evidence(tmp_pat
         payload = dict(verdict="COMPLETE", state_updates={}, journal_entries=[])
         if phase == "phase3-plan":
             calls.append(("PLAN", False))
+            plan_outputs = [
+                spec / name
+                for name in (
+                    "tasks.md",
+                    "critical-path.md",
+                    "risk-matrix.md",
+                    "dependencies.md",
+                )
+            ]
+            for output in plan_outputs:
+                replacement = output.with_name(f".{output.name}.current")
+                replacement.write_bytes(output.read_bytes())
+                replacement.replace(output)
+            payload["output_files"] = [str(output) for output in plan_outputs]
         elif phase == "phase3-how":
             owners.append(prompt)
             return SquadAgentResult(1, None, "Owner observation boundary", 0, True)
         elif "Operate in **ASSESS2**" in prompt:
             calls.append(("ASSESS2", False))
             (spec / "implementability-report.md").write_text(evidence)
-            payload.update(verdict=gate_verdict, state_updates=dict(gate_decision="REJECTED",
-                phase_recommendation="phase3-how", implementability_metrics={}))
+            payload.update(
+                verdict=gate_verdict,
+                output_files=[str(spec / "implementability-report.md")],
+                state_updates=dict(
+                    gate_decision="REJECTED",
+                    phase_recommendation="phase3-how",
+                    implementability_metrics={},
+                ),
+            )
         elif "Operate in **WHY3**" in prompt:
             return normal_review(cwd, prompt, **kwargs)
         elif "Operate in **PLAN2**" in prompt:

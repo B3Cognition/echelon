@@ -20,6 +20,10 @@ if str(EXT_ROOT) not in sys.path:
 
 from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.provider_output_publication import (
+    ProviderOutputGuard,
+    ProviderOutputSpec,
+)
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
@@ -183,6 +187,75 @@ def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> 
             / "sage-decision-phase1-why2-rev-2.yaml"
         ),
     ]
+
+
+def test_agent_why2_rejects_unchanged_claimed_review_reports(tmp_path: Path) -> None:
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+    for output in outputs:
+        output.write_text(f"# stale {output.stem}\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+            "output_files": [str(output) for output in outputs],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock(spec=PhaseGraph)
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-why2")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    result = executor.execute(
+        PhaseNode(
+            id="phase1-why2",
+            type="agent",
+            agent="echelon.sage",
+            outputs=["issues.md", "quality-gates.md"],
+            allowed_verdicts=["PASS"],
+        ),
+        store,
+    )
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+
+
+def test_provider_output_guard_rejects_claimed_symlink(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-issues.md"
+    outside.write_text("# outside\n", encoding="utf-8")
+    output = spec_dir / "issues.md"
+    output.symlink_to(outside)
+    guard = ProviderOutputGuard.capture(
+        project_root=tmp_path,
+        spec_dir=spec_dir,
+        phase_id="phase1-why2",
+        state_revision=1,
+        specs=(ProviderOutputSpec("issues.md"),),
+    )
+
+    finalized = guard.finalize({"output_files": [str(output)]})
+
+    assert finalized.receipt is None
+    assert finalized.failure is not None
+    assert finalized.failure.missing == ("issues.md",)
 
 
 def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> None:
@@ -558,6 +631,7 @@ def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert result.result.state_updates["missing_outputs"] == [
+        "evidence-resolution.md",
         "evidence-grades.md",
         "evidence-inventory.json",
     ]
@@ -2519,6 +2593,205 @@ def test_staged_why3_requires_current_review_reports_in_output_files(tmp_path):
     assert "output_files" in result.result.raw_output
 
 
+def test_staged_why3_rejects_unchanged_claimed_review_reports(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+    for output in outputs:
+        output.write_text(f"# stale {output.stem}\n", encoding="utf-8")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+            "output_files": [str(output) for output in outputs],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        cost_usd=3.5,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon.sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+                "outputs": ["issues.md", "quality-gates.md"],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.result.state_updates["invalid_outputs"] == [
+        {
+            "path": "issues.md",
+            "reason": "not published by the current dispatch",
+        },
+        {
+            "path": "quality-gates.md",
+            "reason": "not published by the current dispatch",
+        },
+    ]
+    persisted = state_store.load()
+    assert persisted["cost_usd"] == 0.0
+    assert "why3_verdict" not in persisted
+
+
+def test_staged_why3_records_receipt_for_identical_rewrites(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+    for output in outputs:
+        output.write_text(f"# current {output.stem}\n", encoding="utf-8")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+
+    def rewrite_reports(*_args, **_kwargs):
+        for output in outputs:
+            replacement = output.with_name(f".{output.name}.current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {},
+                "journal_entries": [],
+                "output_files": [str(output) for output in outputs],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    provider = MagicMock()
+    provider.exec_agent.side_effect = rewrite_reports
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon.sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+                "outputs": ["issues.md", "quality-gates.md"],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "PASS"
+    [receipt] = result.echelon_result["provider_output_receipts"]
+    assert receipt["schema_version"] == 1
+    assert receipt["phase_id"] == "phase3-consensus"
+    assert receipt["state_revision"] == 2
+    assert [output["path"] for output in receipt["outputs"]] == [
+        "issues.md",
+        "quality-gates.md",
+    ]
+
+
+def test_staged_assess2_rejects_unchanged_claimed_report(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    report = spec_dir / "implementability-report.md"
+    report.write_text("# stale assessment\n", encoding="utf-8")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {
+                "gate_decision": "PASS",
+                "phase_recommendation": "proceed-to-build",
+                "implementability_metrics": {},
+            },
+            "journal_entries": [],
+            "output_files": [str(report)],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon.gatekeeper",
+                "mode": "ASSESS2",
+                "stage": 1,
+                "context_pack": [],
+                "outputs": ["implementability-report.md"],
+                "allowed_state_updates": [
+                    "gate_decision",
+                    "phase_recommendation",
+                    "implementability_metrics",
+                ],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.result.state_updates["invalid_outputs"] == [
+        {
+            "path": "implementability-report.md",
+            "reason": "not published by the current dispatch",
+        }
+    ]
+    persisted = state_store.load()
+    assert persisted["cost_usd"] == 0.0
+    assert "assess2_verdict" not in persisted
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -3590,6 +3863,110 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
     ]
 
 
+def test_phase3_plan_rejects_unchanged_claimed_outputs_before_cost(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    required = ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md")
+    for name in required:
+        (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {},
+            "journal_entries": [],
+            "output_files": [str(spec_dir / name) for name in required],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        cost_usd=4.25,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-plan")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    result = executor.execute(
+        PhaseNode(id="phase3-plan", type="agent", agent="echelon.orchestrator"),
+        store,
+    )
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.result.state_updates["invalid_outputs"] == [
+        {"path": name, "reason": "not published by the current dispatch"}
+        for name in required
+    ]
+    assert store.load()["cost_usd"] == 0.0
+
+
+def test_phase3_plan_records_receipt_for_identical_rewrites(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    required = ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md")
+    for name in required:
+        (spec_dir / name).write_text(f"# current {name}\n", encoding="utf-8")
+
+    def rewrite_outputs(*_args, **_kwargs):
+        for name in required:
+            output = spec_dir / name
+            replacement = output.with_name(f".{output.name}.current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {},
+                "journal_entries": [],
+                "output_files": [str(spec_dir / name) for name in required],
+                "provider_output_receipts": [{"forged": True}],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    provider = MagicMock()
+    provider.exec_agent.side_effect = rewrite_outputs
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-plan")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    result = executor.execute(
+        PhaseNode(id="phase3-plan", type="agent", agent="echelon.orchestrator"),
+        store,
+    )
+
+    assert result.verdict == "DONE"
+    [receipt] = result.echelon_result["provider_output_receipts"]
+    assert receipt["schema_version"] == 1
+    assert receipt["phase_id"] == "phase3-plan"
+    assert receipt["state_revision"] == 2
+    assert [output["path"] for output in receipt["outputs"]] == list(required)
+
+
 def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
     tmp_path,
     monkeypatch,
@@ -3774,22 +4151,29 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
     (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
 
     from harness.phase_graph import PhaseNode
+    def publish_shadow_outputs(*_args, **_kwargs):
+        for output in shadow_spec_dir.iterdir():
+            replacement = output.with_name(f".{output.name}.current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "COMPLETE",
+                "state_updates": {},
+                "output_files": [
+                    "specs/006-element-creator/test-strategy.md",
+                    "specs/006-element-creator/test-architecture.md",
+                    "specs/006-element-creator/coverage-map.md",
+                ],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
     provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "COMPLETE",
-            "state_updates": {},
-            "output_files": [
-                "specs/006-element-creator/test-strategy.md",
-                "specs/006-element-creator/test-architecture.md",
-                "specs/006-element-creator/coverage-map.md",
-            ],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
+    provider.exec_agent.side_effect = publish_shadow_outputs
     graph = MagicMock()
     graph.agent_file.return_value = "agents/sentinel.md"
     graph.all_phase_ids.return_value = []
@@ -3825,6 +4209,57 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
         "test-architecture.md",
         "coverage-map.md",
     ]
+
+
+def test_phase3_plan_does_not_recover_stale_claimed_shadow_outputs(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    shadow_spec_dir = squad_dir / "specs" / spec_dir.name
+    shadow_spec_dir.mkdir(parents=True)
+    required = ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md")
+    for name in required:
+        (shadow_spec_dir / name).write_text(
+            f"# stale {name}\n",
+            encoding="utf-8",
+        )
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {},
+            "output_files": [str(spec_dir / name) for name in required],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-plan")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    result = executor.execute(
+        PhaseNode(id="phase3-plan", type="agent", agent="echelon.orchestrator"),
+        store,
+    )
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert not any((spec_dir / name).exists() for name in required)
 
 
 def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output_claims(tmp_path):

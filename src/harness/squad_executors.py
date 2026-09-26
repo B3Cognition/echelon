@@ -23,6 +23,11 @@ from harness.governance_structural_gate import (
 from harness.prompt_companions import append_prompt_companions, prompt_package_roots
 from harness.prompt_markdown import read_prompt_markdown
 from harness.phase_display import color_phase_id
+from harness.provider_output_publication import (
+    ProviderOutputFailure,
+    ProviderOutputGuard,
+    ProviderOutputSpec,
+)
 from harness.quality_scores import (
     normalize_why_quality_scores,
     render_quality_gate_context,
@@ -1608,6 +1613,127 @@ class PhaseExecutor(ABC):
             "Do not choose another proposal filename or write through staging.\n"
         )
 
+    def _provider_output_guard(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        required: tuple[str, ...],
+        *,
+        spec_dir: Path | None = None,
+    ) -> ProviderOutputGuard | None:
+        if not required:
+            return None
+        if spec_dir is None:
+            spec_dir_ref = _normalize_spec_dir_ref(
+                str(state.get("spec_dir") or "").strip(), self._project_root
+            )
+            if not spec_dir_ref:
+                return None
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+        specs = tuple(
+            ProviderOutputSpec(
+                path=relative.rstrip("/"),
+                kind=(
+                    "directory"
+                    if relative.endswith("/") or relative == "contracts"
+                    else "file"
+                ),
+            )
+            for relative in required
+        )
+        return ProviderOutputGuard.capture(
+            project_root=self._project_root,
+            spec_dir=spec_dir,
+            phase_id=node.id,
+            state_revision=_normalized_attempts(state.get("state_revision")),
+            specs=specs,
+        )
+
+    def _finalize_provider_outputs(
+        self,
+        guard: ProviderOutputGuard | None,
+        result: "SquadAgentResult",
+        *,
+        prior_invalid_outputs: object = None,
+        missing_reason: str | None = None,
+    ) -> ExecutorBlockedResult | None:
+        payload = result.echelon_result
+        if isinstance(payload, dict):
+            payload.pop("provider_output_receipts", None)
+        if guard is None or payload is None:
+            return None
+        finalized = guard.finalize(payload)
+        if finalized.failure is not None:
+            return self._provider_output_block(
+                result,
+                finalized.failure,
+                prior_invalid_outputs=prior_invalid_outputs,
+                missing_reason=missing_reason,
+            )
+        if isinstance(payload, dict) and finalized.receipt is not None:
+            payload["provider_output_receipts"] = [dict(finalized.receipt)]
+        return None
+
+    @staticmethod
+    def _provider_output_block(
+        result: "SquadAgentResult",
+        failure: ProviderOutputFailure,
+        *,
+        prior_invalid_outputs: object = None,
+        missing_reason: str | None = None,
+    ) -> ExecutorBlockedResult:
+        from harness.squad_provider import SquadAgentResult
+
+        missing = list(failure.unpublished)
+        invalid_outputs = [
+            {
+                "path": path,
+                "reason": "not published by the current dispatch",
+            }
+            for path in failure.stale
+        ]
+        if not invalid_outputs and isinstance(prior_invalid_outputs, list):
+            invalid_outputs = list(prior_invalid_outputs)
+        reason = (
+            missing_reason
+            if failure.missing and missing_reason is not None
+            else "missing_phase_outputs" if missing else "invalid_phase_outputs"
+        )
+        recovery_updates: dict[str, object] = {
+            "blocked_reason": reason,
+            "missing_outputs": missing,
+            "recovery_state_updates": dict(result.state_updates),
+        }
+        if invalid_outputs:
+            recovery_updates["invalid_outputs"] = invalid_outputs
+        detail_parts = []
+        if failure.missing:
+            detail_parts.append("missing files: " + ", ".join(failure.missing))
+        if failure.undeclared:
+            detail_parts.append(
+                "missing output_files declarations: "
+                + ", ".join(failure.undeclared)
+            )
+        if failure.stale:
+            detail_parts.append(
+                "unchanged since dispatch began: " + ", ".join(failure.stale)
+            )
+        blocked_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": recovery_updates,
+                "journal_entries": [],
+            },
+            raw_output="provider output publication failed; " + "; ".join(detail_parts),
+            duration_ms=result.duration_ms,
+            timed_out=result.timed_out,
+            cost_usd=result.cost_usd,
+        )
+        return ExecutorBlockedResult(reason=reason, result=blocked_result)
+
     def _phase_prompt_metadata(
         self,
         node: "PhaseNode",
@@ -2379,7 +2505,13 @@ class AgentExecutor(PhaseExecutor):
                 matched.add(rel)
         return matched
 
-    def _recover_required_phase_outputs_from_shadow(self, node: "PhaseNode", state: dict, result: "SquadAgentResult") -> list[str]:
+    def _recover_required_phase_outputs_from_shadow(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        result: "SquadAgentResult",
+        shadow_guard: ProviderOutputGuard | None,
+    ) -> list[str]:
         required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
         if not required:
             return []
@@ -2391,6 +2523,20 @@ class AgentExecutor(PhaseExecutor):
             return []
         shadow_dir = self._run_local_shadow_spec_dir(spec_dir)
         if not shadow_dir.exists():
+            return []
+        shadow_publication = (
+            shadow_guard.finalize(
+                {
+                    "output_files": [
+                        str(shadow_dir / rel.rstrip("/"))
+                        for rel in sorted(claimed)
+                    ]
+                }
+            )
+            if shadow_guard is not None
+            else None
+        )
+        if shadow_publication is None or shadow_publication.failure is not None:
             return []
         recovered: list[str] = []
         for rel in required:
@@ -2501,6 +2647,26 @@ class AgentExecutor(PhaseExecutor):
                     expected_state_revision=int(state["state_revision"]),
                     expected_evidence_sha256=str(armed[0]["evidence_sha256"]),
                 )
+                state = state_store.load()
+        required_outputs = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if node.id == "phase1-why2" and str(node.agent or "") == "echelon.sage":
+            required_outputs = _SAGE_REVIEW_OUTPUTS
+        output_guard = self._provider_output_guard(
+            node,
+            state,
+            required_outputs,
+        )
+        spec_dir = self._canonical_spec_dir(state)
+        shadow_output_guard = (
+            self._provider_output_guard(
+                node,
+                state,
+                required_outputs,
+                spec_dir=self._run_local_shadow_spec_dir(spec_dir),
+            )
+            if spec_dir is not None
+            else None
+        )
         result = self._exec_agent_with_contract(
             prompt,
             result_contract,
@@ -2511,10 +2677,13 @@ class AgentExecutor(PhaseExecutor):
         )
         if result.blocked:
             return result
-        self._write_journal_entries(result, node.id)
-        state_store.increment_cost(result.cost_usd)
         if result.echelon_result is not None:
-            recovered = self._recover_required_phase_outputs_from_shadow(node, state, result)
+            recovered = self._recover_required_phase_outputs_from_shadow(
+                node,
+                state,
+                result,
+                shadow_output_guard,
+            )
             if recovered:
                 updates = (result.echelon_result.setdefault("state_updates", {}))
                 existing = updates.get("shadow_output_recovered")
@@ -2522,6 +2691,20 @@ class AgentExecutor(PhaseExecutor):
                     updates["shadow_output_recovered"] = [*existing, *recovered]
                 else:
                     updates["shadow_output_recovered"] = recovered
+        prior_recovery = state.get("phase_output_recovery")
+        prior_invalid_outputs = (
+            prior_recovery.get("invalid_outputs")
+            if isinstance(prior_recovery, dict)
+            else None
+        )
+        publication_block = self._finalize_provider_outputs(
+            output_guard,
+            result,
+            prior_invalid_outputs=prior_invalid_outputs,
+        )
+        if publication_block is not None:
+            return publication_block
+        if result.echelon_result is not None:
             missing_outputs = self._required_phase_outputs_missing(node, state)
             invalid_outputs = (
                 self._required_phase_outputs_invalid(node, state)
@@ -2531,12 +2714,6 @@ class AgentExecutor(PhaseExecutor):
             if missing_outputs or invalid_outputs:
                 output_reason = "missing_phase_outputs" if missing_outputs else "invalid_phase_outputs"
                 recovery_state_updates = dict(result.state_updates)
-                prior_recovery = state.get("phase_output_recovery")
-                prior_invalid_outputs = (
-                    prior_recovery.get("invalid_outputs")
-                    if isinstance(prior_recovery, dict)
-                    else None
-                )
                 recovery_updates: dict[str, object] = {
                     "blocked_reason": output_reason,
                     "missing_outputs": missing_outputs,
@@ -2595,6 +2772,8 @@ class AgentExecutor(PhaseExecutor):
                         reason="invalid_evidence_inventory",
                         result=blocked_result,
                     )
+        self._write_journal_entries(result, node.id)
+        state_store.increment_cost(result.cost_usd)
         return result
 
     def _quarantine_invalid_recovery_outputs(
@@ -2938,71 +3117,6 @@ class StagedParallelExecutor(PhaseExecutor):
     """
 
     _FINAL_REPORTS = ("issues.md", "quality-gates.md", "implementability-report.md")
-
-    def _missing_sage_review_outputs(
-        self,
-        state: dict,
-        result: "SquadAgentResult",
-    ) -> list[str]:
-        """Require WHY3 to publish and declare both current review reports."""
-        spec_dir_ref = _normalize_spec_dir_ref(
-            str(state.get("spec_dir") or "").strip(), self._project_root
-        )
-        if not spec_dir_ref:
-            return list(_SAGE_REVIEW_OUTPUTS)
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-
-        payload = result.echelon_result or {}
-        raw_outputs = payload.get("output_files")
-        claimed: set[Path] = set()
-        if isinstance(raw_outputs, list):
-            for raw in raw_outputs:
-                if not isinstance(raw, str) or not raw.strip():
-                    continue
-                candidate = Path(raw.strip().rstrip("/"))
-                candidates = (
-                    [candidate]
-                    if candidate.is_absolute()
-                    else [self._project_root / candidate, spec_dir / candidate]
-                )
-                claimed.update(path.resolve(strict=False) for path in candidates)
-
-        return [
-            filename
-            for filename in _SAGE_REVIEW_OUTPUTS
-            if not (spec_dir / filename).is_file()
-            or (spec_dir / filename).resolve(strict=False) not in claimed
-        ]
-
-    @staticmethod
-    def _missing_review_outputs_block(missing: list[str]):
-        from harness.squad_provider import SquadAgentResult
-
-        detail = (
-            "SAGE must write the current WHY3 review reports and list them in "
-            "echelon_result.output_files; missing declarations: "
-            + ", ".join(missing)
-        )
-        return ExecutorBlockedResult(
-            reason="missing_phase_outputs",
-            result=SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": {
-                        "blocked_reason": "missing_phase_outputs",
-                        "missing_outputs": missing,
-                        "recovery_state_updates": {},
-                    },
-                    "journal_entries": [],
-                },
-                raw_output=detail,
-                duration_ms=0,
-                timed_out=False,
-            ),
-        )
 
     def _final_review_inputs(self, node, state, spec_dir):
         """Fingerprint full inputs, not bounded model renderings or report revisions.
@@ -3840,6 +3954,18 @@ class StagedParallelExecutor(PhaseExecutor):
                         "outputs", getattr(node, "outputs", [])
                     ),
                 )
+                if agent_id == "echelon.sage" and mode_label == "WHY3":
+                    required_outputs = _SAGE_REVIEW_OUTPUTS
+                elif (
+                    agent_id == "echelon.gatekeeper"
+                    and mode_label == "ASSESS2"
+                ):
+                    required_outputs = ("implementability-report.md",)
+                else:
+                    required_outputs = ()
+                output_guard = self._provider_output_guard(
+                    node, state, required_outputs
+                )
                 if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3":
                     reviewer_dispatch = (agent_entry, result_contract, prompt_metadata)
                 futures[pool.submit(
@@ -3847,10 +3973,10 @@ class StagedParallelExecutor(PhaseExecutor):
                     prompt,
                     result_contract,
                     prompt_metadata,
-                )] = (mode_label, result_contract, agent_id)
+                )] = (mode_label, result_contract, agent_id, output_guard)
 
             for future in as_completed(futures):
-                label, result_contract, agent_id = futures[future]
+                label, result_contract, agent_id, output_guard = futures[future]
                 raw_result = self._normalize_completed_assess2_rejection(
                     label,
                     future.result(),
@@ -3881,10 +4007,18 @@ class StagedParallelExecutor(PhaseExecutor):
                     elif agent_id != "echelon.sage" or label != "WHY3":
                         return ExecutorBlockedResult(reason="invalid_phase_outputs", result=SquadAgentResult(
                             exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "invalid_phase_outputs"}}, raw_output="unsolicited or non-SAGE issue review", duration_ms=0, timed_out=False))
-                if agent_id == "echelon.sage" and label == "WHY3":
-                    missing = self._missing_sage_review_outputs(state, result)
-                    if missing:
-                        return self._missing_review_outputs_block(missing)
+                publication_block = self._finalize_provider_outputs(
+                    output_guard,
+                    result,
+                    missing_reason=(
+                        "missing_consensus_prerequisite"
+                        if agent_id == "echelon.gatekeeper"
+                        and label == "ASSESS2"
+                        else None
+                    ),
+                )
+                if publication_block is not None:
+                    return publication_block
                 stage1_results[label] = result
                 payload = result.echelon_result or {}
                 product_input_updates.extend(payload.get("product_input_updates") or [])
@@ -4187,16 +4321,20 @@ class StagedParallelExecutor(PhaseExecutor):
                         fresh_prompt += self._sage_output_path_context(
                             node, fresh_state, agent_id="echelon.sage"
                         )
+                        fresh_output_guard = self._provider_output_guard(
+                            node, fresh_state, _SAGE_REVIEW_OUTPUTS
+                        )
                         fresh_result = self._validate_result_state_updates(node,
                             self._exec_agent_with_contract(fresh_prompt, sage_contract, sage_metadata),
                             result_contract=sage_contract, direct_state_write=True)
                         if isinstance(fresh_result, ExecutorBlockedResult):
                             return fresh_result
-                        missing = self._missing_sage_review_outputs(
-                            fresh_state, fresh_result
+                        publication_block = self._finalize_provider_outputs(
+                            fresh_output_guard,
+                            fresh_result,
                         )
-                        if missing:
-                            return self._missing_review_outputs_block(missing)
+                        if publication_block is not None:
+                            return publication_block
                         state_store.increment_cost(fresh_result.cost_usd)
                         self._write_journal_entries(fresh_result, node.id)
                         fresh_review = review_from_result(fresh_result.echelon_result or {},
@@ -4280,12 +4418,21 @@ class StagedParallelExecutor(PhaseExecutor):
         assessment_error = self._assess_phase3_work(node, state_store)
         if assessment_error is not None:
             return assessment_error
+        provider_output_receipts = [
+            receipt
+            for result in stage1_results.values()
+            for receipt in (
+                (result.echelon_result or {}).get("provider_output_receipts") or []
+            )
+            if isinstance(receipt, dict)
+        ]
         return SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "PASS" if all_pass else "FAIL",
                 "state_updates": {},
                 "product_input_updates": product_input_updates,
+                "provider_output_receipts": provider_output_receipts,
             },
             raw_output="",
             duration_ms=0,
