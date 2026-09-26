@@ -428,6 +428,21 @@ def sage_issue_fields(body: str) -> dict[str, str]:
     return {label: matches[0] for label, matches in fields.items()}
 
 
+def authoritative_sage_issues_section(report: str) -> str:
+    """Return the sole section whose issue entries carry routing authority."""
+    headings = list(
+        re.finditer(r"(?m)^##[ \t]+Issues[ \t]*$", report)
+    )
+    if len(headings) != 1:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE Issues section is malformed"
+        )
+    start = headings[0].end()
+    next_heading = re.search(r"(?m)^##[ \t]+\S.*$", report[start:])
+    end = start + next_heading.start() if next_heading else len(report)
+    return report[start:end]
+
+
 def _parse_authoritative_sage_assessment_bytes(
     content: bytes,
 ) -> tuple[str, tuple[dict[str, str], ...]]:
@@ -460,10 +475,11 @@ def _parse_authoritative_sage_assessment_bytes(
         raise QualityCandidateIntegrityError(
             "authoritative SAGE issue verdict is malformed"
         )
+    issues_section = authoritative_sage_issues_section(text)
     headings = list(
         re.finditer(
             r"(?m)^###\s+(ISS-[A-Za-z0-9-]+):\s*([^\n]+)\s*$",
-            text,
+            issues_section,
         )
     )
     issues: list[dict[str, str]] = []
@@ -478,9 +494,9 @@ def _parse_authoritative_sage_assessment_bytes(
         end = (
             headings[index + 1].start()
             if index + 1 < len(headings)
-            else len(text)
+            else len(issues_section)
         )
-        body = text[heading.end():end]
+        body = issues_section[heading.end():end]
         severity_matches = re.findall(
             r"(?m)^-?\s*\*\*Severity:\*\*\s*(CRITICAL|HIGH|MEDIUM|LOW)\s*$",
             body,

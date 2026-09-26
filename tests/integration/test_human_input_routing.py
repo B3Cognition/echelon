@@ -2340,7 +2340,11 @@ def test_v2_controller_decision_restart_uses_registered_dynamic_preparer(
             spec_dir = Path(str(store.load()["spec_dir"]))
             spec_dir.mkdir(parents=True, exist_ok=True)
             (spec_dir / "issues.md").write_text(
-                """### ISS-001: Retry policy
+                """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4592,7 +4596,11 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4659,7 +4667,11 @@ def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corrid
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Coverage handoff is stale
+        """# Issues — WHY3
+
+## Issues
+
+### ISS-001: Coverage handoff is stale
 
 - **Responsible agent:** SENTINEL
 - **Action Required:** Amend coverage-map.md from the current task plan.
@@ -4740,7 +4752,11 @@ def test_dispatch_cap_routes_discovery_issue_to_its_owner_and_resets_phase1_corr
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Discovery model is stale
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Discovery model is stale
 
 - **Responsible agent:** SCOUT
 - **Action Required:** Reconcile the discovery model with the resolved input decision.
@@ -4839,7 +4855,11 @@ def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     spec_dir.mkdir()
     issues_path = spec_dir / "issues.md"
     issues_path.write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4860,7 +4880,11 @@ def test_dispatch_cap_rejects_evidence_drift_after_sealing(
         (sealed_candidate,),
     )
     issues_path.write_text(
-        """### ISS-002: New issue
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-002: New issue
 
 ### Resolution Guidance
 - **Decision required:** New behavior.
@@ -4916,7 +4940,11 @@ def test_dispatch_cap_accepts_legacy_candidate_description(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4967,7 +4995,11 @@ def test_dispatch_cap_accepts_pending_schema1_reference_without_route_rewrite(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 - **Responsible agent:** SENTINEL
 - **Action Required:** Repair the test handoff.
@@ -5048,7 +5080,11 @@ def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -5282,7 +5318,11 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -5442,7 +5482,11 @@ def test_dispatch_cap_option_contract_failure_is_not_malformed_evidence(
     spec_dir = Path(store.load()["spec_dir"])
     spec_dir.mkdir(parents=True)
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Valid issue
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Valid issue
 
 ### Resolution Guidance
 - **Decision required:** Repair the issue.
@@ -5524,11 +5568,15 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
         content = {
             "empty": "",
             "malformed": (
+                "# Issues — WHY2\n\n"
+                "## Issues\n\n"
                 "### ISS-001: Incomplete guidance\n\n"
                 "### Resolution Guidance\n"
                 "- **Banzai eligible:** yes\n"
             ),
             "ineligible": (
+                "# Issues — WHY2\n\n"
+                "## Issues\n\n"
                 "### ISS-001: Product preference\n\n"
                 "### Resolution Guidance\n"
                 "- **Decision required:** Choose a product preference.\n"
@@ -5650,11 +5698,18 @@ def test_dispatch_cap_bounds_issue_reads_and_candidate_count(
         "- **Banzai eligible:** yes\n"
     )
     if evidence == "oversized":
-        content = issue.format(issue_id="ISS-001") + ("x" * 1_000_000)
+        content = (
+            "# Issues — WHY2\n\n## Issues\n\n"
+            + issue.format(issue_id="ISS-001")
+            + ("x" * 1_000_000)
+        )
     else:
-        content = "\n".join(
-            issue.format(issue_id=f"ISS-{index:03d}")
-            for index in range(1, 66)
+        content = (
+            "# Issues — WHY2\n\n## Issues\n\n"
+            + "\n".join(
+                issue.format(issue_id=f"ISS-{index:03d}")
+                for index in range(1, 66)
+            )
         )
     (spec_dir / "issues.md").write_text(content, encoding="utf-8")
 

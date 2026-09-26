@@ -355,6 +355,28 @@ Must follow the structure in `agents/exploration/templates/sage-quality-gates-te
 
 Must follow the structure in `agents/exploration/templates/sage-issues-template.md` exactly.
 
+When the controller supplies targeted validation context for one repaired issue,
+keep every actionable `### ISS-*` entry inside `## Issues` and append this
+canonical audit section after that section:
+
+```markdown
+## Selected Issue Validation
+
+### Validation receipt
+
+- **Issue ID:** ISS-<ID>
+- **Outcome:** resolved | unresolved
+- **Evidence:** <current affected artifact and section checked>
+- **Rationale:** <why the current artifact does or does not implement the controller-bound decision>
+```
+
+ALWAYS use `### Validation receipt` for targeted-validation audit evidence and
+bind its Issue ID to the controller-selected issue.
+NEVER use an `### ISS-*` heading outside `## Issues`, count a validation receipt
+as an actionable issue, or treat receipt prose as authority to close an issue.
+The controller's selected-issue state and current artifact evidence remain the
+closure authority.
+
 For every issue, include `Action Required` and a `Resolution Guidance` subsection.
 This is a controller contract, not optional explanatory prose:
 

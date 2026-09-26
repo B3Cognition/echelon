@@ -6888,6 +6888,37 @@ class TestProportionalQualityController:
         assert ctrl._prepare_banzai_quality_issue_resolution(snapshot, assessment) is None
         assert store.load() == snapshot.state
 
+    def test_banzai_candidates_ignore_selected_issue_validation_receipt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Audit receipts outside Issues cannot become repair candidates."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        content = (
+            issues_path.read_text(encoding="utf-8")
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        issues_path.write_text(
+            content
+            + """
+
+## Selected Issue Validation
+
+### ISS-001: Residual quality debt
+- **Outcome:** resolved
+- **Evidence:** spec.md now contains the required correction.
+- **Rationale:** The selected repair matches the controller decision.
+""",
+            encoding="utf-8",
+        )
+
+        candidates = ctrl._banzai_issue_resolution_candidates(store.load())
+
+        assert [candidate["issue_id"] for candidate in candidates] == ["ISS-001"]
+
     @pytest.mark.parametrize("legacy_option", [False, True])
     def test_issue_options_bind_current_artifact_evidence_and_read_legacy_seals(
         self, tmp_path: Path, legacy_option: bool,
@@ -7286,6 +7317,14 @@ class TestProportionalQualityController:
 ## Issues
 
 No issue remains for the selected repair. The certified aggregate gates still fail.
+
+## Selected Issue Validation
+
+### ISS-001: Residual quality debt
+- **Outcome:** resolved
+- **Affected artifact:** spec.md
+- **Evidence:** The selected correction is present in the current specification.
+- **Rationale:** The repaired artifact implements the controller-bound decision.
 """,
             encoding="utf-8",
         )

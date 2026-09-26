@@ -955,6 +955,9 @@ def _render_issue_resolution_context(state: dict) -> str:
             "contradictory part of its decision in the affected artifacts, citing the "
             "affected section and the missing detail. Never re-list it merely "
             "because it appeared in a prior issues.md or prior score report.\n"
+            "- Record this check using the canonical `Selected Issue Validation` "
+            "receipt in the SAGE protocol. The receipt is audit evidence, not "
+            "closure authority; never format it as an `### ISS-*` issue entry.\n"
         )
     return (
         "## Selected Issue Resolution (Controller-Owned)\n"

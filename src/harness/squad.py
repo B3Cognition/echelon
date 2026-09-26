@@ -105,6 +105,7 @@ from harness.proportional_quality import (
     QualityCandidateIntegrityError,
     QualityCandidateManifest,
     QualityCandidateSnapshot,
+    authoritative_sage_issues_section,
     candidate_artifact_preimage_digests,
     is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
@@ -15941,9 +15942,15 @@ class SquadController:
             raise _DispatchCapEvidenceError(
                 "phase_dispatch_limit_evidence_empty"
             )
+        try:
+            issues_section = authoritative_sage_issues_section(issues_md)
+        except QualityCandidateIntegrityError as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            ) from exc
         issue_blocks = re.findall(
             r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
-            issues_md,
+            issues_section,
             re.MULTILINE | re.DOTALL,
         )
         if not issue_blocks:
