@@ -16,7 +16,7 @@ import sys
 import time
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -81,6 +81,7 @@ from harness.human_input import (
     v2_automatic_decision_is_registered,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_execution import FinalizedPhaseExecution, PhaseExecutionAccumulator
 from harness.phase_a_state_version import require_current_phase_a_state
 from harness.checkpoint_policy import (
     CheckpointPolicyError,
@@ -927,6 +928,7 @@ class _ProviderHumanInputAdvance:
     from_phase: str
     to_phase: str
     decision: PreparedRoutingDecision
+    execution: FinalizedPhaseExecution | None = None
 
 
 @dataclass(frozen=True)
@@ -1572,6 +1574,7 @@ class SquadController:
         conditional_skip: bool,
         record_completion: bool,
         publication_marker: Mapping[str, object] | None,
+        accepted_results: Sequence[SquadAgentResult] = (),
         judgments: tuple[SquadAgentResult, ...] = (),
         origin: str = "routed",
         quality_effect: Mapping[str, object] | None = None,
@@ -1642,7 +1645,7 @@ class SquadController:
                 })
             judgment_records = tuple(
                 self._completion_judgment_record(result)
-                for result in judgments
+                for result in (*accepted_results, *judgments)
             )
             if not record_completion:
                 effect_plan = ("journal", "checkpoint")
@@ -4037,6 +4040,7 @@ class SquadController:
             receipt = self._advance_prepared_result_or_block(
                 node,
                 provider_advance.decision,
+                execution=provider_advance.execution,
                 human_input=request,
                 human_input_initial_status=initial_status,
             )
@@ -8145,34 +8149,36 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
 
         executor = self._executors.get(node.type)
+        phase_provider_usage: dict[str, int] = {"tokens": 0}
         try:
-            node = self._materialize_controller_phase_inputs(node)
-            if executor is None:
-                result = self._judgment_dispatch(
-                    f"Unknown phase type {node.type!r} for phase {phase!r}",
-                    node,
-                )
-            else:
-                with self._telemetry_provider.dispatch(
-                    DispatchContext(
-                        phase=phase,
-                        agent=str(node.agent or node.type),
-                        kind=(
-                            "repair"
-                            if dispatch_count > 1
-                            else "phase"
-                        ),
-                        attempt=dispatch_count,
-                        reason=self._dispatch_reason(
-                            phase,
-                            dispatch_count,
-                        ),
-                    )
-                ):
-                    result = executor.execute(
+            with self._defer_routing_provider_usage() as phase_provider_usage:
+                node = self._materialize_controller_phase_inputs(node)
+                if executor is None:
+                    result = self._judgment_dispatch(
+                        f"Unknown phase type {node.type!r} for phase {phase!r}",
                         node,
-                        self._state_store,
                     )
+                else:
+                    with self._telemetry_provider.dispatch(
+                        DispatchContext(
+                            phase=phase,
+                            agent=str(node.agent or node.type),
+                            kind=(
+                                "repair"
+                                if dispatch_count > 1
+                                else "phase"
+                            ),
+                            attempt=dispatch_count,
+                            reason=self._dispatch_reason(
+                                phase,
+                                dispatch_count,
+                            ),
+                        )
+                    ):
+                        result = executor.execute(
+                            node,
+                            self._state_store,
+                        )
         except ControllerStateContractViolation as exc:
             self._block_after_executor_contract_failure(node, exc)
             return SquadResult.from_state(self._state_store.load())
@@ -8209,6 +8215,17 @@ class SquadController:
                 return None
             return SquadResult.from_state(self._state_store.load())
 
+        execution = (
+            result if isinstance(result, FinalizedPhaseExecution) else None
+        )
+        if execution is not None:
+            result = execution.result
+        execution_routing_updates = (
+            dict(execution.result.state_updates)
+            if execution is not None and node.id == "phase3-consensus"
+            else {}
+        )
+
         if result.timed_out:
             snapshot = self._state_store.capture_routing_snapshot(
                 expected_phase=node.id,
@@ -8232,7 +8249,7 @@ class SquadController:
         )
         prepared = self._prepare_phase_result_or_block(
             node,
-            result,
+            execution if execution is not None else result,
             snapshot,
         )
         if prepared is None:
@@ -8246,8 +8263,19 @@ class SquadController:
         if blocked_result:
             if (self._phase3_planner_block_routing(node, prepared, snapshot)[0]
                     or (blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0])):
-                routing = self._construct_routing_decision_or_block(node, prepared, snapshot)
-                if routing is None or self._advance_prepared_result_or_block(node, routing.decision) is None:
+                routing = self._construct_routing_decision_or_block(
+                    node,
+                    prepared,
+                    snapshot,
+                    projected_state_updates=execution_routing_updates,
+                    execution=execution,
+                    token_usage_delta=phase_provider_usage["tokens"],
+                )
+                if routing is None or self._advance_prepared_result_or_block(
+                    node,
+                    routing.decision,
+                    execution=execution,
+                ) is None:
                     return SquadResult.from_state(self._state_store.load())
                 return None
             # A bare BLOCKED result has no material ambiguity.  It is a
@@ -8358,6 +8386,9 @@ class SquadController:
             prepared,
             snapshot,
             additional_state_updates=routing_updates,
+            projected_state_updates=execution_routing_updates,
+            execution=execution,
+            token_usage_delta=phase_provider_usage["tokens"],
         )
         if routing is None:
             self._discard_publication_without_authority(
@@ -8374,6 +8405,7 @@ class SquadController:
                 snapshot,
                 routing,
                 prepared_publication,
+                execution,
             )
         )
         if human_input_result is not None:
@@ -8384,6 +8416,7 @@ class SquadController:
         receipt = self._advance_prepared_result_or_block(
             node,
             decision,
+            execution=execution,
             prepared_publication=prepared_publication,
         )
         if receipt is None:
@@ -8840,53 +8873,55 @@ class SquadController:
             except ControllerStateContractViolation:
                 self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
                 return SquadResult.from_state(self._state_store.load())
+        phase_provider_usage: dict[str, int] = {"tokens": 0}
         try:
-            if not replay_claimed:
-                node = self._materialize_controller_phase_inputs(node)
-            if executor is None:
-                result = self._judgment_dispatch(
-                    f"Unknown phase type {node.type!r} for phase {phase!r}",
-                    node,
-                )
-            else:
-                state = self._state_store.load()
-                attempts = state.get("phase_dispatch_counts")
-                attempt = (
-                    int(attempts.get(phase, 0)) + 1
-                    if isinstance(attempts, dict)
-                    else 1
-                )
-                with self._telemetry_provider.dispatch(
-                    DispatchContext(
-                        phase=phase,
-                        agent=str(node.agent or node.type),
-                        kind="repair" if attempt > 1 else "phase",
-                        attempt=attempt,
-                        reason="manual_rerun",
+            with self._defer_routing_provider_usage() as phase_provider_usage:
+                if not replay_claimed:
+                    node = self._materialize_controller_phase_inputs(node)
+                if executor is None:
+                    result = self._judgment_dispatch(
+                        f"Unknown phase type {node.type!r} for phase {phase!r}",
+                        node,
                     )
-                ):
-                    if replay_claimed:
-                        retire_replay = (
-                            self._state_store
-                            .retire_claimed_failed_automatic_decision_for_manual_phase_replay
+                else:
+                    state = self._state_store.load()
+                    attempts = state.get("phase_dispatch_counts")
+                    attempt = (
+                        int(attempts.get(phase, 0)) + 1
+                        if isinstance(attempts, dict)
+                        else 1
+                    )
+                    with self._telemetry_provider.dispatch(
+                        DispatchContext(
+                            phase=phase,
+                            agent=str(node.agent or node.type),
+                            kind="repair" if attempt > 1 else "phase",
+                            attempt=attempt,
+                            reason="manual_rerun",
                         )
-                        retired = retire_replay(
-                            phase_id,
-                            initial_state_updates=initial_state_updates or {},
-                        )
-                        if not retired:
-                            clear_replay = (
+                    ):
+                        if replay_claimed:
+                            retire_replay = (
                                 self._state_store
-                                .clear_failed_automatic_decision_for_manual_phase_replay
+                                .retire_claimed_failed_automatic_decision_for_manual_phase_replay
                             )
-                            clear_replay()
-                            raise StateAdvanceError(
-                                "failed decision replay authority changed before "
-                                "executor dispatch",
-                                json_path="$.blocked_decision",
-                                validator="human_input_authority",
+                            retired = retire_replay(
+                                phase_id,
+                                initial_state_updates=initial_state_updates or {},
                             )
-                    result = executor.execute(node, self._state_store)
+                            if not retired:
+                                clear_replay = (
+                                    self._state_store
+                                    .clear_failed_automatic_decision_for_manual_phase_replay
+                                )
+                                clear_replay()
+                                raise StateAdvanceError(
+                                    "failed decision replay authority changed before "
+                                    "executor dispatch",
+                                    json_path="$.blocked_decision",
+                                    validator="human_input_authority",
+                                )
+                        result = executor.execute(node, self._state_store)
         except ControllerStateContractViolation as exc:
             self._block_after_executor_contract_failure(node, exc)
             return SquadResult.from_state(self._state_store.load())
@@ -8906,6 +8941,17 @@ class SquadController:
                 ),
             )
             return SquadResult.from_state(self._state_store.load())
+
+        execution = (
+            result if isinstance(result, FinalizedPhaseExecution) else None
+        )
+        if execution is not None:
+            result = execution.result
+        execution_routing_updates = (
+            dict(execution.result.state_updates)
+            if execution is not None and node.id == "phase3-consensus"
+            else {}
+        )
 
         if result.timed_out:
             snapshot = self._state_store.capture_routing_snapshot(
@@ -8928,7 +8974,7 @@ class SquadController:
         )
         prepared = self._prepare_phase_result_or_block(
             node,
-            result,
+            execution if execution is not None else result,
             snapshot,
         )
         if prepared is None:
@@ -8996,7 +9042,10 @@ class SquadController:
             prepared,
             snapshot,
             additional_state_updates=routing_updates,
+            projected_state_updates=execution_routing_updates,
             manual_phase_run=True,
+            execution=execution,
+            token_usage_delta=phase_provider_usage["tokens"],
         )
         if routing is None:
             self._discard_publication_without_authority(
@@ -9012,12 +9061,14 @@ class SquadController:
             snapshot,
             routing,
             prepared_publication,
+            execution,
         )
         if human_input_result is not None:
             return SquadResult.from_state(self._state_store.load())
         receipt = self._advance_prepared_result_or_block(
             node,
             decision,
+            execution=execution,
             prepared_publication=prepared_publication,
         )
         if receipt is None:
@@ -9134,6 +9185,16 @@ class SquadController:
                 timed_out=False,
                 cost_usd=0.0,
             )
+            execution: FinalizedPhaseExecution | None = None
+            if "managed_identity" not in snapshot.state:
+                accumulator = PhaseExecutionAccumulator(node.id)
+                assignment = node.provider_assignment()
+                accumulator.skip(
+                    assignment,
+                    "ordinary",
+                    f"phase condition did not match: {condition}",
+                )
+                execution = accumulator.freeze(result)
             prepared = self._prepare_phase_result_or_block(
                 node,
                 result,
@@ -9147,6 +9208,7 @@ class SquadController:
                 snapshot,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=True,
+                execution=execution,
             )
             if routing is None:
                 return True
@@ -9158,6 +9220,7 @@ class SquadController:
                         from_phase=decision.from_phase,
                         to_phase=decision.to_phase,
                         decision=decision,
+                        execution=execution,
                     ),
                 )
                 return True
@@ -9165,6 +9228,7 @@ class SquadController:
             receipt = self._advance_prepared_result_or_block(
                 node,
                 decision,
+                execution=execution,
             )
             if receipt is None:
                 return True
@@ -13296,11 +13360,18 @@ class SquadController:
     def _prepare_phase_result(
         self,
         node: PhaseNode,
-        result: SquadAgentResult,
+        result: SquadAgentResult | FinalizedPhaseExecution,
         snapshot: RoutingStateSnapshot,
         *, publication_sources=None,
     ) -> PreparedPhaseResult:
         """Prepare one detached executor result for routing and persistence."""
+        if isinstance(result, FinalizedPhaseExecution):
+            result = result.result
+            if node.id == "phase3-consensus":
+                result = detach_squad_agent_result(result)
+                payload = dict(result.echelon_result or {})
+                payload["state_updates"] = {}
+                result.echelon_result = payload
         if publication_sources is not None and node.id not in {"phase1-what", "phase1-why2", "phase1-lexicon-derive"}:
             raise ValueError("projected sources require WHAT, WHY2 or Lexicon derivation")
         candidate = detach_squad_agent_result(result)
@@ -13441,7 +13512,7 @@ class SquadController:
     def _prepare_phase_result_or_block(
         self,
         node: PhaseNode,
-        result: SquadAgentResult,
+        result: SquadAgentResult | FinalizedPhaseExecution,
         snapshot: RoutingStateSnapshot,
     ) -> PreparedPhaseResult | None:
         """Prepare a result or persist one stable, redacted contract failure."""
@@ -13560,6 +13631,7 @@ class SquadController:
         snapshot: RoutingStateSnapshot,
         routing: _PreparedControllerRouting,
         prepared_publication: PreparedSquadPublication | None,
+        execution: FinalizedPhaseExecution | None = None,
     ) -> bool | None:
         """Share provider preparation, overlap rejection, and sealing."""
         decision = routing.decision
@@ -13603,6 +13675,7 @@ class SquadController:
                 from_phase=decision.from_phase,
                 to_phase=decision.to_phase,
                 decision=decision,
+                execution=execution,
             ),
         )
 
@@ -13611,6 +13684,7 @@ class SquadController:
         node: PhaseNode,
         decision: PreparedRoutingDecision,
         *,
+        execution: FinalizedPhaseExecution | None = None,
         prepared_publication: PreparedSquadPublication | None = None,
         human_input: PreparedHumanInput | None = None,
         human_input_initial_status: str | None = None,
@@ -13644,6 +13718,30 @@ class SquadController:
             completion_marker.get("completion_id") or ""
         )
         try:
+            if execution is None:
+                if decision.cost_usd_delta != 0.0:
+                    raise StateAdvanceError(
+                        "routing cost has no provider execution",
+                        json_path="$.cost_usd_delta",
+                        validator="completion_binding",
+                    )
+                provider_execution = None
+            else:
+                if decision.cost_usd_delta != execution.cost_usd_delta:
+                    raise StateAdvanceError(
+                        "routing cost does not match provider execution",
+                        json_path="$.cost_usd_delta",
+                        validator="completion_binding",
+                    )
+                provider_execution = {
+                    "schema_version": 1,
+                    "manifest_sha256": execution.manifest_sha256,
+                    "manifest": [
+                        entry.to_dict() for entry in execution.manifest
+                    ],
+                    "receipts": [dict(receipt) for receipt in execution.receipts],
+                    "cost_usd_delta": execution.cost_usd_delta,
+                }
             if prepared_publication is not None:
                 expected_marker = prepared_publication.marker.to_dict()
                 if (
@@ -13724,6 +13822,12 @@ class SquadController:
                         decision.judgment_payload_sha256
                     ),
                     "token_usage_delta": decision.token_usage_delta,
+                    "cost_usd_delta": decision.cost_usd_delta,
+                    **(
+                        {"provider_execution": provider_execution}
+                        if provider_execution is not None
+                        else {}
+                    ),
                 },
             )
             snapshot = self._state_store.capture_routing_snapshot(
@@ -15208,11 +15312,13 @@ class SquadController:
         snapshot: RoutingStateSnapshot,
         *,
         additional_state_updates: Mapping[str, object] | None = None,
+        projected_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
         managed_discovery_request: str | None = None,
         completion_id: str | None = None,
         token_usage_delta: int = 0,
+        execution: FinalizedPhaseExecution | None = None,
         publication_sources=None,
     ) -> _PreparedControllerRouting | None:
         """Construct one route or record a redacted snapshot-bound failure."""
@@ -15224,12 +15330,14 @@ class SquadController:
                     prepared,
                     snapshot,
                     additional_state_updates=additional_state_updates,
+                    projected_state_updates=projected_state_updates,
                     manual_phase_run=manual_phase_run,
                     conditional_skip=conditional_skip,
                     human_input_collector=routed_human_input,
                     managed_discovery_request=managed_discovery_request,
                     completion_id=completion_id,
                     token_usage_delta=token_usage_delta,
+                    execution=execution,
                     **({"publication_sources": publication_sources} if publication_sources is not None else {}),
                 )
                 return _PreparedControllerRouting(
@@ -15289,12 +15397,14 @@ class SquadController:
         snapshot: RoutingStateSnapshot,
         *,
         additional_state_updates: Mapping[str, object] | None = None,
+        projected_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
         human_input_collector: list[PreparedHumanInput] | None = None,
         managed_discovery_request: str | None = None,
         completion_id: str | None = None,
         token_usage_delta: int = 0,
+        execution: FinalizedPhaseExecution | None = None,
         publication_sources=None,
     ) -> PreparedRoutingDecision:
         """Select and seal one route without mutating live success state."""
@@ -15366,6 +15476,24 @@ class SquadController:
                 )
 
         merge_effects(dict(additional_state_updates or {}))
+        merge_effects(dict(projected_state_updates or {}))
+        if projected_state_updates:
+            projected_state = {
+                **snapshot.state,
+                **dict(projected_state_updates),
+            }
+            snapshot = RoutingStateSnapshot(
+                phase=snapshot.phase,
+                state_revision=snapshot.state_revision,
+                previous_dispatch_sha256=(
+                    snapshot.previous_dispatch_sha256
+                ),
+                _state_json=json.dumps(
+                    projected_state,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
         selected_issue_updates = (
             self._coordinate_selected_issue_repair_updates(
                 node,
@@ -15713,6 +15841,9 @@ class SquadController:
                 else None
             ),
             judgments=tuple(judgment_results),
+            accepted_results=(
+                execution.accepted_results if execution is not None else ()
+            ),
             quality_effect=quality_effect,
             managed_discovery_request=managed_discovery_request,
             completion_id=completion_id,
@@ -15720,6 +15851,16 @@ class SquadController:
         transaction_updates[SPEC_STEP_EFFECT_PLAN_KEY] = (
             completion.marker.to_dict()
         )
+        accepted_payloads = [
+            (
+                dict(result.echelon_result)
+                if isinstance(result.echelon_result, dict)
+                else {}
+            )
+            for result in (
+                execution.accepted_results if execution is not None else ()
+            )
+        ]
         try:
             decision = self._state_store.prepare_routing_decision(
                 prepared,
@@ -15729,7 +15870,7 @@ class SquadController:
                 queued_state_updates=queued_updates,
                 transaction_state_updates=transaction_updates,
                 transaction_state_removals=transaction_removals,
-                judgment_payloads=judgment_payloads,
+                judgment_payloads=[*accepted_payloads, *judgment_payloads],
                 source=source,
                 transition_index=transition_index,
                 increment_iteration=increment_iteration,
@@ -15741,7 +15882,16 @@ class SquadController:
                 ),
                 token_usage_delta=(
                     self._deferred_provider_usage or {"tokens": 0}
-                )["tokens"] + token_usage_delta,
+                )["tokens"] + (
+                    execution.token_usage_delta
+                    if execution is not None
+                    else token_usage_delta
+                ),
+                cost_usd_delta=(
+                    execution.cost_usd_delta
+                    if execution is not None
+                    else 0.0
+                ),
                 dispatch_id=completion.marker.completion_id,
             )
             if human_input_collector is not None and human_input_collector:

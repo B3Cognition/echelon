@@ -47,6 +47,11 @@ from harness.human_input import (
 )
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_execution import FinalizedPhaseExecution, PhaseExecutionAccumulator
+from harness.provider_dispatch_finalizer import (
+    FinalizedProviderResult,
+    ProviderDispatchReceipt,
+)
 from harness.phase_checkpoints import PhaseCheckpointError, load_checkpoint_ledger
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
@@ -63,7 +68,7 @@ from harness.squad import (
     _phase_requires_constitution_provenance,
     project_authoring_verdict,
 )
-from harness.squad_executors import AgentExecutor
+from harness.squad_executors import AgentExecutor, ExecutorBlockedResult
 from harness.squad_provider import SquadAgentResult
 from harness.squad_publication import (
     PreparedSquadPublication,
@@ -558,6 +563,40 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
     return provider
 
 
+def _publish_mock_outputs(
+    result: SquadAgentResult,
+    kwargs: Mapping[str, object],
+    *,
+    content: str = "# Fixture output\n",
+) -> SquadAgentResult:
+    """Publish every path granted to one successful integration-test dispatch."""
+    metadata = kwargs.get("prompt_metadata")
+    write_paths = (
+        metadata.get("tool_write_paths", [])
+        if isinstance(metadata, Mapping)
+        else []
+    )
+    claims: list[str] = []
+    for raw_path in write_paths:
+        path = Path(str(raw_path))
+        if path.suffix:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            previous = path.read_text(encoding="utf-8") if path.is_file() else ""
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.fixture")
+            temporary.write_text(previous + content, encoding="utf-8")
+            temporary.replace(path)
+            claims.append(str(path))
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            member = path / f"fixture-{uuid.uuid4().hex}.md"
+            member.write_text(content, encoding="utf-8")
+            claims.append(str(member))
+    payload = result.echelon_result
+    assert isinstance(payload, dict)
+    payload["output_files"] = claims
+    return result
+
+
 def _why2_pass_result() -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
@@ -583,8 +622,17 @@ def _mock_quality_first_flow_provider() -> MagicMock:
     def phase_aware_exec_agent(*args, **kwargs):
         nonlocal publication_serial
         prompt = str(args[1])
-        if "# Phase: phase1-tracker" in prompt:
-            return SquadAgentResult(
+        metadata = kwargs.get("prompt_metadata")
+        write_names = {
+            Path(str(path)).name
+            for path in (
+                metadata.get("tool_write_paths", [])
+                if isinstance(metadata, Mapping)
+                else []
+            )
+        }
+        if "user-intent.md" in write_names:
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "ALIGNED",
@@ -593,7 +641,7 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 raw_output="",
                 duration_ms=0,
                 timed_out=False,
-            )
+            ), kwargs)
         if "# COMMANDER DECISION RESOLUTION" in prompt:
             return SquadAgentResult(
                 exit_code=0,
@@ -612,7 +660,12 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 duration_ms=0,
                 timed_out=False,
             )
-        if "# Phase: phase1-why2" in prompt:
+        if "assumption-review.md" in write_names:
+            return _publish_mock_outputs(
+                default_exec_agent(*args, **kwargs),
+                kwargs,
+            )
+        if {"issues.md", "quality-gates.md"} <= write_names:
             publication_serial += 1
             match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
             assert match is not None
@@ -637,7 +690,7 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 duration_ms=0,
                 timed_out=False,
             )
-        if "# Phase: phase1-what" in prompt:
+        if {"spec.md", "requirements-overview.md"} <= write_names:
             publication_serial += 1
             match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
             assert match is not None
@@ -654,8 +707,8 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 str(output) for output in outputs
             ]
             return result
-        if "# Phase: phase2-decide" in prompt:
-            return SquadAgentResult(
+        if {"feasibility.md", "prioritization.md", "estimates.md", "mvp-scope.md"} <= write_names:
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "KILL",
@@ -664,7 +717,7 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 raw_output="",
                 duration_ms=0,
                 timed_out=False,
-            )
+            ), kwargs)
         return default_exec_agent(*args, **kwargs)
 
     provider.exec_agent.side_effect = phase_aware_exec_agent
@@ -823,6 +876,106 @@ def test_success_then_regeneration_gets_a_fresh_output_repair_cycle(tmp_path):
     store.save(state)
     assert ctrl._schedule_phase_output_retry("phase1-what", "invalid_phase_outputs")
     assert store.load()["phase_output_retry_counts"]["phase1-what"] == 1
+
+
+def test_finalized_child_effects_are_sealed_and_committed_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    node = PhaseNode(
+        id="phase-test",
+        type="agent",
+        allowed_state_updates=["accepted_marker"],
+        transitions=[{"to": "phase-next", "condition": "always"}],
+    )
+    child = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"accepted_marker": "sealed"},
+            "journal_entries": [
+                {
+                    "type": "provider_finalization_test",
+                    "agent": "echelon.test",
+                    "data": {"boundary": "provider-finalization"},
+                }
+            ],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+        token_usage=17,
+        cost_usd=1.25,
+    )
+    receipt = ProviderDispatchReceipt(
+        schema_version=2,
+        dispatch_id="1" * 32,
+        phase_id=node.id,
+        assignment_id="phase-test/provider",
+        occurrence_id="ordinary",
+        state_revision=store.load()["state_revision"],
+        contract_sha256="2" * 64,
+        prompt_sha256="3" * 64,
+        prompt_metadata_sha256="4" * 64,
+        outcome="published",
+        outputs=(),
+        semantic_validator_id=None,
+        semantic_result_sha256=None,
+        provider_attempts_sha256="5" * 64,
+        validated_result_sha256="6" * 64,
+    )
+    accumulator = PhaseExecutionAccumulator(node.id)
+    accumulator.record(FinalizedProviderResult(child, receipt))
+    execution = accumulator.freeze(child)
+    before = store.load()
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, execution, snapshot)
+    routing = ctrl._construct_routing_decision_or_block(
+        node,
+        prepared,
+        snapshot,
+        execution=execution,
+    )
+    assert routing is not None
+    assert len(routing.decision.judgment_payload_sha256) == 1
+    captured_provenance: dict[str, object] = {}
+    original_begin = store.begin_spec_step
+
+    def capture_step(step, *, snapshot):
+        captured_provenance.update(step.intent.provenance)
+        return original_begin(step, snapshot=snapshot)
+
+    monkeypatch.setattr(store, "begin_spec_step", capture_step)
+
+    assert store.load() == before
+    assert ctrl._advance_prepared_result_or_block(
+        node,
+        routing.decision,
+        execution=execution,
+    ) is not None
+
+    after = store.load()
+    assert after["accepted_marker"] == "sealed"
+    assert after["token_usage"] == before["token_usage"] + 17
+    assert after["cost_usd"] == before["cost_usd"] + 1.25
+    provider_execution = captured_provenance["provider_execution"]
+    assert provider_execution["manifest_sha256"] == execution.manifest_sha256
+    journal = [
+        json.loads(line)
+        for line in (
+            ctrl._squad_dir / "reasoning-journal.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [
+        row["data"]["boundary"]
+        for row in journal
+        if isinstance(row.get("data"), dict) and "boundary" in row["data"]
+    ] == [
+        "provider-finalization"
+    ]
 
 
 def test_prepared_run_preserves_bootstrap_contract_during_initialization(
@@ -1748,45 +1901,52 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     store.save(state)
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     last_executed_completion = ""
+    active_phase = ""
 
     def dispatch_with_artifacts(*args, **kwargs):
         nonlocal last_executed_completion
-        prompt = str(args[1])
-        match = re.search(r"^# Phase: ([^\n]+)$", prompt, re.MULTILINE)
-        assert match is not None
-        phase = match.group(1)
+        phase = active_phase
         if last_executed_completion:
             assert any(
                 row.completion_id == last_executed_completion
                 for row in load_checkpoint_ledger(spec_dir).checkpoints
             )
-        if phase == "phase1-discover":
-            (spec_dir / "glossary.md").write_text("discover\n", encoding="utf-8")
-        elif phase == "phase1-synthesizer":
-            (spec_dir / "glossary.md").write_text("synthesized\n", encoding="utf-8")
-        elif phase == "phase1-tracker":
-            (spec_dir / "user-intent.md").write_text("simple notes\n", encoding="utf-8")
-        elif phase == "phase1-constitution":
-            constitution = tmp_path / ".echelon" / "constitution.md"
-            constitution.write_text("# Constitution\n", encoding="utf-8")
-        elif phase == "phase1-what":
-            (spec_dir / "spec.md").write_text("# Notes\n", encoding="utf-8")
-            (spec_dir / "requirements-overview.md").write_text(
-                "# Requirements\n",
+        outputs_by_phase = {
+            "phase1-discover": (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+            ),
+            "phase1-synthesizer": (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+                "contradictions-and-gaps.md",
+                "risks.md",
+            ),
+            "phase1-tracker": ("user-intent.md",),
+            "phase1-why1": ("assumption-review.md",),
+            "phase1-what": ("spec.md", "requirements-overview.md"),
+        }
+        assert phase in outputs_by_phase or phase == "phase1-constitution", phase
+        output_paths = [spec_dir / name for name in outputs_by_phase.get(phase, ())]
+        if phase == "phase1-constitution":
+            output_paths = [run_dir / "constitution.draft.md"]
+        for output in output_paths:
+            output.write_text(
+                f"# {output.stem}\n\n{phase} current output.\n",
                 encoding="utf-8",
             )
         result = default_dispatch(*args, **kwargs)
         if phase == "phase1-tracker":
             result.echelon_result["verdict"] = "ALIGNED"
-        if phase == "phase1-constitution":
-            result.echelon_result["state_updates"] = {
-                "constitution_status": "exists"
-            }
-        if phase == "phase1-what":
-            result.echelon_result["output_files"] = [
-                str(spec_dir / "spec.md"),
-                str(spec_dir / "requirements-overview.md"),
-            ]
+        result.echelon_result["output_files"] = [
+            str(output) for output in output_paths
+        ]
         return result
 
     provider.exec_agent.side_effect = dispatch_with_artifacts
@@ -1799,10 +1959,30 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
         "phase1-what",
     ]
     expected_paths = {
-        "phase1-discover": {"runs/spec-run-1/specs/001-demo/glossary.md"},
-        "phase1-synthesizer": {"runs/spec-run-1/specs/001-demo/glossary.md"},
+        "phase1-discover": {
+            f"runs/spec-run-1/specs/001-demo/{name}"
+            for name in (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+            )
+        },
+        "phase1-synthesizer": {
+            f"runs/spec-run-1/specs/001-demo/{name}"
+            for name in (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+                "contradictions-and-gaps.md",
+                "risks.md",
+            )
+        },
         "phase1-tracker": {"runs/spec-run-1/specs/001-demo/user-intent.md"},
-        "phase1-why1": set(),
+        "phase1-why1": {"runs/spec-run-1/specs/001-demo/assumption-review.md"},
         "phase1-constitution": {".echelon/constitution.md"},
         "phase1-what": {
             "runs/spec-run-1/specs/001-demo/spec.md",
@@ -1811,12 +1991,14 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     }
 
     for phase in executed[:2]:
+        active_phase = phase
         node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
         parent = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
         ).stdout.strip()
         result = ctrl._executors[node.type].execute(node, store)
+        assert not isinstance(result, ExecutorBlockedResult), result.result.raw_output
         _coordinate_prepared_result(ctrl, node, result)
         row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
         last_executed_completion = row.completion_id
@@ -1856,12 +2038,14 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     )
 
     for phase in executed[2:]:
+        active_phase = phase
         node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
         parent = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
         ).stdout.strip()
         result = ctrl._executors[node.type].execute(node, store)
+        assert not isinstance(result, ExecutorBlockedResult), result.result.raw_output
         _coordinate_prepared_result(ctrl, node, result)
         row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
         last_executed_completion = row.completion_id
@@ -2077,8 +2261,9 @@ def _evaluate_prepared_result(
 def _coordinate_prepared_result(
     ctrl: SquadController,
     node: PhaseNode,
-    result: SquadAgentResult,
+    result: SquadAgentResult | FinalizedPhaseExecution,
 ) -> str:
+    execution = result if isinstance(result, FinalizedPhaseExecution) else None
     snapshot = ctrl._state_store.capture_routing_snapshot(
         expected_phase=node.id
     )
@@ -2087,7 +2272,13 @@ def _coordinate_prepared_result(
         node,
         ctrl._prepare_phase_result(node, result, snapshot),
         snapshot,
+        projected_state_updates=(
+            dict(execution.result.state_updates)
+            if execution is not None and node.id == "phase3-consensus"
+            else None
+        ),
         human_input_collector=routed_human_input,
+        execution=execution,
     )
     if routed_human_input:
         ctrl.handle_human_input(
@@ -2096,10 +2287,15 @@ def _coordinate_prepared_result(
                 from_phase=decision.from_phase,
                 to_phase=decision.to_phase,
                 decision=decision,
+                execution=execution,
             ),
         )
     else:
-        assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+        assert ctrl._advance_prepared_result_or_block(
+            node,
+            decision,
+            execution=execution,
+        ) is not None
     return decision.to_phase
 
 
@@ -2460,9 +2656,12 @@ class TestConsensusCannotBeSkipped:
 
         assert result.verdict == "FAIL"
         persisted = store.load()
-        assert persisted["assess2_verdict"] == "REJECTED"
-        assert persisted["gate_decision"] == "REJECTED"
-        assert persisted["phase_recommendation"] == "phase3-how"
+        assert "assess2_verdict" not in persisted
+        assert "gate_decision" not in persisted
+        assert "phase_recommendation" not in persisted
+        assert result.state_updates["assess2_verdict"] == "REJECTED"
+        assert result.state_updates["gate_decision"] == "REJECTED"
+        assert result.state_updates["phase_recommendation"] == "phase3-how"
         assert not any(
             "Operate in **PLAN2** mode" in call.args[1]
             for call in provider.exec_agent.call_args_list
@@ -2884,10 +3083,7 @@ class TestAgentResultIntegrity:
         assert state["phase_output_recovery"] == {
             "phase": "phase1-what",
             "missing_outputs": ["requirements-overview.md"],
-            "prior_state_updates": {
-                "spec_status": "planned",
-                "evidence_resolution_status": "not_required",
-            },
+            "prior_state_updates": {},
         }
         assert "controller_contract_error" not in state
         assert state["recovery_instruction"] == {
@@ -4707,6 +4903,10 @@ class TestSquadControllerBasics:
 
     def test_generation_change_does_not_block_manual_spec_phase(self, tmp_path):
         provider = _mock_provider("ALIGNED")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
@@ -5035,13 +5235,13 @@ class TestSquadControllerBasics:
 
         def consensus_result(project_root: str, prompt: str, *args, **kwargs):
             if "Operate in **PLAN2** mode" in prompt:
-                return SquadAgentResult(
+                return _publish_mock_outputs(SquadAgentResult(
                     exit_code=0,
                     echelon_result={"verdict": "COMPLETE", "state_updates": {}},
                     raw_output="",
                     duration_ms=100,
                     timed_out=False,
-                )
+                ), kwargs)
             if "Operate in **WHY3** mode" in prompt:
                 for output in (
                     spec_dir / "issues.md",
@@ -5134,6 +5334,10 @@ class TestSquadControllerBasics:
                 "state_updates": {"quality_scores": [{"pass": False}]},
             },
             raw_output="", duration_ms=0, timed_out=False,
+        )
+        configured = provider.exec_agent.return_value
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(copy.deepcopy(configured), kwargs)
         )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
@@ -5364,6 +5568,10 @@ class TestSquadControllerBasics:
                 "state_updates": {"quality_scores": [{"pass": True}]},
             },
             raw_output="", duration_ms=0, timed_out=False,
+        )
+        configured = provider.exec_agent.return_value
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(copy.deepcopy(configured), kwargs)
         )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
@@ -8551,7 +8759,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ctrl._squad_dir,
             store.load()[PENDING_SPEC_STEP_KEY],
         )
-        marker = step.intent.provenance["completion_marker"]
+        marker = ctrl._completion_marker_from_spec_step(step)
         prepared = load_prepared_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
@@ -8788,7 +8996,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ctrl._squad_dir,
             store.load()[PENDING_SPEC_STEP_KEY],
         )
-        marker = step.intent.provenance["completion_marker"]
+        marker = ctrl._completion_marker_from_spec_step(step)
         prepared = load_prepared_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
@@ -10299,11 +10507,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ("invalid_mandatory_artifact", "missing_phase_outputs"),
             (
                 "state_contract",
-                "controller_state_contract_validation_failed",
+                "invalid_phase_outputs",
             ),
             (
                 "debt_state_contract",
-                "controller_state_contract_validation_failed",
+                "invalid_phase_outputs",
             ),
         ],
     )
@@ -11154,6 +11362,10 @@ def test_run_single_phase_rejects_provider_and_safeguard_question_overlap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _mock_provider("ALIGNED")
+    default_dispatch = provider.exec_agent.side_effect
+    provider.exec_agent.side_effect = lambda *args, **kwargs: (
+        _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+    )
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize(
         "r",
@@ -11220,6 +11432,10 @@ class TestConvergenceRoutingGuard:
         _disable_governance_gate(tmp_path)
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
         state = store.load()
@@ -11245,6 +11461,10 @@ class TestConvergenceRoutingGuard:
         _disable_governance_gate(tmp_path)
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
         state = store.load()
@@ -11341,16 +11561,23 @@ def test_journal_written_to_squad_dir_not_specify(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
-    ctrl, store = _controller(tmp_path, squad_dir=squad_dir)
-    store.initialize("r", "banzai", "msg", 0, "init")
-    from harness.squad_provider import SquadAgentResult
-    ctrl._provider.exec_agent.return_value = SquadAgentResult(
+    provider = _mock_provider()
+    configured = SquadAgentResult(
         exit_code=0,
         echelon_result={"verdict": "DONE", "state_updates": {},
                         "journal_entries": [{"type": "insight"}]},
         raw_output="", duration_ms=0, timed_out=False,
     )
-    ctrl.run("msg", "banzai")
+    provider.exec_agent.side_effect = lambda *args, **kwargs: (
+        _publish_mock_outputs(copy.deepcopy(configured), kwargs)
+    )
+    ctrl, store = _controller(
+        tmp_path,
+        provider=provider,
+        squad_dir=squad_dir,
+    )
+    store.initialize("r", "banzai", "msg", 0, "init")
+    ctrl.run_single_phase("phase1-discover", "msg", "banzai")
     assert (squad_dir / "reasoning-journal.jsonl").exists()
     assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
 

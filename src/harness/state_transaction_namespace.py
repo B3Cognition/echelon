@@ -223,6 +223,8 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "phase_dispatch_limit",
         "phase_dispatch_limit_recovery",
         "cartographer_resume_existing_spec",
+        "why3_verdict",
+        "assess2_verdict",
         "lexicon_repair_no_artifact_progress",
         "quality_gate_remediation_no_artifact_progress",
         SPEC_STEP_PUBLICATION_PLAN_KEY,

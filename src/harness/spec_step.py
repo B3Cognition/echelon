@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -34,6 +35,7 @@ _MAX_INTENT_BYTES = 4_194_304
 _MAX_RECEIPTS_BYTES = 1_048_576
 _STEP_ID = re.compile(r"\A[0-9a-f]{32}\Z")
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
+_DISPATCH_ID = re.compile(r"\A[0-9a-f]{32}\Z")
 _ORIGINS = ("routed", "terminal", "resolution")
 _EFFECT_ORDER = (
     "publication",
@@ -288,6 +290,329 @@ def _valid_sha256(value: object, code: str = "intent_invalid") -> str:
     return value
 
 
+def _bounded_provider_text(value: object, *, maximum: int) -> str:
+    if (
+        type(value) is not str
+        or not value.strip()
+        or len(value) > maximum
+    ):
+        _raise("intent_invalid")
+    return value
+
+
+def _provider_artifact_path(value: object) -> str:
+    path = _bounded_provider_text(value, maximum=2048)
+    parts = path.split("/")
+    if (
+        path.startswith("/")
+        or path.endswith("/")
+        or "\\" in path
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        _raise("intent_invalid")
+    return path
+
+
+def _provider_occurrence_order_key(occurrence_id: str) -> tuple[object, ...]:
+    fixed = {
+        "ordinary": (10, 0),
+        "why3/initial": (20, 0),
+        "sage/work-assessment": (40, 0),
+        "why3/final-revalidation": (70, 0),
+    }
+    if occurrence_id in fixed:
+        group, index = fixed[occurrence_id]
+        return (group, index, occurrence_id)
+    match = re.fullmatch(
+        r"(pre-dispatch|stage1|stage2|specialist)/(\d+)",
+        occurrence_id,
+    )
+    if match:
+        group = {
+            "pre-dispatch": 0,
+            "stage1": 20,
+            "specialist": 20,
+            "stage2": 60,
+        }[match.group(1)]
+        return (group, int(match.group(2)), occurrence_id)
+    # Runtime-only controller occurrences use stable semantic names. Their
+    # lexical order is the graph-independent canonical order.
+    return (80, 0, occurrence_id)
+
+
+def _validate_provider_output_evidence(value: object) -> dict[str, object]:
+    keys = {
+        "root",
+        "path",
+        "kind",
+        "requirement",
+        "sha256",
+        "preimage_identity_sha256",
+        "postimage_identity_sha256",
+        "evidence_kind",
+        "members",
+    }
+    if type(value) is not dict or frozenset(value) != frozenset(keys):
+        _raise("intent_invalid")
+    root = _bounded_provider_text(value["root"], maximum=64)
+    if root not in {"active_spec", "squad", "proposal"}:
+        _raise("intent_invalid")
+    path = _provider_artifact_path(value["path"])
+    if value["kind"] not in {"file", "directory"}:
+        _raise("intent_invalid")
+    if value["requirement"] not in {"required", "optional"}:
+        _raise("intent_invalid")
+    if value["evidence_kind"] not in {
+        "created",
+        "replaced",
+        "shadow_promoted",
+    }:
+        _raise("intent_invalid")
+    preimage = value["preimage_identity_sha256"]
+    if preimage is not None:
+        preimage = _valid_sha256(preimage)
+    members = value["members"]
+    if type(members) is not list or len(members) > 4096:
+        _raise("intent_invalid")
+    normalized_members: list[dict[str, object]] = []
+    previous_path: str | None = None
+    for member in members:
+        if type(member) is not dict or frozenset(member) != frozenset(
+            {"path", "sha256", "identity_sha256"}
+        ):
+            _raise("intent_invalid")
+        member_path = _provider_artifact_path(member["path"])
+        if previous_path is not None and member_path <= previous_path:
+            _raise("intent_invalid")
+        previous_path = member_path
+        normalized_members.append(
+            {
+                "path": member_path,
+                "sha256": _valid_sha256(member["sha256"]),
+                "identity_sha256": _valid_sha256(member["identity_sha256"]),
+            }
+        )
+    if value["kind"] == "file" and normalized_members:
+        _raise("intent_invalid")
+    if value["kind"] == "directory" and not normalized_members:
+        _raise("intent_invalid")
+    return {
+        "root": root,
+        "path": path,
+        "kind": value["kind"],
+        "requirement": value["requirement"],
+        "sha256": _valid_sha256(value["sha256"]),
+        "preimage_identity_sha256": preimage,
+        "postimage_identity_sha256": _valid_sha256(
+            value["postimage_identity_sha256"]
+        ),
+        "evidence_kind": value["evidence_kind"],
+        "members": normalized_members,
+    }
+
+
+def _validate_provider_receipt(value: object) -> dict[str, object]:
+    keys = {
+        "schema_version",
+        "dispatch_id",
+        "phase_id",
+        "assignment_id",
+        "occurrence_id",
+        "state_revision",
+        "contract_sha256",
+        "prompt_sha256",
+        "prompt_metadata_sha256",
+        "outcome",
+        "outputs",
+        "semantic_validator_id",
+        "semantic_result_sha256",
+        "provider_attempts_sha256",
+        "validated_result_sha256",
+    }
+    if type(value) is not dict or frozenset(value) != frozenset(keys):
+        _raise("intent_invalid")
+    if value["schema_version"] != 2 or type(value["schema_version"]) is not int:
+        _raise("intent_invalid")
+    dispatch_id = value["dispatch_id"]
+    if type(dispatch_id) is not str or _DISPATCH_ID.fullmatch(dispatch_id) is None:
+        _raise("intent_invalid")
+    revision = value["state_revision"]
+    if type(revision) is not int or revision < 0:
+        _raise("intent_invalid")
+    if value["outcome"] not in {"published", "domain_blocked", "invalid"}:
+        _raise("intent_invalid")
+    outputs = value["outputs"]
+    if type(outputs) is not list or len(outputs) > 4096:
+        _raise("intent_invalid")
+    semantic_id = value["semantic_validator_id"]
+    semantic_sha = value["semantic_result_sha256"]
+    if (semantic_id is None) != (semantic_sha is None):
+        _raise("intent_invalid")
+    if semantic_id is not None:
+        semantic_id = _bounded_provider_text(semantic_id, maximum=256)
+        semantic_sha = _valid_sha256(semantic_sha)
+    return {
+        "schema_version": 2,
+        "dispatch_id": dispatch_id,
+        "phase_id": _bounded_provider_text(value["phase_id"], maximum=256),
+        "assignment_id": _bounded_provider_text(
+            value["assignment_id"], maximum=512
+        ),
+        "occurrence_id": _bounded_provider_text(
+            value["occurrence_id"], maximum=256
+        ),
+        "state_revision": revision,
+        "contract_sha256": _valid_sha256(value["contract_sha256"]),
+        "prompt_sha256": _valid_sha256(value["prompt_sha256"]),
+        "prompt_metadata_sha256": _valid_sha256(
+            value["prompt_metadata_sha256"]
+        ),
+        "outcome": value["outcome"],
+        "outputs": [_validate_provider_output_evidence(item) for item in outputs],
+        "semantic_validator_id": semantic_id,
+        "semantic_result_sha256": semantic_sha,
+        "provider_attempts_sha256": _valid_sha256(
+            value["provider_attempts_sha256"]
+        ),
+        "validated_result_sha256": _valid_sha256(
+            value["validated_result_sha256"]
+        ),
+    }
+
+
+def validate_provider_execution_provenance(value: object) -> dict[str, object]:
+    """Authenticate one closed provider manifest without graph imports."""
+    keys = {
+        "schema_version",
+        "manifest_sha256",
+        "manifest",
+        "receipts",
+        "cost_usd_delta",
+    }
+    if type(value) is not dict or frozenset(value) != frozenset(keys):
+        _raise("intent_invalid")
+    if value["schema_version"] != 1 or type(value["schema_version"]) is not int:
+        _raise("intent_invalid")
+    manifest = value["manifest"]
+    receipts = value["receipts"]
+    if (
+        type(manifest) is not list
+        or type(receipts) is not list
+        or len(manifest) > 512
+        or len(receipts) > 512
+    ):
+        _raise("intent_invalid")
+    normalized_manifest: list[dict[str, object]] = []
+    occurrences: set[str] = set()
+    prior_order: tuple[object, ...] | None = None
+    for row in manifest:
+        row_keys = {
+            "assignment_id",
+            "occurrence_id",
+            "contract_sha256",
+            "status",
+            "reason",
+            "receipt_sha256",
+            "reused_step_id",
+            "reused_dispatch_id",
+        }
+        if type(row) is not dict or frozenset(row) != frozenset(row_keys):
+            _raise("intent_invalid")
+        assignment_id = _bounded_provider_text(row["assignment_id"], maximum=512)
+        occurrence_id = _bounded_provider_text(row["occurrence_id"], maximum=256)
+        if occurrence_id in occurrences:
+            _raise("intent_invalid")
+        occurrences.add(occurrence_id)
+        order = _provider_occurrence_order_key(occurrence_id)
+        if prior_order is not None and order <= prior_order:
+            _raise("intent_invalid")
+        prior_order = order
+        status = row["status"]
+        reason = row["reason"]
+        receipt_sha = row["receipt_sha256"]
+        reused_step = row["reused_step_id"]
+        reused_dispatch = row["reused_dispatch_id"]
+        if status == "executed":
+            if reason != "" or reused_step is not None or reused_dispatch is not None:
+                _raise("intent_invalid")
+            receipt_sha = _valid_sha256(receipt_sha)
+        elif status in {"skipped", "deferred"}:
+            _bounded_provider_text(reason, maximum=1024)
+            if receipt_sha is not None or reused_step is not None or reused_dispatch is not None:
+                _raise("intent_invalid")
+        elif status == "reused":
+            _bounded_provider_text(reason, maximum=1024)
+            if receipt_sha is not None:
+                _raise("intent_invalid")
+            reused_step = _valid_step_id(reused_step)
+            if (
+                type(reused_dispatch) is not str
+                or _DISPATCH_ID.fullmatch(reused_dispatch) is None
+            ):
+                _raise("intent_invalid")
+        else:
+            _raise("intent_invalid")
+        normalized_manifest.append(
+            {
+                "assignment_id": assignment_id,
+                "occurrence_id": occurrence_id,
+                "contract_sha256": _valid_sha256(row["contract_sha256"]),
+                "status": status,
+                "reason": reason,
+                "receipt_sha256": receipt_sha,
+                "reused_step_id": reused_step,
+                "reused_dispatch_id": reused_dispatch,
+            }
+        )
+    manifest_sha = _valid_sha256(value["manifest_sha256"])
+    if hashlib.sha256(
+        _canonical_json(
+            normalized_manifest,
+            code="intent_invalid",
+            newline=False,
+        )
+    ).hexdigest() != manifest_sha:
+        _raise("intent_invalid")
+    executed = [row for row in normalized_manifest if row["status"] == "executed"]
+    if len(executed) != len(receipts):
+        _raise("intent_invalid")
+    normalized_receipts: list[dict[str, object]] = []
+    for row, raw_receipt in zip(executed, receipts, strict=True):
+        receipt = _validate_provider_receipt(raw_receipt)
+        receipt_sha = hashlib.sha256(
+            _canonical_json(receipt, code="intent_invalid", newline=False)
+        ).hexdigest()
+        if (
+            receipt_sha != row["receipt_sha256"]
+            or receipt["assignment_id"] != row["assignment_id"]
+            or receipt["occurrence_id"] != row["occurrence_id"]
+            or receipt["contract_sha256"] != row["contract_sha256"]
+        ):
+            _raise("intent_invalid")
+        normalized_receipts.append(receipt)
+    output_targets = [
+        (output["root"], output["path"])
+        for receipt in normalized_receipts
+        for output in receipt["outputs"]
+    ]
+    if len(output_targets) != len(set(output_targets)):
+        _raise("intent_invalid")
+    cost = value["cost_usd_delta"]
+    if (
+        type(cost) not in (int, float)
+        or not math.isfinite(float(cost))
+        or not 0 <= float(cost) <= 1_000_000_000
+    ):
+        _raise("intent_invalid")
+    return {
+        "schema_version": 1,
+        "manifest_sha256": manifest_sha,
+        "manifest": normalized_manifest,
+        "receipts": normalized_receipts,
+        "cost_usd_delta": float(cost),
+    }
+
+
 def _valid_origin(value: object) -> SpecStepOrigin:
     if type(value) is not str or value not in _ORIGINS:
         _raise("intent_invalid")
@@ -421,6 +746,18 @@ def _validate_intent(value: object) -> dict[str, object]:
     provenance = _normalize_json(value["provenance"], code="intent_invalid")
     if type(route) is not dict or type(final_state) is not dict or type(provenance) is not dict:
         _raise("intent_invalid")
+    if "provider_execution" in provenance:
+        provenance["provider_execution"] = (
+            validate_provider_execution_provenance(
+                provenance["provider_execution"]
+            )
+        )
+        from_phase = route.get("from_phase")
+        if type(from_phase) is str and any(
+            receipt["phase_id"] != from_phase
+            for receipt in provenance["provider_execution"]["receipts"]
+        ):
+            _raise("intent_invalid")
     effects = _valid_effects(value["effects"])
     publication = _validate_publication(value["publication"], step_id=step_id)
     if ("publication" in effects) != (publication is not None):

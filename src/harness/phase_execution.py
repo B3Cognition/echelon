@@ -34,6 +34,18 @@ class ProviderExecutionManifestEntry:
     reused_step_id: str | None
     reused_dispatch_id: str | None
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "assignment_id": self.assignment_id,
+            "occurrence_id": self.occurrence_id,
+            "contract_sha256": self.contract_sha256,
+            "status": self.status,
+            "reason": self.reason,
+            "receipt_sha256": self.receipt_sha256,
+            "reused_step_id": self.reused_step_id,
+            "reused_dispatch_id": self.reused_dispatch_id,
+        }
+
 
 @dataclass(frozen=True)
 class FinalizedPhaseExecution:
@@ -44,6 +56,17 @@ class FinalizedPhaseExecution:
     projected_state_updates: Mapping[str, object]
     cost_usd_delta: float
     token_usage_delta: int = 0
+
+    @property
+    def manifest_sha256(self) -> str:
+        payload = json.dumps(
+            [entry.to_dict() for entry in self.manifest],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
 
     @property
     def verdict(self) -> str | None:

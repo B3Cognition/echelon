@@ -1589,6 +1589,7 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
         transition_index=1,
         increment_iteration=True,
         token_usage_delta=17,
+        cost_usd_delta=1.25,
     )
     queued["judgment_note"] = "changed"
     judgment["state_updates"]["iteration"] = 99
@@ -1605,6 +1606,7 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
     assert len(decision.judgment_payload_sha256) == 1
     assert decision.increment_iteration is True
     assert decision.token_usage_delta == 17
+    assert decision.cost_usd_delta == 1.25
 
 
 def test_routing_decision_attests_supplied_dispatch_id() -> None:
@@ -1876,6 +1878,56 @@ def test_routing_token_usage_delta_tampering_breaks_attestation() -> None:
             decision,
             from_phase="provider",
             to_phase="next",
+        )
+
+
+def test_routing_cost_delta_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        cost_usd_delta=1.25,
+    )
+
+    object.__setattr__(decision, "cost_usd_delta", 2.5)
+
+    with pytest.raises(
+        PreparedPhaseResultAttestationError,
+        match="routing decision attestation mismatch",
+    ):
+        verify_prepared_routing_decision_attestation(
+            decision,
+            from_phase="provider",
+            to_phase="next",
+        )
+
+
+@pytest.mark.parametrize(
+    "cost",
+    [-1.0, 1_000_000_000.01, float("inf"), float("nan"), True],
+)
+def test_routing_decision_rejects_invalid_cost_delta(cost: object) -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(PreparedPhaseResultAttestationError):
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            cost_usd_delta=cost,
         )
 
 

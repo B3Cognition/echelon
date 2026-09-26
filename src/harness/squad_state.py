@@ -5685,6 +5685,7 @@ class SquadStateStore:
         checkpoint_policy: str = "none",
         record_completion: bool = True,
         token_usage_delta: int = 0,
+        cost_usd_delta: float = 0.0,
         dispatch_id: str | None = None,
         transaction_state_updates: dict[str, Any] | None = None,
         transaction_state_removals: object = (),
@@ -5753,6 +5754,7 @@ class SquadStateStore:
                 checkpoint_policy=checkpoint_policy,
                 record_completion=record_completion,
                 token_usage_delta=token_usage_delta,
+                cost_usd_delta=cost_usd_delta,
                 dispatch_id=dispatch_id,
                 transaction_state_updates=transaction_state_updates,
                 transaction_state_removals=transaction_state_removals,
@@ -6045,6 +6047,11 @@ class SquadStateStore:
             next_state["token_usage"] = (
                 int(next_state.get("token_usage") or 0)
                 + decision.token_usage_delta
+            )
+            next_state["cost_usd"] = round(
+                float(next_state.get("cost_usd") or 0.0)
+                + decision.cost_usd_delta,
+                8,
             )
             next_state.pop("controller_contract_error", None)
             if decision.record_completion and not decision.conditional_skip:

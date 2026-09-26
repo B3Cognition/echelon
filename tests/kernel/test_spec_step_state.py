@@ -13,6 +13,9 @@ from harness.spec_step import (
     append_spec_step_receipt,
     prepare_spec_step,
 )
+from harness.phase_graph import PhaseNode
+from harness.prepared_phase_result import prepare_phase_result
+from harness.squad_provider import SquadAgentResult
 from harness.squad_state import StateAdvanceError, SquadStateStore
 
 
@@ -59,6 +62,41 @@ def test_begin_spec_step_persists_only_marker_against_exact_snapshot(tmp_path: P
     state = store.load()
     assert state["phase"] == "phase1"
     assert state["pending_spec_step"] == prepared.marker.to_dict()
+
+
+def test_provider_cost_is_applied_only_to_prepared_advance_postimage(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1")
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    prepared = prepare_phase_result(
+        PhaseNode(id="phase1", type="agent", allowed_state_updates=[]),
+        result,
+        controller_updates={},
+    )
+    decision = store.prepare_routing_decision(
+        prepared,
+        snapshot=snapshot,
+        from_phase="phase1",
+        to_phase="phase2",
+        cost_usd_delta=1.25,
+    )
+
+    final_state, _receipt = store.prepare_advance_postimage(
+        "phase1",
+        "phase2",
+        decision,
+    )
+
+    assert store.load()["cost_usd"] == 0.0
+    assert final_state["cost_usd"] == 1.25
 
 
 def test_begin_spec_step_rejects_stale_revision(tmp_path: Path) -> None:

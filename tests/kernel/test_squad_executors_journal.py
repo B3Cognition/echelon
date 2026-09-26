@@ -5,6 +5,7 @@ Covers:
 - SquadController._write_journal_entries (judgment dispatch path)
 - Structural: no phase spec file contains direct >> reasoning-journal.jsonl appends
 """
+import hashlib
 import json
 import os
 import re
@@ -239,6 +240,17 @@ def _finalized_provider_result(
     )
 
 
+def _digest_manifest(manifest) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            [row.to_dict() for row in manifest],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def test_accumulator_keeps_repeated_occurrences_in_manifest() -> None:
     accumulator = PhaseExecutionAccumulator("phase3-consensus")
     accumulator.record(
@@ -262,6 +274,8 @@ def test_accumulator_keeps_repeated_occurrences_in_manifest() -> None:
     ]
     assert len(execution.receipts) == 2
     assert execution.projected_state_updates == {"why3_verdict": "PASS"}
+    assert execution.manifest[0].to_dict()["occurrence_id"] == "why3/initial"
+    assert execution.manifest_sha256 == _digest_manifest(execution.manifest)
 
 
 def test_accumulator_orders_initial_why3_at_its_declared_stage1_position() -> None:

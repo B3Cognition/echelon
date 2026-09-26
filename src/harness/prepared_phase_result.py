@@ -578,6 +578,7 @@ class PreparedRoutingDecision:
     checkpoint_policy: str
     record_completion: bool
     token_usage_delta: int
+    cost_usd_delta: float
     judgment_payload_sha256: tuple[str, ...]
     _queued_state_updates: dict[str, Any] = field(repr=False)
     _transaction_state_updates: dict[str, Any] = field(repr=False)
@@ -945,6 +946,7 @@ def _routing_attestation_facts(
     checkpoint_policy: object,
     record_completion: object,
     token_usage_delta: object,
+    cost_usd_delta: object,
     judgment_payload_sha256: object,
     queued_state_updates: object,
     transaction_state_updates: object,
@@ -978,6 +980,7 @@ def _routing_attestation_facts(
         "checkpoint_policy": _attestable_value(checkpoint_policy),
         "record_completion": _attestable_value(record_completion),
         "token_usage_delta": _attestable_value(token_usage_delta),
+        "cost_usd_delta": _attestable_value(cost_usd_delta),
         "judgment_payload_sha256": _attestable_value(
             judgment_payload_sha256
         ),
@@ -1013,6 +1016,7 @@ def _create_routing_attestation(
     checkpoint_policy: str,
     record_completion: bool,
     token_usage_delta: int,
+    cost_usd_delta: float,
     judgment_payload_sha256: tuple[str, ...],
     queued_state_updates: dict[str, Any],
     transaction_state_updates: dict[str, Any],
@@ -1035,6 +1039,7 @@ def _create_routing_attestation(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=judgment_payload_sha256,
         queued_state_updates=queued_state_updates,
         transaction_state_updates=transaction_state_updates,
@@ -1079,6 +1084,7 @@ def prepare_routing_decision(
     checkpoint_policy: str = "none",
     record_completion: bool = True,
     token_usage_delta: int = 0,
+    cost_usd_delta: float = 0.0,
     transaction_state_updates: Mapping[str, Any] | None = None,
     transaction_state_removals: object = (),
 ) -> PreparedRoutingDecision:
@@ -1140,6 +1146,16 @@ def prepare_routing_decision(
         raise PreparedPhaseResultAttestationError(
             "routing decision token usage delta is invalid"
         )
+    if (
+        type(cost_usd_delta) not in (int, float)
+        or not math.isfinite(float(cost_usd_delta))
+        or float(cost_usd_delta) < 0
+        or float(cost_usd_delta) > 1_000_000_000
+    ):
+        raise PreparedPhaseResultAttestationError(
+            "routing decision cost delta is invalid"
+        )
+    cost_usd_delta = float(cost_usd_delta)
     if checkpoint_policy not in {"required", "none"}:
         raise PreparedPhaseResultAttestationError(
             "routing decision checkpoint policy is invalid"
@@ -1310,6 +1326,7 @@ def prepare_routing_decision(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=sealed_digests,
         queued_state_updates=detached_updates,
         transaction_state_updates=detached_transaction_updates,
@@ -1332,6 +1349,7 @@ def prepare_routing_decision(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=sealed_digests,
         _queued_state_updates=detached_updates,
         _transaction_state_updates=detached_transaction_updates,
@@ -1373,6 +1391,7 @@ def verify_prepared_routing_decision_attestation(
         checkpoint_policy=decision.checkpoint_policy,
         record_completion=decision.record_completion,
         token_usage_delta=decision.token_usage_delta,
+        cost_usd_delta=decision.cost_usd_delta,
         judgment_payload_sha256=decision.judgment_payload_sha256,
         queued_state_updates=decision._queued_state_updates,
         transaction_state_updates=decision._transaction_state_updates,
