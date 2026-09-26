@@ -336,6 +336,72 @@ def test_dispatch_rejects_cross_assignment_sibling_mutation(tmp_path: Path) -> N
         _dispatch(context, execute)
 
 
+def test_squad_guard_ignores_only_harness_telemetry_writes(
+    tmp_path: Path,
+) -> None:
+    squad = tmp_path / "squad"
+    contract = compile_provider_artifact_contract(
+        {
+            "mode": "publish",
+            "artifacts": [
+                {
+                    "root": "squad",
+                    "path": "constitution.draft.md",
+                    "kind": "file",
+                    "requirement": "required",
+                }
+            ],
+        },
+        assignment_id="phase1-constitution",
+    )
+    resolved = resolve_provider_artifact_contract(
+        contract,
+        assignment_id="phase1-constitution",
+        roots={"squad": squad},
+    )
+    context = ProviderDispatchContext(
+        phase_id="phase1-constitution",
+        assignment_id="phase1-constitution",
+        occurrence_id="ordinary",
+        state_revision=7,
+        contract=resolved,
+        prompt_sha256=_sha("prompt"),
+        prompt_metadata_sha256=_sha("metadata"),
+    )
+    target = squad / "constitution.draft.md"
+
+    def telemetry_and_output(_metadata):
+        target.parent.mkdir(parents=True)
+        target.write_text("# Constitution\n", encoding="utf-8")
+        (squad / "telemetry").mkdir()
+        (squad / "telemetry" / "spans.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (squad / "events.jsonl").write_text("{}\n", encoding="utf-8")
+        (squad / "phase-timing.lock").write_text("", encoding="utf-8")
+        return _result(output_files=[str(target)])
+
+    finalized = _dispatch(context, telemetry_and_output)
+    assert finalized.receipt.outputs[0]["path"] == "constitution.draft.md"
+
+    retry_context = ProviderDispatchContext(
+        **{
+            **context.__dict__,
+            "occurrence_id": "ordinary/retry",
+        }
+    )
+
+    def mutate_controller_state(_metadata):
+        replacement = target.with_suffix(".tmp")
+        replacement.write_text("# Constitution v2\n", encoding="utf-8")
+        os.replace(replacement, target)
+        (squad / "state.json").write_text("{}\n", encoding="utf-8")
+        return _result(output_files=[str(target)])
+
+    with pytest.raises(ProviderDispatchFailure, match="outside write scope"):
+        _dispatch(retry_context, mutate_controller_state)
+
+
 def test_fresh_shadow_is_promoted_but_stale_shadow_is_rejected(
     tmp_path: Path,
 ) -> None:

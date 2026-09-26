@@ -597,6 +597,24 @@ def _publish_mock_outputs(
     return result
 
 
+def _mock_provider_publishing_outputs(
+    verdict: str = "DONE",
+) -> MagicMock:
+    provider = _mock_provider(verdict)
+    default_exec_agent = provider.exec_agent.side_effect
+
+    def execute(*args, **kwargs):
+        result = default_exec_agent(*args, **kwargs)
+        return _publish_mock_outputs(
+            result,
+            kwargs,
+            content="\n# Current provider publication\n\nReal rules.\n",
+        )
+
+    provider.exec_agent.side_effect = execute
+    return provider
+
+
 def _why2_pass_result() -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
@@ -664,6 +682,12 @@ def _mock_quality_first_flow_provider() -> MagicMock:
             return _publish_mock_outputs(
                 default_exec_agent(*args, **kwargs),
                 kwargs,
+            )
+        if "constitution.draft.md" in write_names:
+            return _publish_mock_outputs(
+                default_exec_agent(*args, **kwargs),
+                kwargs,
+                content="\n# Current constitution publication\n\nReal rules.\n",
             )
         if {"issues.md", "quality-gates.md"} <= write_names:
             publication_serial += 1
@@ -2268,18 +2292,42 @@ def _coordinate_prepared_result(
         expected_phase=node.id
     )
     routed_human_input = []
+    routed_execution = []
+    constitution_publication_request = None
+    additional_state_updates = None
+    if node.id == "phase1-constitution":
+        assert execution is not None
+        from echelon.constitution import canonical_constitution_path
+        from harness.constitution_publication import (
+            prepare_constitution_publication,
+        )
+
+        receipt = next(
+            receipt
+            for receipt in execution.receipts
+            if receipt["phase_id"] == node.id
+        )
+        constitution_publication_request = prepare_constitution_publication(
+            ctrl._squad_dir / "constitution.draft.md",
+            canonical_constitution_path(ctrl._project_root),
+            receipt,
+        )
+        additional_state_updates = {"constitution_status": "exists"}
     decision = ctrl._coordinate_transition_routing(
         node,
         ctrl._prepare_phase_result(node, result, snapshot),
         snapshot,
+        additional_state_updates=additional_state_updates,
         projected_state_updates=(
             dict(execution.result.state_updates)
             if execution is not None and node.id == "phase3-consensus"
             else None
         ),
         human_input_collector=routed_human_input,
+        execution_collector=routed_execution,
         execution=execution,
     )
+    execution = routed_execution[0] if routed_execution else execution
     if routed_human_input:
         ctrl.handle_human_input(
             routed_human_input[0],
@@ -2295,6 +2343,7 @@ def _coordinate_prepared_result(
             node,
             decision,
             execution=execution,
+            constitution_publication_request=constitution_publication_request,
         ) is not None
     return decision.to_phase
 
@@ -6630,6 +6679,109 @@ class TestSquadControllerBasics:
         assert state["blocked_decision"]["automatic_eligible"] is False
         assert state["blocked_decision"]["resolved_by"] is None
         provider.exec_agent.assert_not_called()
+
+    def test_banzai_commander_resolution_is_sealed_as_result_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": "approve",
+                    "answer_text": None,
+                    "rationale": "The sealed checkpoint evidence is current.",
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+            token_usage=9,
+            cost_usd=0.4,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            100,
+            "phase3-how",
+            autonomy_mode="banzai",
+        )
+        policy = HumanInputPolicy(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            reason_code="test_approval_required",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="gate_outcome",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase3-how"}),
+            allowed_target_phases=frozenset(
+                {"phase3-how", "terminal-blocked"}
+            ),
+            context_state_keys=("phase",),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="approve",
+                    label="Approve",
+                    description="Continue.",
+                    recommended=True,
+                    risk_level="low",
+                    next_phase="phase3-how",
+                    outcome="approved",
+                ),
+                HumanInputOption(
+                    id="reject",
+                    label="Reject",
+                    description="Stop.",
+                    recommended=False,
+                    risk_level="medium",
+                    next_phase="terminal-blocked",
+                    outcome="rejected",
+                ),
+            ),
+            recommendation_mode="static",
+        )
+        ctrl._human_input_registry = HumanInputPolicyRegistry((policy,))
+        request = ctrl._human_input_registry.prepare(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            phase_id="phase3-how",
+            reason_code="test_approval_required",
+            question="Continue?",
+            source_state_revision=store.load()["state_revision"],
+        )
+        captured: list[dict[str, object]] = []
+        real_prepare = squad_module.prepare_spec_step
+
+        def capture_step(*args, **kwargs):
+            prepared = real_prepare(*args, **kwargs)
+            captured.append(prepared.intent.provenance)
+            return prepared
+
+        monkeypatch.setattr(squad_module, "prepare_spec_step", capture_step)
+
+        assert ctrl.handle_human_input(request) is True
+
+        assert captured[-1]["provider_execution"]["receipts"][0][
+            "assignment_id"
+        ] == "commander/human-resolution"
+        assert captured[-1]["provider_execution"]["receipts"][0][
+            "outputs"
+        ] == []
+        assert store.load()["token_usage"] == 9
+        assert store.load()["cost_usd"] == 0.4
+        metadata = provider.exec_agent.call_args.kwargs["prompt_metadata"]
+        assert metadata["tool_write_paths"] == []
+        assert metadata["tool_write_scope_exclusive"] is True
 
     def test_semi_escalation_stops_run(self, tmp_path):
         """Semi mode: blocked+escalation_question → run stops with status=blocked."""
@@ -11408,6 +11560,7 @@ def test_run_single_phase_rejects_provider_and_safeguard_question_overlap(
         return_value=SimpleNamespace(
             decision=decision,
             human_input=safeguard_request,
+            execution=None,
         )
     )
     ctrl._prepare_provider_human_input = MagicMock(
@@ -11652,7 +11805,7 @@ class TestConstitutionPhase:
         assert _phase_requires_constitution_provenance("phase1-what") is True
 
     def test_run_dispatches_chief_before_phase1_what_without_provenance(self, tmp_path):
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what")
         (ctrl._squad_dir / "constitution.draft.md").write_text(
@@ -11773,7 +11926,7 @@ Modified principles:
 
     def test_chief_dispatched_in_controller(self, tmp_path):
         """SquadController dispatches an agent (not no-op) for phase1-constitution."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         ctrl.run("msg", "banzai")
@@ -11788,7 +11941,7 @@ Modified principles:
         tmp_path: Path,
     ) -> None:
         """CHIEF never needs write authority over the protected .echelon root."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         draft = ctrl._squad_dir / "constitution.draft.md"
@@ -11808,12 +11961,33 @@ Modified principles:
         assert store.load()["constitution_status"] == "exists"
         assert "phase1-constitution" in store.load()["completed_phases"]
 
+    def test_manual_chief_replay_promotes_sealed_draft_before_advancing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider_publishing_outputs()
+        ctrl, store = _controller(tmp_path, provider)
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            result = ctrl.run_single_phase(
+                "phase1-constitution",
+                "repair the constitution",
+                "banzai",
+            )
+
+        draft = ctrl._squad_dir / "constitution.draft.md"
+        canonical = tmp_path / ".echelon" / "constitution.md"
+        assert result.status == "running"
+        assert canonical.read_bytes() == draft.read_bytes()
+        assert store.load()["constitution_status"] == "exists"
+        assert "phase1-constitution" in store.load()["completed_phases"]
+
     def test_controller_refuses_incomplete_chief_draft_without_advancing(
         self,
         tmp_path: Path,
     ) -> None:
         """An incomplete draft cannot create constitution provenance."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         (ctrl._squad_dir / "constitution.draft.md").write_text(
@@ -11913,6 +12087,54 @@ class TestCommanderJudgmentStateUpdates:
         entries = [json.loads(line) for line in journal.read_text().splitlines()]
         assert entries[0]["type"] == "state_contract_warning"
         assert entries[0]["data"]["dropped_keys"] == ["unauthorized_key"]
+
+    def test_routing_judgment_is_sealed_as_result_only_execution(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {"next_phase": "phase1-why1"},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+            token_usage=7,
+            cost_usd=0.25,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize("r", "greenfield", "msg", 100, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
+
+        routing = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert routing is not None
+        assert routing.execution is not None
+        assert routing.execution.manifest[-1].assignment_id == (
+            "commander/routing-judgment"
+        )
+        assert routing.execution.receipts[-1]["outputs"] == []
+        assert routing.decision.token_usage_delta == 7
+        assert routing.decision.cost_usd_delta == 0.25
+        metadata = provider.exec_agent.call_args.kwargs["prompt_metadata"]
+        assert metadata == {
+            "tool_read_roots": [],
+            "tool_write_paths": [],
+            "tool_write_scope_exclusive": True,
+        }
 
     def test_judgment_cannot_own_store_iteration(self, tmp_path):
         provider = _mock_provider()

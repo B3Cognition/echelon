@@ -224,7 +224,11 @@ def _publication_step(tmp_path: Path):
         owned_paths={Path("specs/result.txt")},
     )
     publication = transaction.seal()
-    prepared = _prepared(squad_dir, "publication", publication=publication.marker.to_dict())
+    prepared = _prepared(
+        squad_dir,
+        "publication",
+        publication={"kind": "external", "marker": publication.marker.to_dict()},
+    )
     return project_root, squad_dir, prepared, publication
 
 
@@ -270,8 +274,9 @@ def test_publication_adapter_reports_target_drift_without_overwrite(tmp_path: Pa
 
 def test_publication_adapter_rejects_marker_stage_mismatch(tmp_path: Path) -> None:
     project_root, squad_dir, prepared, _publication = _publication_step(tmp_path)
-    marker = prepared.intent.publication
-    assert marker is not None
+    publication_intent = prepared.intent.publication
+    assert publication_intent is not None
+    marker = publication_intent["marker"]
     marker["manifest_sha256"] = "f" * 64
     mismatched = prepare_spec_step(
         squad_dir,
@@ -282,9 +287,12 @@ def test_publication_adapter_rejects_marker_stage_mismatch(tmp_path: Path) -> No
         route={"kind": "routed"},
         effects=("publication",),
         publication={
-            "schema_version": 1,
-            "transaction_id": "c" * 32,
-            "manifest_sha256": marker["manifest_sha256"],
+            "kind": "external",
+            "marker": {
+                "schema_version": 1,
+                "transaction_id": "c" * 32,
+                "manifest_sha256": marker["manifest_sha256"],
+            },
         },
         final_state={"phase_a_state_version": 1},
         provenance={},

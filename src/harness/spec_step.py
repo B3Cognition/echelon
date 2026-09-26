@@ -704,20 +704,51 @@ def validate_spec_step_marker(value: object) -> SpecStepMarker:
 def _validate_publication(value: object, *, step_id: str) -> dict[str, object] | None:
     if value is None:
         return None
-    if type(value) is not dict or frozenset(value) != frozenset(
-        {"schema_version", "transaction_id", "manifest_sha256"}
-    ):
+    if type(value) is not dict or type(value.get("kind")) is not str:
         _raise("intent_invalid")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
-        _raise("intent_invalid")
-    transaction_id = _valid_step_id(value["transaction_id"])
-    if transaction_id != step_id:
-        _raise("intent_invalid")
-    return {
-        "schema_version": 1,
-        "transaction_id": transaction_id,
-        "manifest_sha256": _valid_sha256(value["manifest_sha256"]),
-    }
+
+    def external(marker: object) -> dict[str, object]:
+        if type(marker) is not dict or frozenset(marker) != frozenset(
+            {"schema_version", "transaction_id", "manifest_sha256"}
+        ):
+            _raise("intent_invalid")
+        if type(marker["schema_version"]) is not int or marker["schema_version"] != 1:
+            _raise("intent_invalid")
+        transaction_id = _valid_step_id(marker["transaction_id"])
+        if transaction_id != step_id:
+            _raise("intent_invalid")
+        return {
+            "schema_version": 1,
+            "transaction_id": transaction_id,
+            "manifest_sha256": _valid_sha256(marker["manifest_sha256"]),
+        }
+
+    def constitution(request: object) -> dict[str, object]:
+        try:
+            from harness.constitution_publication import (
+                ConstitutionPublicationError,
+                validate_constitution_publication_request,
+            )
+
+            return validate_constitution_publication_request(request)
+        except ConstitutionPublicationError:
+            _raise("intent_invalid")
+
+    kind = value["kind"]
+    if kind == "external" and set(value) == {"kind", "marker"}:
+        return {"kind": "external", "marker": external(value["marker"])}
+    if kind == "constitution" and set(value) == {"kind", "request"}:
+        return {
+            "kind": "constitution",
+            "request": constitution(value["request"]),
+        }
+    if kind == "both" and set(value) == {"kind", "external", "constitution"}:
+        return {
+            "kind": "both",
+            "external": external(value["external"]),
+            "constitution": constitution(value["constitution"]),
+        }
+    _raise("intent_invalid")
 
 
 def _validate_intent(value: object) -> dict[str, object]:

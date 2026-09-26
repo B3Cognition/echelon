@@ -7,7 +7,6 @@ Covers:
 """
 import hashlib
 import json
-import os
 import re
 import sys
 import threading
@@ -33,8 +32,6 @@ from harness.provider_dispatch_finalizer import (
 )
 from harness.provider_output_publication import (
     ProviderArtifactContractError,
-    ProviderOutputGuard,
-    ProviderOutputSpec,
     compile_provider_artifact_contract,
 )
 from harness.squad_executors import (
@@ -436,51 +433,6 @@ def test_agent_why2_rejects_unchanged_claimed_review_reports(tmp_path: Path) -> 
 
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "invalid_phase_outputs"
-
-
-def test_provider_output_guard_rejects_claimed_symlink(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    outside = tmp_path / "outside-issues.md"
-    outside.write_text("# outside\n", encoding="utf-8")
-    output = spec_dir / "issues.md"
-    output.symlink_to(outside)
-    guard = ProviderOutputGuard.capture(
-        project_root=tmp_path,
-        spec_dir=spec_dir,
-        phase_id="phase1-why2",
-        state_revision=1,
-        specs=(ProviderOutputSpec("issues.md"),),
-    )
-
-    finalized = guard.finalize({"output_files": [str(output)]})
-
-    assert finalized.receipt is None
-    assert finalized.failure is not None
-    assert finalized.failure.missing == ("issues.md",)
-
-
-def test_provider_output_guard_rejects_directory_metadata_only_touch(
-    tmp_path: Path,
-) -> None:
-    spec_dir = tmp_path / "specs" / "001-demo"
-    output = spec_dir / "contracts"
-    output.mkdir(parents=True)
-    (output / "api.md").write_text("# API\n", encoding="utf-8")
-    guard = ProviderOutputGuard.capture(
-        project_root=tmp_path,
-        spec_dir=spec_dir,
-        phase_id="phase3-how",
-        state_revision=1,
-        specs=(ProviderOutputSpec("contracts", kind="directory"),),
-    )
-
-    os.utime(output, None)
-    finalized = guard.finalize({"output_files": [str(output)]})
-
-    assert finalized.receipt is None
-    assert finalized.failure is not None
-    assert finalized.failure.stale == ("contracts/",)
 
 
 def test_sage_consensus_metadata_does_not_derive_review_scope(tmp_path: Path) -> None:

@@ -115,7 +115,9 @@ class _Guard:
     dispatch_id: str
     canonical_before: tuple[_TargetSnapshot | None, ...]
     shadow_before: tuple[_TargetSnapshot | None, ...]
-    root_before: tuple[tuple[Path, Mapping[str, tuple[str, str]]], ...]
+    root_before: tuple[
+        tuple[Path, tuple[str, ...], Mapping[str, tuple[str, str]]], ...
+    ]
 
     @classmethod
     def capture(cls, context: ProviderDispatchContext) -> _Guard:
@@ -146,8 +148,14 @@ class _Guard:
             canonical_before=canonical,
             shadow_before=shadow,
             root_before=tuple(
-                (root, MappingProxyType(_root_leaf_manifest(root)))
-                for root in roots
+                (
+                    root,
+                    ignored,
+                    MappingProxyType(
+                        _root_leaf_manifest(root, ignored=ignored)
+                    ),
+                )
+                for root, ignored in roots
             ),
         )
 
@@ -264,8 +272,8 @@ class _Guard:
             )
         )
         violations: list[str] = []
-        for root, before in self.root_before:
-            after = _root_leaf_manifest(root)
+        for root, ignored, before in self.root_before:
+            after = _root_leaf_manifest(root, ignored=ignored)
             for relative in sorted(set(before) | set(after)):
                 if before.get(relative) == after.get(relative):
                     continue
@@ -610,7 +618,11 @@ def _snapshot_changed(
     return before != after
 
 
-def _root_leaf_manifest(root: Path) -> dict[str, tuple[str, str]]:
+def _root_leaf_manifest(
+    root: Path,
+    *,
+    ignored: tuple[str, ...] = (),
+) -> dict[str, tuple[str, str]]:
     if not root.exists():
         return {}
     manifest: dict[str, tuple[str, str]] = {}
@@ -623,6 +635,8 @@ def _root_leaf_manifest(root: Path) -> dict[str, tuple[str, str]]:
             child = current / name
             metadata = os.lstat(child)
             relative = child.relative_to(root).as_posix()
+            if relative in ignored:
+                continue
             if stat.S_ISLNK(metadata.st_mode):
                 manifest[relative] = ("symlink", _identity_sha256(metadata))
             elif stat.S_ISDIR(metadata.st_mode):
@@ -634,6 +648,8 @@ def _root_leaf_manifest(root: Path) -> dict[str, tuple[str, str]]:
             child = current / name
             metadata = os.lstat(child)
             relative = child.relative_to(root).as_posix()
+            if relative in ignored:
+                continue
             if stat.S_ISREG(metadata.st_mode):
                 manifest[relative] = (_identity_sha256(metadata), _file_sha256(child))
             elif stat.S_ISLNK(metadata.st_mode):
@@ -643,8 +659,10 @@ def _root_leaf_manifest(root: Path) -> dict[str, tuple[str, str]]:
     return manifest
 
 
-def _artifact_roots(resolved: ResolvedProviderArtifactContract) -> tuple[Path, ...]:
-    roots: list[Path] = []
+def _artifact_roots(
+    resolved: ResolvedProviderArtifactContract,
+) -> tuple[tuple[Path, tuple[str, ...]], ...]:
+    roots: list[tuple[Path, tuple[str, ...]]] = []
     for rule, target in zip(
         resolved.contract.artifacts,
         resolved.write_paths,
@@ -653,8 +671,19 @@ def _artifact_roots(resolved: ResolvedProviderArtifactContract) -> tuple[Path, .
         root = target
         for _part in PurePosixPath(rule.path).parts:
             root = root.parent
-        if root not in roots:
-            roots.append(root)
+        ignored = (
+            ("telemetry", "events.jsonl", "phase-timing.lock")
+            if rule.root == "squad"
+            else ()
+        )
+        existing = next(
+            (index for index, item in enumerate(roots) if item[0] == root),
+            None,
+        )
+        if existing is None:
+            roots.append((root, ignored))
+        elif ignored:
+            roots[existing] = (root, tuple(sorted(set(roots[existing][1]) | set(ignored))))
     return tuple(roots)
 
 

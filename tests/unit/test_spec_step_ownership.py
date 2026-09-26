@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from harness.provider_dispatch_ownership import provider_dispatch_call_sites
+
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "src" / "harness"
@@ -141,3 +143,29 @@ def test_controller_shape_run_locked_delegates_to_one_step_loop() -> None:
         "context",
         "mining",
     }
+
+
+def test_all_command_driven_phase_a_provider_calls_use_finalizer() -> None:
+    assert provider_dispatch_call_sites(HARNESS) == {
+        "finalized": {
+            "squad.py:_dispatch_controller_provider",
+            "squad_executors.py:_exec_raw_agent_with_contract",
+        },
+        "stronger_boundaries": {
+            "discovery_turns.py:run_inspection_turn": "managed_discovery",
+            "managed_commander.py:run_inspection_turn": "managed_discovery",
+        },
+        "bypasses": set(),
+    }
+
+
+def test_provider_call_inventory_rejects_a_new_bypass(tmp_path: Path) -> None:
+    source = tmp_path / "rogue.py"
+    source.write_text(
+        "def dispatch(provider):\n    return provider.exec_agent('.', 'prompt')\n",
+        encoding="utf-8",
+    )
+
+    findings = provider_dispatch_call_sites(tmp_path)
+
+    assert findings["bypasses"] == {"rogue.py:dispatch"}

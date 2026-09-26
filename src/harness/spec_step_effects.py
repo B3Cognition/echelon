@@ -66,19 +66,26 @@ def step_effect_intent(prepared: PreparedSpecStep) -> CompletionIntent:
         effect for effect in prepared.intent.effects if effect != "publication"
     )
     publication = validated["publication"]
-    marker = (
-        publication.get("marker")
-        if isinstance(publication, dict)
-        and publication.get("kind") == "external"
-        else None
-    )
+    marker = None
+    if isinstance(publication, dict):
+        if publication.get("kind") == "external":
+            marker = publication.get("marker")
+        elif publication.get("kind") == "both":
+            marker = publication.get("external")
+    sealed_publication = prepared.intent.publication
+    step_marker = None
+    if isinstance(sealed_publication, dict):
+        if sealed_publication.get("kind") == "external":
+            step_marker = sealed_publication.get("marker")
+        elif sealed_publication.get("kind") == "both":
+            step_marker = sealed_publication.get("external")
     step_route = prepared.intent.route
     effect_route = validated["route"]
     if (
         validated["completion_id"] != prepared.marker.step_id
         or validated["origin"] != prepared.intent.origin
         or tuple(validated["effect_plan"]) != effects
-        or marker != prepared.intent.publication
+        or marker != step_marker
         or not isinstance(effect_route, dict)
         or any(step_route.get(key) != value for key, value in effect_route.items())
     ):
@@ -267,6 +274,17 @@ def _requires_companion_tail(
     return any(item in {"context", "mining", "retarget"} for item in tail)
 
 
+def _companion_owns_publication(prepared: PreparedSpecStep) -> bool:
+    intent = prepared.intent.provenance.get("effect_intent")
+    if not isinstance(intent, Mapping):
+        return False
+    publication = intent.get("publication")
+    return (
+        isinstance(publication, Mapping)
+        and publication.get("kind") == "external"
+    )
+
+
 class PhaseASpecStepEffects:
     """Closed Phase A effect switch; this is deliberately not a registry."""
 
@@ -309,30 +327,63 @@ class PhaseASpecStepEffects:
         )
 
     def _publication(self, prepared: PreparedSpecStep) -> dict[str, object]:
-        marker = prepared.intent.publication
-        if marker is None or marker.get("transaction_id") != prepared.marker.step_id:
+        publication = prepared.intent.publication
+        if publication is None:
             raise SpecStepEffectError("intent_mismatch")
-        staged = load_prepared_publication(
-            self._project_root,
-            self._squad_dir,
-            marker,
+        kind = publication.get("kind")
+        external_marker = (
+            publication.get("marker")
+            if kind == "external"
+            else publication.get("external") if kind == "both" else None
         )
-        staged.publish()
-        operations = []
-        for raw in staged._manifest["operations"]:
-            operation = dict(raw)
-            operations.append(
-                {
-                    "action": operation["action"],
-                    "target": operation["target"],
-                    "postimage": dict(operation["postimage"]),
-                }
+        constitution_request = (
+            publication.get("request")
+            if kind == "constitution"
+            else publication.get("constitution") if kind == "both" else None
+        )
+        result: dict[str, object] = {"schema_version": 1, "kind": kind}
+        if external_marker is not None:
+            if (
+                not isinstance(external_marker, Mapping)
+                or external_marker.get("transaction_id")
+                != prepared.marker.step_id
+            ):
+                raise SpecStepEffectError("intent_mismatch")
+            staged = load_prepared_publication(
+                self._project_root,
+                self._squad_dir,
+                external_marker,
             )
-        return {
-            "schema_version": 1,
-            "marker": staged.marker.to_dict(),
-            "operations": operations,
-        }
+            staged.publish()
+            result["external"] = {
+                "marker": staged.marker.to_dict(),
+                "operations": [
+                    {
+                        "action": operation["action"],
+                        "target": operation["target"],
+                        "postimage": dict(operation["postimage"]),
+                    }
+                    for operation in map(dict, staged._manifest["operations"])
+                ],
+            }
+        if constitution_request is not None:
+            from harness.constitution_publication import (
+                apply_or_verify_constitution_publication,
+            )
+
+            if not isinstance(constitution_request, Mapping):
+                raise SpecStepEffectError("intent_mismatch")
+            result["constitution"] = apply_or_verify_constitution_publication(
+                prepared,
+                constitution_request,
+            )
+        if set(result) == {"schema_version", "kind"}:
+            raise SpecStepEffectError("intent_mismatch")
+        if kind == "external":
+            external_result = result["external"]
+            assert isinstance(external_result, dict)
+            return {"schema_version": 1, **external_result}
+        return result
 
     def apply(
         self,
@@ -361,7 +412,10 @@ class PhaseASpecStepEffects:
                 )
                 if self._completion_effect_applier is not None and (
                     _managed_effect(prepared)
-                    or _requires_companion_tail(prepared, effect)
+                    or (
+                        _requires_companion_tail(prepared, effect)
+                        and _companion_owns_publication(prepared)
+                    )
                 ):
                     result = self._completion_effect_applier(
                         prepared,
@@ -405,5 +459,11 @@ class PhaseASpecStepEffects:
             raise
         except (CompletionError, PublicationError) as exc:
             raise SpecStepEffectError(exc.code) from exc
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
+            from harness.constitution_publication import ConstitutionPublicationError
+
+            if isinstance(exc, ConstitutionPublicationError):
+                raise SpecStepEffectError(exc.code) from exc
+            raise SpecStepEffectError("effect_io") from exc
+        except SystemExit as exc:
             raise SpecStepEffectError("effect_io") from exc

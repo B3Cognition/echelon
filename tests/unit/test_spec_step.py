@@ -113,9 +113,12 @@ def _prepare(squad_dir: Path, **overrides: object):
         },
         "effects": ("publication", "journal"),
         "publication": {
-            "schema_version": 1,
-            "transaction_id": STEP_ID,
-            "manifest_sha256": "c" * 64,
+            "kind": "external",
+            "marker": {
+                "schema_version": 1,
+                "transaction_id": STEP_ID,
+                "manifest_sha256": "c" * 64,
+            },
         },
         "final_state": {"phase_a_state_version": 1, "phase": "phase2"},
         "provenance": {"prepared_result_sha256": "d" * 64},
@@ -142,11 +145,11 @@ def test_prepared_spec_step_views_are_detached(tmp_path: Path) -> None:
     final_state["phase"] = "tampered"
     publication = prepared.intent.publication
     assert publication is not None
-    publication["manifest_sha256"] = "0" * 64
+    publication["marker"]["manifest_sha256"] = "0" * 64
 
     assert prepared.intent.route["to_phase"] == "phase2"
     assert prepared.intent.final_state["phase"] == "phase2"
-    assert prepared.intent.publication["manifest_sha256"] == "c" * 64
+    assert prepared.intent.publication["marker"]["manifest_sha256"] == "c" * 64
 
 
 def test_spec_step_rejects_executed_occurrence_without_exact_receipt(

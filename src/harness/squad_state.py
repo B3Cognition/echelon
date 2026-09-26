@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import secrets
 import re
@@ -4585,6 +4586,7 @@ class SquadStateStore:
         state_updates: Mapping[str, Any],
         state_removals: Iterable[str],
         token_usage_delta: int = 0,
+        cost_usd_delta: float = 0.0,
         prepared_completion: object | None = None,
         resolved_at: str | None = None,
         resolved_decision_postimage: Mapping[str, object] | None = None,
@@ -4600,6 +4602,17 @@ class SquadStateStore:
             raise StateAdvanceError(
                 "human-input token usage delta is invalid",
                 json_path="$.token_usage_delta",
+                validator="type",
+            )
+        if (
+            type(cost_usd_delta) not in (int, float)
+            or not math.isfinite(float(cost_usd_delta))
+            or float(cost_usd_delta) < 0
+            or float(cost_usd_delta) > 1_000_000_000
+        ):
+            raise StateAdvanceError(
+                "human-input cost delta is invalid",
+                json_path="$.cost_usd_delta",
                 validator="type",
             )
         if resolved_at is not None and (
@@ -4794,6 +4807,10 @@ class SquadStateStore:
             desired["token_usage"] = (
                 int(desired.get("token_usage") or 0)
                 + token_usage_delta
+            )
+            desired["cost_usd"] = (
+                float(desired.get("cost_usd") or 0.0)
+                + float(cost_usd_delta)
             )
             self._replace_human_input_decision_unlocked(
                 desired,
