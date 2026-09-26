@@ -50,6 +50,10 @@ def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", re
                         outcome=final_outcome if final else "resolved", rationale="Checked current requirements", evidence_refs=[reference])
             (spec / "issues.md").write_text("No issues" if payload["verdict"] == "PASS" else "New concrete failure")
             (spec / "quality-gates.md").write_text(f"Review revision {len(calls)}")
+            payload["output_files"] = [
+                str(spec / "issues.md"),
+                str(spec / "quality-gates.md"),
+            ]
             if final and after_review:
                 after_review(spec)
         elif "Operate in **ASSESS2**" in prompt:

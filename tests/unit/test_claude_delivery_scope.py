@@ -79,10 +79,10 @@ def test_nonexclusive_implementation_approves_scoped_edits_and_preserves_shell_p
     assert "--tools" not in command  # No output-only restriction on implementation.
     rules = set(command[command.index("--allowedTools") + 1].split(","))
     assert rules == {
-        f"Read(/{root}/**)", f"Write(/{root}/**)", f"Edit(/{root}/**)",
-        f"Read(/{root}/.echelon/runnability.yml)",
-        f"Write(/{root}/.echelon/runnability.yml)",
-        f"Edit(/{root}/.echelon/runnability.yml)",
+        f"Read({root}/**)", f"Write({root}/**)", f"Edit({root}/**)",
+        f"Read({root}/.echelon/runnability.yml)",
+        f"Write({root}/.echelon/runnability.yml)",
+        f"Edit({root}/.echelon/runnability.yml)",
     }
     assert ("--dangerously-skip-permissions" in command) is unsafe
     assert "--permission-mode" not in command
@@ -125,7 +125,9 @@ def test_real_host_boundary_enforces_declared_scope_and_nested_control_paths(tmp
     secret = control / "config.yml"
     secret.write_text("control")
     report = root / "review.json"
+    report_temp = root / ".review.json.tmp"
     other = root / "other.json"
+    other_temp = root / ".other.json.tmp"
     alias = tmp_path / "source-alias"
     alias.symlink_to(source)
     command = _command(_request(
@@ -151,7 +153,9 @@ print(json.dumps(result))
         ("control_read", str(secret), "read"),
         ("control_write", str(secret), "write"),
         ("report_write", str(report), "write"),
+        ("report_temp_write", str(report_temp), "write"),
         ("other_write", str(other), "write"),
+        ("other_temp_write", str(other_temp), "write"),
     ]
     result = subprocess.run(
         [*command[:3], sys.executable, "-c", probe, json.dumps(operations)],
@@ -161,7 +165,10 @@ print(json.dumps(result))
     assert json.loads(result.stdout) == {
         "source_read": True, "source_write": not exclusive, "alias_write": not exclusive,
         "control_read": False, "control_write": False,
-        "report_write": allow_report or not exclusive, "other_write": not exclusive,
+        "report_write": allow_report or not exclusive,
+        "report_temp_write": allow_report or not exclusive,
+        "other_write": not exclusive,
+        "other_temp_write": not exclusive,
     }
     assert source.read_text() == ("source" if exclusive else "changed")
     assert secret.read_text() == "control"
