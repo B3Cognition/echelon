@@ -171,94 +171,25 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
             return statement.value
         return None
 
-    def is_args_method(call: ast.Call | None, method: str) -> bool:
-        return bool(
-            call is not None
-            and isinstance(call.func, ast.Attribute)
-            and isinstance(call.func.value, ast.Name)
-            and call.func.value.id == "args"
-            and call.func.attr == method
-        )
-
-    def is_engine_branch(node: ast.If) -> bool:
-        test = node.test
-        return bool(
-            isinstance(test, ast.Compare)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "engine"
-            and len(test.ops) == 1
-            and isinstance(test.ops[0], ast.IsNot)
-            and len(test.comparators) == 1
-            and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value is None
-        )
-
-    def is_normal_branch(node: ast.If) -> bool:
-        return bool(
-            isinstance(node.test, ast.UnaryOp)
-            and isinstance(node.test.op, ast.Not)
-            and isinstance(node.test.operand, ast.Name)
-            and node.test.operand.id == "legacy"
-        )
-
-    def routes_engine(node: ast.If) -> bool:
-        for statement in node.body:
-            call = direct_call(statement)
-            if not is_args_method(call, "extend") or len(call.args) != 1:
-                continue
-            value = call.args[0]
-            if not isinstance(value, (ast.List, ast.Tuple)) or len(value.elts) != 2:
-                continue
-            switch, selected = value.elts
-            if (
-                isinstance(switch, ast.Constant)
-                and switch.value == "--engine"
-                and isinstance(selected, ast.Attribute)
-                and isinstance(selected.value, ast.Name)
-                and selected.value.id == "engine"
-                and selected.attr == "value"
-            ):
-                return True
-        return False
-
-    def routes_shadow(node: ast.If) -> bool:
-        if not isinstance(node.test, ast.Name) or node.test.id != "shadow":
-            return False
-        for statement in node.body:
-            call = direct_call(statement)
-            if (
-                is_args_method(call, "append")
-                and len(call.args) == 1
-                and isinstance(call.args[0], ast.Constant)
-                and call.args[0].value == "--shadow"
-            ):
-                return True
-        return False
-
-    def routes_legacy_run(statement: ast.stmt) -> bool:
-        call = direct_call(statement)
-        return bool(
-            call is not None
-            and isinstance(call.func, ast.Attribute)
-            and call.func.attr == "_cmd_re_run"
-            and isinstance(call.func.value, ast.Call)
-            and isinstance(call.func.value.func, ast.Name)
-            and call.func.value.func.id == "_legacy_cli"
-            and len(call.args) == 1
-            and isinstance(call.args[0], ast.Name)
-            and call.args[0].id == "args"
-        )
-
-    def routes_reviewed_knowledge(node: ast.If) -> bool:
-        return any(
-            call is not None
-            and isinstance(call.func, ast.Attribute)
-            and call.func.attr == "_cmd_re_knowledge_run"
-            and isinstance(call.func.value, ast.Call)
-            and isinstance(call.func.value.func, ast.Name)
-            and call.func.value.func.id == "_legacy_cli"
-            for statement in node.body
+    def routes_typed_run_facade(
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> bool:
+        calls = [
+            call
+            for statement in function.body
             if (call := direct_call(statement)) is not None
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "run_re"
+        ]
+        if len(calls) != 1 or len(calls[0].args) != 1 or calls[0].keywords:
+            return False
+        request = calls[0].args[0]
+        return bool(
+            isinstance(request, ast.Call)
+            and isinstance(request.func, ast.Name)
+            and request.func.id == "ReRunRequest"
+            and not request.args
+            and all(keyword.arg is not None for keyword in request.keywords)
         )
 
     root_attachments = []
@@ -382,29 +313,15 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
                 f"RE run option ownership is ambiguous: {switch} also belongs to "
                 + ", ".join(conflicting)
             )
-    engine_branches = [
-        node for node in run_function.body if isinstance(node, ast.If) and is_engine_branch(node)
-    ]
-    if len(engine_branches) != 1 or not routes_engine(engine_branches[0]):
-        raise SystemExit("RE run --engine callback routing is invalid")
-    normal_branches = [
-        node for node in run_function.body if isinstance(node, ast.If) and is_normal_branch(node)
-    ]
-    if len(normal_branches) != 1 or not routes_reviewed_knowledge(normal_branches[0]):
-        raise SystemExit("RE run normal reviewed-knowledge routing is invalid")
-    shadow_branches = [
-        node for node in run_function.body if isinstance(node, ast.If) and routes_shadow(node)
-    ]
-    if len(shadow_branches) != 1:
-        raise SystemExit("RE run --shadow callback routing is invalid")
-    if not run_function.body or not routes_legacy_run(run_function.body[-1]):
-        raise SystemExit("RE run legacy callback routing is invalid")
+
+    if not routes_typed_run_facade(run_function):
+        raise SystemExit("RE run typed facade routing is invalid")
     if any(scratch.iterdir()):
         raise SystemExit("static RE validation created workspace/provider state")
 
 print(
     f"PASS: {len(module_names)} RE v2 modules import; "
-    "RE root, composite creation order, complete command surface, and run option routing are valid "
+    "RE root, composite creation order, complete command surface, and typed run facade are valid "
     "without runtime work"
 )
 PY
