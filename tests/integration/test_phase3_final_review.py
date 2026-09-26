@@ -325,6 +325,101 @@ def test_failed_final_gate_does_not_claim_success_or_replan_in_same_dispatch(tmp
     assert calls.count(("PLAN2", False)) == 1
 
 
+def test_banzai_final_gate_admits_reused_issue_id_and_routes_its_owner(tmp_path):
+    """A fresh final-review finding must not inherit an old display-ID slot."""
+    def write_fresh_issue(spec):
+        (spec / "issues.md").write_text(
+            """# Issues — WHY3
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 1
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** FAIL
+
+## Issues
+
+### ISS-001: Architecture contract contradicts the accepted boundary
+- **Severity:** HIGH
+- **Type:** contradiction
+- **Description:** The contract adds an invariant absent from the accepted requirement.
+- **Affected artifact:** contracts/api.md
+- **Affected section:** Runtime boundary
+- **Evidence:** FR-001 constrains only the accepted boundary.
+- **Recommendation:** Remove the extra architecture invariant.
+- **Responsible agent:** HOW
+- **Action Required:** Amend the architecture contract.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Remove the extra invariant from contracts/api.md.
+- **Evidence basis:** FR-001 and the current architecture contract.
+- **Values not inferable:** None
+- **Banzai eligible:** yes
+- **Banzai rationale:** The accepted requirement determines the correction.
+""",
+            encoding="utf-8",
+        )
+
+    ctrl, store, executor, node, _, _ = final_fixture(
+        tmp_path,
+        "banzai",
+        after_review=write_fresh_issue,
+        final_verdict="FAIL",
+    )
+    historical = {
+        "issue_id": "ISS-001",
+        "title": "Historical specification ambiguity",
+        "severity": "ISSUE",
+        "guidance": "Clarify the former specification ambiguity.",
+        "status": "validated",
+        "decision": "Clarify the former ambiguity.",
+        "repair_phase": "phase1-what",
+        "rationale": "The old specification required clarification.",
+        "confidence": "high",
+        "evidence_backed": "true",
+        "issue_fingerprint": "a" * 64,
+    }
+    state = store.load()
+    state["issue_resolution_ledger"] = {"ISS-001": historical}
+    store.save(state)
+
+    assert advance(ctrl, store, executor.execute(node, store)) == "phase3-consensus"
+    result = executor.execute(node, store)
+    assert result.verdict == "FAIL"
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+    routing = ctrl._construct_routing_decision_or_block(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert routing is not None
+    assert routing.human_input is not None
+    assert routing.decision.to_phase == "terminal-blocked"
+    assert ctrl._handle_prepared_human_input_or_block(
+        node,
+        prepared,
+        snapshot,
+        routing,
+        None,
+    )
+
+    persisted = store.load()
+    assert persisted["status"] == "running"
+    assert persisted["phase"] == "phase3-how"
+    assert persisted["selected_issue_resolution"] == "ISS-001"
+    selected = persisted["issue_resolution_ledger"]["ISS-001"]
+    assert selected["status"] == "selected"
+    assert selected["repair_phase"] == "phase3-how"
+    assert selected["issue_fingerprint"] != historical["issue_fingerprint"]
+    assert selected["previous_resolutions"] == [historical]
+    assert persisted["blocked_decision"]["status"] == "resolved"
+    assert persisted["blocked_decision"]["resolved_by"] == "controller"
+
+
 @pytest.mark.parametrize("outcome", ["unresolved", "unverifiable"])
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
 def test_fresh_nonclosure_retires_review_round_instead_of_looping(tmp_path, outcome, mode):

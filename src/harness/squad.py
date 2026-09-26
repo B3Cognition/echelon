@@ -4044,27 +4044,35 @@ class SquadController:
                 return False
         return self.resume_pending_human_input()
 
-    def _route_banzai_consensus_issue_repair(
+    def _prepare_banzai_consensus_issue_resolution(
         self,
         node: PhaseNode,
         snapshot: RoutingStateSnapshot,
-    ) -> bool:
-        """Route one completed WHY3 issue through sealed Banzai authority.
-
-        Bare agent blocks remain retryable. This exception is limited to the
-        completed consensus stage, which has just written the authoritative
-        SAGE issue register needed to choose a documented repair safely.
-        """
+    ) -> PreparedHumanInput | None:
+        """Prepare one unresolved WHY3 issue through sealed Banzai authority."""
         if (
             node.id != "phase3-consensus"
             or snapshot.state.get("autonomy_mode") != "banzai"
         ):
-            return False
+            return None
         try:
             candidates = self._banzai_issue_resolution_candidates(
                 dict(snapshot.state)
             )
-            options = self._dispatch_cap_options(candidates)
+            raw_ledger = snapshot.state.get("issue_resolution_ledger")
+            ledger = raw_ledger if isinstance(raw_ledger, Mapping) else {}
+            unresolved = [
+                candidate
+                for candidate in candidates
+                if matching_issue_resolution(
+                    ledger,
+                    candidate["issue_fingerprint"],
+                ).get("status")
+                not in {"selected", "repaired", "validated"}
+            ]
+            if not unresolved:
+                return None
+            options = self._dispatch_cap_options(unresolved)
             request = self._human_input_registry.prepare_controller(
                 source_kind="controller_safeguard",
                 producer_id="banzai_issue_resolution",
@@ -4078,10 +4086,33 @@ class SquadController:
                 option_contract=options,
             )
             self._validate_prepared_human_input(request)
-            self._state_store.set_consensus_banzai_issue_decision(request)
+            return request
         except (
             _DispatchCapEvidenceError,
             HumanInputPolicyError,
+        ):
+            return None
+
+    def _route_banzai_consensus_issue_repair(
+        self,
+        node: PhaseNode,
+        snapshot: RoutingStateSnapshot,
+    ) -> bool:
+        """Route one completed WHY3 issue through sealed Banzai authority.
+
+        Bare agent blocks remain retryable. This exception is limited to the
+        completed consensus stage, which has just written the authoritative
+        SAGE issue register needed to choose a documented repair safely.
+        """
+        request = self._prepare_banzai_consensus_issue_resolution(
+            node,
+            snapshot,
+        )
+        if request is None:
+            return False
+        try:
+            self._state_store.set_consensus_banzai_issue_decision(request)
+        except (
             StateAdvanceError,
             StateDurabilityError,
         ):
@@ -15437,6 +15468,17 @@ class SquadController:
         )
         work_route, work_updates = self._phase3_work_routing(snapshot.state)
         planner_route, planner_updates = self._phase3_planner_block_routing(node, prepared, snapshot)
+        consensus_issue_human_input = None
+        if (
+            (prepared.verdict or "").upper() == "FAIL"
+            and snapshot.state.get("why3_verdict") == "FAIL"
+        ):
+            consensus_issue_human_input = (
+                self._prepare_banzai_consensus_issue_resolution(
+                    node,
+                    snapshot,
+                )
+            )
         if proportional_what_human_input is not None:
             next_phase = "phase1-why2"
             source = "proportional_quality_no_progress"
@@ -15465,6 +15507,10 @@ class SquadController:
             merge_effects(work_updates)
             next_phase = work_route
             source = "phase3_technical_work"
+        elif consensus_issue_human_input is not None:
+            next_phase = PHASE_TERMINAL_BLOCKED
+            source = "phase3_banzai_issue_resolution"
+            routed_human_input = consensus_issue_human_input
         else:
             if precomputed_why_routing is not None:
                 why_override, why_updates, routed_human_input = (
