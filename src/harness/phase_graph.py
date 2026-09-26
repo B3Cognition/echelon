@@ -23,6 +23,12 @@ from harness.human_input import (
     compile_workflow_human_input_policies,
     controller_safeguard_policies,
 )
+from harness.phase_a_provider_assignments import CompiledProviderAssignment
+from harness.provider_output_publication import (
+    ProviderArtifactContract,
+    ProviderArtifactContractError,
+    compile_provider_artifact_contract,
+)
 
 
 def _validate_controller_provider_allowlist(
@@ -51,6 +57,138 @@ def _validate_controller_provider_allowlist(
             "must not overlap allowed_state_updates: "
             f"{', '.join(sorted(overlap))}"
         )
+
+
+def _compile_phase_provider_assignments(
+    raw_phase: dict,
+) -> tuple[
+    ProviderArtifactContract | None,
+    CompiledProviderAssignment | None,
+    tuple[tuple[str, int, CompiledProviderAssignment], ...],
+]:
+    phase_id = raw_phase.get("id")
+    phase_type = raw_phase.get("type", "agent")
+    raw_contract = raw_phase.get("artifact_contract")
+    contract: ProviderArtifactContract | None = None
+    assignment: CompiledProviderAssignment | None = None
+    nested: list[tuple[str, int, CompiledProviderAssignment]] = []
+
+    if phase_type == "agent":
+        agent_id = raw_phase.get("agent")
+        if type(agent_id) is not str or not agent_id:
+            raise ProviderArtifactContractError(
+                f"provider phase {phase_id!r} requires a non-empty agent id"
+            )
+        contract = compile_provider_artifact_contract(
+            raw_contract,
+            assignment_id=str(phase_id),
+        )
+        mode = raw_phase.get("mode")
+        if mode is not None and (type(mode) is not str or not mode):
+            raise ProviderArtifactContractError(
+                f"provider phase {phase_id!r} has an invalid mode"
+            )
+        assignment = CompiledProviderAssignment(
+            assignment_id=str(phase_id),
+            agent_id=agent_id,
+            mode=mode,
+            contract=contract,
+        )
+    elif raw_contract is not None:
+        raise ProviderArtifactContractError(
+            f"non-provider phase {phase_id!r} cannot declare artifact_contract"
+        )
+
+    for collection in ("agents", "pre_dispatch"):
+        raw_entries = raw_phase.get(collection, [])
+        if not isinstance(raw_entries, list):
+            continue
+        for index, entry in enumerate(raw_entries):
+            if not isinstance(entry, dict):
+                continue
+            agent_id = entry.get("agent")
+            if agent_id is None and collection == "agents":
+                agent_id = entry.get("id")
+            entry_has_provider = type(agent_id) is str and bool(agent_id)
+            if not entry_has_provider:
+                if entry.get("artifact_contract") is not None:
+                    raise ProviderArtifactContractError(
+                        f"non-provider entry {phase_id!r}/{collection}/{index} "
+                        "cannot declare artifact_contract"
+                    )
+                continue
+            mode = entry.get("mode")
+            if mode is not None and (type(mode) is not str or not mode):
+                raise ProviderArtifactContractError(
+                    f"provider entry {phase_id!r}/{collection}/{index} has an "
+                    "invalid mode"
+                )
+            assignment_id = (
+                f"{phase_id}/{collection}/{index}/{agent_id}:{mode or 'default'}"
+            )
+            entry_contract = compile_provider_artifact_contract(
+                entry.get("artifact_contract"),
+                assignment_id=assignment_id,
+            )
+            nested.append(
+                (
+                    collection,
+                    index,
+                    CompiledProviderAssignment(
+                        assignment_id=assignment_id,
+                        agent_id=agent_id,
+                        mode=mode,
+                        contract=entry_contract,
+                    ),
+                )
+            )
+
+    _reject_parallel_provider_overlap(raw_phase, nested)
+    return contract, assignment, tuple(nested)
+
+
+def _reject_parallel_provider_overlap(
+    raw_phase: dict,
+    assignments: list[tuple[str, int, CompiledProviderAssignment]],
+) -> None:
+    phase_type = raw_phase.get("type", "agent")
+    if phase_type not in {"parallel", "staged_parallel"}:
+        return
+    raw_agents = raw_phase.get("agents", [])
+    for left_index, (_, left_entry_index, left) in enumerate(assignments):
+        if assignments[left_index][0] != "agents":
+            continue
+        left_stage = (
+            raw_agents[left_entry_index].get("stage")
+            if phase_type == "staged_parallel"
+            else None
+        )
+        for collection, right_entry_index, right in assignments[left_index + 1 :]:
+            if collection != "agents":
+                continue
+            right_stage = (
+                raw_agents[right_entry_index].get("stage")
+                if phase_type == "staged_parallel"
+                else None
+            )
+            if phase_type == "staged_parallel" and left_stage != right_stage:
+                continue
+            for left_rule in left.contract.artifacts:
+                left_path = Path(left_rule.path)
+                for right_rule in right.contract.artifacts:
+                    if left_rule.root != right_rule.root:
+                        continue
+                    right_path = Path(right_rule.path)
+                    if (
+                        left_path == right_path
+                        or left_path in right_path.parents
+                        or right_path in left_path.parents
+                    ):
+                        raise ProviderArtifactContractError(
+                            f"parallel provider assignments overlap in phase "
+                            f"{raw_phase.get('id')!r}: {left.assignment_id!r} and "
+                            f"{right.assignment_id!r}"
+                        )
 
 
 @dataclass
@@ -85,6 +223,11 @@ class PhaseNode:
     evidence_routing: str = "none"
     transitions: list = field(default_factory=list)
     human_input_policies: tuple[HumanInputPolicy, ...] = ()
+    artifact_contract: ProviderArtifactContract | None = None
+    compiled_provider_assignment: CompiledProviderAssignment | None = None
+    nested_provider_assignments: tuple[
+        tuple[str, int, CompiledProviderAssignment], ...
+    ] = ()
 
     @property
     def controller_state_update_keys(self) -> frozenset[str]:
@@ -137,6 +280,30 @@ class PhaseNode:
             ),
             unexpected_state_updates=str(unexpected),
             evidence_routing=str(evidence_routing),
+        )
+
+    def provider_assignment(
+        self,
+        *,
+        collection: str | None = None,
+        index: int | None = None,
+    ) -> CompiledProviderAssignment:
+        if collection is None and index is None:
+            if self.compiled_provider_assignment is None:
+                raise ProviderArtifactContractError(
+                    f"phase {self.id!r} has no top-level provider assignment"
+                )
+            return self.compiled_provider_assignment
+        if collection is None or index is None:
+            raise ProviderArtifactContractError(
+                "nested provider assignment requires both collection and index"
+            )
+        for item_collection, item_index, assignment in self.nested_provider_assignments:
+            if item_collection == collection and item_index == index:
+                return assignment
+        raise ProviderArtifactContractError(
+            f"phase {self.id!r} has no provider assignment at "
+            f"{collection}[{index}]"
         )
 
 
@@ -244,6 +411,9 @@ class PhaseGraph:
                                 nested=True,
                                 check_overlap=False,
                             )
+            provider_contract, provider_assignment, nested_assignments = (
+                _compile_phase_provider_assignments(p)
+            )
             node = PhaseNode(
                 id=p["id"],
                 type=p.get("type", "agent"),
@@ -287,6 +457,9 @@ class PhaseGraph:
                     p,
                     known_phase_ids=phase_ids,
                 ),
+                artifact_contract=provider_contract,
+                compiled_provider_assignment=provider_assignment,
+                nested_provider_assignments=nested_assignments,
             )
             self._phases[node.id] = node
             self._human_input_policies.extend(node.human_input_policies)
@@ -321,6 +494,14 @@ class PhaseGraph:
         return HumanInputPolicyRegistry(
             tuple(self._human_input_policies) + controller_safeguard_policies()
         )
+
+    def provider_assignments(self) -> tuple[CompiledProviderAssignment, ...]:
+        assignments: list[CompiledProviderAssignment] = []
+        for node in self._phases.values():
+            if node.compiled_provider_assignment is not None:
+                assignments.append(node.compiled_provider_assignment)
+            assignments.extend(item[2] for item in node.nested_provider_assignments)
+        return tuple(assignments)
 
     def agent_file(self, dispatch_id: str) -> Optional[str]:
         """Return the relative file path for an agent dispatch id, or None."""

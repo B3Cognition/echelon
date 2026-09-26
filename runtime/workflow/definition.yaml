@@ -282,6 +282,16 @@ phases:
     spec_file: workflow/phases/phase1-discover.md
     type: agent
     agent: echelon.scout
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: glossary.md, kind: file, requirement: required}
+        - {root: active_spec, path: mental-model.md, kind: file, requirement: required}
+        - {root: active_spec, path: boundaries.md, kind: file, requirement: required}
+        - {root: active_spec, path: assumptions.md, kind: file, requirement: required}
+        - {root: active_spec, path: unknowns.md, kind: file, requirement: required}
+        - {root: active_spec, path: reference-architectures.md, kind: file, requirement: optional}
     tier: exploration
     context_pack:
       - user_request
@@ -320,6 +330,20 @@ phases:
     spec_file: workflow/phases/phase1-synthesizer.md
     type: agent
     agent: echelon.synthesizer
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: glossary.md, kind: file, requirement: required}
+        - {root: active_spec, path: mental-model.md, kind: file, requirement: required}
+        - {root: active_spec, path: boundaries.md, kind: file, requirement: required}
+        - {root: active_spec, path: assumptions.md, kind: file, requirement: required}
+        - {root: active_spec, path: unknowns.md, kind: file, requirement: required}
+        - {root: active_spec, path: contradictions-and-gaps.md, kind: file, requirement: required}
+        - {root: active_spec, path: risks.md, kind: file, requirement: required}
+        - {root: active_spec, path: people-and-teams.md, kind: file, requirement: optional}
+        - {root: active_spec, path: timeline.md, kind: file, requirement: optional}
+        - {root: active_spec, path: qa-test-strategy-inputs.md, kind: file, requirement: optional}
     tier: exploration
     context_pack:
       - all echelon.scout (SCOUT) outputs from {spec_dir}/
@@ -349,6 +373,14 @@ phases:
     spec_file: workflow/phases/phase1-modeler.md
     type: agent
     agent: echelon.modeler
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: mental-model-code.md, kind: file, requirement: required}
+        - {root: active_spec, path: codebase-graph.md, kind: file, requirement: optional}
+      read_inputs:
+        - {root: project, path: src, kind: directory}
     tier: exploration
     condition: "mode = brownfield"
     context_pack:
@@ -376,6 +408,12 @@ phases:
     spec_file: workflow/phases/phase1-tracker.md
     type: agent
     agent: echelon.tracker
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: user-intent.md, kind: file, requirement: required}
+        - {root: active_spec, path: stakeholder-model.md, kind: file, requirement: optional}
     tier: control
     context_pack:
       - user_request
@@ -424,6 +462,13 @@ phases:
     type: agent
     agent: echelon.sage
     mode: WHY1
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: assumption-review.md, kind: file, requirement: required}
+        - {root: active_spec, path: unknowns.md, kind: file, requirement: optional}
+        - {root: active_spec, path: issues.md, kind: file, requirement: optional}
     tier: exploration
     context_pack:
       - glossary.md
@@ -481,6 +526,11 @@ phases:
     spec_file: workflow/phases/phase1-constitution.md
     type: agent
     agent: echelon.chief
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: false
+      artifacts:
+        - {root: squad, path: constitution.draft.md, kind: file, requirement: required}
     tier: control
     context_pack:
       - "{spec_dir}/glossary.md"
@@ -512,6 +562,12 @@ phases:
     spec_file: workflow/phases/phase1-what.md
     type: agent
     agent: echelon.cartographer
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: spec.md, kind: file, requirement: required}
+        - {root: active_spec, path: requirements-overview.md, kind: file, requirement: required}
     tier: exploration
     context_pack:
       - user_request
@@ -584,6 +640,12 @@ phases:
     type: agent
     agent: echelon.sage
     mode: WHY2
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: issues.md, kind: file, requirement: required}
+        - {root: active_spec, path: quality-gates.md, kind: file, requirement: required}
     tier: exploration
     context_pack:
       - "{spec_dir}/spec.md"
@@ -690,6 +752,14 @@ phases:
     spec_file: workflow/phases/phase1-investigate.md
     type: agent
     agent: echelon.investigator
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: investigation, kind: directory, requirement: required}
+        - {root: active_spec, path: evidence-resolution.md, kind: file, requirement: required}
+        - {root: active_spec, path: evidence-grades.md, kind: file, requirement: required}
+        - {root: active_spec, path: evidence-inventory.json, kind: file, requirement: required}
     tier: specialists
     context_pack:
       - "{spec_dir}/spec.md"
@@ -757,6 +827,11 @@ phases:
     spec_file: workflow/phases/phase1-lexicon-derive.md
     type: agent
     agent: echelon.lexicon-deriver
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: requirements.lexicon.md, kind: file, requirement: required}
     tier: exploration
     context_pack:
       - "{spec_dir}/spec.md"
@@ -844,6 +919,15 @@ phases:
     spec_file: workflow/phases/phase2-decide.md
     type: agent
     agent: echelon.gatekeeper
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: feasibility.md, kind: file, requirement: required}
+        - {root: active_spec, path: prioritization.md, kind: file, requirement: required}
+        - {root: active_spec, path: estimates.md, kind: file, requirement: required}
+        - {root: active_spec, path: mvp-scope.md, kind: file, requirement: required}
+        - {root: active_spec, path: kill-report.md, kind: file, requirement: optional}
     timing_window_start: phase2-decide   # opens timing window; budget below
     budget_seconds: 1800                 # wall-clock budget for the phase2-decide window
                                          # (spans phase2-decide + phase2-strategic-overview + phase2-tracker-alignment)
@@ -909,6 +993,11 @@ phases:
     spec_file: workflow/phases/phase2-strategic-overview.md
     type: agent
     agent: echelon.strategist
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: strategic-overview.md, kind: file, requirement: required}
     tier: control
     context_pack:
       - spec.md
@@ -930,6 +1019,11 @@ phases:
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
     agent: echelon.tracker
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: intent-alignment-check.md, kind: file, requirement: required}
     tier: control
     context_pack:
       - user-intent.md
@@ -993,6 +1087,17 @@ phases:
     spec_file: workflow/phases/phase3-how.md
     type: agent
     agent: echelon.architect
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: plan.md, kind: file, requirement: required}
+        - {root: active_spec, path: research.md, kind: file, requirement: required}
+        - {root: active_spec, path: data-model.md, kind: file, requirement: required}
+        - {root: active_spec, path: contracts, kind: directory, requirement: required}
+        - {root: active_spec, path: constitution-amendment-candidates.md, kind: file, requirement: optional}
+        - {root: active_spec, path: architecture.md, kind: file, requirement: optional}
+        - {root: active_spec, path: adr, kind: directory, requirement: optional}
     tier: solution
     context_pack:
       - spec.md
@@ -1035,6 +1140,12 @@ phases:
       specialist (the only permitted parallelism). All others are strictly sequential.
     agents:
       - id: echelon.guardian
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: security-findings.md, kind: file, requirement: required}
+            - {root: active_spec, path: risk-acceptance-log.md, kind: file, requirement: required}
         tier: specialists
         condition: "guardian_mode = always_on OR domain_security_relevant"
         exempt_from_max_active_specialists: true
@@ -1050,6 +1161,12 @@ phases:
           - risk-acceptance-log.md
 
       - id: echelon.investigator
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: research.md, kind: file, requirement: required}
+            - {root: active_spec, path: experiment-results.md, kind: file, requirement: optional}
         tier: specialists
         condition: "unknown_territory OR calibrate_confidence < calibrate_confidence_floor"
         context_pack:
@@ -1065,24 +1182,44 @@ phases:
           - experiment-results.md  # if prototype spike run
 
       - id: echelon.oracle
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: domain-knowledge.md, kind: file, requirement: required}
         tier: specialists
         condition: domain_specific_knowledge_needed
         outputs:
           - domain-knowledge.md
 
       - id: echelon.benchmark
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: performance-model.md, kind: file, requirement: required}
         tier: specialists
         condition: performance_requirements_present
         outputs:
           - performance-model.md
 
       - id: echelon.advocate
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: ux-report.md, kind: file, requirement: required}
         tier: specialists
         condition: user_facing_ui_present
         outputs:
           - ux-report.md
 
       - id: echelon.maverick
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: alternatives.md, kind: file, requirement: required}
         tier: specialists
         # Dispatch when ANY of the 8 INNOVATE triggers is true:
         #   1. stagnation_detected          — EVOLVE: no quality improvement between runs
@@ -1128,6 +1265,13 @@ phases:
     spec_file: workflow/phases/phase3-sentinel.md
     type: agent
     agent: echelon.sentinel
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: test-strategy.md, kind: file, requirement: required}
+        - {root: active_spec, path: test-architecture.md, kind: file, requirement: required}
+        - {root: active_spec, path: coverage-map.md, kind: file, requirement: required}
     tier: solution
     context_pack:
       - spec.md
@@ -1161,6 +1305,14 @@ phases:
     spec_file: workflow/phases/phase3-plan.md
     type: agent
     agent: echelon.orchestrator
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: tasks.md, kind: file, requirement: required}
+        - {root: active_spec, path: critical-path.md, kind: file, requirement: required}
+        - {root: active_spec, path: risk-matrix.md, kind: file, requirement: required}
+        - {root: active_spec, path: dependencies.md, kind: file, requirement: required}
     tier: solution
     context_pack:
       - spec.md
@@ -1248,6 +1400,12 @@ phases:
     agents:
       - id: echelon.sage
         mode: WHY3
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: issues.md, kind: file, requirement: required}
+            - {root: active_spec, path: quality-gates.md, kind: file, requirement: required}
         stage: 1
         tier: exploration
         allowed_state_updates: []
@@ -1273,6 +1431,12 @@ phases:
 
       - id: echelon.gatekeeper
         mode: ASSESS2
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: implementability-report.md, kind: file, requirement: required}
+            - {root: active_spec, path: estimates.md, kind: file, requirement: optional}
         stage: 1
         tier: feasibility
         allowed_state_updates:
@@ -1306,6 +1470,14 @@ phases:
 
       - id: echelon.orchestrator
         mode: PLAN2
+        artifact_contract:
+          mode: publish
+          allow_shadow_recovery: true
+          artifacts:
+            - {root: active_spec, path: tasks.md, kind: file, requirement: required}
+            - {root: active_spec, path: critical-path.md, kind: file, requirement: required}
+            - {root: active_spec, path: risk-matrix.md, kind: file, requirement: required}
+            - {root: active_spec, path: dependencies.md, kind: file, requirement: required}
         stage: 2                           # dispatched AFTER stage 1 completes
         depends_on: [echelon.gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
@@ -1472,6 +1644,11 @@ phases:
     type: agent
     agent: echelon.chief
     tier: experimental
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: constitution-quality-report.md, kind: file, requirement: required}
     context_pack:
       - .echelon/constitution.md
       - constitution.md
@@ -1504,6 +1681,12 @@ phases:
     type: agent
     agent: echelon.orchestrator
     tier: experimental
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: tasks.md, kind: file, requirement: required}
+        - {root: active_spec, path: tasks-quality-report.md, kind: file, requirement: required}
     context_pack:
       - spec.md
       - plan.md
@@ -1538,6 +1721,11 @@ phases:
     type: agent
     agent: echelon.architect
     tier: experimental
+    artifact_contract:
+      mode: publish
+      allow_shadow_recovery: true
+      artifacts:
+        - {root: active_spec, path: adr-quality-report.md, kind: file, requirement: required}
     context_pack:
       - plan.md
       - architecture.md
@@ -1625,6 +1813,8 @@ phases:
     spec_file: workflow/phases/bugfix-2-diagnose.md
     type: agent
     agent: echelon.debugger
+    artifact_contract:
+      mode: result_only
     tier: build
     context_pack:
       - user description
@@ -1645,6 +1835,8 @@ phases:
     type: agent
     agent: echelon.sentinel
     tier: solution
+    artifact_contract:
+      mode: result_only
     context_pack:
       - debugger_report
       - spec.md
@@ -1663,6 +1855,8 @@ phases:
     spec_file: workflow/phases/bugfix-4-spec-compliance.md
     type: agent
     agent: echelon.spec-guard
+    artifact_contract:
+      mode: result_only
     tier: build
     context_pack:
       - spec.md
