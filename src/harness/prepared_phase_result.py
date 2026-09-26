@@ -205,6 +205,7 @@ class _CanonicalSquadAgentResult:
     provider_limit_message: str
     quarantined_state_updates: dict[str, Any]
     stderr: str
+    provider_attempts: tuple[dict[str, Any], ...]
 
 
 def _type_violation(field_name: str) -> ControllerStateContractViolation:
@@ -292,6 +293,41 @@ def _canonicalize_squad_agent_result(
     )
     if type(quarantined) is not dict:
         raise _type_violation("quarantined_state_updates")
+    provider_attempts = _bounded_detach_untrusted(
+        _exact_field(result, "provider_attempts", tuple),
+        root_path="$.provider_attempts",
+    )
+    if type(provider_attempts) is not tuple:
+        raise _type_violation("provider_attempts")
+    attempt_fields = {
+        "attempt_id",
+        "kind",
+        "provider",
+        "model",
+        "started_at",
+        "ended_at",
+        "outcome",
+        "response_sha256",
+    }
+    for index, attempt in enumerate(provider_attempts):
+        if type(attempt) is not dict or set(attempt) != attempt_fields:
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}]",
+                validator="type",
+            )
+        if any(type(value) is not str for value in attempt.values()):
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}]",
+                validator="type",
+            )
+        digest = attempt["response_sha256"]
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}].response_sha256",
+                validator="pattern",
+            )
 
     exit_code = _exact_field(result, "exit_code", int)
     raw_output = _exact_field(result, "raw_output", str)
@@ -378,6 +414,7 @@ def _canonicalize_squad_agent_result(
         ),
         quarantined_state_updates=quarantined,
         stderr=_exact_field(result, "stderr", str),
+        provider_attempts=provider_attempts,
     )
 
 
@@ -442,6 +479,7 @@ def _reconstruct_squad_agent_result(
             result.quarantined_state_updates
         ),
         stderr=result.stderr,
+        provider_attempts=_clone_canonical(result.provider_attempts),
     )
 
 
@@ -714,6 +752,7 @@ def _canonical_result_facts(
             result.quarantined_state_updates
         ),
         "stderr": _attestable_value(result.stderr),
+        "provider_attempts": _attestable_value(result.provider_attempts),
     }
 
 

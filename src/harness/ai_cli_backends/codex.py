@@ -41,6 +41,7 @@ _PRODUCT_PLANE_PERMISSION_PROFILE = "echelon_product_plane"
 class CodexCliBackend:
     name = "codex"
     constrained_execution_contract_id = "codex-constrained-prompt-v1"
+    exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
 
     def __init__(self, config: HarnessConfig) -> None:
         self._config = config

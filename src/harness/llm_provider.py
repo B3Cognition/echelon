@@ -14,6 +14,7 @@ from harness.ai_cli_backend import (
     CliRunRequest,
     CliRunResult,
     ConstrainedPromptBackend,
+    ExclusiveWriteScopeBackend,
     InspectionTurnBackend,
     ReviewTriageBackend,
     create_ai_cli_backend,
@@ -90,6 +91,13 @@ class AICodingCliProvider:
             return None
         value = self._backend.constrained_execution_contract_id
         return value if isinstance(value, str) and value else None
+
+    @property
+    def supports_exclusive_write_scope(self) -> bool:
+        if not isinstance(self._backend, ExclusiveWriteScopeBackend):
+            return False
+        value = self._backend.exclusive_write_scope_contract_id
+        return isinstance(value, str) and bool(value)
 
     @property
     def constrained_execution_configuration_id(self) -> str:
@@ -235,6 +243,23 @@ class AICodingCliProvider:
         if containment_violation is not None:
             self._record_result(containment_violation, metadata)
             return containment_violation
+        if _requests_exclusive_write_scope(metadata) and not (
+            self.supports_exclusive_write_scope
+        ):
+            result = CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr=(
+                    f"configured provider '{self._cli}' lacks exclusive "
+                    "write-scope capability"
+                ),
+                metadata={
+                    "failure_reason": "exclusive-write-scope-unsupported",
+                    "provider": self._cli,
+                },
+            )
+            self._record_result(result, metadata)
+            return result
         result = self._backend.run_agent(
             CliRunRequest(
                 cwd=project_root,
@@ -533,6 +558,14 @@ def _execution_profile_violation(
         stdout="",
         stderr=message,
         metadata={"unsupported_execution_profile": profile},
+    )
+
+
+def _requests_exclusive_write_scope(metadata: Mapping[str, object]) -> bool:
+    prompt_metadata = metadata.get("prompt_metadata")
+    return (
+        isinstance(prompt_metadata, Mapping)
+        and prompt_metadata.get("tool_write_scope_exclusive") is True
     )
 
 

@@ -1291,6 +1291,45 @@ def test_prepare_rejects_hostile_non_payload_fields_before_routing(
     assert _RAW_ATTESTATION_SECRET not in str(raised.value)
 
 
+def test_prepare_detaches_provider_attempt_records() -> None:
+    result = _result({})
+    attempt = {
+        "attempt_id": "primary-id",
+        "kind": "primary",
+        "provider": "codex",
+        "model": "gpt-test",
+        "started_at": "2026-09-26T10:00:00Z",
+        "ended_at": "2026-09-26T10:00:01Z",
+        "outcome": "OK",
+        "response_sha256": "a" * 64,
+    }
+    result.provider_attempts = (attempt,)
+
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        result,
+        controller_updates={},
+    )
+    attempt["outcome"] = "FORGED"
+
+    assert prepared.as_squad_agent_result().provider_attempts[0]["outcome"] == "OK"
+
+
+def test_prepare_rejects_mutable_provider_attempt_container() -> None:
+    result = _result({})
+    result.provider_attempts = []
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            result,
+            controller_updates={},
+        )
+
+    assert raised.value.json_path == "$.provider_attempts"
+    assert raised.value.validator == "type"
+
+
 def test_prepare_bounds_non_payload_strings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

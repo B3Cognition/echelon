@@ -42,6 +42,7 @@ _CLAUDE_RULE_PATH_SAFE_CHARACTERS = frozenset("/._- ")
 class ClaudeCliBackend:
     name = "claude"
     constrained_execution_contract_id = "claude-constrained-prompt-v1"
+    exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
 
     def __init__(self, config: HarnessConfig) -> None:
         self._config = config

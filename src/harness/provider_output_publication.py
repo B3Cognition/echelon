@@ -175,6 +175,42 @@ def resolve_provider_artifact_contract(
     )
 
 
+def permission_metadata(
+    resolved_contract: ResolvedProviderArtifactContract,
+) -> dict[str, object]:
+    """Project a resolved contract into the provider's exact native scope."""
+    read_roots: list[str] = []
+    for rule, target in zip(
+        resolved_contract.contract.read_inputs,
+        resolved_contract.read_paths,
+        strict=True,
+    ):
+        _append_unique(read_roots, str(_declared_root(target, rule.path)))
+    for rule, target in zip(
+        resolved_contract.contract.artifacts,
+        resolved_contract.write_paths,
+        strict=True,
+    ):
+        _append_unique(read_roots, str(_declared_root(target, rule.path)))
+    return {
+        "tool_read_roots": read_roots,
+        "tool_write_paths": [str(path) for path in resolved_contract.write_paths],
+        "tool_write_scope_exclusive": True,
+    }
+
+
+def _declared_root(target: Path, relative_path: str) -> Path:
+    root = target
+    for _part in PurePosixPath(relative_path).parts:
+        root = root.parent
+    return root
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
 def _compile_artifact_rule(
     raw: object,
     *,
