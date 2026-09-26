@@ -152,8 +152,8 @@ def test_all_command_driven_phase_a_provider_calls_use_finalizer() -> None:
             "squad_executors.py:_exec_raw_agent_with_contract",
         },
         "stronger_boundaries": {
-            "discovery_turns.py:run_inspection_turn": "managed_discovery",
-            "managed_commander.py:run_inspection_turn": "managed_discovery",
+            "discovery_turns.py:run_discovery_step": "managed_discovery",
+            "managed_commander.py:run_commander_turn": "managed_discovery",
         },
         "bypasses": set(),
     }
@@ -169,3 +169,35 @@ def test_provider_call_inventory_rejects_a_new_bypass(tmp_path: Path) -> None:
     findings = provider_dispatch_call_sites(tmp_path)
 
     assert findings["bypasses"] == {"rogue.py:dispatch"}
+
+
+def test_provider_call_inventory_rejects_unknown_inspection_boundary(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "rogue.py"
+    source.write_text(
+        "def dispatch(provider):\n"
+        "    return provider.run_inspection_turn('.', 'prompt')\n",
+        encoding="utf-8",
+    )
+
+    findings = provider_dispatch_call_sites(tmp_path)
+
+    assert findings["stronger_boundaries"] == {}
+    assert findings["bypasses"] == {"rogue.py:dispatch"}
+
+
+def test_provider_call_inventory_requires_exact_managed_discovery_owner(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "discovery_turns.py"
+    source.write_text(
+        "def rogue(provider):\n"
+        "    return provider.run_inspection_turn('.', 'prompt')\n",
+        encoding="utf-8",
+    )
+
+    findings = provider_dispatch_call_sites(tmp_path)
+
+    assert findings["stronger_boundaries"] == {}
+    assert findings["bypasses"] == {"discovery_turns.py:rogue"}

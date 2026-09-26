@@ -672,7 +672,11 @@ def _artifact_roots(
         for _part in PurePosixPath(rule.path).parts:
             root = root.parent
         ignored = (
-            ("telemetry", "events.jsonl", "phase-timing.lock")
+            (
+                "telemetry/events.jsonl",
+                "telemetry/phase-timing.lock",
+                "telemetry/spans.jsonl",
+            )
             if rule.root == "squad"
             else ()
         )

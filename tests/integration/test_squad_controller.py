@@ -11982,6 +11982,82 @@ Modified principles:
         assert store.load()["constitution_status"] == "exists"
         assert "phase1-constitution" in store.load()["completed_phases"]
 
+    @pytest.mark.parametrize("crash_point", ["before", "after"])
+    def test_constitution_publication_crash_recovers_without_redispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        crash_point: str,
+    ) -> None:
+        from harness import constitution_publication
+
+        provider = _mock_provider_publishing_outputs()
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
+        canonical = tmp_path / ".echelon" / "constitution.md"
+
+        if crash_point == "before":
+            original_apply = ctrl._apply_spec_step_publication
+
+            def crash_before(*_args, **_kwargs):
+                raise KeyboardInterrupt("before constitution publication")
+
+            monkeypatch.setattr(
+                ctrl,
+                "_apply_spec_step_publication",
+                crash_before,
+            )
+        else:
+            original_publish = (
+                constitution_publication.apply_or_verify_constitution_publication
+            )
+
+            def crash_after(*args, **kwargs):
+                original_publish(*args, **kwargs)
+                raise KeyboardInterrupt("after constitution publication")
+
+            monkeypatch.setattr(
+                constitution_publication,
+                "apply_or_verify_constitution_publication",
+                crash_after,
+            )
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            with pytest.raises(KeyboardInterrupt):
+                ctrl.run("msg", "banzai")
+
+        crashed_state = store.load()
+        assert crashed_state[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
+        assert "constitution_status" not in crashed_state
+        assert "phase1-constitution" not in crashed_state["completed_phases"]
+        assert canonical.exists() is (crash_point == "after")
+        provider_calls = provider.exec_agent.call_count
+
+        if crash_point == "before":
+            monkeypatch.setattr(
+                ctrl,
+                "_apply_spec_step_publication",
+                original_apply,
+            )
+        else:
+            monkeypatch.setattr(
+                constitution_publication,
+                "apply_or_verify_constitution_publication",
+                original_publish,
+            )
+
+        recovery = ctrl._drain_pending_spec_step()
+
+        recovered_state = store.load()
+        assert recovery.recovered and not recovery.blocked
+        assert PENDING_SPEC_STEP_KEY not in recovered_state
+        assert recovered_state["constitution_status"] == "exists"
+        assert "phase1-constitution" in recovered_state["completed_phases"]
+        assert canonical.read_bytes() == (
+            ctrl._squad_dir / "constitution.draft.md"
+        ).read_bytes()
+        assert provider.exec_agent.call_count == provider_calls
+
     def test_controller_refuses_incomplete_chief_draft_without_advancing(
         self,
         tmp_path: Path,
@@ -12135,6 +12211,66 @@ class TestCommanderJudgmentStateUpdates:
             "tool_write_paths": [],
             "tool_write_scope_exclusive": True,
         }
+
+    def test_multiple_routing_judgments_have_unique_occurrence_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.side_effect = [
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {"next_phase": "phase1-why1"},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        ]
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = PhaseNode(
+            id="phase1-discover",
+            type="agent",
+            transitions=[
+                {"to": "phase1-tracker", "condition": "unknown.first"},
+                {"to": "phase1-why1", "condition": "unknown.second"},
+            ],
+        )
+        store.initialize("r", "greenfield", "msg", 100, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
+
+        routing = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert routing is not None
+        assert routing.decision.to_phase == "phase1-why1"
+        assert routing.execution is not None
+        assert [
+            item.occurrence_id for item in routing.execution.manifest
+        ] == [
+            "commander/routing-judgment/transition-0",
+            "commander/routing-judgment/transition-1",
+        ]
 
     def test_judgment_cannot_own_store_iteration(self, tmp_path):
         provider = _mock_provider()

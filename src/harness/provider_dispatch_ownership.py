@@ -11,8 +11,14 @@ _FINALIZED = {
     ("squad_executors.py", "_exec_raw_agent_with_contract"),
 }
 _STRONGER_BOUNDARIES = {
-    ("discovery_turns.py", "run_inspection_turn"),
-    ("managed_commander.py", "run_inspection_turn"),
+    ("discovery_turns.py", "run_discovery_step"),
+    ("managed_commander.py", "run_commander_turn"),
+}
+_NON_PHASE_A_INSPECTION_CALLS = {
+    # The provider adapter implements, but does not own, the protocol.
+    ("llm_provider.py", "run_inspection_turn"),
+    # Delivery fulfillment has its own sealed read-channel protocol.
+    ("controlled_fulfillment.py", "_dispatch"),
 }
 _OUT_OF_SCOPE_PREFIXES = ("re_",)
 
@@ -57,25 +63,28 @@ def provider_dispatch_call_sites(root: Path) -> dict[str, object]:
         except (OSError, SyntaxError, UnicodeDecodeError):
             bypasses.add(f"{relative}:<unreadable>")
             continue
-        inventory = _CallInventory(filename)
+        inventory = _CallInventory(relative)
         inventory.visit(tree)
         for location, stack in inventory.exec_calls:
             owner = next(
                 (
                     function
                     for function in stack
-                    if (filename, function) in _FINALIZED
+                    if (relative, function) in _FINALIZED
                 ),
                 None,
             )
             if owner is not None:
-                finalized.add(f"{filename}:{owner}")
+                finalized.add(f"{relative}:{owner}")
             else:
                 bypasses.add(location)
-        for location, _stack in inventory.inspection_calls:
-            normalized = f"{filename}:run_inspection_turn"
-            if (filename, "run_inspection_turn") in _STRONGER_BOUNDARIES:
-                stronger[normalized] = "managed_discovery"
+        for location, stack in inventory.inspection_calls:
+            owner = stack[-1] if stack else "<module>"
+            site = (relative, owner)
+            if site in _STRONGER_BOUNDARIES:
+                stronger[location] = "managed_discovery"
+            elif site not in _NON_PHASE_A_INSPECTION_CALLS:
+                bypasses.add(location)
     return {
         "finalized": finalized,
         "stronger_boundaries": stronger,

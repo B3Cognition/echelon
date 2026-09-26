@@ -15922,6 +15922,10 @@ class SquadController:
                         break
                     except _TransitionJudgmentRequired as unresolved:
                         transition_index = unresolved.transition_index
+                        judgment_occurrence_id = (
+                            "commander/routing-judgment/transition-"
+                            f"{transition_index}"
+                        )
                         source = "commander"
                         result = prepared.as_squad_agent_result()
                         finalized_judgment = self._judgment_dispatch(
@@ -15931,6 +15935,7 @@ class SquadController:
                             node,
                             result,
                             snapshot,
+                            occurrence_id=judgment_occurrence_id,
                         )
                         if execution is None:
                             execution = empty_phase_execution(
@@ -15940,7 +15945,7 @@ class SquadController:
                         execution = extend_phase_execution(
                             execution,
                             finalized_judgment,
-                            occurrence_id="commander/routing-judgment",
+                            occurrence_id=judgment_occurrence_id,
                         )
                         judgment = finalized_judgment.result
                         requested_phase = (
@@ -16258,6 +16263,8 @@ class SquadController:
         node: PhaseNode,
         result: Optional[SquadAgentResult] = None,
         snapshot: RoutingStateSnapshot | None = None,
+        *,
+        occurrence_id: str = "commander/routing-judgment",
     ) -> FinalizedProviderResult:
         """Dispatch slimmed COMMANDER for judgment calls."""
         commander_file = self._graph.agent_file("echelon.commander")
@@ -16297,7 +16304,7 @@ class SquadController:
             return self._dispatch_controller_provider(
                 assignment_id="commander/routing-judgment",
                 phase_id=node.id,
-                occurrence_id="commander/routing-judgment",
+                occurrence_id=occurrence_id,
                 state_revision=int(state.get("state_revision") or 0),
                 prompt=context,
                 dispatch_kind="judgment",

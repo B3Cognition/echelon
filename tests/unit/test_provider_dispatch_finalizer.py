@@ -377,8 +377,12 @@ def test_squad_guard_ignores_only_harness_telemetry_writes(
         (squad / "telemetry" / "spans.jsonl").write_text(
             "{}\n", encoding="utf-8"
         )
-        (squad / "events.jsonl").write_text("{}\n", encoding="utf-8")
-        (squad / "phase-timing.lock").write_text("", encoding="utf-8")
+        (squad / "telemetry" / "events.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (squad / "telemetry" / "phase-timing.lock").write_text(
+            "", encoding="utf-8"
+        )
         return _result(output_files=[str(target)])
 
     finalized = _dispatch(context, telemetry_and_output)
@@ -400,6 +404,37 @@ def test_squad_guard_ignores_only_harness_telemetry_writes(
 
     with pytest.raises(ProviderDispatchFailure, match="outside write scope"):
         _dispatch(retry_context, mutate_controller_state)
+
+    for attempt, relative in enumerate(
+        (
+            "telemetry/rogue.json",
+            "events.jsonl",
+            "phase-timing.lock",
+        ),
+        start=2,
+    ):
+        foreign_context = ProviderDispatchContext(
+            **{
+                **context.__dict__,
+                "occurrence_id": f"ordinary/retry/{attempt}",
+            }
+        )
+
+        def mutate_lookalike(_metadata, *, path=relative, version=attempt):
+            target.write_text(
+                f"# Constitution v{version}\n",
+                encoding="utf-8",
+            )
+            foreign = squad / path
+            foreign.parent.mkdir(parents=True, exist_ok=True)
+            foreign.write_text("provider-owned\n", encoding="utf-8")
+            return _result(output_files=[str(target)])
+
+        with pytest.raises(
+            ProviderDispatchFailure,
+            match="outside write scope",
+        ):
+            _dispatch(foreign_context, mutate_lookalike)
 
 
 def test_fresh_shadow_is_promoted_but_stale_shadow_is_rejected(
