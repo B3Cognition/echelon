@@ -132,7 +132,7 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
     )
     gate = graph.get("phase3-consensus-tasks-lexicon")
     gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
-    gate_prepared = ctrl._prepare_phase_result(gate, gate_result, snapshot)
+    gate_prepared = ctrl._prepare_phase_result(gate, gate_result.result, snapshot)
     return ctrl._evaluate_transitions(gate, gate_prepared, snapshot)
 
 
@@ -388,19 +388,16 @@ def test_targeted_why3_queue_resets_only_its_owner_dispatch_counts(
             "phase3-plan": 3,
         },
     }
-    store = MagicMock()
-    store.load.return_value = state
     executor = object.__new__(StagedParallelExecutor)
     executor._project_root = tmp_path
 
-    executor._persist_why3_repair_phase(store)
+    updates = executor._why3_repair_updates(state)
 
-    saved = store.save.call_args.args[0]
-    assert saved["why3_targeted_repair_queue"] == [
+    assert updates["why3_targeted_repair_queue"] == [
         "phase1-discover",
         "phase3-sentinel",
     ]
-    assert saved["phase_dispatch_counts"] == {"phase3-plan": 3}
+    assert updates["phase_dispatch_counts"] == {"phase3-plan": 3}
 
 
 @pytest.mark.unit

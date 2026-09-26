@@ -146,6 +146,7 @@ from harness.published_re_context import (
     attach_published_re_context,
     write_canonical_re_context,
 )
+from harness.provider_output_publication import ProviderArtifactContractError
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
 from echelon.spec_retarget_history import (
@@ -166,7 +167,6 @@ from harness.squad_executors import (
     ExecutorBlockedResult,
     PhaseExecutor,
     StagedParallelExecutor,
-    _MANDATORY_PHASE_OUTPUTS,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_completion import (
@@ -11847,7 +11847,15 @@ class SquadController:
         last_dispatch = state.get("last_dispatch")
         if not isinstance(last_dispatch, dict) or last_dispatch.get("phase_id") != phase:
             return False
-        required = _MANDATORY_PHASE_OUTPUTS.get(phase, ())
+        try:
+            assignment = self._graph.get(phase).provider_assignment()
+        except (KeyError, ProviderArtifactContractError):
+            return False
+        required = tuple(
+            rule
+            for rule in assignment.contract.artifacts
+            if rule.requirement == "required" and rule.root == "active_spec"
+        )
         spec_dir_ref = str(state.get("spec_dir") or "").strip()
         if not required or not spec_dir_ref:
             return False
@@ -11855,9 +11863,13 @@ class SquadController:
         if not spec_dir.is_absolute():
             spec_dir = self._project_root / spec_dir
         missing = [
-            output
-            for output in required
-            if not (spec_dir / output).exists()
+            rule.path
+            for rule in required
+            if not (
+                (spec_dir / rule.path).is_dir()
+                if rule.kind == "directory"
+                else (spec_dir / rule.path).is_file()
+            )
         ]
         if not missing:
             return False

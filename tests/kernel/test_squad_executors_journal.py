@@ -9,6 +9,8 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -21,9 +23,18 @@ if str(EXT_ROOT) not in sys.path:
 
 from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_a_provider_assignments import CompiledProviderAssignment
+from harness.phase_execution import PhaseExecutionAccumulator
+from harness.provider_dispatch_finalizer import (
+    FinalizedProviderResult,
+    ProviderDispatchReceipt,
+    ProviderDispatchFailure,
+)
 from harness.provider_output_publication import (
+    ProviderArtifactContractError,
     ProviderOutputGuard,
     ProviderOutputSpec,
+    compile_provider_artifact_contract,
 )
 from harness.squad_executors import (
     AgentExecutor,
@@ -31,7 +42,6 @@ from harness.squad_executors import (
     DeterministicLexiconExecutor,
     ExecutorBlockedResult,
     StagedParallelExecutor,
-    _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
     _validate_evidence_inventory,
@@ -40,6 +50,117 @@ from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 from harness.spec_lexicon_gate import SpecLexiconGateResult
 from harness.tasks_lexicon_gate import TasksLexiconGateResult
+
+
+_TEST_REQUIRED_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase1-what": ("spec.md", "requirements-overview.md"),
+    "phase1-lexicon-derive": ("requirements.lexicon.md",),
+    "phase1-investigate": (
+        "evidence-resolution.md",
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    ),
+    "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
+    "phase3-sentinel": (
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    ),
+    "phase3-plan": (
+        "tasks.md",
+        "critical-path.md",
+        "risk-matrix.md",
+        "dependencies.md",
+    ),
+}
+
+
+def _test_provider_assignment(
+    node: PhaseNode,
+    collection: str | None,
+    index: int | None,
+) -> CompiledProviderAssignment:
+    entry: dict = {}
+    if collection is not None and index is not None:
+        entry = getattr(node, collection)[index]
+    agent_id = str(
+        entry.get("id")
+        or entry.get("agent")
+        or getattr(node, "agent", None)
+        or "echelon.test"
+    ).split(" ")[0]
+    mode = entry.get("mode") or getattr(node, "mode", None)
+    declared = entry.get("outputs") or getattr(node, "outputs", [])
+    paths: set[str] = set()
+    if isinstance(declared, list):
+        for item in declared:
+            if not isinstance(item, str):
+                continue
+            paths.update(re.findall(r"[A-Za-z0-9_.-]+\.(?:md|json|yaml|yml)", item))
+            if item.endswith("/"):
+                paths.add(item.rstrip("/"))
+    if not paths:
+        paths.update(_TEST_REQUIRED_OUTPUTS.get(node.id, ()))
+    if node.id == "phase3-consensus" and not getattr(
+        node,
+        "test_result_only",
+        False,
+    ):
+        paths.update(
+            {
+                "WHY3": {"issues.md", "quality-gates.md"},
+                "ASSESS2": {"implementability-report.md"},
+                "PLAN2": {
+                    "tasks.md",
+                    "critical-path.md",
+                    "risk-matrix.md",
+                    "dependencies.md",
+                },
+            }.get(str(mode or "").upper(), set())
+        )
+    artifacts = [
+        {
+            "root": "active_spec",
+            "path": path.rstrip("/"),
+            "kind": "directory" if path.endswith("/") or path == "contracts" else "file",
+            "requirement": "required",
+        }
+        for path in sorted(paths)
+    ]
+    assignment_id = (
+        node.id
+        if collection is None
+        else f"{node.id}/{collection}/{index}/{agent_id}:{mode or 'default'}"
+    )
+    return CompiledProviderAssignment(
+        assignment_id=assignment_id,
+        agent_id=agent_id,
+        mode=mode,
+        contract=compile_provider_artifact_contract(
+            {
+                "mode": "publish" if artifacts else "result_only",
+                "artifacts": artifacts,
+                "allow_shadow_recovery": bool(artifacts),
+            },
+            assignment_id=assignment_id,
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _supply_contracts_for_legacy_phase_nodes(monkeypatch):
+    """Keep legacy executor fixtures explicit without relaxing production lookup."""
+    from harness.squad_executors import PhaseExecutor
+
+    original = PhaseExecutor._provider_assignment
+
+    def resolve(self, node, *, collection=None, index=None):
+        try:
+            return original(self, node, collection=collection, index=index)
+        except ProviderArtifactContractError:
+            return _test_provider_assignment(node, collection, index)
+
+    monkeypatch.setattr(PhaseExecutor, "_provider_assignment", resolve)
 
 
 def test_artifact_repair_prompt_is_scoped_to_owner_and_not_inventory_protocol():
@@ -88,6 +209,84 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
     )
 
 
+def _finalized_provider_result(
+    occurrence_id: str,
+    *,
+    state_updates: dict[str, object],
+) -> FinalizedProviderResult:
+    result = _result(verdict="PASS")
+    assert result.echelon_result is not None
+    result.echelon_result["state_updates"] = state_updates
+    return FinalizedProviderResult(
+        result=result,
+        receipt=ProviderDispatchReceipt(
+            schema_version=2,
+            dispatch_id=f"dispatch-{occurrence_id}",
+            phase_id="phase3-consensus",
+            assignment_id="phase3-consensus/agents/0/echelon.sage:WHY3",
+            occurrence_id=occurrence_id,
+            state_revision=1,
+            contract_sha256="a" * 64,
+            prompt_sha256="b" * 64,
+            prompt_metadata_sha256="c" * 64,
+            outcome="published",
+            outputs=(),
+            semantic_validator_id=None,
+            semantic_result_sha256=None,
+            provider_attempts_sha256="d" * 64,
+            validated_result_sha256="e" * 64,
+        ),
+    )
+
+
+def test_accumulator_keeps_repeated_occurrences_in_manifest() -> None:
+    accumulator = PhaseExecutionAccumulator("phase3-consensus")
+    accumulator.record(
+        _finalized_provider_result(
+            "why3/initial",
+            state_updates={"why3_verdict": "PASS"},
+        )
+    )
+    accumulator.record(
+        _finalized_provider_result(
+            "why3/final-revalidation",
+            state_updates={"why3_verdict": "PASS"},
+        )
+    )
+
+    execution = accumulator.freeze(_result())
+
+    assert [row.occurrence_id for row in execution.manifest] == [
+        "why3/initial",
+        "why3/final-revalidation",
+    ]
+    assert len(execution.receipts) == 2
+    assert execution.projected_state_updates == {"why3_verdict": "PASS"}
+
+
+def test_accumulator_orders_initial_why3_at_its_declared_stage1_position() -> None:
+    accumulator = PhaseExecutionAccumulator("phase3-consensus")
+    accumulator.record(
+        _finalized_provider_result(
+            "stage1/1",
+            state_updates={"assess2_verdict": "PASS"},
+        )
+    )
+    accumulator.record(
+        _finalized_provider_result(
+            "why3/initial",
+            state_updates={"why3_verdict": "PASS"},
+        )
+    )
+
+    execution = accumulator.freeze(_result())
+
+    assert [row.occurrence_id for row in execution.manifest] == [
+        "why3/initial",
+        "stage1/1",
+    ]
+
+
 def test_agent_executor_uses_configured_phase_timeout(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     executor._resolved_config = MagicMock(
@@ -95,7 +294,7 @@ def test_agent_executor_uses_configured_phase_timeout(tmp_path: Path) -> None:
     )
     executor._provider.exec_agent.return_value = _result()
 
-    executor._exec_agent_with_contract("Do work.", MagicMock())
+    executor._exec_raw_agent_with_contract("Do work.", MagicMock())
 
     assert executor._provider.exec_agent.call_args.kwargs["timeout_ms"] == 37_000
 
@@ -105,12 +304,12 @@ def test_agent_executor_defaults_to_one_hour_timeout(tmp_path: Path) -> None:
     executor._resolved_config = MagicMock(return_value={})
     executor._provider.exec_agent.return_value = _result()
 
-    executor._exec_agent_with_contract("Do work.", MagicMock())
+    executor._exec_raw_agent_with_contract("Do work.", MagicMock())
 
     assert executor._provider.exec_agent.call_args.kwargs["timeout_ms"] == 3_600_000
 
 
-def test_agent_phase_metadata_limits_writes_to_declared_outputs(tmp_path: Path) -> None:
+def test_agent_phase_metadata_does_not_infer_filesystem_permissions(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -131,19 +330,7 @@ def test_agent_phase_metadata_limits_writes_to_declared_outputs(tmp_path: Path) 
         {"model_tier": "strong", "tools": "full"},
     )
 
-    assert metadata["model_tier"] == "strong"
-    assert metadata["tool_write_scope_exclusive"] is True
-    assert metadata["tool_write_paths"] == [
-        str(spec_dir / "issues.md"),
-        str(spec_dir / "quality-gates.md"),
-        str(
-            tmp_path
-            / "squad"
-            / "run-test"
-            / "kb-proposals"
-            / "sage-decision-phase1-why2-rev-0.yaml"
-        ),
-    ]
+    assert metadata == {"model_tier": "strong", "tools": "full"}
 
 
 def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> None:
@@ -282,7 +469,7 @@ def test_provider_output_guard_rejects_directory_metadata_only_touch(
     assert finalized.failure.stale == ("contracts/",)
 
 
-def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> None:
+def test_sage_consensus_metadata_does_not_derive_review_scope(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -295,17 +482,7 @@ def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> No
         outputs=["issues (CRITICAL | HIGH | MEDIUM)"],
     )
 
-    assert metadata["tool_write_paths"] == [
-        str(spec_dir / "issues.md"),
-        str(spec_dir / "quality-gates.md"),
-        str(
-            tmp_path
-            / "squad"
-            / "run-test"
-            / "kb-proposals"
-            / "sage-decision-phase3-consensus-rev-0.yaml"
-        ),
-    ]
+    assert metadata == {}
 
 
 def test_sage_prompt_names_exact_authorized_decision_proposal_path(
@@ -333,7 +510,7 @@ def test_sage_prompt_names_exact_authorized_decision_proposal_path(
     assert "use this exact path" in context
 
 
-def test_read_only_sage_assessment_has_no_write_paths(tmp_path: Path) -> None:
+def test_result_only_sage_metadata_has_no_embedded_permissions(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -346,8 +523,7 @@ def test_read_only_sage_assessment_has_no_write_paths(tmp_path: Path) -> None:
         outputs=[],
     )
 
-    assert metadata["tool_write_scope_exclusive"] is True
-    assert metadata["tool_write_paths"] == []
+    assert metadata == {}
 
 
 def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
@@ -370,7 +546,13 @@ def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() ->
 
 
 def test_phase1_investigate_requires_evidence_artifacts() -> None:
-    assert _MANDATORY_PHASE_OUTPUTS["phase1-investigate"] == (
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    contract = graph.get("phase1-investigate").provider_assignment().contract
+    assert tuple(rule.path for rule in contract.artifacts if rule.requirement == "required") == (
+        "investigation",
         "evidence-resolution.md",
         "evidence-grades.md",
         "evidence-inventory.json",
@@ -605,7 +787,7 @@ def test_agent_prompt_inlines_referenced_prosaic_companion(tmp_path: Path) -> No
     assert prompt.count("COMPANION_SENTINEL") == 1
 
 
-def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_is_missing(tmp_path):
+def test_phase1_investigate_rejects_result_before_missing_artifact_publication(tmp_path):
     squad_dir = tmp_path / "runs" / "spec-20260724-123456"
     squad_dir.mkdir(parents=True)
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -655,13 +837,9 @@ def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert result.result.state_updates["missing_outputs"] == [
-        "evidence-resolution.md",
-        "evidence-grades.md",
-        "evidence-inventory.json",
+        "evidence-grades.md"
     ]
-    assert result.result.state_updates["recovery_state_updates"] == {
-        "evidence_resolution_status": "conflicting"
-    }
+    assert result.result.state_updates["recovery_state_updates"] == {}
 
 
 def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
@@ -1437,46 +1615,27 @@ def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):
     assert "# Spec Lexicon Repair (Controller-Enforced)" not in prompt
 
 
-def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ex = _executor(tmp_path, squad_dir=squad_dir)
-    from harness.phase_graph import PhaseNode
-
-    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
-    spec_dir.mkdir(parents=True)
-    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
-    node = PhaseNode(id="phase1-what", type="agent")
-
-    assert ex._required_phase_outputs_missing(node, state) == [
+def test_phase1_what_outputs_are_owned_by_the_compiled_contract():
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    contract = graph.get("phase1-what").provider_assignment().contract
+    assert [rule.path for rule in contract.artifacts] == [
         "spec.md",
         "requirements-overview.md",
     ]
-    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
-    assert ex._required_phase_outputs_missing(node, state) == []
 
 
-def test_phase1_lexicon_derive_checks_only_derived_artifact(tmp_path):
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ex = _executor(tmp_path, squad_dir=squad_dir)
-    from harness.phase_graph import PhaseNode
-
-    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
-    spec_dir.mkdir(parents=True)
-    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
-    node = PhaseNode(id="phase1-lexicon-derive", type="agent")
-
-    assert ex._required_phase_outputs_missing(node, state) == [
+def test_phase1_lexicon_derive_contract_owns_only_derived_artifact():
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    contract = graph.get("phase1-lexicon-derive").provider_assignment().contract
+    assert [rule.path for rule in contract.artifacts] == [
         "requirements.lexicon.md",
     ]
-    (spec_dir / "requirements.lexicon.md").write_text(
-        "ARTIFACT: SPEC\n",
-        encoding="utf-8",
-    )
-    assert ex._required_phase_outputs_missing(node, state) == []
 
 
 def test_allowed_state_updates_contract_renders_empty_allowlist():
@@ -2003,6 +2162,9 @@ def test_execute_passes_agent_frontmatter_metadata_to_provider(tmp_path):
     assert provider.exec_agent.call_args.kwargs["prompt_metadata"] == {
         "model": "frontmatter-model",
         "effort": "high",
+        "tool_read_roots": [],
+        "tool_write_paths": [],
+        "tool_write_scope_exclusive": True,
     }
 
 
@@ -2216,15 +2378,23 @@ def test_pre_dispatch_quarantines_unallowed_state_updates_before_mutation(tmp_pa
         allowed_state_updates=["allowed_key"],
     )
 
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+    accumulator = PhaseExecutionAccumulator(node.id)
+    result = ex._run_pre_dispatch(
+        node,
+        state_store.load(),
+        state_store,
+        accumulator,
+    )
 
     state = state_store.load()
     assert result is None
     assert "unexpected" not in state
     assert not state.get("blocked_reason")
-    journal = _read_journal(tmp_path, squad_dir=squad_dir)
-    assert journal[0]["type"] == "state_contract_warning"
-    assert journal[0]["data"]["dropped_keys"] == ["unexpected"]
+    assert _read_journal(tmp_path, squad_dir=squad_dir) == []
+    execution = accumulator.freeze(_result())
+    assert execution.accepted_results[0].quarantined_state_updates == {
+        "unexpected": True
+    }
 
 
 def test_agent_execute_quarantines_unallowed_state_updates_before_state_write(tmp_path):
@@ -2263,8 +2433,10 @@ def test_agent_execute_quarantines_unallowed_state_updates_before_state_write(tm
     assert result.blocked is False
     assert result.state_updates == {}
     assert result.quarantined_state_updates == {"unexpected": True}
-    journal = _read_journal(tmp_path, squad_dir=squad_dir)
-    assert journal[0]["type"] == "state_contract_warning"
+    assert _read_journal(tmp_path, squad_dir=squad_dir) == []
+    assert result.accepted_results[0].quarantined_state_updates == {
+        "unexpected": True
+    }
 
 
 def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
@@ -2306,10 +2478,17 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
         allowed_state_updates=["allowed_key"],
     )
 
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+    accumulator = PhaseExecutionAccumulator(node.id)
+    result = ex._run_pre_dispatch(
+        node,
+        state_store.load(),
+        state_store,
+        accumulator,
+    )
 
     assert result is None
-    assert state_store.load()["allowed_key"] is True
+    assert "allowed_key" not in state_store.load()
+    assert accumulator.project_state(state_store.load())["allowed_key"] is True
 
 
 def test_pre_dispatch_rejects_allowlisted_transaction_owned_update_before_write(
@@ -2350,12 +2529,16 @@ def test_pre_dispatch_rejects_allowlisted_transaction_owned_update_before_write(
         allowed_state_updates=[],
     )
 
-    with pytest.raises(ControllerStateContractViolation) as raised:
-        executor._run_pre_dispatch(node, state_store.load(), state_store)
+    with pytest.raises(ProviderDispatchFailure) as raised:
+        executor._run_pre_dispatch(
+            node,
+            state_store.load(),
+            state_store,
+            PhaseExecutionAccumulator(node.id),
+        )
 
-    assert raised.value.contract == "provider"
-    assert raised.value.validator == "ownership"
-    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert raised.value.reason == "invalid provider result"
+    assert isinstance(raised.value.__cause__, ControllerStateContractViolation)
     assert "manual_phase_runs" not in state_store.load()
 
 
@@ -2407,6 +2590,7 @@ def test_pre_dispatch_stop_and_ask_short_circuits_without_state_write(tmp_path):
         node,
         state_store.load(),
         state_store,
+        PhaseExecutionAccumulator(node.id),
     )
 
     assert result is not None
@@ -2459,12 +2643,191 @@ def test_conditional_nested_rejects_transaction_owned_update_before_write(
         allowed_state_updates=[],
     )
 
-    with pytest.raises(ControllerStateContractViolation) as raised:
-        executor.execute(node, state_store)
+    result = executor.execute(node, state_store)
 
-    assert raised.value.validator == "ownership"
-    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.execution is not None
     assert "manual_phase_runs" not in state_store.load()
+
+
+def test_conditional_specialist_skip_is_explicit_in_manifest(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# Guardian\n", encoding="utf-8")
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    state = store.load()
+    state["selected"] = False
+    store.save(state)
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(
+        provider,
+        graph,
+        ext_dir,
+        tmp_path,
+        squad_dir,
+    )
+    node = SimpleNamespace(
+        id="phase-test",
+        agents=[{"id": "echelon.guardian", "condition": "selected"}],
+        allowed_state_updates=[],
+    )
+
+    execution = executor.execute(node, store)
+
+    provider.exec_agent.assert_not_called()
+    assert execution.verdict == "DONE"
+    assert len(execution.manifest) == 1
+    assert execution.manifest[0].occurrence_id == "specialist/0"
+    assert execution.manifest[0].status == "skipped"
+    assert execution.manifest[0].reason == "condition did not match: selected"
+
+
+def test_staged_acceptance_does_not_persist_before_outer_seal(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "implementability-report.md").write_text(
+        "# Current assessment\n",
+        encoding="utf-8",
+    )
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+    journal = squad_dir / "reasoning-journal.jsonl"
+    before_state = store.load()
+    before_journal = journal.read_bytes() if journal.exists() else b""
+    accepted = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {"review_marker": "accepted"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        cost_usd=1.25,
+    )
+    provider = MagicMock()
+    provider.exec_agent.side_effect = [accepted, RuntimeError("stage two failed")]
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, squad_dir)
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        test_result_only=True,
+        agents=[
+            {
+                "id": "echelon.reviewer",
+                "mode": "REVIEW",
+                "stage": 1,
+                "context_pack": [],
+                "allowed_state_updates": ["review_marker"],
+            },
+            {
+                "id": "echelon.planner",
+                "mode": "PLAN2",
+                "stage": 2,
+                "context_pack": [],
+            },
+        ],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(RuntimeError, match="stage two failed"):
+        executor.execute(node, store)
+
+    assert store.load() == before_state
+    assert (journal.read_bytes() if journal.exists() else b"") == before_journal
+
+
+def test_staged_failure_keeps_accepted_sibling_dispatch_in_execution(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        MagicMock(), graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    failure_released_sibling = threading.Event()
+
+    def dispatch(*, occurrence_id, **_kwargs):
+        if occurrence_id == "stage1/0":
+            failure_released_sibling.set()
+            raise ProviderDispatchFailure(
+                "missing required output",
+                details=("review-a.md",),
+            )
+        assert failure_released_sibling.wait(timeout=1)
+        time.sleep(0.05)
+        return _finalized_provider_result(
+            occurrence_id,
+            state_updates={"review_b": "accepted"},
+        )
+
+    executor._dispatch_provider = dispatch
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        test_result_only=True,
+        agents=[
+            {
+                "id": "echelon.reviewer-a",
+                "mode": "REVIEW_A",
+                "stage": 1,
+                "context_pack": [],
+            },
+            {
+                "id": "echelon.reviewer-b",
+                "mode": "REVIEW_B",
+                "stage": 1,
+                "context_pack": [],
+                "allowed_state_updates": ["review_b"],
+            },
+        ],
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.execution is not None
+    assert [row.occurrence_id for row in result.execution.manifest] == [
+        "stage1/1"
+    ]
+    assert result.execution.projected_state_updates == {
+        "review_b": "accepted"
+    }
+
+
+def test_provider_artifact_roots_resolve_relative_run_paths_from_project(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    executor = StagedParallelExecutor(
+        MagicMock(), MagicMock(), tmp_path / "ext", tmp_path, squad_dir
+    )
+
+    roots = executor._provider_artifact_roots(
+        {
+            "spec_dir": "specs/001-demo",
+            "context_dir": "runs/run-test/context",
+            "staging_dir": "runs/run-test/staging",
+        }
+    )
+
+    assert roots["context"] == (tmp_path / "runs/run-test/context").resolve()
+    assert roots["staging"] == (tmp_path / "runs/run-test/staging").resolve()
 
 
 def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
@@ -2495,6 +2858,7 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
     )
     node = SimpleNamespace(
         id="phase3-consensus",
+        test_result_only=True,
         agents=[{
             "id": "echelon-sage",
             "mode": "WHY3",
@@ -2505,15 +2869,15 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
         allowed_state_updates=[],
     )
 
-    with pytest.raises(ControllerStateContractViolation) as raised:
-        executor.execute(node, state_store)
+    result = executor.execute(node, state_store)
 
-    assert raised.value.validator == "ownership"
-    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.execution is not None
     assert "manual_phase_runs" not in state_store.load()
 
 
-def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
+def test_staged_why3_failure_projects_controller_owned_repair_phase(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     spec_dir = squad_dir / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -2526,13 +2890,26 @@ def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
 """,
         encoding="utf-8",
     )
+    (spec_dir / "quality-gates.md").write_text("# Gates\n", encoding="utf-8")
     state_store = SquadStateStore(squad_dir)
     state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
     state = state_store.load()
     state["spec_dir"] = str(spec_dir)
     state_store.save(state)
     provider = MagicMock()
-    provider.exec_agent.return_value = _result(verdict="FAIL")
+    review_verdict = ["FAIL"]
+
+    def publish_review(*_args, **_kwargs):
+        outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+        for output in outputs:
+            replacement = output.with_name(f".{output.name}.current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        result = _result(verdict=review_verdict[0])
+        result.echelon_result["output_files"] = [str(path) for path in outputs]
+        return result
+
+    provider.exec_agent.side_effect = publish_review
     graph = MagicMock()
     graph.agent_file.return_value = None
     graph.all_phase_ids.return_value = []
@@ -2559,12 +2936,14 @@ def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
     result = executor.execute(node, state_store)
 
     assert result.verdict == "FAIL"
-    assert state_store.load()["why3_repair_phase"] == "phase3-sentinel"
+    assert result.state_updates["why3_repair_phase"] == "phase3-sentinel"
+    assert "why3_repair_phase" not in state_store.load()
 
-    provider.exec_agent.return_value = _result(verdict="PASS")
+    review_verdict[0] = "PASS"
     result = executor.execute(node, state_store)
 
     assert result.verdict == "PASS"
+    assert result.state_updates["why3_repair_phase"] is None
     assert "why3_repair_phase" not in state_store.load()
 
 
@@ -2609,12 +2988,14 @@ def test_staged_why3_requires_current_review_reports_in_output_files(tmp_path):
     result = executor.execute(node, state_store)
 
     assert isinstance(result, ExecutorBlockedResult)
-    assert result.reason == "missing_phase_outputs"
-    assert result.result.state_updates["missing_outputs"] == [
+    assert result.reason == "invalid_phase_outputs"
+    invalid = result.result.state_updates["invalid_outputs"]
+    assert invalid
+    assert {Path(item["path"]).name for item in invalid} <= {
         "issues.md",
         "quality-gates.md",
-    ]
-    assert "output_files" in result.result.raw_output
+    }
+    assert "stale required output" in result.result.raw_output
 
 
 def test_staged_why3_rejects_unchanged_claimed_review_reports(tmp_path):
@@ -2670,11 +3051,7 @@ def test_staged_why3_rejects_unchanged_claimed_review_reports(tmp_path):
     assert result.result.state_updates["invalid_outputs"] == [
         {
             "path": "issues.md",
-            "reason": "not published by the current dispatch",
-        },
-        {
-            "path": "quality-gates.md",
-            "reason": "not published by the current dispatch",
+            "reason": "stale claimed output",
         },
     ]
     persisted = state_store.load()
@@ -2738,11 +3115,11 @@ def test_staged_why3_records_receipt_for_identical_rewrites(tmp_path):
     result = executor.execute(node, state_store)
 
     assert result.verdict == "PASS"
-    [receipt] = result.echelon_result["provider_output_receipts"]
-    assert receipt["schema_version"] == 1
+    [receipt] = result.receipts
+    assert receipt["schema_version"] == 2
     assert receipt["phase_id"] == "phase3-consensus"
     assert receipt["state_revision"] == 2
-    assert [output["path"] for output in receipt["outputs"]] == [
+    assert [Path(output["path"]).name for output in receipt["outputs"]] == [
         "issues.md",
         "quality-gates.md",
     ]
@@ -2808,7 +3185,7 @@ def test_staged_assess2_rejects_unchanged_claimed_report(tmp_path):
     assert result.result.state_updates["invalid_outputs"] == [
         {
             "path": "implementability-report.md",
-            "reason": "not published by the current dispatch",
+            "reason": "stale claimed output",
         }
     ]
     persisted = state_store.load()
@@ -3273,6 +3650,7 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, squad_dir)
     node = SimpleNamespace(
         id="phase3-consensus",
+        test_result_only=True,
         agents=[
             {
                 "id": "echelon-sage",
@@ -3287,11 +3665,13 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     result = executor.execute(node, state_store)
 
     assert result.verdict == "PASS"
-    assert state_store.load()["why3_verdict"] == "PASS"
+    assert result.state_updates["why3_verdict"] == "PASS"
+    assert "why3_verdict" not in state_store.load()
     assert "unexpected" not in state_store.load()
-    entries = _read_journal(tmp_path, squad_dir=squad_dir)
-    assert entries[0]["type"] == "state_contract_warning"
-    assert entries[0]["data"]["dropped_keys"] == ["unexpected"]
+    assert _read_journal(tmp_path, squad_dir=squad_dir) == []
+    assert result.accepted_results[0].quarantined_state_updates == {
+        "unexpected": True
+    }
 
 
 def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tmp_path):
@@ -3326,14 +3706,14 @@ def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tm
         id="phase3-consensus",
         agents=[
             {
-                "id": "echelon-gatekeeper",
+                    "id": "echelon.gatekeeper",
                 "mode": "ASSESS2",
                 "stage": 1,
                 "context_pack": [],
                 "allowed_verdicts": ["PASS", "REJECTED", "BLOCKED"],
             },
             {
-                "id": "echelon-orchestrator",
+                    "id": "echelon.orchestrator",
                 "mode": "PLAN2",
                 "stage": 2,
                 "context_pack": [],
@@ -3348,7 +3728,7 @@ def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tm
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_consensus_prerequisite"
     assert result.result.state_updates["missing_outputs"] == [
-        str(spec_dir / "implementability-report.md")
+        "implementability-report.md"
     ]
     assert provider.exec_agent.call_count == 1
 
@@ -3830,8 +4210,6 @@ def test_phase3_sentinel_blocks_when_required_outputs_missing(tmp_path):
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert result.result.state_updates["missing_outputs"] == [
-        "test-strategy.md",
-        "test-architecture.md",
         "coverage-map.md",
     ]
 
@@ -3880,10 +4258,7 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert result.result.state_updates["missing_outputs"] == [
-        "tasks.md",
         "critical-path.md",
-        "risk-matrix.md",
-        "dependencies.md",
     ]
 
 
@@ -3929,8 +4304,7 @@ def test_phase3_plan_rejects_unchanged_claimed_outputs_before_cost(tmp_path):
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "invalid_phase_outputs"
     assert result.result.state_updates["invalid_outputs"] == [
-        {"path": name, "reason": "not published by the current dispatch"}
-        for name in required
+        {"path": "critical-path.md", "reason": "stale claimed output"}
     ]
     assert store.load()["cost_usd"] == 0.0
 
@@ -3984,11 +4358,11 @@ def test_phase3_plan_records_receipt_for_identical_rewrites(tmp_path):
     )
 
     assert result.verdict == "DONE"
-    [receipt] = result.echelon_result["provider_output_receipts"]
-    assert receipt["schema_version"] == 1
+    [receipt] = result.receipts
+    assert receipt["schema_version"] == 2
     assert receipt["phase_id"] == "phase3-plan"
     assert receipt["state_revision"] == 2
-    assert [output["path"] for output in receipt["outputs"]] == list(required)
+    assert [Path(output["path"]).name for output in receipt["outputs"]] == sorted(required)
 
 
 def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
@@ -4186,9 +4560,9 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
                 "verdict": "COMPLETE",
                 "state_updates": {},
                 "output_files": [
-                    "specs/006-element-creator/test-strategy.md",
-                    "specs/006-element-creator/test-architecture.md",
-                    "specs/006-element-creator/coverage-map.md",
+                    str(shadow_spec_dir / "test-strategy.md"),
+                    str(shadow_spec_dir / "test-architecture.md"),
+                    str(shadow_spec_dir / "coverage-map.md"),
                 ],
             },
             raw_output="",
@@ -4218,21 +4592,26 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
 
     if valid_coverage:
         assert result.verdict == "COMPLETE"
-        recovery_updates = result.state_updates
+        execution = result
     else:
         assert isinstance(result, ExecutorBlockedResult)
         assert result.reason == "invalid_phase_outputs"
         assert result.result.verdict == "BLOCKED"
         assert result.result.state_updates["invalid_outputs"][0]["path"] == "coverage-map.md"
-        recovery_updates = result.result.state_updates["recovery_state_updates"]
+        assert result.execution is not None
+        execution = result.execution
     assert (spec_dir / "test-strategy.md").exists()
     assert (spec_dir / "test-architecture.md").exists()
     assert (spec_dir / "coverage-map.md").read_text(encoding="utf-8") == coverage
-    assert recovery_updates["shadow_output_recovered"] == [
+    [receipt] = execution.receipts
+    assert {item["path"] for item in receipt["outputs"]} == {
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
-    ]
+    }
+    assert {item["evidence_kind"] for item in receipt["outputs"]} == {
+        "shadow_promoted"
+    }
 
 
 def test_phase3_plan_does_not_recover_stale_claimed_shadow_outputs(tmp_path):
