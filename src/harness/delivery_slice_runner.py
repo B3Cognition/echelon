@@ -99,7 +99,9 @@ class DeliverySliceRunner:
                 extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file
             inputs = _spec_inputs(spec_dir, self._project_dir)
             input_fingerprint = _digest(inputs)
-            protected_fingerprint = _protected_fingerprint(worktree, spec_dir)
+            protected_fingerprint = _durable_protected_fingerprint(
+                worktree, spec_dir,
+            )
             loader = ProsaicPromptLoader(self._project_dir)
             roles = {}
             for step, name in _ROLES.items():
@@ -150,7 +152,9 @@ class DeliverySliceRunner:
                     "protected_fingerprint": protected_fingerprint,
                     "candidate_fingerprint": _candidate_fingerprint(worktree, spec_dir),
                     "progress_input_fingerprint": _digest({**inputs, str(tasks_path): progress_text}),
-                    "progress_protected_fingerprint": _protected_fingerprint(worktree, spec_dir, progress_text),
+                    "progress_protected_fingerprint": _durable_protected_fingerprint(
+                        worktree, spec_dir, progress_text,
+                    ),
                     "budget_limit": token_budget, "records": [],
                 }
                 journal.save(data)
@@ -231,7 +235,7 @@ class DeliverySliceRunner:
                             nested_target_prefix, nested_target_fingerprint,
                             repair_context, worktree, spec_dir,
                             evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
-                            protected_fingerprint, record, data, journal,
+                            record, data, journal,
                         )
                         invocation_count += 1
                         tokens = sum(item["token_usage"] or 0 for item in records)
@@ -260,7 +264,9 @@ class DeliverySliceRunner:
                 if not rejected:
                     if (_candidate_fingerprint(worktree, spec_dir) != records[-1]["candidate_after"]
                             or _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint
-                            or _protected_fingerprint(worktree, spec_dir) != protected_fingerprint):
+                            or _durable_protected_fingerprint(
+                                worktree, spec_dir,
+                            ) != protected_fingerprint):
                         raise DeliverySliceError("delivery_reconciliation_required: acceptance inputs changed")
                     return outcome("delivery_gates_passed", task_id)
                 if review_failures:
@@ -275,7 +281,7 @@ class DeliverySliceRunner:
                   nested_target_prefix, nested_target_fingerprint, repair_context,
                   worktree, spec_dir,
                   evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
-                  protected_fingerprint, record, data, journal):
+                  record, data, journal):
         step = assignment.step
         forbidden_roots = [str(spec_dir), str(evidence_root), str(worktree / ".git")]
         if nested_target_prefix is not None:
@@ -298,6 +304,9 @@ class DeliverySliceRunner:
         prompt = _render_prompt(
             artifact.body, assignment, inputs, path_projection, repair_context, worktree,
         )
+        dispatch_protected_fingerprint = _protected_fingerprint(
+            worktree, spec_dir,
+        )
         response = self._executor.run_agent_result(
             str(worktree), prompt, extra_env=extra_env,
             request_metadata={"prompt_metadata": metadata,
@@ -316,7 +325,10 @@ class DeliverySliceRunner:
                 raise DeliverySliceError("delivery_slice_cancelled")
             if _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint:
                 raise DeliverySliceError("delivery_spec_inputs_changed")
-            if _protected_fingerprint(worktree, spec_dir) != protected_fingerprint:
+            if (
+                _protected_fingerprint(worktree, spec_dir)
+                != dispatch_protected_fingerprint
+            ):
                 raise DeliverySliceError("delivery_protected_inputs_changed")
             current_nested_fingerprint = _nested_target_fingerprint(
                 worktree, nested_target_prefix,
@@ -420,7 +432,8 @@ def _spec_inputs(spec_dir: Path, project_dir: Path) -> dict[str, str]:
 
 
 def _protected_fingerprint(worktree: Path, spec_dir: Path, progress_text: str | None = None,
-                           *, excluded_report_paths: tuple[Path, ...] = ()) -> str:
+                           *, excluded_report_paths: tuple[Path, ...] = (),
+                           excluded_controller_paths: tuple[Path, ...] = ()) -> str:
     """Detect writes outside implementation ownership, even from a faulty adapter."""
     from harness.provider_workspace_scope import _CONTROL_PLANE_PATHS
 
@@ -429,12 +442,15 @@ def _protected_fingerprint(worktree: Path, spec_dir: Path, progress_text: str | 
                           ("documentation-impact-report.md", "docs-verification-report.md")}
     if not set(excluded_report_paths) <= allowed_exclusions:
         raise DeliverySliceError("invalid protected report exclusion")
+    allowed_controller_exclusions = {spec_dir / "harness-run-history.json"}
+    if not set(excluded_controller_paths) <= allowed_controller_exclusions:
+        raise DeliverySliceError("invalid protected controller exclusion")
     roots = [worktree / name for name in _CONTROL_PLANE_PATHS]
     roots.append(spec_dir)
     for root in roots:
         paths = [root, *sorted(root.rglob("*"))] if root.is_dir() and not root.is_symlink() else [root]
         for path in paths:
-            if path in excluded_report_paths:
+            if path in excluded_report_paths or path in excluded_controller_paths:
                 continue
             if path == worktree / ".echelon/runnability.yml":
                 continue  # the explicitly authorized candidate contract
@@ -444,6 +460,20 @@ def _protected_fingerprint(worktree: Path, spec_dir: Path, progress_text: str | 
                 content = progress_text.encode() if progress_text is not None and path == spec_dir / "tasks.md" else path.read_bytes()
                 entries[str(path)] = ("file", hashlib.sha256(content).hexdigest())
     return _digest(entries)
+
+
+def _durable_protected_fingerprint(
+    worktree: Path,
+    spec_dir: Path,
+    progress_text: str | None = None,
+) -> str:
+    """Bind resumable inputs while excluding controller-owned run history."""
+    return _protected_fingerprint(
+        worktree,
+        spec_dir,
+        progress_text,
+        excluded_controller_paths=(spec_dir / "harness-run-history.json",),
+    )
 
 
 def _render_prompt(body: str, assignment: DeliveryAssignment, inputs: dict[str, str],

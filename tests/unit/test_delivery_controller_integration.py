@@ -1,4 +1,5 @@
 """Controlled delivery must reach real Ralph consumers without legacy shortcuts."""
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -320,6 +321,27 @@ def test_ralph_restart_preserves_feedback_operation_not_next_task(slice_project,
                                       worktree_path=str(slice_project[0]), prompt="fix greeting")
     resumed = ScriptedExecutor()
     result = _build(_reconstruct(controller, store, resumed), slice_project)
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert _steps(resumed) == ["code_reviewer", "test_guardian"]
+
+
+def test_ralph_restart_ignores_controller_owned_harness_history(
+    slice_project, tmp_path, monkeypatch,
+):
+    controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
+    with monkeypatch.context() as patch:
+        _crash_after_receipt(patch, 2)
+        with pytest.raises(ProcessLost):
+            _build(controller, slice_project)
+
+    (slice_project[1] / "harness-run-history.json").write_text(
+        json.dumps({"runs": [{"status": "blocked"}]}),
+        encoding="utf-8",
+    )
+
+    resumed = ScriptedExecutor()
+    result = _build(_reconstruct(controller, store, resumed), slice_project)
+
     assert result["passed"] and result["task_ids"] == ["T-001"], result
     assert _steps(resumed) == ["code_reviewer", "test_guardian"]
 

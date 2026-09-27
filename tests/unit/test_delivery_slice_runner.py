@@ -625,7 +625,9 @@ def test_prior_marker_and_receipts_cannot_substitute_for_new_reviews(slice_proje
     assert {x[0]["dispatch_id"] for x in first.calls}.isdisjoint(x[0]["dispatch_id"] for x in second.calls)
 
 
-@pytest.mark.parametrize("path", ["specs/001-slice/user-clarifications.md", ".echelon/config.yml",
+@pytest.mark.parametrize("path", ["specs/001-slice/user-clarifications.md",
+                                  "specs/001-slice/harness-run-history.json",
+                                  ".echelon/config.yml",
                                   ".echelon/prosaic/subagents/echelon.delivery-spec-guard.md"])
 def test_implementation_cannot_modify_protected_inputs(slice_project, path):
     target = slice_project[0] / path
