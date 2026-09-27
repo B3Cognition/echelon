@@ -144,6 +144,46 @@ def test_nonfinal_reply_has_no_rows_or_write_authority(action):
         validate_semantic_result(payload, assignment())
 
 
+def test_bound_flattened_single_read_is_normalized_to_canonical_request():
+    from harness.fulfillment_semantics import validate_semantic_result
+    payload = {
+        **assignment().reply_identity(),
+        "action": "read",
+        "op": "read_file",
+        "root": "worktree",
+        "path": "app.py",
+        "start_line": 1,
+        "line_count": 2,
+    }
+
+    assert validate_semantic_result(payload, assignment()) == {
+        **assignment().reply_identity(),
+        "action": "read",
+        "request": {
+            "op": "read_file",
+            "root": "worktree",
+            "path": "app.py",
+            "start_line": 1,
+            "line_count": 2,
+        },
+    }
+
+
+def test_batched_read_requests_remain_invalid():
+    from harness.fulfillment_semantics import validate_semantic_result
+    payload = {
+        **assignment().reply_identity(),
+        "action": "read",
+        "requests": [
+            {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 2},
+            {"op": "list_directory", "root": "worktree", "path": "."},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="invalid schema"):
+        validate_semantic_result(payload, assignment())
+
+
 @pytest.mark.parametrize("step", ["mapper", "judge"])
 def test_renderer_does_not_trust_unvalidated_callers(step):
     from harness.fulfillment_semantics import render_implementation_map, render_fallback_report

@@ -52,6 +52,10 @@ contains one structured mapping row per assigned ID and separate
 `unmapped_candidates` notes. The host supplies field names/enums and owns
 Markdown rendering, sequencing, state, budgets and publication.
 
+For a `read` action, return exactly one singular read operation nested under
+the top-level `request` field. NEVER put `op`, `root`, `path`, or bounds at the
+top level, and NEVER emit a `requests` array or batch multiple reads.
+
 Every row field except `runtime_threshold` is one JSON string, never an array
 or object. Join multiple citations or candidates with `; ` in that one string.
 `unmapped_candidates` is always an array of single-line strings; return `[]`

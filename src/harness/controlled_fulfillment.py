@@ -178,7 +178,7 @@ class ControlledFulfillment:
                 "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
                 "provider": getattr(self._executor, "provider_id", self._executor.cli),
                 "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
-                "contract": "controlled-fulfillment-inspection-v4",
+                "contract": "controlled-fulfillment-inspection-v5",
             })
             if saved is None:
                 state_path = context.verify_run_dir / "state.json"
@@ -354,7 +354,12 @@ class ControlledFulfillment:
                 raise ValueError("fulfillment inputs changed during inspection")
             _verify_reads(channel, reads)
             payload = {"assignment": assignment.identity(), "context": data, "reads": reads,
-                "reply_contract": {"actions": {"read": "request: closed read_file/list_directory request",
+                "reply_contract": {"actions": {"read": {
+                        "fields_after_binding": ["action", "request"],
+                        "shape": {"action": "read", "request": "one read_request_schemas object"},
+                        "request_count": 1,
+                        "batching": "forbidden; never use a requests array",
+                        "flattening": "forbidden; op/root/path belong inside request"},
                     "blocked": "reason: nonempty single-line text", "final": "rows and unmapped_candidates"},
                     "binding": assignment.reply_identity(),
                     "row_fields": _MAPPER_FIELDS if step == "mapper" else _JUDGE_FIELDS,
@@ -362,10 +367,15 @@ class ControlledFulfillment:
                         "items": {"type": "string", "format": "nonempty safe single-line note"},
                         "maxItems": 100, "when_none": "return []"},
                     "roots": ["worktree", "spec", "evidence"],
-                    "read_file": {"op": "read_file", "root": "evidence", "path": "requirement-audit.md",
-                                  "start_line": 1, "line_count": 200},
-                    "list_directory": {"op": "list_directory", "root": "worktree", "path": "."},
-                    "instruction": "Repeat every reply_contract.binding field exactly at top level, then action and its fields only."}}
+                    "read_request_schemas": {
+                        "read_file": {"op": "read_file", "root": "evidence",
+                                      "path": "requirement-audit.md", "start_line": 1,
+                                      "line_count": 200},
+                        "list_directory": {"op": "list_directory", "root": "worktree",
+                                           "path": "."}},
+                    "instruction": ("Repeat every reply_contract.binding field exactly at top level, "
+                        "then action and its fields only. For read, emit exactly one singular request "
+                        "object nested under request; never flatten it and never emit a requests array.")}}
             prompt = role.body + "\nHOST_INPUT_JSON\n" + json.dumps(payload, allow_nan=False)
             if len(prompt.encode()) > 1024 * 1024:
                 raise ValueError("fulfillment inspection input exceeds provider limit")

@@ -45,6 +45,9 @@ Return only the JSON envelope specified by the host, repeating its compact
 `reply_contract.binding` exactly. Choose `read`, `blocked`, or `final`; final rows contain `id`,
 `status`, and nonempty `evidence`, with separate `unmapped_candidates` notes.
 Cite actual evidence using the returned root, path and line numbers.
+For a `read` action, return exactly one singular read operation nested under
+the top-level `request` field. NEVER put `op`, `root`, `path`, or bounds at the
+top level, and NEVER emit a `requests` array or batch multiple reads.
 Every row field is one JSON string, never an array or object; join multiple
 citations with `; ` in that one string.
 `unmapped_candidates` is always an array of single-line strings; return `[]`

@@ -121,6 +121,38 @@ def test_reply_contract_declares_bounded_unmapped_candidate_array(preparation_co
     }
 
 
+def test_reply_contract_declares_one_nested_read_request(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    contract = executor.dispatches[0]["reply_contract"]
+    assert contract["actions"]["read"] == {
+        "fields_after_binding": ["action", "request"],
+        "shape": {"action": "read", "request": "one read_request_schemas object"},
+        "request_count": 1,
+        "batching": "forbidden; never use a requests array",
+        "flattening": "forbidden; op/root/path belong inside request",
+    }
+    assert contract["read_request_schemas"] == {
+        "read_file": {
+            "op": "read_file",
+            "root": "evidence",
+            "path": "requirement-audit.md",
+            "start_line": 1,
+            "line_count": 200,
+        },
+        "list_directory": {
+            "op": "list_directory",
+            "root": "worktree",
+            "path": ".",
+        },
+    }
+    assert "read_file" not in contract
+    assert "list_directory" not in contract
+
+
 def test_mechanical_missing_report_skips_judge_and_stays_staged(preparation_context):
     context = preparation_context
     before = _snapshot(context.spec_dir)

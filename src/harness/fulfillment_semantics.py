@@ -103,6 +103,21 @@ def validate_semantic_result(value: object, assignment: FulfillmentAssignment) -
     if any(value.get(key) != expected for key, expected in identity.items()):
         raise ValueError("fulfillment assignment binding mismatch")
     action = value.get("action")
+    # Some providers flatten a single read object even when asked for the
+    # canonical nested shape. Normalize only the two exact, host-readable
+    # single-operation schemas. Batches and unknown fields remain invalid.
+    if action == "read" and "request" not in value and "requests" not in value:
+        operation = value.get("op")
+        operation_fields = {
+            "read_file": {"op", "root", "path", "start_line", "line_count"},
+            "list_directory": {"op", "root", "path"},
+        }.get(operation) if type(operation) is str else None
+        if operation_fields is not None and set(value) == set(identity) | {"action"} | operation_fields:
+            value = {
+                **identity,
+                "action": "read",
+                "request": {key: value[key] for key in operation_fields},
+            }
     extra = {"rows", "unmapped_candidates"} if action == "final" else (
         {"request"} if action == "read" else {"reason"} if action == "blocked" else None)
     if extra is None or set(value) != set(identity) | {"action"} | extra:
