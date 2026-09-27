@@ -179,6 +179,7 @@ def _fresh_delivery_baseline(
         if path.is_dir() and path.name != marked_build_id
     )
 
+    pending_repair_states: list[tuple[str, Mapping[str, object]]] = []
     for prior_build_id in build_ids:
         state_path = runs_dir(harness_root) / prior_build_id / "state" / "delivery.json"
         try:
@@ -204,6 +205,11 @@ def _fresh_delivery_baseline(
             continue
         checkpoints = state.get("checkpoint_commits")
         if not isinstance(checkpoints, list):
+            if (
+                state.get("termination_reason") == "build_blocked"
+                and isinstance(state.get("salvage_commit"), str)
+            ):
+                pending_repair_states.append((prior_build_id, state))
             continue
         for checkpoint in reversed(checkpoints):
             if not isinstance(checkpoint, dict):
@@ -220,6 +226,16 @@ def _fresh_delivery_baseline(
                     # Once it has landed, an old abandoned candidate must not
                     # be revived merely because its state still says running.
                     return None
+                for repair_build_id, repair_state in pending_repair_states:
+                    repaired_candidate = _fresh_delivery_repaired_candidate(
+                        gitops=gitops,
+                        state=repair_state,
+                        spec_id=intent.spec_id,
+                        build_id=repair_build_id,
+                        checkpoint=commit,
+                    )
+                    if repaired_candidate:
+                        return repaired_candidate
                 repaired_candidate = _fresh_delivery_repaired_candidate(
                     gitops=gitops,
                     state=state,
@@ -228,6 +244,11 @@ def _fresh_delivery_baseline(
                     checkpoint=commit,
                 )
                 return repaired_candidate or commit
+        if (
+            state.get("termination_reason") == "build_blocked"
+            and isinstance(state.get("salvage_commit"), str)
+        ):
+            pending_repair_states.append((prior_build_id, state))
     return None
 
 

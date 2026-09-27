@@ -307,6 +307,63 @@ def test_fresh_delivery_retains_clean_manual_repair_as_untrusted_candidate(
     )
 
 
+@pytest.mark.parametrize("empty_checkpoints", [False, True])
+def test_fresh_delivery_retains_checkpointless_manual_repair_over_older_checkpoint(
+    tmp_path: Path,
+    empty_checkpoints: bool,
+) -> None:
+    """A repair may inherit checkpoint ancestry from the preceding run."""
+    checkpoint = "a" * 40
+    salvage = "b" * 40
+    repaired = "c" * 40
+    blocked_build = "build-20260927-111740-405988"
+    checkpoint_build = "build-20260927-102423-261547"
+    for build_id, payload in (
+        (
+            blocked_build,
+            {
+                "status": "blocked",
+                "termination_reason": "build_blocked",
+                "salvage_commit": salvage,
+                "spec_id": "012",
+            },
+        ),
+        (
+            checkpoint_build,
+            {
+                "status": "interrupted",
+                "checkpoint_commits": [{"commit": checkpoint}],
+                "spec_id": "012",
+            },
+        ),
+    ):
+        if build_id == blocked_build and empty_checkpoints:
+            payload["checkpoint_commits"] = []
+        state_dir = tmp_path / "runs" / build_id / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "delivery.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+    marker = tmp_path / "runs" / "current-012.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(blocked_build, encoding="utf-8")
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.return_value = False
+    gitops.get_clean_worktree_head.return_value = repaired
+    gitops.commit_is_ancestor.side_effect = lambda parent, child: (
+        (parent, child) in {(checkpoint, salvage), (salvage, repaired)}
+    )
+
+    baseline = _fresh_delivery_baseline(tmp_path, intent, gitops)
+
+    assert baseline == repaired
+    gitops.get_clean_worktree_head.assert_called_once_with(
+        "012", build_id=blocked_build
+    )
+
+
 def test_fresh_delivery_rejects_manual_head_outside_salvaged_lineage(
     tmp_path: Path,
 ) -> None:
