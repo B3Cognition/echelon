@@ -521,6 +521,46 @@ def test_run_loop_retains_success_screenshot_as_candidate_evidence(
     ).valid
 
 
+def test_visual_verifier_cannot_pass_after_mutating_candidate(tmp_path: Path) -> None:
+    """A writable sandbox must not bless Playwright-generated source changes."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    source = worktree / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+
+    def mutate_during_browser_test(*_args, **_kwargs):
+        source.write_text("export const ready = false;\n", encoding="utf-8")
+        return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+
+    provider.exec.side_effect = mutate_during_browser_test
+    feedback = MagicMock()
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+        feedback_runner=feedback,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "candidate_mutated_during_visual_verification"
+    assert result.final_verify is not None
+    assert any(f.id == "candidate-mutated-during-visual-verification" for f in result.final_verify.failures)
+    assert result.evidence is None
+    feedback.assert_not_called()
+    provider.destroy.assert_called_once()
+
+
 def test_retrieve_screenshots_falls_back_to_playwright_test_results(
     tmp_path: Path,
 ) -> None:

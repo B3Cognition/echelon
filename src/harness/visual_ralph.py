@@ -78,6 +78,7 @@ class VisualRalphController:
                 self._spec_id,
             )
 
+            candidate_before = _safe_product_fingerprint(worktree_path)
             sandbox_spec = self._build_sandbox_spec(worktree_path)
             handle = self._provider.create(sandbox_spec)
 
@@ -113,6 +114,19 @@ class VisualRalphController:
 
                 attempt_sequence = self._next_visual_attempt_sequence()
                 screenshots = self._retrieve_screenshots(handle, attempt_sequence)
+                if candidate_before and candidate_before != _safe_product_fingerprint(worktree_path):
+                    verify_result = self._with_visual_failure(
+                        verify_result,
+                        failure_id="candidate-mutated-during-visual-verification",
+                        error="sandbox browser verification changed bounded candidate content",
+                    )
+                    return VisualResult(
+                        status="blocked",
+                        termination_reason="candidate_mutated_during_visual_verification",
+                        iterations=iteration + 1,
+                        tokens_used=tokens_used,
+                        final_verify=verify_result,
+                    )
                 try:
                     evidence = self._record_visual_evidence(
                         worktree_path=Path(worktree_path),
