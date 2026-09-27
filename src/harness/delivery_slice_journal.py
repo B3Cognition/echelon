@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import stat
 
-from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, PASSING_VERDICTS, validate_delivery_result
+from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, PASSING_VERDICTS, bind_delivery_result
 from harness.durable_json import write_json_atomic
 
 
@@ -67,7 +67,7 @@ def _validate(data):
               "protected_fingerprint", "candidate_fingerprint", "progress_input_fingerprint",
               "progress_protected_fingerprint", "budget_limit", "records"}
     if (not isinstance(data, dict) or set(data) != fields
-            or type(data["schema_version"]) is not int or data["schema_version"] != 1):
+            or type(data["schema_version"]) is not int or data["schema_version"] != 2):
         raise DeliverySliceError("invalid delivery journal schema")
     if any(not isinstance(data[key], str) or not data[key] for key in fields - {"schema_version", "budget_limit", "records"}):
         raise DeliverySliceError("invalid delivery journal identity")
@@ -86,7 +86,7 @@ def _validate(data):
     for index, record in enumerate(records):
         if terminal or repair > 2 or step_index >= 4:
             raise DeliverySliceError("delivery receipt after terminal result")
-        if not isinstance(record, dict) or set(record) != {"assignment", "repair_attempt", "result", "candidate_after", "token_usage", "error"}:
+        if not isinstance(record, dict) or set(record) != {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}:
             raise DeliverySliceError("invalid delivery receipt fields")
         if type(record["repair_attempt"]) is not int or record["repair_attempt"] != repair:
             raise DeliverySliceError("invalid delivery repair history")
@@ -101,16 +101,27 @@ def _validate(data):
         usage = record["token_usage"]
         if usage is not None and (type(usage) is not int or usage < 0):
             raise DeliverySliceError("invalid delivery receipt usage")
+        raw_result = record["raw_result"]
+        if raw_result is not None and (
+            not isinstance(raw_result, str)
+            or len(raw_result.encode("utf-8")) > 100_000
+        ):
+            raise DeliverySliceError("invalid raw delivery result")
         if record["error"] is not None:
             if not isinstance(record["error"], str) or not record["error"] or record["result"] is not None:
                 raise DeliverySliceError("invalid delivery failure receipt")
             terminal = True
         elif record["result"] is None:
-            if index != len(records) - 1 or record["candidate_after"] is not None or usage is not None:
+            if (index != len(records) - 1 or record["candidate_after"] is not None
+                    or usage is not None or raw_result is not None):
                 raise DeliverySliceError("invalid pending delivery receipt")
             terminal = True
         else:
-            result = validate_delivery_result(json.dumps(record["result"]), assignment)
+            if raw_result is None:
+                raise DeliverySliceError("missing raw delivery result")
+            result = bind_delivery_result(raw_result, assignment)
+            if result != record["result"]:
+                raise DeliverySliceError("delivery result binding mismatch")
             after = record["candidate_after"]
             if not isinstance(after, str) or not after:
                 raise DeliverySliceError("invalid delivery candidate receipt")

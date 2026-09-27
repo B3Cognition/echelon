@@ -132,3 +132,32 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
     if verdict in {"FAIL", "CHANGES_REQUESTED"} and not findings:
         raise DeliverySliceError("failed review must identify findings")
     return payload
+
+
+def bind_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, object]:
+    """Bind controller-owned fingerprints after strict transport identity validation.
+
+    Providers must still return the complete result envelope.  The dispatch,
+    step, task, and schema fields prove which call produced the response.  The
+    two long content fingerprints are controller observations, so their raw
+    echoes are retained for diagnosis but never made authoritative by a model.
+    """
+    if len(raw.encode("utf-8")) > 100_000:
+        raise DeliverySliceError("delivery result exceeds size limit")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        raise DeliverySliceError("delivery result must be JSON") from exc
+    identity = assignment.identity()
+    if not isinstance(payload, dict) or set(payload) != set(identity) | {"verdict", "summary", "findings"}:
+        raise DeliverySliceError("invalid delivery result fields")
+    for key in ("schema_version", "dispatch_id", "step", "task_id"):
+        if type(payload[key]) is not type(identity[key]) or payload[key] != identity[key]:
+            raise DeliverySliceError("delivery result identity mismatch")
+    for key in ("candidate_fingerprint", "input_fingerprint"):
+        if not isinstance(payload[key], str) or not payload[key] or len(payload[key]) > 128:
+            raise DeliverySliceError("invalid delivery result fingerprint echo")
+    bound = dict(payload)
+    bound["candidate_fingerprint"] = assignment.candidate_fingerprint
+    bound["input_fingerprint"] = assignment.input_fingerprint
+    return validate_delivery_result(json.dumps(bound), assignment)

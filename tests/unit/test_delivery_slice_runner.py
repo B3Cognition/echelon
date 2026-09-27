@@ -515,6 +515,41 @@ def test_collects_all_required_review_failures_before_one_repair(slice_project):
     assert all(finding in repair_prompt for finding in findings.values())
 
 
+def test_host_binds_fingerprints_and_preserves_the_review_decision(slice_project):
+    finding = "app.py:1 still returns the wrong greeting"
+    rejected = False
+
+    def script(assignment, payload, root):
+        nonlocal rejected
+        if assignment["step"] != "code_reviewer" or rejected:
+            return
+        rejected = True
+        payload.update(
+            candidate_fingerprint=assignment["candidate_fingerprint"][:48],
+            input_fingerprint=assignment["input_fingerprint"][:50],
+            verdict="CHANGES_REQUESTED",
+            summary="The candidate still needs one repair",
+            findings=[finding],
+        )
+
+    executor = ScriptedExecutor(script)
+
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert _steps(executor) == chain * 2
+    assert finding in executor.calls[len(chain)][2]
+    journal_path = next(slice_project[2].rglob("journal.json"))
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    review = journal["records"][2]
+    raw = json.loads(review["raw_result"])
+    assert raw["input_fingerprint"] != review["assignment"]["input_fingerprint"]
+    assert review["result"]["input_fingerprint"] == review["assignment"]["input_fingerprint"]
+    assert review["result"]["verdict"] == "CHANGES_REQUESTED"
+    assert review["result"]["findings"] == [finding]
+
+
 def test_two_failed_repairs_block_without_degraded_progress(slice_project):
     def script(assignment, payload, root):
         if assignment["step"] == "spec_guard":

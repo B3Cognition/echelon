@@ -13,7 +13,7 @@ from uuid import uuid4
 from harness.build_result import BuildResult
 from harness.delivery_slice import (
     DeliveryAssignment, DeliverySliceError, DeliveryTasksComplete, PASSING_VERDICTS, STEP_VERDICTS,
-    select_delivery_task, validate_delivery_result,
+    bind_delivery_result, select_delivery_task,
 )
 from harness.durable_json import write_json_atomic
 from harness.delivery_slice_journal import DeliverySliceJournal
@@ -145,7 +145,7 @@ class DeliverySliceRunner:
                 tasks_path = spec_dir / "tasks.md"
                 progress_text = update_task_progress_markdown(inputs[str(tasks_path)], task_id, "DONE")
                 data = {
-                    "schema_version": 1, "run_id": run_id, "binding": binding,
+                    "schema_version": 2, "run_id": run_id, "binding": binding,
                     "task_id": task_id, "input_fingerprint": input_fingerprint,
                     "protected_fingerprint": protected_fingerprint,
                     "candidate_fingerprint": _candidate_fingerprint(worktree, spec_dir),
@@ -222,7 +222,8 @@ class DeliverySliceRunner:
                             uuid4().hex, step, task_id, _candidate_fingerprint(worktree, spec_dir), data["input_fingerprint"],
                         )
                         record = {"assignment": assignment.identity(), "repair_attempt": repair,
-                                  "result": None, "candidate_after": None, "token_usage": None, "error": None}
+                                  "raw_result": None, "result": None, "candidate_after": None,
+                                  "token_usage": None, "error": None}
                         records.append(record)
                         journal.save(data)  # Intent is durable before any external execution.
                         result = self._dispatch(
@@ -309,6 +310,8 @@ class DeliverySliceRunner:
             "stdout": response.stdout[:100_001], "stderr": response.stderr[-4000:],
         }, trusted_root=evidence_root)
         try:
+            if len(response.stdout.encode("utf-8")) <= 100_000:
+                record["raw_result"] = response.stdout
             if stop_requested and stop_requested():
                 raise DeliverySliceError("delivery_slice_cancelled")
             if _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint:
@@ -328,7 +331,7 @@ class DeliverySliceRunner:
                 raise DeliverySliceError("delivery_reviewer_mutated_candidate")
             if response.exit_code != 0 or response.timed_out:
                 raise DeliverySliceError("delivery_provider_failed")
-            result = validate_delivery_result(response.stdout, assignment)
+            result = bind_delivery_result(response.stdout, assignment)
             record.update(result=result, candidate_after=candidate_after)
         except (ValueError, OSError, RuntimeError, TypeError, AttributeError) as exc:
             record["error"] = str(exc)
