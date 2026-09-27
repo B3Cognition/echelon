@@ -2392,6 +2392,19 @@ class RalphController:
                 }
             else:
                 runner_options["repair_task_id"] = repair_task_id
+                implementation_target = state.get("implementation_target")
+                if implementation_target is not None and not isinstance(
+                    implementation_target, str
+                ):
+                    raise DeliverySliceError("invalid persisted implementation target")
+                runner_options["implementation_target"] = implementation_target
+                declared_targets = state.get("declared_targets")
+                if declared_targets is not None and (
+                    not isinstance(declared_targets, list)
+                    or any(not isinstance(target, str) for target in declared_targets)
+                ):
+                    raise DeliverySliceError("invalid persisted declared targets")
+                runner_options["declared_targets"] = declared_targets
             result = runner(
                 self._llm_provider, self._orchestration_root(worktree),
             ).run(

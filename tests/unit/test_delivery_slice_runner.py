@@ -91,6 +91,379 @@ def test_only_three_sequential_approvals_accept_one_task(slice_project):
     assert len(list(slice_project[2].rglob("result.json"))) == 4
 
 
+def test_polyrepo_slice_projects_workspace_paths_into_target_worktree(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n"
+        "\n"
+        "  **Acceptance Criteria:**\n"
+        "  - [ ] Return hello\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"canonical_prefix": "sources/demo/"' in prompt
+        and '"sources/demo/app.py": "app.py"' in prompt
+        and '"forbidden_nested_root": "sources/demo"' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_polyrepo_slice_preserves_repository_relative_task_paths(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `src/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"src/app.py": "src/app.py"' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_polyrepo_slice_rejects_selected_task_from_another_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/other",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 target sources/demo does not match "
+        "implementation target sources/other"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_unsafe_implementation_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=../other\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="../other",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid implementation target: ../other"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_selected_task_file_outside_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/other/app.py` - Wrong repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file sources/other/app.py is outside "
+        "implementation target sources/demo"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_file_owned_by_arbitrary_sibling_target(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=apps/api\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `apps/web/src/app.ts` - Wrong repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="apps/api",
+        declared_targets=["apps/api", "apps/web"],
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file apps/web/src/app.ts is outside "
+        "implementation target apps/api"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_uses_most_specific_overlapping_target_owner(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=apps\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `apps/web/src/app.ts` - Owned by the nested repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="apps",
+        declared_targets=["apps", "apps/web"],
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file apps/web/src/app.ts is outside "
+        "implementation target apps"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_traversal_in_selected_task_file(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `../sources/demo/app.py` - Escapes the workspace root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_validates_labeled_file_bullets(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - **Modify:** `../sources/demo/app.py` - Escapes the workspace root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize("bullet", ["*", "+"])
+def test_polyrepo_slice_validates_standard_markdown_file_bullets(
+    slice_project, bullet,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        f"  {bullet} **Modify:** `../sources/demo/app.py` - Escapes the root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_unparseable_file_bullet(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - src/app.py - Missing canonical path delimiters.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 Files entry"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_ignores_fenced_task_examples_when_projecting_paths(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "```md\n"
+        "- [ ] T-999 complexity=standard phase=example req=FR-X depends=none "
+        "target=sources/other\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/other/example.py` - Documentation example only.\n"
+        "```\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"sources/demo/app.py": "app.py"' in prompt
+        and "sources/other/example.py" not in prompt.split(
+            "## Candidate path projection (controller authority)", 1
+        )[1].split("## Read-only specification inputs", 1)[0]
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_polyrepo_slice_rejects_recreated_target_prefix_after_implementation(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+
+    def recreate_prefix(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            nested = root / "sources" / "demo"
+            nested.mkdir(parents=True)
+            (nested / "app.py").write_text("wrong root\n", encoding="utf-8")
+
+    executor = ScriptedExecutor(recreate_prefix)
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_nested_target_modified: sources/demo"
+    assert _steps(executor) == ["implementer"]
+
+
 @pytest.mark.parametrize("failed_step,negative", [("spec_guard", "FAIL"),
     ("code_reviewer", "CHANGES_REQUESTED"), ("test_guardian", "FAIL")])
 def test_repair_invalidates_every_prior_approval(slice_project, failed_step, negative):

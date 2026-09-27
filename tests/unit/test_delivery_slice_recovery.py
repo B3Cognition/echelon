@@ -113,6 +113,35 @@ def test_changed_binding_never_reuses_receipts(slice_project, monkeypatch, chang
     assert not result.succeeded and not resumed.calls
 
 
+def test_changed_implementation_target_never_reuses_receipts(
+    slice_project, monkeypatch,
+):
+    _project, spec, _evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n",
+        encoding="utf-8",
+    )
+    with monkeypatch.context() as patch:
+        _crash_after_receipt(patch, 1)
+        with pytest.raises(ProcessLost):
+            _run(
+                slice_project,
+                ScriptedExecutor(),
+                implementation_target="sources/demo",
+            )
+
+    resumed = ScriptedExecutor()
+    result = _run(
+        slice_project,
+        resumed,
+        implementation_target="sources/other",
+    )
+
+    assert result.reason == "delivery_reconciliation_required: operation binding changed"
+    assert not result.succeeded and not resumed.calls
+
+
 def test_exhausted_repairs_remain_exhausted_after_restart(slice_project):
     def reject(assignment, payload, root):
         if assignment["step"] == "spec_guard":

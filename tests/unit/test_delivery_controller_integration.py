@@ -52,6 +52,41 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert {call[0]["task_id"] for call in executor.calls} == {"T-001"}
 
 
+def test_ralph_passes_persisted_target_path_projection_to_slice(slice_project, tmp_path):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, executor)
+    state = store.read()
+    state["implementation_target"] = "sources/demo"
+    state["declared_targets"] = ["sources/demo", "sources/web"]
+    state["target_task_ids"] = ["T-001"]
+    store.write(state)
+
+    result = controller._exec_build(
+        None,
+        "echelon build",
+        "",
+        worktree_path=str(project),
+        prompt="banzai mode",
+    )
+
+    assert result["passed"], result
+    assert all(
+        '"canonical_prefix": "sources/demo/"' in prompt
+        and '"sources/demo/app.py": "app.py"' in prompt
+        and '"declared_targets": ["sources/demo", "sources/web"]' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
 def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode):
     def reject(assignment, payload, root):
