@@ -476,9 +476,43 @@ def test_repair_invalidates_every_prior_approval(slice_project, failed_step, neg
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain[:chain.index(failed_step)+1] + chain
-    assert result.succeeded and result.task_ids == ["T-001"]
-    assert "incorrect text" in executor.calls[chain.index(failed_step)+1][2]
+    assert _steps(executor) == chain * 2
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert "incorrect text" in executor.calls[len(chain)][2]
+
+
+def test_collects_all_required_review_failures_before_one_repair(slice_project):
+    failed_once: set[str] = set()
+    findings = {
+        "spec_guard": "spec.md:1 requirement mismatch",
+        "code_reviewer": "app.py:1 implementation defect",
+        "test_guardian": "tests/test_app.py:1 missing regression coverage",
+    }
+
+    def script(assignment, payload, root):
+        step = assignment["step"]
+        if step == "implementer" or step in failed_once:
+            return
+        failed_once.add(step)
+        payload.update(
+            verdict={
+                "spec_guard": "FAIL",
+                "code_reviewer": "CHANGES_REQUESTED",
+                "test_guardian": "FAIL",
+            }[step],
+            summary=f"{step} rejected the candidate",
+            findings=[findings[step]],
+        )
+
+    executor = ScriptedExecutor(script)
+
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert _steps(executor) == chain * 2
+    repair_prompt = executor.calls[len(chain)][2]
+    assert all(finding in repair_prompt for finding in findings.values())
 
 
 def test_two_failed_repairs_block_without_degraded_progress(slice_project):
@@ -487,10 +521,11 @@ def test_two_failed_repairs_block_without_degraded_progress(slice_project):
             payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 3
     assert result.status == "blocked" and not result.task_ids
     assert "repair_limit" in result.reason
-    assert result.token_usage == 42
+    assert result.token_usage == 84
 
 
 @pytest.mark.parametrize("fault", ["degraded", "skip", "stale", "malformed", "exit", "timeout",

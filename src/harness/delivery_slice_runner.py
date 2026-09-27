@@ -179,9 +179,7 @@ class DeliverySliceRunner:
             usage_known = all(record["token_usage"] is not None for record in records)
             if records and records[-1]["result"] is None and records[-1]["error"] is None:
                 raise DeliverySliceError("delivery_reconciliation_required: dispatch completion is unknown")
-            accepted = bool(records and records[-1]["result"] and
-                            records[-1]["assignment"]["step"] == "test_guardian" and
-                            records[-1]["result"]["verdict"] == "PASS")
+            accepted = _latest_review_round_accepted(records)
             allowed_inputs = {(data["input_fingerprint"], data["protected_fingerprint"])}
             if accepted:
                 allowed_inputs.add((data["progress_input_fingerprint"], data["progress_protected_fingerprint"]))
@@ -202,6 +200,7 @@ class DeliverySliceRunner:
             cursor = 0
             for repair in range(3):  # initial implementation, then two repairs
                 rejected = False
+                review_failures: list[dict[str, object]] = []
                 for step, artifact in roles.items():
                     cached = cursor < len(records)
                     if not cached and token_budget is not None and tokens >= token_budget:
@@ -246,16 +245,25 @@ class DeliverySliceRunner:
                     if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                         raise DeliverySliceError(f"delivery_{step}_blocked: {result['summary']}")
                     if result["verdict"] not in PASSING_VERDICTS:
-                        repair_context = json.dumps({"original_feedback": feedback, "failed_step": step,
-                                                     "summary": result["summary"], "findings": result["findings"]})
                         rejected = True
-                        break
+                        failure = {
+                            "step": step,
+                            "verdict": result["verdict"],
+                            "summary": result["summary"],
+                            "findings": result["findings"],
+                        }
+                        if step == "implementer":
+                            repair_context = _repair_context(feedback, [failure])
+                            break
+                        review_failures.append(failure)
                 if not rejected:
                     if (_candidate_fingerprint(worktree, spec_dir) != records[-1]["candidate_after"]
                             or _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint
                             or _protected_fingerprint(worktree, spec_dir) != protected_fingerprint):
                         raise DeliverySliceError("delivery_reconciliation_required: acceptance inputs changed")
                     return outcome("delivery_gates_passed", task_id)
+                if review_failures:
+                    repair_context = _repair_context(feedback, review_failures)
             return outcome("delivery_gate_repair_limit: required review still failed after two repairs")
         except (ValueError, OSError, RuntimeError, TypeError, AttributeError, KeyError) as exc:
             return outcome(str(exc))
@@ -331,6 +339,46 @@ class DeliverySliceRunner:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+
+def _latest_review_round_accepted(records: list[dict[str, object]]) -> bool:
+    """Return true only when the latest complete round passed every required role."""
+    steps = tuple(_ROLES)
+    if len(records) < len(steps):
+        return False
+    tail = records[-len(steps):]
+    repair_attempts = {record.get("repair_attempt") for record in tail}
+    if len(repair_attempts) != 1:
+        return False
+    if tuple(record.get("assignment", {}).get("step") for record in tail) != steps:
+        return False
+    return all(
+        isinstance(record.get("result"), dict)
+        and record["result"].get("verdict") in PASSING_VERDICTS
+        for record in tail
+    )
+
+
+def _repair_context(feedback: str, failures: list[dict[str, object]]) -> str:
+    """Bind every independent rejection of one candidate into one repair prompt."""
+    first = failures[0]
+    findings = [
+        finding
+        for failure in failures
+        for finding in failure.get("findings", [])
+    ]
+    return json.dumps({
+        "original_feedback": feedback,
+        # Retain the legacy scalar fields for one-failure prompt compatibility.
+        "failed_step": first["step"],
+        "summary": (
+            first["summary"]
+            if len(failures) == 1
+            else f"{len(failures)} required reviews rejected the same candidate"
+        ),
+        "findings": findings,
+        "failed_reviews": failures,
+    })
 
 
 def _candidate_fingerprint(worktree: Path, spec_dir: Path) -> str:

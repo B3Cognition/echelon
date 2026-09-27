@@ -82,6 +82,7 @@ def _validate(data):
     candidate = data["candidate_fingerprint"]
     seen = set()
     terminal = False
+    review_rejected = False
     for index, record in enumerate(records):
         if terminal or repair > 2 or step_index >= 4:
             raise DeliverySliceError("delivery receipt after terminal result")
@@ -118,8 +119,17 @@ def _validate(data):
             candidate = after
             if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                 terminal = True
-            elif result["verdict"] in PASSING_VERDICTS:
-                step_index += 1
-            else:
+            elif assignment.step == "implementer" and result["verdict"] not in PASSING_VERDICTS:
                 repair += 1
                 step_index = 0
+            else:
+                if result["verdict"] not in PASSING_VERDICTS:
+                    review_rejected = True
+                step_index += 1
+                if step_index == len(steps):
+                    if review_rejected:
+                        repair += 1
+                        step_index = 0
+                        review_rejected = False
+                    else:
+                        terminal = True

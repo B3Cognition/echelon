@@ -148,11 +148,12 @@ def test_exhausted_repairs_remain_exhausted_after_restart(slice_project):
             payload.update(verdict="FAIL", findings=["app.py:1 wrong result"])
     first = ScriptedExecutor(reject)
     assert not _run(slice_project, first).succeeded
-    assert _steps(first) == ["implementer", "spec_guard"] * 3
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(first) == chain * 3
     second = ScriptedExecutor()
     result = _run(slice_project, second)
     assert not result.succeeded and "repair_limit" in result.reason
-    assert not second.calls and result.token_usage == 42
+    assert not second.calls and result.token_usage == 84
 
 
 def test_restart_after_rejection_preserves_repair_count_and_feedback(slice_project, monkeypatch):
@@ -166,8 +167,35 @@ def test_restart_after_rejection_preserves_repair_count_and_feedback(slice_proje
     resumed = ScriptedExecutor(reject)
     result = _run(slice_project, resumed)
     assert not result.succeeded and "repair_limit" in result.reason
-    assert _steps(resumed) == ["implementer", "spec_guard"]
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(resumed) == chain * 2
     assert "wrong result" in resumed.calls[0][2]
+
+
+def test_restart_finishes_rejected_review_round_before_repair(slice_project, monkeypatch):
+    rejected = False
+
+    def reject_once(assignment, payload, root):
+        nonlocal rejected
+        if assignment["step"] == "spec_guard" and not rejected:
+            rejected = True
+            payload.update(
+                verdict="FAIL",
+                findings=["app.py:1 wrong result"],
+            )
+
+    with monkeypatch.context() as patch:
+        _crash_after_receipt(patch, 2)
+        with pytest.raises(ProcessLost):
+            _run(slice_project, ScriptedExecutor(reject_once))
+
+    resumed = ScriptedExecutor(reject_once)
+    result = _run(slice_project, resumed)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded, result.reason
+    assert _steps(resumed) == ["code_reviewer", "test_guardian"] + chain
+    assert "wrong result" in resumed.calls[2][2]
 
 
 def test_saved_finite_budget_cannot_reset_on_restart(slice_project, monkeypatch):

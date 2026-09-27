@@ -97,7 +97,8 @@ def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode)
     result = controller._exec_build(None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build")
     assert result["passed"] is False and result["build_status"] == "blocked"
     assert result["task_ids"] == []
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 3
     assert "delivery_slice_task_id" not in store.read()
 
 
@@ -161,8 +162,9 @@ def test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice(slice_projec
     result = controller.run_loop(max_outer=1, max_inner=1, build_prompt="banzai mode")
     assert result.status == "blocked", result
     assert result.termination_reason == "build_blocked"
-    assert result.tokens_used == 42
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    assert result.tokens_used == 84
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 3
     assert "- [ ] T-001" in (slice_project[1] / "tasks.md").read_text()
     assert store.read().get("build", {}).get("completed_tasks", 0) == 0
     assert "repair_limit" in store.read()["build_reason"]
