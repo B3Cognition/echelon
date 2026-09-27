@@ -40,6 +40,88 @@ def test_resume_after_validated_completion(slice_project, monkeypatch, completed
     assert result.token_usage == 28
 
 
+def test_capture_written_before_journal_update_can_be_recaptured_on_resume(
+    slice_project, monkeypatch,
+):
+    from harness.delivery_slice_journal import DeliverySliceJournal
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    captures = []
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    original = DeliverySliceJournal.save
+
+    def crash_before_reference(self, data):
+        if data["records"] and "browser_evidence" in data["records"][-1]:
+            raise ProcessLost()
+        original(self, data)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DeliverySliceJournal, "save", crash_before_reference)
+        with pytest.raises(ProcessLost):
+            _run(slice_project, ScriptedExecutor(request), browser_baseline_capture=capture)
+
+    replay = ScriptedExecutor()
+    result = _run(slice_project, replay, browser_baseline_capture=capture)
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 2
+    assert len(list(slice_project[2].rglob("browser-baselines/*/*/receipt.json"))) == 2
+    assert _steps(replay) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+
+
+def test_stale_capture_is_not_journaled_and_can_be_retried(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree, *, fingerprint):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=fingerprint,
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    blocked = _run(
+        slice_project, ScriptedExecutor(request),
+        browser_baseline_capture=lambda worktree: capture(worktree, fingerprint="stale"),
+    )
+    assert blocked.status == "blocked" and "stale" in blocked.reason
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert "browser_evidence" not in journal["records"][0]
+
+    replay = ScriptedExecutor()
+    resumed = _run(
+        slice_project, replay,
+        browser_baseline_capture=lambda worktree: capture(
+            worktree, fingerprint=product_evidence_fingerprint(Path(worktree)),
+        ),
+    )
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+
+
 @pytest.mark.parametrize("when", ["intent_saved", "provider_returned"])
 def test_unknown_completion_never_reexecutes_or_accepts(slice_project, monkeypatch, when):
     from harness.delivery_slice_journal import DeliverySliceJournal

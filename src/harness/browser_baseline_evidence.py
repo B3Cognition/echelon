@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 from harness.durable_json import write_json_atomic
 from harness.visual_ralph import BrowserBaselineCapture
@@ -36,11 +37,14 @@ def write_browser_baseline_receipt(
     if evidence_root.is_symlink():
         raise BrowserBaselineEvidenceError("symlinked browser evidence root")
     evidence_root.mkdir(parents=True, exist_ok=True)
-    root = evidence_root.resolve(strict=True) / "browser-baselines" / hashlib.sha256(
+    operation_root = evidence_root.resolve(strict=True) / "browser-baselines" / hashlib.sha256(
         operation_id.encode("utf-8")
     ).hexdigest()
-    root.parent.mkdir(exist_ok=True)
-    root.mkdir()  # Any prior or partial operation must be reconciled, never overwritten.
+    operation_root.mkdir(parents=True, exist_ok=True)
+    if operation_root.is_symlink():
+        raise BrowserBaselineEvidenceError("symlinked browser operation evidence root")
+    root = operation_root / uuid4().hex
+    root.mkdir()  # Unjournaled attempts remain inert; retries never overwrite them.
     artifact_dir = root / "artifacts"
     artifact_dir.mkdir()
     artifacts: list[dict[str, object]] = []

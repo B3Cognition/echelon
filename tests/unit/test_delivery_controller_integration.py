@@ -53,6 +53,47 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert {call[0]["task_id"] for call in executor.calls} == {"T-001"}
 
 
+def test_ralph_supplies_isolated_browser_capture_to_requested_slice(
+    slice_project, tmp_path, monkeypatch,
+):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.visual_ralph import BrowserBaselineCapture, VisualRalphController
+
+    requested = False
+
+    def request_once(assignment, payload, root):
+        nonlocal requested
+        if assignment["step"] == "implementer" and not requested:
+            requested = True
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need pinned baseline",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    captures = []
+
+    def capture(self, worktree):
+        captures.append((self._provider, worktree))
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    monkeypatch.setattr(VisualRalphController, "capture_baselines", capture)
+    executor = ScriptedExecutor(request_once)
+    controller, _ = _controller(slice_project, tmp_path, executor)
+    result = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert captures == [(controller._provider, str(slice_project[0].resolve()))]
+    assert _steps(executor) == [
+        "implementer", "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
 def test_ralph_passes_persisted_target_path_projection_to_slice(slice_project, tmp_path):
     project, spec, _ = slice_project
     (spec / "tasks.md").write_text(

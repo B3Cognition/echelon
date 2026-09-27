@@ -75,7 +75,7 @@ def _validate(data):
     if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget)):
         raise DeliverySliceError("invalid delivery journal budget")
     records = data["records"]
-    if not isinstance(records, list) or len(records) > 12:
+    if not isinstance(records, list) or len(records) > 13:
         raise DeliverySliceError("invalid delivery journal receipts")
     steps = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
     step_index, repair = 0, 0
@@ -83,10 +83,12 @@ def _validate(data):
     seen = set()
     terminal = False
     review_rejected = False
+    browser_requests = 0
     for index, record in enumerate(records):
         if terminal or repair > 2 or step_index >= 4:
             raise DeliverySliceError("delivery receipt after terminal result")
-        if not isinstance(record, dict) or set(record) != {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}:
+        base_fields = {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}
+        if not isinstance(record, dict) or set(record) not in (base_fields, base_fields | {"browser_evidence"}):
             raise DeliverySliceError("invalid delivery receipt fields")
         if type(record["repair_attempt"]) is not int or record["repair_attempt"] != repair:
             raise DeliverySliceError("invalid delivery repair history")
@@ -122,14 +124,28 @@ def _validate(data):
             result = bind_delivery_result(raw_result, assignment)
             if result != record["result"]:
                 raise DeliverySliceError("delivery result binding mismatch")
+            evidence = record.get("browser_evidence")
+            if evidence is not None and (
+                result["verdict"] != "BROWSER_EVIDENCE_REQUIRED"
+                or not isinstance(evidence, dict)
+                or set(evidence) != {"path", "receipt_sha256"}
+                or any(not isinstance(value, str) or not value for value in evidence.values())
+            ):
+                raise DeliverySliceError("invalid browser evidence reference")
             after = record["candidate_after"]
             if not isinstance(after, str) or not after:
                 raise DeliverySliceError("invalid delivery candidate receipt")
             if assignment.step != "implementer" and after != candidate:
                 raise DeliverySliceError("mutating delivery review receipt")
             candidate = after
-            if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT", "BROWSER_EVIDENCE_REQUIRED"}:
+            if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                 terminal = True
+            elif result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
+                browser_requests += 1
+                if browser_requests > 1:
+                    terminal = True
+                elif index < len(records) - 1 and evidence is None:
+                    raise DeliverySliceError("browser evidence missing before continuation")
             elif assignment.step == "implementer" and result["verdict"] not in PASSING_VERDICTS:
                 repair += 1
                 step_index = 0

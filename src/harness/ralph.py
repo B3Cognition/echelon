@@ -2392,6 +2392,19 @@ class RalphController:
                 }
             else:
                 runner_options["repair_task_id"] = repair_task_id
+                def capture_browser_baselines(candidate: str):
+                    from harness.visual_ralph import VisualRalphController
+
+                    visual = VisualRalphController(
+                        provider=self._provider, config=self._config,
+                        spec_id=self._spec_id,
+                        base_dir=str(self._orchestration_root(worktree)),
+                        build_id=self._build_id or operation["id"],
+                        sandbox_spec_factory=lambda path: self._build_sandbox_spec(path, 0),
+                    )
+                    return visual.capture_baselines(candidate)
+
+                runner_options["browser_baseline_capture"] = capture_browser_baselines
                 implementation_target = state.get("implementation_target")
                 if implementation_target is not None and not isinstance(
                     implementation_target, str

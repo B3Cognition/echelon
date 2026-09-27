@@ -179,6 +179,51 @@ print(json.dumps(result))
     sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file(),
     reason="requires the enforced macOS host boundary",
 )
+def test_browser_handoff_can_read_only_its_artifacts_under_forbidden_evidence_root(tmp_path):
+    root = (tmp_path / "candidate").resolve()
+    root.mkdir()
+    evidence = (tmp_path / "evidence").resolve()
+    artifacts = evidence / "browser-baselines" / "operation" / "attempt" / "artifacts"
+    artifacts.mkdir(parents=True)
+    image = artifacts / "0001.png"
+    image.write_bytes(b"baseline")
+    private = evidence / "private.json"
+    private.write_text("secret")
+    request = _request(root, exclusive=False, forbidden=[evidence])
+    request.metadata["prompt_metadata"]["tool_read_roots"] = [str(artifacts)]
+    command = _command(request)
+    probe = '''
+import json, pathlib, sys
+result = {}
+for key, path, action in json.loads(sys.argv[1]):
+    try:
+        if action == "read": pathlib.Path(path).read_bytes()
+        else: pathlib.Path(path).write_bytes(b"changed")
+        result[key] = True
+    except PermissionError:
+        result[key] = False
+print(json.dumps(result))
+'''
+    operations = [
+        ("image_read", str(image), "read"),
+        ("image_write", str(image), "write"),
+        ("private_read", str(private), "read"),
+    ]
+    result = subprocess.run(
+        [*command[:3], sys.executable, "-c", probe, json.dumps(operations)],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "image_read": True, "image_write": False, "private_read": False,
+    }
+    assert image.read_bytes() == b"baseline"
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file(),
+    reason="requires the enforced macOS host boundary",
+)
 @pytest.mark.parametrize("reject", [False, True])
 def test_claude_delivery_runs_real_adapter_stream_and_host_boundary(slice_project, monkeypatch, reject):
     from harness.llm_provider import AICodingCliProvider

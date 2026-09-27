@@ -103,3 +103,24 @@ def test_baseline_proposal_rejects_redirected_receipt_directory(tmp_path):
             ref, operation_id="operation-1", task_id="T-010",
             candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
         )
+
+
+def test_unjournaled_capture_can_retry_without_replacing_prior_evidence(tmp_path):
+    from harness.browser_baseline_evidence import (
+        read_browser_baseline_receipt, write_browser_baseline_receipt,
+    )
+
+    args = dict(
+        evidence_root=tmp_path / "evidence", operation_id="operation-1",
+        task_id="T-010", input_fingerprint="inputs-a",
+    )
+    first = write_browser_baseline_receipt(**args, capture=_capture())
+    second = write_browser_baseline_receipt(**args, capture=_capture())
+
+    assert first.path != second.path
+    for ref in (first, second):
+        retained = read_browser_baseline_receipt(
+            ref, operation_id="operation-1", task_id="T-010",
+            candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
+        )
+        assert next(iter(retained.values())).read_bytes() == b"image-a"

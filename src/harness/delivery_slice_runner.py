@@ -11,6 +11,10 @@ from typing import Callable
 from uuid import uuid4
 
 from harness.build_result import BuildResult
+from harness.browser_baseline_evidence import (
+    BrowserBaselineEvidenceRef, read_browser_baseline_receipt,
+    write_browser_baseline_receipt,
+)
 from harness.delivery_slice import (
     DeliveryAssignment, DeliverySliceError, DeliveryTasksComplete, PASSING_VERDICTS, STEP_VERDICTS,
     bind_delivery_result, select_delivery_task,
@@ -23,6 +27,7 @@ from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.task_targets import task_files_section_for
 from harness.task_progress import update_task_progress_markdown
+from harness.visual_ralph import BrowserBaselineCapture
 from kernel.task_contract import parse_task_rows
 
 
@@ -53,6 +58,7 @@ class DeliverySliceRunner:
         token_budget: float | None = None,
         operation_id: str = "active", journal_required: bool = False,
         on_journal_ready: Callable[[], None] | None = None,
+        browser_baseline_capture: Callable[[str], BrowserBaselineCapture] | None = None,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -202,56 +208,96 @@ class DeliverySliceRunner:
 
             repair_context = feedback
             cursor = 0
+            browser_requested = False
             for repair in range(3):  # initial implementation, then two repairs
                 rejected = False
                 review_failures: list[dict[str, object]] = []
                 for step, artifact in roles.items():
-                    cached = cursor < len(records)
-                    if not cached and token_budget is not None and tokens >= token_budget:
-                        raise DeliverySliceError("delivery_slice_budget_exhausted")
-                    if not cached and token_budget is not None and not usage_known:
-                        raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
-                    if stop_requested and stop_requested():
-                        raise DeliverySliceError("delivery_slice_cancelled")
-                    if _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint:
-                        raise DeliverySliceError("delivery_spec_inputs_changed")
-                    if cached:
-                        record = records[cursor]
-                        assignment = DeliveryAssignment(**record["assignment"])
-                        result = record["result"]
-                        if assignment.step != step or record["repair_attempt"] != repair:
-                            raise DeliverySliceError("invalid delivery replay sequence")
-                    else:
-                        assignment = DeliveryAssignment(
-                            uuid4().hex, step, task_id, _candidate_fingerprint(worktree, spec_dir), data["input_fingerprint"],
+                    browser_paths: dict[str, Path] | None = None
+                    context_before_browser = repair_context
+                    while True:
+                        cached = cursor < len(records)
+                        if not cached and token_budget is not None and tokens >= token_budget:
+                            raise DeliverySliceError("delivery_slice_budget_exhausted")
+                        if not cached and token_budget is not None and not usage_known:
+                            raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
+                        if stop_requested and stop_requested():
+                            raise DeliverySliceError("delivery_slice_cancelled")
+                        if _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint:
+                            raise DeliverySliceError("delivery_spec_inputs_changed")
+                        if cached:
+                            record = records[cursor]
+                            assignment = DeliveryAssignment(**record["assignment"])
+                            result = record["result"]
+                            if assignment.step != step or record["repair_attempt"] != repair:
+                                raise DeliverySliceError("invalid delivery replay sequence")
+                        else:
+                            assignment = DeliveryAssignment(
+                                uuid4().hex, step, task_id, _candidate_fingerprint(worktree, spec_dir), data["input_fingerprint"],
+                            )
+                            record = {"assignment": assignment.identity(), "repair_attempt": repair,
+                                      "raw_result": None, "result": None, "candidate_after": None,
+                                      "token_usage": None, "error": None}
+                            records.append(record)
+                            journal.save(data)  # Intent is durable before any external execution.
+                            result = self._dispatch(
+                                artifact, assignment, inputs, path_projection,
+                                nested_target_prefix, nested_target_fingerprint,
+                                repair_context, worktree, spec_dir,
+                                evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
+                                record, data, journal, browser_paths,
+                            )
+                            invocation_count += 1
+                            tokens = sum(item["token_usage"] or 0 for item in records)
+                            usage_known = all(item["token_usage"] is not None for item in records)
+                        cursor += 1
+                        if token_budget is not None and not usage_known:
+                            raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
+                        if token_budget is not None and tokens >= token_budget:
+                            raise DeliverySliceError("delivery_slice_budget_exhausted")
+                        if record["error"]:
+                            raise DeliverySliceError(record["error"])
+                        if result["verdict"] != "BROWSER_EVIDENCE_REQUIRED":
+                            break
+                        if browser_requested:
+                            raise DeliverySliceError("delivery_browser_evidence_request_repeated")
+                        browser_requested = True
+                        if browser_baseline_capture is None:
+                            raise DeliverySliceError("delivery_browser_evidence_requested: baseline_capture")
+                        if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
+                            raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
+                        reference = record.get("browser_evidence")
+                        if reference is None:
+                            capture = browser_baseline_capture(str(worktree))
+                            if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
+                                raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
+                            if capture.candidate_fingerprint != product_evidence_fingerprint(worktree):
+                                raise DeliverySliceError("delivery_reconciliation_required: stale browser capture")
+                            ref = write_browser_baseline_receipt(
+                                evidence_root=evidence_root, operation_id=operation_id,
+                                task_id=task_id, input_fingerprint=input_fingerprint,
+                                capture=capture,
+                            )
+                            reference = {"path": str(ref.path), "receipt_sha256": ref.receipt_sha256}
+                            record["browser_evidence"] = reference
+                            journal.save(data)
+                        ref = BrowserBaselineEvidenceRef(
+                            path=Path(reference["path"]), receipt_sha256=reference["receipt_sha256"],
                         )
-                        record = {"assignment": assignment.identity(), "repair_attempt": repair,
-                                  "raw_result": None, "result": None, "candidate_after": None,
-                                  "token_usage": None, "error": None}
-                        records.append(record)
-                        journal.save(data)  # Intent is durable before any external execution.
-                        result = self._dispatch(
-                            artifact, assignment, inputs, path_projection,
-                            nested_target_prefix, nested_target_fingerprint,
-                            repair_context, worktree, spec_dir,
-                            evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
-                            record, data, journal,
+                        browser_paths = read_browser_baseline_receipt(
+                            ref, operation_id=operation_id, task_id=task_id,
+                            candidate_fingerprint=product_evidence_fingerprint(worktree),
+                            input_fingerprint=input_fingerprint,
                         )
-                        invocation_count += 1
-                        tokens = sum(item["token_usage"] or 0 for item in records)
-                        usage_known = all(item["token_usage"] is not None for item in records)
-                    cursor += 1
-                    if token_budget is not None and not usage_known:
-                        raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
-                    if token_budget is not None and tokens >= token_budget:
-                        raise DeliverySliceError("delivery_slice_budget_exhausted")
-                    if record["error"]:
-                        raise DeliverySliceError(record["error"])
-                    if result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
-                        raise DeliverySliceError(
-                            "delivery_browser_evidence_requested: "
-                            + result["browser_evidence_request"]["purpose"]
-                        )
+                        repair_context = json.dumps({
+                            "original_feedback": context_before_browser,
+                            "browser_baseline_proposal": {
+                                candidate_path: str(path) for candidate_path, path in browser_paths.items()
+                            },
+                            "instruction": "Inspect these read-only sandbox captures. They are proposals, not passing verification or review.",
+                        })
+                    if browser_paths is not None:
+                        repair_context = context_before_browser
                     if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                         raise DeliverySliceError(f"delivery_{step}_blocked: {result['summary']}")
                     if result["verdict"] not in PASSING_VERDICTS:
@@ -286,7 +332,7 @@ class DeliverySliceRunner:
                   nested_target_prefix, nested_target_fingerprint, repair_context,
                   worktree, spec_dir,
                   evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
-                  record, data, journal):
+                  record, data, journal, browser_paths=None):
         step = assignment.step
         forbidden_roots = [str(spec_dir), str(evidence_root), str(worktree / ".git")]
         if nested_target_prefix is not None:
@@ -294,7 +340,9 @@ class DeliverySliceRunner:
         metadata = {
             **{key: artifact.frontmatter[key] for key in ("model_tier", "effort")
                if key in artifact.frontmatter},
-            "tool_read_roots": [] if step == "implementer" else [str(worktree)],
+            "tool_read_roots": ([str(next(iter(browser_paths.values())).parent)]
+                                if step == "implementer" and browser_paths else
+                                [] if step == "implementer" else [str(worktree)]),
             "tool_forbidden_roots": forbidden_roots,
             "tool_write_paths": ([str(worktree / ".echelon/runnability.yml")]
                                  if step == "implementer" else []),
