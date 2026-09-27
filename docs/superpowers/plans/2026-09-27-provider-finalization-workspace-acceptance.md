@@ -66,7 +66,7 @@
 - Consumes: Echelon commit `91fbe33e` and the preserved T-009 Delivery operation.
 - Produces: accepted T-009 through T-012, completed sandbox verification, and final Delivery/fulfillment evidence.
 
-- [ ] Install the current Echelon checkout with `bash scripts/bash/install.sh`.
+- [ ] Install the current Echelon checkout with `bash scripts/install.sh`.
 - [ ] Resume with `echelon delivery continue 001` from the existing workspace.
 - [ ] For each blocker, preserve the run, identify whether the fault is Echelon or the product, and fix only the reproduced fault using RED→GREEN tests.
 - [ ] Continue until all 12 tasks and final Delivery/fulfillment gates complete, or record an external blocker that cannot be repaired in-repo.
@@ -103,7 +103,7 @@
 - [ ] Run the provider-finalization focused suites named in Tasks 1–6 of `2026-09-26-provider-dispatch-finalization.md`.
 - [ ] Run `.venv/bin/python -m pytest -m unit`.
 - [ ] Run `.venv/bin/python -m pytest`.
-- [ ] Run `bash scripts/bash/dry-run.sh` and `bash scripts/bash/install.sh`.
+- [ ] Run `bash scripts/bash/dry-run.sh` and `bash scripts/install.sh`.
 - [ ] Run `python scripts/merge_verification.py run --base 62a43bdf` and retain the generated receipt.
 - [ ] Review `git log`, `git diff --stat`, and `git diff --check` for `62a43bdf..HEAD`.
 
