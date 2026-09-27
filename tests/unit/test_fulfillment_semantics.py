@@ -19,9 +19,8 @@ def reply(step="judge"):
                  "evidence_strength": "medium", "runtime_threshold": False,
                  "confidence": "low", "notes": "No executable test found"}
                 for item in ("FR-001", "FR-1000000")]
-    return {"schema_version": 1, "run_id": "run", "step": step, "dispatch_id": "dispatch",
-            "input_fingerprint": "a" * 64, "assigned_ids": ["FR-001", "FR-1000000"],
-            "action": "final", "rows": rows, "unmapped_candidates": []}
+    return {**assignment(step).reply_identity(), "action": "final", "rows": rows,
+            "unmapped_candidates": []}
 
 
 @pytest.mark.parametrize("step", ["mapper", "judge"])
@@ -47,9 +46,9 @@ def test_valid_reply_is_consumed_by_existing_artifact_parser(tmp_path, step):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("schema_version", True), ("schema_version", 2), ("run_id", "other"),
+    ("schema_version", True), ("schema_version", 1), ("run_id", "other"),
     ("step", "mapper"), ("dispatch_id", "other"), ("input_fingerprint", "b" * 64),
-    ("assigned_ids", ["FR-001"]), ("action", "execute"), ("tools", ["shell"]),
+    ("assigned_ids_sha256", "b" * 64), ("action", "execute"), ("tools", ["shell"]),
     ("unmapped_candidates", "invented"), ("unmapped_candidates", [1]),
 ])
 def test_reply_cannot_change_assignment_or_add_authority(field, value):
@@ -58,6 +57,16 @@ def test_reply_cannot_change_assignment_or_add_authority(field, value):
     payload[field] = value
     with pytest.raises(ValueError):
         validate_semantic_result(payload, assignment())
+
+
+def test_reply_binds_ordered_assignment_by_digest_without_repeating_ids():
+    from harness.fulfillment_semantics import validate_semantic_result
+    payload = reply()
+
+    assert payload["schema_version"] == 2
+    assert "assigned_ids" not in payload
+    assert len(payload["assigned_ids_sha256"]) == 64
+    assert validate_semantic_result(payload, assignment())["rows"] == payload["rows"]
 
 
 @pytest.mark.parametrize("kind", ["missing", "extra", "duplicate", "renumbered", "synthetic", "reordered"])

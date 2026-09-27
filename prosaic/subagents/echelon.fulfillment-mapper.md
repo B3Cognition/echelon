@@ -46,8 +46,8 @@ outside host-authorized roots.
 
 ## Reply contract
 
-Return only the JSON envelope specified by the host: repeat its assignment
-identity exactly, then one `read`, `blocked`, or `final` action. A final reply
+Return only the JSON envelope specified by the host: repeat its compact
+`reply_contract.binding` exactly, then one `read`, `blocked`, or `final` action. A final reply
 contains one structured mapping row per assigned ID and separate
 `unmapped_candidates` notes. The host supplies field names/enums and owns
 Markdown rendering, sequencing, state, budgets and publication.

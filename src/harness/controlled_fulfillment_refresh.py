@@ -27,7 +27,7 @@ from kernel.fulfillment import (
     _FRONTMATTER_RE,
 )
 
-CONTRACT = "controlled-fulfillment-inspection-v1"
+CONTRACT = "controlled-fulfillment-inspection-v2"
 _OUTPUT_NAMES = ("fulfillment-report.md", "fulfillment-gaps.md")
 
 

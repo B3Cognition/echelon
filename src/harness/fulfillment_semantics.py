@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import re
 import unicodedata
@@ -52,6 +53,15 @@ class FulfillmentAssignment:
                 "dispatch_id": self.dispatch_id, "input_fingerprint": self.input_fingerprint,
                 "assigned_ids": list(self.assigned_ids)}
 
+    def reply_identity(self) -> dict[str, object]:
+        """Compact reply binding; the host retains and validates the full ID list."""
+        identity = self.identity()
+        encoded_ids = json.dumps(identity["assigned_ids"], ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+        return {"schema_version": 2, "run_id": self.run_id, "step": self.step,
+                "dispatch_id": self.dispatch_id, "input_fingerprint": self.input_fingerprint,
+                "assigned_ids_sha256": hashlib.sha256(encoded_ids).hexdigest()}
+
 
 def _cell(value: object, *, required: bool = False) -> str:
     if (type(value) is not str or len(value) > 8192 or (required and not value.strip())
@@ -87,7 +97,7 @@ def _validate_rows(rows: object, step: str) -> list[dict]:
 
 
 def validate_semantic_result(value: object, assignment: FulfillmentAssignment) -> dict:
-    identity = assignment.identity()
+    identity = assignment.reply_identity()
     if type(value) is not dict or type(value.get("schema_version")) is not int:
         raise ValueError("fulfillment reply must be a versioned object")
     if any(value.get(key) != expected for key, expected in identity.items()):

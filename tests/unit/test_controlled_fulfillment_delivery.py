@@ -339,7 +339,7 @@ rows = [{"id": item, "verified_implementation_evidence": "", "verified_test_evid
          "codegraph_candidates": "", "candidate_disposition": "none", "evidence_kind": "missing",
          "evidence_strength": "none", "runtime_threshold": False, "confidence": "none", "notes": "No evidence"}
         for item in data["assignment"]["assigned_ids"]]
-answer = json.dumps({**data["assignment"], "action": "final", "rows": rows, "unmapped_candidates": []})
+answer = json.dumps({**data["reply_contract"]["binding"], "action": "final", "rows": rows, "unmapped_candidates": []})
 '''
     script += f"sys.stdout.write({wire!r}.replace(json.dumps('__RESULT__'), json.dumps(answer)))\n"
     real_popen, commands = subprocess.Popen, []

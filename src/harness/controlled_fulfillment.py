@@ -165,7 +165,7 @@ class ControlledFulfillment:
                 "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
                 "provider": getattr(self._executor, "provider_id", self._executor.cli),
                 "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
-                "contract": "controlled-fulfillment-inspection-v1",
+                "contract": "controlled-fulfillment-inspection-v2",
             })
             if saved is None:
                 state_path = context.verify_run_dir / "state.json"
@@ -343,12 +343,13 @@ class ControlledFulfillment:
             payload = {"assignment": assignment.identity(), "context": data, "reads": reads,
                 "reply_contract": {"actions": {"read": "request: closed read_file/list_directory request",
                     "blocked": "reason: nonempty single-line text", "final": "rows and unmapped_candidates"},
+                    "binding": assignment.reply_identity(),
                     "row_fields": _MAPPER_FIELDS if step == "mapper" else _JUDGE_FIELDS,
                     "roots": ["worktree", "spec", "evidence"],
                     "read_file": {"op": "read_file", "root": "evidence", "path": "requirement-audit.md",
                                   "start_line": 1, "line_count": 200},
                     "list_directory": {"op": "list_directory", "root": "worktree", "path": "."},
-                    "instruction": "Repeat every assignment field exactly at top level, then action and its fields only."}}
+                    "instruction": "Repeat every reply_contract.binding field exactly at top level, then action and its fields only."}}
             prompt = role.body + "\nHOST_INPUT_JSON\n" + json.dumps(payload, allow_nan=False)
             if len(prompt.encode()) > 1024 * 1024:
                 raise ValueError("fulfillment inspection input exceeds provider limit")

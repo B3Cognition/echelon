@@ -52,13 +52,14 @@ class SemanticExecutor:
         assert 0 < timeout_ms <= 300000
         data = json.loads(prompt.split("\nHOST_INPUT_JSON\n", 1)[1])
         assignment = data["assignment"]
+        reply_binding = data["reply_contract"]["binding"]
         self.dispatches.append(data)
         if self.bad == "provider":
             return CliRunResult(125, "", "scripted native tool rejection", token_usage=self.usage)
         if self.bad == "malformed":
             return CliRunResult(0, "[]", "", token_usage=self.usage)
         if self.bad == "read_forever" or (self.inspect_source and assignment["step"] == "mapper" and not data["reads"]):
-            value = {**assignment, "action": "read", "request": {
+            value = {**reply_binding, "action": "read", "request": {
                 "op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 2}}
         else:
             rows = []
@@ -76,7 +77,7 @@ class SemanticExecutor:
                 rows[0]["id"] = "FR-999999"
             if self.bad == "unread_citation":
                 rows[0]["verified_implementation_evidence"] = "worktree:app.py:1"
-            value = {**assignment, "action": "final", "rows": rows, "unmapped_candidates": []}
+            value = {**reply_binding, "action": "final", "rows": rows, "unmapped_candidates": []}
         return CliRunResult(0, json.dumps(value), "", token_usage=self.usage)
 
 
@@ -127,18 +128,18 @@ def test_invalid_read_bounds_are_returned_for_correction_instead_of_failing_refr
     class CorrectingExecutor(SemanticExecutor):
         def run_inspection_turn(self, *args, **kwargs):
             result = super().run_inspection_turn(*args, **kwargs)
-            if self.dispatch_count == 1:
-                assignment = self.dispatches[-1]["assignment"]
+            if self.dispatch_count in {1, 2}:
+                binding = self.dispatches[-1]["reply_contract"]["binding"]
                 result.stdout = json.dumps(
                     {
-                        **assignment,
+                        **binding,
                         "action": "read",
                         "request": {
                             "op": "read_file",
                             "root": "worktree",
                             "path": "app.py",
                             "start_line": 1,
-                            "line_count": 201,
+                            "line_count": 201 if self.dispatch_count == 1 else 2,
                         },
                     }
                 )
@@ -148,7 +149,7 @@ def test_invalid_read_bounds_are_returned_for_correction_instead_of_failing_refr
     result = run(preparation_context, executor)
 
     assert result.exit_code == 0, result.reason
-    assert executor.dispatch_count == 2
+    assert executor.dispatch_count == 3
     assert executor.dispatches[1]["reads"] == [
         {
             "request": {
@@ -168,6 +169,9 @@ def test_invalid_read_bounds_are_returned_for_correction_instead_of_failing_refr
             },
         }
     ]
+    assert executor.dispatches[2]["reads"][1]["response"]["text"] == (
+        "def hello(): return 'hello'\n"
+    )
 
 
 @pytest.mark.parametrize("bad", ["provider", "malformed", "extra_id", "unread_citation"])
@@ -312,7 +316,7 @@ rows = [{"id": item, "verified_implementation_evidence": "", "verified_test_evid
 '''
         if fault == "extra_id":
             script += 'rows[0]["id"] = "FR-999999"\n'
-        script += '''answer = json.dumps({**data["assignment"], "action": "final", "rows": rows, "unmapped_candidates": []})
+        script += '''answer = json.dumps({**data["reply_contract"]["binding"], "action": "final", "rows": rows, "unmapped_candidates": []})
 '''
         script += f"sys.stdout.write({wire!r}.replace(json.dumps('__RESULT__'), json.dumps(answer)))\n"
     real_popen = subprocess.Popen

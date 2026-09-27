@@ -41,8 +41,8 @@ files, discover workflow instructions, or expand the assigned scope.
 
 ## Reply contract
 
-Return only the JSON envelope specified by the host, repeating its assignment
-identity exactly. Choose `read`, `blocked`, or `final`; final rows contain `id`,
+Return only the JSON envelope specified by the host, repeating its compact
+`reply_contract.binding` exactly. Choose `read`, `blocked`, or `final`; final rows contain `id`,
 `status`, and nonempty `evidence`, with separate `unmapped_candidates` notes.
 Cite actual evidence using the returned root, path and line numbers.
 
