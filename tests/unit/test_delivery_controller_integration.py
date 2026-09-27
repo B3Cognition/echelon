@@ -182,6 +182,8 @@ def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project,
     config.llm.cli = cli
     provider = AICodingCliProvider(config)
     class ExternalBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
+
         def run_agent(self, request):
             return script.run_agent_result(request.cwd, request.prompt, request_metadata=request.metadata)
     provider._backend = ExternalBackend()
