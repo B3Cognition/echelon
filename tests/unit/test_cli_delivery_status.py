@@ -137,6 +137,25 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
+def test_provider_failed_status_matches_checkpoint_preserving_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "build_status": "blocked",
+            "build_reason": "delivery_provider_failed",
+            "delivery_slice_operation": {"id": "slice-operation-1"},
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
     from echelon.delivery_service import _delivery_status_next_step

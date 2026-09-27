@@ -182,6 +182,19 @@ def _outer_cap_delivery_action(
     )
 
 
+def _is_retryable_delivery_provider_failure(state: dict) -> bool:
+    """Return true only for a provider failure bound to a durable slice operation."""
+    operation = state.get("delivery_slice_operation")
+    return (
+        state.get("termination_reason") == "build_blocked"
+        and state.get("blocked_phase") == "implementation"
+        and state.get("build_status") == "blocked"
+        and state.get("build_reason") == "delivery_provider_failed"
+        and isinstance(operation, dict)
+        and bool(str(operation.get("id") or "").strip())
+    )
+
+
 def _delivery_status_next_step(
     state: dict,
     spec_id: str,
@@ -193,6 +206,8 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
+        if _is_retryable_delivery_provider_failure(state):
+            return f"echelon delivery continue {effective_spec}"
         if termination_reason == "outer_cap":
             command, explanation = _outer_cap_delivery_action(
                 effective_spec, state.get("max_outer")
@@ -3734,6 +3749,8 @@ def _run_delivery_resume(
         continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
+    if _is_retryable_delivery_provider_failure(state):
+        continuation_reasons.add("build_blocked")
     retryable_error_reasons = {"harness_error"}
 
     resumable_statuses = {
