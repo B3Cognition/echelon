@@ -45,6 +45,8 @@ Return only the JSON envelope specified by the host, repeating its compact
 `reply_contract.binding` exactly. Choose `read`, `blocked`, or `final`; final rows contain `id`,
 `status`, and nonempty `evidence`, with separate `unmapped_candidates` notes.
 Cite actual evidence using the returned root, path and line numbers.
+Every row field is one JSON string, never an array or object; join multiple
+citations with `; ` in that one string.
 
 ALWAYS state uncertainty and concrete missing evidence; return `blocked` when
 required context cannot be inspected safely.

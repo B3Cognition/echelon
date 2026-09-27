@@ -86,6 +86,27 @@ def run(context, executor, **kwargs):
     return ControlledFulfillment(executor, context.workspace_root).run(context, **kwargs)
 
 
+def test_mapper_reply_contract_declares_exact_scalar_json_types(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    fields = executor.dispatches[0]["reply_contract"]["row_fields"]
+    assert fields["runtime_threshold"] == {"type": "boolean"}
+    assert all(
+        definition["type"] == "string"
+        for name, definition in fields.items()
+        if name != "runtime_threshold"
+    )
+    for name in (
+        "verified_implementation_evidence",
+        "verified_test_evidence",
+        "codegraph_candidates",
+    ):
+        assert fields[name]["multiple_values"] == "join with ; in one string"
+
+
 def test_mechanical_missing_report_skips_judge_and_stays_staged(preparation_context):
     context = preparation_context
     before = _snapshot(context.spec_dir)

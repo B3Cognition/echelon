@@ -49,14 +49,27 @@ _EVIDENCE_INPUTS = ("canonical-requirements.json", "requirement-audit.md", "prod
                     "codegraph-analysis.json", "codegraph-summary.json", "codegraph-evidence-map.json",
                     "perlgraph-analysis.json", "perlgraph-summary.json", "coverage-evidence.json",
                     "coverage-observation-context.json", "topology-receipt.json")
-_MAPPER_FIELDS = {"id": "exact assigned ID", "verified_implementation_evidence": "inspected root:path:line citations or empty",
-    "verified_test_evidence": "inspected root:path:line citations or empty", "codegraph_candidates": "host-supplied leads",
-    "candidate_disposition": "accepted|candidate_only|contradicted|unrelated|none",
-    "evidence_kind": "source_and_test|source_only|test_only|measured_runtime|assertion_only|missing|meta",
-    "evidence_strength": "strong|medium|weak|none", "runtime_threshold": "boolean",
-    "confidence": "high|medium|low|none", "notes": "literal single-line text"}
-_JUDGE_FIELDS = {"id": "exact assigned ID", "status": "IMPLEMENTED|PARTIAL|UNVERIFIED|MISSING|DEVIATED|OBSOLETE_SPEC",
-                 "evidence": "nonempty concrete evidence with task/case context"}
+_MAPPER_FIELDS = {
+    "id": {"type": "string", "format": "exact assigned ID"},
+    "verified_implementation_evidence": {"type": "string", "format": "inspected root:path:line citations or empty",
+                                         "multiple_values": "join with ; in one string"},
+    "verified_test_evidence": {"type": "string", "format": "inspected root:path:line citations or empty",
+                               "multiple_values": "join with ; in one string"},
+    "codegraph_candidates": {"type": "string", "format": "host-supplied file::symbol leads or empty",
+                             "multiple_values": "join with ; in one string"},
+    "candidate_disposition": {"type": "string", "enum": "accepted|candidate_only|contradicted|unrelated|none"},
+    "evidence_kind": {"type": "string",
+                      "enum": "source_and_test|source_only|test_only|measured_runtime|assertion_only|missing|meta"},
+    "evidence_strength": {"type": "string", "enum": "strong|medium|weak|none"},
+    "runtime_threshold": {"type": "boolean"},
+    "confidence": {"type": "string", "enum": "high|medium|low|none"},
+    "notes": {"type": "string", "format": "literal single-line text"},
+}
+_JUDGE_FIELDS = {
+    "id": {"type": "string", "format": "exact assigned ID"},
+    "status": {"type": "string", "enum": "IMPLEMENTED|PARTIAL|UNVERIFIED|MISSING|DEVIATED|OBSOLETE_SPEC"},
+    "evidence": {"type": "string", "format": "nonempty concrete evidence with task/case context"},
+}
 _STAGED_OUTPUTS = ("implementation-map.md", "judgment-prepass.json", "judgment-prepass.md",
                    "fulfillment-report.fallback.md", "progress-integrity.json",
                    "fulfillment-report.staged.md", "fulfillment-gaps.staged.md")
@@ -165,7 +178,7 @@ class ControlledFulfillment:
                 "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
                 "provider": getattr(self._executor, "provider_id", self._executor.cli),
                 "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
-                "contract": "controlled-fulfillment-inspection-v2",
+                "contract": "controlled-fulfillment-inspection-v3",
             })
             if saved is None:
                 state_path = context.verify_run_dir / "state.json"

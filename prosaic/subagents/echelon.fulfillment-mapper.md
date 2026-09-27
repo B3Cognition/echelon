@@ -52,6 +52,9 @@ contains one structured mapping row per assigned ID and separate
 `unmapped_candidates` notes. The host supplies field names/enums and owns
 Markdown rendering, sequencing, state, budgets and publication.
 
+Every row field except `runtime_threshold` is one JSON string, never an array
+or object. Join multiple citations or candidates with `; ` in that one string.
+
 ALWAYS leave verified evidence empty when no inspected evidence supports it,
 and explain the limitation in notes or return `blocked` for missing context.
 NEVER invent citations, native execution settings, output paths, completion
