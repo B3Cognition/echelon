@@ -154,6 +154,11 @@ starting another.
   issuing a passing receipt (`6a2de222`; 93 Delivery/visual tests passed).
 - [ ] Give browser-required tasks a controller-owned browser-evidence handoff
   before slice acceptance; keep provider task ownership and reviewer verdicts.
+  `fd54cf29` returns a retained proposal to the same task; a live Docker
+  Playwright/host-scope probe captured one image without changing its candidate.
+  The preserved rugby demo's Chromium test passes but declares no snapshot, so
+  capture yields no image and the current slice still blocks. An actionable
+  no-image handback and an installed-workspace run remain pending.
 - [x] Run browser verification from a disposable container copy of a read-only
   candidate mount; retain evidence outside the product worktree (`d64b7a16`;
   235 adjacent tests and two real-Docker isolation/runtime smokes passed).
