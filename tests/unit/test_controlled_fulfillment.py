@@ -121,6 +121,55 @@ def test_real_host_read_and_prepass_select_only_unresolved_ids(preparation_conte
     assert "TC-000001" in result.gaps_path.read_text()
 
 
+def test_invalid_read_bounds_are_returned_for_correction_instead_of_failing_refresh(
+    preparation_context,
+):
+    class CorrectingExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if self.dispatch_count == 1:
+                assignment = self.dispatches[-1]["assignment"]
+                result.stdout = json.dumps(
+                    {
+                        **assignment,
+                        "action": "read",
+                        "request": {
+                            "op": "read_file",
+                            "root": "worktree",
+                            "path": "app.py",
+                            "start_line": 1,
+                            "line_count": 201,
+                        },
+                    }
+                )
+            return result
+
+    executor = CorrectingExecutor()
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 2
+    assert executor.dispatches[1]["reads"] == [
+        {
+            "request": {
+                "op": "read_file",
+                "root": "worktree",
+                "path": "app.py",
+                "start_line": 1,
+                "line_count": 201,
+            },
+            "response": {
+                "status": "rejected",
+                "reason": "invalid_line_bounds",
+                "constraints": {
+                    "start_line": "integer >= 1",
+                    "line_count": "integer from 1 through 200",
+                },
+            },
+        }
+    ]
+
+
 @pytest.mark.parametrize("bad", ["provider", "malformed", "extra_id", "unread_citation"])
 def test_failed_semantics_never_publish_and_keep_usage(preparation_context, bad):
     (preparation_context.spec_dir / "fulfillment-report.md").write_text("previous accepted report")

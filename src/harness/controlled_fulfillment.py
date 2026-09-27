@@ -25,7 +25,7 @@ from harness.fulfillment_preparation_steps import load_preparation_observation
 from harness.fulfillment_semantics import (
     FulfillmentAssignment, parse_semantic_reply, render_fallback_report, render_implementation_map,
 )
-from harness.inspection_io import BoundedReadChannel
+from harness.inspection_io import BoundedReadChannel, InspectionReadBoundsError
 from harness.judgment_prepass import assemble_fulfillment_report, write_judgment_prepass
 from harness.product_inventory import CONTROL_PATHS, CONTROL_ROOTS, product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
@@ -386,7 +386,10 @@ class ControlledFulfillment:
                     if len(reads) >= 32:
                         raise ValueError("fulfillment inspection read limit exhausted")
                     request = accepted["request"]
-                    record["read"] = {"request": request, "response": channel.request(request)}
+                    record["read"] = {
+                        "request": request,
+                        "response": _service_read(channel, request),
+                    }
                     reads.append(record["read"])
                 recovery.save()
                 if accepted["action"] == "final":
@@ -406,8 +409,22 @@ def _check_budget(usage, budget):
 
 def _verify_reads(channel, reads):
     for read in reads:
-        if channel.request(read["request"]) != read["response"]:
+        if _service_read(channel, read["request"]) != read["response"]:
             raise ValueError("fulfillment inspected evidence changed")
+
+
+def _service_read(channel, request):
+    try:
+        return channel.request(request)
+    except InspectionReadBoundsError:
+        return {
+            "status": "rejected",
+            "reason": "invalid_line_bounds",
+            "constraints": {
+                "start_line": "integer >= 1",
+                "line_count": "integer from 1 through 200",
+            },
+        }
 
 
 def _verify_citations(rows, reads):

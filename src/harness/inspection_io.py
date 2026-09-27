@@ -19,6 +19,10 @@ class InspectionReadError(ValueError):
     """Raised when a host-serviced inspection read is invalid or unsafe."""
 
 
+class InspectionReadBoundsError(InspectionReadError):
+    """Raised for a well-formed file read whose requested bounds are invalid."""
+
+
 class BoundedReadChannel:
     """Expose only bounded reads below caller-named, descriptor-pinned roots."""
 
@@ -111,7 +115,9 @@ class BoundedReadChannel:
                 or start_line < 1
                 or not 1 <= line_count <= _MAX_LINES
             ):
-                raise InspectionReadError("review file read has invalid line bounds")
+                raise InspectionReadBoundsError(
+                    "review file read has invalid line bounds"
+                )
             return _read_file(
                 self._roots[root],
                 components,
