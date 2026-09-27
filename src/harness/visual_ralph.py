@@ -110,8 +110,8 @@ class VisualRalphController:
                 if len(content) > 10_000_000:
                     raise RuntimeError("browser baseline image exceeded size limit")
                 images[relative.as_posix()] = content
-            if not images:
-                raise RuntimeError("browser capture produced no baseline images")
+            if not images and not verification.passed:
+                raise RuntimeError("browser capture failed and produced no baseline images")
             if fingerprint != product_evidence_fingerprint(Path(worktree_path)):
                 raise RuntimeError("candidate changed during browser baseline capture")
             return BrowserBaselineCapture(fingerprint, verification, images)

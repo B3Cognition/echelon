@@ -208,7 +208,8 @@ class DeliverySliceRunner:
 
             repair_context = feedback
             cursor = 0
-            browser_requested = False
+            browser_requests = 0
+            needs_snapshot_recapture = False
             for repair in range(3):  # initial implementation, then two repairs
                 rejected = False
                 review_failures: list[dict[str, object]] = []
@@ -258,10 +259,13 @@ class DeliverySliceRunner:
                         if record["error"]:
                             raise DeliverySliceError(record["error"])
                         if result["verdict"] != "BROWSER_EVIDENCE_REQUIRED":
+                            if (needs_snapshot_recapture
+                                    and result["verdict"] not in {"BLOCKED", "NEEDS_CONTEXT"}):
+                                raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             break
-                        if browser_requested:
+                        if browser_requests and (not needs_snapshot_recapture or browser_requests >= 2):
                             raise DeliverySliceError("delivery_browser_evidence_request_repeated")
-                        browser_requested = True
+                        browser_requests += 1
                         if browser_baseline_capture is None:
                             raise DeliverySliceError("delivery_browser_evidence_requested: baseline_capture")
                         if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
@@ -289,12 +293,22 @@ class DeliverySliceRunner:
                             candidate_fingerprint=product_evidence_fingerprint(worktree),
                             input_fingerprint=input_fingerprint,
                         )
+                        if not browser_paths and browser_requests >= 2:
+                            raise DeliverySliceError("delivery_browser_capture_no_snapshots_after_retry")
+                        needs_snapshot_recapture = not browser_paths
                         repair_context = json.dumps({
                             "original_feedback": context_before_browser,
                             "browser_baseline_proposal": {
                                 candidate_path: str(path) for candidate_path, path in browser_paths.items()
                             },
-                            "instruction": "Inspect these read-only sandbox captures. They are proposals, not passing verification or review.",
+                            "instruction": (
+                                "Browser tests passed but produced no snapshot image. Add a real "
+                                "snapshot assertion or test within this task, then request browser "
+                                "capture again. Do not fabricate a baseline or claim visual approval."
+                                if not browser_paths else
+                                "Inspect these read-only sandbox captures. They are proposals, "
+                                "not passing verification or review."
+                            ),
                         })
                     if browser_paths is not None:
                         repair_context = context_before_browser

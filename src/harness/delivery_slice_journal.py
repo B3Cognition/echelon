@@ -75,7 +75,7 @@ def _validate(data):
     if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget)):
         raise DeliverySliceError("invalid delivery journal budget")
     records = data["records"]
-    if not isinstance(records, list) or len(records) > 13:
+    if not isinstance(records, list) or len(records) > 14:
         raise DeliverySliceError("invalid delivery journal receipts")
     steps = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
     step_index, repair = 0, 0
@@ -142,7 +142,7 @@ def _validate(data):
                 terminal = True
             elif result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
                 browser_requests += 1
-                if browser_requests > 1:
+                if browser_requests > 2:
                     terminal = True
                 elif index < len(records) - 1 and evidence is None:
                     raise DeliverySliceError("browser evidence missing before continuation")

@@ -137,7 +137,7 @@ def test_baseline_capture_uses_isolated_browser_and_returns_snapshot_bytes(tmp_p
     provider.destroy.assert_called_once_with(provider.create.return_value)
 
 
-def test_baseline_capture_without_images_fails_and_destroys_sandbox(tmp_path: Path):
+def test_passing_baseline_capture_without_images_returns_observation_and_destroys_sandbox(tmp_path: Path):
     from harness.visual_ralph import VisualRalphController
 
     candidate = tmp_path / "candidate"
@@ -158,10 +158,36 @@ def test_baseline_capture_without_images_fails_and_destroys_sandbox(tmp_path: Pa
         provider=provider, config=_make_config(), spec_id="001",
     )
 
-    with pytest.raises(RuntimeError, match="no baseline images"):
+    capture = controller.capture_baselines(str(candidate))
+
+    assert capture.verification.passed
+    assert capture.images == {}
+    provider.read_file.assert_not_called()
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_failing_baseline_capture_without_images_does_not_request_snapshot_repair(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-3")
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="")
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(provider=provider, config=_make_config(), spec_id="001")
+
+    with pytest.raises(RuntimeError, match="browser capture failed"):
         controller.capture_baselines(str(candidate))
 
-    provider.read_file.assert_not_called()
     provider.destroy.assert_called_once_with(provider.create.return_value)
 
 

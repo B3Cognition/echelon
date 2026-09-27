@@ -31,7 +31,7 @@ def write_browser_baseline_receipt(
     """Store one exclusive proposal under the delivery operation's evidence root."""
     if not all(isinstance(value, str) and value for value in (
         operation_id, task_id, input_fingerprint, capture.candidate_fingerprint,
-    )) or not capture.images:
+    )) or (not capture.images and capture.verification.passed is not True):
         raise BrowserBaselineEvidenceError("invalid browser baseline identity or images")
     evidence_root = Path(evidence_root)
     if evidence_root.is_symlink():
@@ -114,7 +114,8 @@ def read_browser_baseline_receipt(
                 or type(payload["verification_passed"]) is not bool):
             raise BrowserBaselineEvidenceError("browser receipt binding mismatch")
         artifacts = payload["artifacts"]
-        if not isinstance(artifacts, list) or not 1 <= len(artifacts) <= 32:
+        if (not isinstance(artifacts, list) or len(artifacts) > 32
+                or (not artifacts and not payload["verification_passed"])):
             raise BrowserBaselineEvidenceError("invalid browser artifact inventory")
         artifact_dir = root / "artifacts"
         if artifact_dir.is_symlink() or not artifact_dir.is_dir():

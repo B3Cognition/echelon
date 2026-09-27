@@ -38,6 +38,33 @@ def test_baseline_proposal_retains_path_and_bytes_without_claiming_pass(tmp_path
     assert receipt["task_id"] == "T-010"
 
 
+def test_passing_browser_run_without_snapshots_is_durable_but_not_an_image_proposal(tmp_path):
+    from harness.browser_baseline_evidence import (
+        BrowserBaselineEvidenceError, read_browser_baseline_receipt, write_browser_baseline_receipt,
+    )
+
+    args = dict(evidence_root=tmp_path / "evidence", operation_id="operation-1",
+                task_id="T-010", input_fingerprint="inputs-a")
+    empty = BrowserBaselineCapture(
+        candidate_fingerprint="candidate-a", verification=VerifyResult(passed=True), images={},
+    )
+    ref = write_browser_baseline_receipt(**args, capture=empty)
+    assert read_browser_baseline_receipt(
+        ref, operation_id="operation-1", task_id="T-010",
+        candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
+    ) == {}
+    receipt = json.loads(ref.path.read_text(encoding="utf-8"))
+    assert receipt["authority"] == "browser-baseline-proposal"
+    assert receipt["verification_passed"] is True
+    assert receipt["artifacts"] == []
+    with pytest.raises(BrowserBaselineEvidenceError):
+        write_browser_baseline_receipt(
+            **args, capture=BrowserBaselineCapture(
+                candidate_fingerprint="candidate-a", verification=VerifyResult(passed=False), images={},
+            ),
+        )
+
+
 @pytest.mark.parametrize("changed", ["task_id", "candidate_fingerprint", "input_fingerprint", "operation_id", "artifact"])
 def test_baseline_proposal_rejects_wrong_binding_or_changed_bytes(tmp_path, changed):
     from harness.browser_baseline_evidence import (

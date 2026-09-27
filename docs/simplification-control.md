@@ -157,8 +157,11 @@ starting another.
   `fd54cf29` returns a retained proposal to the same task; a live Docker
   Playwright/host-scope probe captured one image without changing its candidate.
   The preserved rugby demo's Chromium test passes but declares no snapshot, so
-  capture yields no image and the current slice still blocks. An actionable
-  no-image handback and an installed-workspace run remain pending.
+  capture yields no image. The slice now retains that non-approving observation,
+  tells the same implementer to add a snapshot assertion, and allows one bounded
+  recapture; absent or repeatedly empty capture cannot pass to reviewers. A live
+  isolated Docker rerun confirmed Playwright passes with zero images and leaves
+  the preserved demo unchanged. An installed-workspace run remains pending.
 - [x] Run browser verification from a disposable container copy of a read-only
   candidate mount; retain evidence outside the product worktree (`d64b7a16`;
   235 adjacent tests and two real-Docker isolation/runtime smokes passed).
