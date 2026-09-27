@@ -130,6 +130,21 @@ def test_failed_provider_usage_survives_reentry_without_retry(preparation_contex
     assert executor.dispatch_count == 1
 
 
+def test_invalid_provider_reply_is_durably_bound_to_its_turn(preparation_context):
+    executor = SemanticExecutor(bad="malformed")
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    record = journal["steps"]["mapper"]["records"][0]
+    assert record["raw_stdout"] == "[]"
+    assert record["reply"] is None
+    assert record["error"] == "fulfillment reply must be a versioned object"
+
+
 def test_pending_publication_replays_exact_bytes(preparation_context, monkeypatch):
     import harness.fulfillment_recovery as recovery
     context = preparation_context

@@ -173,7 +173,7 @@ class ControlledFulfillment:
                 _validate_context(context)
                 state["controlled_fulfillment_journal"] = recovery.path.name
                 write_json_atomic(state_path, state, trusted_root=context.verify_run_dir)
-                recovery.data = {"schema_version": 1, "binding": operation_binding, "phase": "preparing",
+                recovery.data = {"schema_version": 2, "binding": operation_binding, "phase": "preparing",
                                  "inputs": None, "budget_limit": token_budget, "steps": {}, "outputs": {}}
                 recovery.save()
                 prepared = prepare_fulfillment_inputs(context)
@@ -326,7 +326,7 @@ class ControlledFulfillment:
                 accepted = record["reply"]
                 if accepted["action"] == "final":
                     _verify_reads(channel, reads)
-                    return accepted, reads
+                    return _json_copy(accepted), reads
                 if accepted["action"] == "blocked":
                     raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
                 if record["read"] is None:
@@ -352,7 +352,13 @@ class ControlledFulfillment:
             prompt = role.body + "\nHOST_INPUT_JSON\n" + json.dumps(payload, allow_nan=False)
             if len(prompt.encode()) > 1024 * 1024:
                 raise ValueError("fulfillment inspection input exceeds provider limit")
-            record = {"reply": None, "read": None, "token_usage": None, "error": None}
+            record = {
+                "reply": None,
+                "read": None,
+                "raw_stdout": None,
+                "token_usage": None,
+                "error": None,
+            }
             stored["records"].append(record)
             recovery.save()  # Durable intent before external execution.
             cursor += 1
@@ -369,6 +375,8 @@ class ControlledFulfillment:
             usage["known"] = usage["known"] and known
             usage["tokens"] += result.token_usage if known else 0
             record["token_usage"] = result.token_usage if known else None
+            record["raw_stdout"] = result.stdout
+            recovery.save()  # Preserve the exact current result before validation.
             try:
                 if result.exit_code != 0:
                     raise ValueError(f"fulfillment {step} provider failed: {result.stderr}")
@@ -379,7 +387,7 @@ class ControlledFulfillment:
                     raise ValueError("fulfillment inputs changed during inspection")
                 _verify_reads(channel, reads)
                 accepted = parse_semantic_reply(result.stdout, assignment)
-                record["reply"] = accepted
+                record["reply"] = _json_copy(accepted)
                 if accepted["action"] == "blocked":
                     raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
                 if accepted["action"] == "read":
@@ -405,6 +413,10 @@ def _check_budget(usage, budget):
         raise ValueError("fulfillment usage unknown with finite budget")
     if budget is not None and usage["tokens"] >= budget:
         raise ValueError("fulfillment token budget exhausted")
+
+
+def _json_copy(value):
+    return json.loads(json.dumps(value, allow_nan=False))
 
 
 def _verify_reads(channel, reads):

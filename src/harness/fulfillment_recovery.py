@@ -10,7 +10,11 @@ from pathlib import Path
 import stat
 
 from harness.durable_json import write_json_atomic, write_text_atomic
-from harness.fulfillment_semantics import FulfillmentAssignment, validate_semantic_result
+from harness.fulfillment_semantics import (
+    FulfillmentAssignment,
+    parse_semantic_reply,
+    validate_semantic_result,
+)
 from harness.inspection_io import _open_root_directory
 
 
@@ -94,7 +98,7 @@ class FulfillmentRecovery:
 
 def _validate(data):
     fields = {"schema_version", "binding", "phase", "inputs", "budget_limit", "steps", "outputs"}
-    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 1:
+    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 2:
         raise ValueError("invalid fulfillment recovery schema")
     if data["phase"] not in {"preparing", "prepared", "staged"}:
         raise ValueError("invalid fulfillment recovery phase")
@@ -124,8 +128,16 @@ def _validate(data):
             raise ValueError("invalid recovered turn count")
         terminal = False
         for record in records:
-            if terminal or type(record) is not dict or set(record) != {"reply", "read", "token_usage", "error"}:
+            if terminal or type(record) is not dict or set(record) != {
+                "reply", "read", "raw_stdout", "token_usage", "error"
+            }:
                 raise ValueError("invalid fulfillment turn receipt")
+            raw_stdout = record["raw_stdout"]
+            if raw_stdout is not None and (
+                type(raw_stdout) is not str
+                or len(raw_stdout.encode("utf-8")) > 256 * 1024
+            ):
+                raise ValueError("invalid recovered fulfillment provider output")
             usage = record["token_usage"]
             if usage is not None and (type(usage) is not int or usage < 0):
                 raise ValueError("invalid recovered fulfillment usage")
@@ -133,6 +145,11 @@ def _validate(data):
                 raise ValueError("invalid recovered fulfillment error")
             if record["reply"] is not None:
                 reply = validate_semantic_result(record["reply"], assignment)
+                if (
+                    raw_stdout is None
+                    or parse_semantic_reply(raw_stdout, assignment) != reply
+                ):
+                    raise ValueError("recovered fulfillment reply is not provider-bound")
                 if reply["action"] == "read":
                     if record["read"] is not None and (type(record["read"]) is not dict
                             or set(record["read"]) != {"request", "response"}
