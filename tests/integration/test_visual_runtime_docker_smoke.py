@@ -19,7 +19,9 @@ PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.42.0-jammy"
 @pytest.mark.docker
 @pytest.mark.docker_image(PLAYWRIGHT_IMAGE)
 def test_visual_runtime_command_lifecycle_with_real_docker(tmp_path: Path) -> None:
-    (tmp_path / "server.js").write_text(
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "server.js").write_text(
         """
 const http = require('http');
 const server = http.createServer((_req, res) => {
@@ -30,7 +32,7 @@ server.listen(4173, '127.0.0.1');
 """,
         encoding="utf-8",
     )
-    (tmp_path / "playwright-result.json").write_text(
+    (candidate / "playwright-result.json").write_text(
         json.dumps({
             "suites": [{
                 "specs": [{
@@ -47,7 +49,7 @@ server.listen(4173, '127.0.0.1');
         }),
         encoding="utf-8",
     )
-    screenshot_dir = tmp_path / "playwright-report"
+    screenshot_dir = candidate / "playwright-report"
     screenshot_dir.mkdir()
     (screenshot_dir / "journey.png").write_bytes(b"visual-proof")
 
@@ -82,7 +84,7 @@ server.listen(4173, '127.0.0.1');
         build_id="build-smoke",
     )
 
-    result = controller.run_loop(str(tmp_path))
+    result = controller.run_loop(str(candidate))
 
-    assert result.status == "passed"
+    assert result.status == "passed", (result.termination_reason, result.final_verify)
     assert result.termination_reason == "converged"

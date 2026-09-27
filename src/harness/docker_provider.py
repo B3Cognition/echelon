@@ -303,6 +303,11 @@ class DockerWorktreeProvider(SandboxProvider):
         proxy_container_id = None
         sandbox_container_id = None
         generated_squid_conf: str | None = None
+        candidate_volume = (
+            f"harness-volume-{session_id}-candidate-copy"
+            if spec.isolate_candidate else None
+        )
+        volume_names: list[str] = []
 
         try:
             # Create internal Docker network
@@ -345,11 +350,21 @@ class DockerWorktreeProvider(SandboxProvider):
                 "--memory", spec.resource_limits.memory,
                 "--cpus", str(spec.resource_limits.cpu),
                 "--pids-limit", str(spec.resource_limits.pids),
-                "--volume", f"{spec.worktree_mount}:{spec.container_mount}",
                 "--workdir", spec.container_mount,
                 "--label", f"echelon-harness.session_id={session_id}",
                 "--label", "echelon-harness.type=sandbox",
             ]
+
+            if candidate_volume is not None:
+                docker_args.extend([
+                    "--volume", f"{spec.worktree_mount}:{spec.container_mount}-source:ro",
+                    "--volume", f"{candidate_volume}:{spec.container_mount}",
+                ])
+                volume_names.append(candidate_volume)
+            else:
+                docker_args.extend([
+                    "--volume", f"{spec.worktree_mount}:{spec.container_mount}",
+                ])
 
             # Add spec labels
             for key, value in spec.labels.items():
@@ -363,6 +378,7 @@ class DockerWorktreeProvider(SandboxProvider):
             ]
             for volume_name, path in zip(ephemeral_volumes, spec.ephemeral_volumes):
                 docker_args.extend(["--volume", f"{volume_name}:{spec.container_mount}/{path}"])
+            volume_names.extend(ephemeral_volumes)
 
             # Inject environment variables
             for key, value in spec.env.items():
@@ -391,6 +407,20 @@ class DockerWorktreeProvider(SandboxProvider):
             sandbox_result = _run_docker(docker_args, cli=self._container_cli)
             sandbox_container_id = sandbox_result.stdout.strip()
 
+            if candidate_volume is not None:
+                copy_result = subprocess.run(
+                    [self._container_cli, "exec", sandbox_container_id, "cp", "-a",
+                     f"{spec.container_mount}-source/.", f"{spec.container_mount}/"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
+                if copy_result.returncode != 0:
+                    raise SandboxCreationError(
+                        "isolated candidate copy failed: " + copy_result.stderr.strip()
+                    )
+
             # Execute post_create_command (FR-SANDBOX spec)
             if spec.post_create_command:
                 post_result = subprocess.run(
@@ -417,7 +447,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 sandbox_id=sandbox_container_id,
                 proxy_id=proxy_container_id,
                 network_name=network_name,
-                volume_names=ephemeral_volumes,
+                volume_names=volume_names,
                 generated_squid_conf=generated_squid_conf,
             )
 
@@ -425,7 +455,10 @@ class DockerWorktreeProvider(SandboxProvider):
 
         except Exception as e:
             # Clean up partial resources on failure
-            self._cleanup_partial(sandbox_container_id, proxy_container_id, network_name)
+            self._cleanup_partial(
+                sandbox_container_id, proxy_container_id, network_name,
+                volume_names=volume_names,
+            )
             if generated_squid_conf:
                 Path(generated_squid_conf).unlink(missing_ok=True)
             if isinstance(e, (CredentialLeakError, SandboxCreationError, SandboxExecError)):
@@ -741,6 +774,7 @@ class DockerWorktreeProvider(SandboxProvider):
         sandbox_id: Optional[str],
         proxy_id: Optional[str],
         network_name: Optional[str],
+        volume_names: list[str] | None = None,
     ) -> None:
         """Clean up partially created resources on failure."""
         if sandbox_id:
@@ -756,6 +790,11 @@ class DockerWorktreeProvider(SandboxProvider):
         if network_name:
             subprocess.run(
                 [self._container_cli, "network", "rm", network_name],
+                capture_output=True, timeout=10, check=False,
+            )
+        for volume_name in volume_names or ():
+            subprocess.run(
+                [self._container_cli, "volume", "rm", "-f", volume_name],
                 capture_output=True, timeout=10, check=False,
             )
 

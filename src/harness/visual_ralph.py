@@ -649,6 +649,7 @@ class VisualRalphController:
             spec = self._sandbox_spec_factory(worktree_path)
             return replace(
                 spec,
+                isolate_candidate=True,
                 labels={
                     **dict(spec.labels),
                     "phase": "visual",
@@ -679,6 +680,7 @@ class VisualRalphController:
                 "phase": "visual",
                 "spec_id": self._spec_id,
             },
+            isolate_candidate=True,
         )
 
     def _command_diagnostic(self, result: ExecResult, limit: int = 1000) -> str:

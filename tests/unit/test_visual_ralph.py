@@ -598,6 +598,27 @@ def test_visual_runtime_teardown_cannot_mutate_passing_candidate(tmp_path: Path)
     assert result.evidence is None
 
 
+def test_visual_sandbox_requests_disposable_candidate_copy() -> None:
+    """The visual controller must opt into the provider's isolated mount."""
+    from harness.visual_ralph import VisualRalphController
+
+    original = SandboxSpec(
+        image="playwright:test", image_source="playwright",
+        worktree_mount="/host/candidate", container_mount="/workspace",
+        resource_limits=SandboxResourceLimits(), network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+    controller = VisualRalphController(
+        provider=MagicMock(), config=_make_config(), spec_id="001",
+        sandbox_spec_factory=lambda _worktree: original,
+    )
+
+    visual_spec = controller._build_sandbox_spec("/host/candidate")
+
+    assert visual_spec.isolate_candidate is True
+    assert original.isolate_candidate is False
+
+
 def test_retrieve_screenshots_falls_back_to_playwright_test_results(
     tmp_path: Path,
 ) -> None:
