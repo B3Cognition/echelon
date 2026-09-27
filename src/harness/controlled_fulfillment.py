@@ -73,6 +73,65 @@ _JUDGE_FIELDS = {
 _STAGED_OUTPUTS = ("implementation-map.md", "judgment-prepass.json", "judgment-prepass.md",
                    "fulfillment-report.fallback.md", "progress-integrity.json",
                    "fulfillment-report.staged.md", "fulfillment-gaps.staged.md")
+_MAX_ASSIGNMENT_IDS = 12
+
+
+def _assignment_batches(ids):
+    values = tuple(ids)
+    return tuple(
+        values[offset:offset + _MAX_ASSIGNMENT_IDS]
+        for offset in range(0, len(values), _MAX_ASSIGNMENT_IDS)
+    )
+
+
+def _batch_key(step: str, index: int) -> str:
+    return step if index == 0 else f"{step}-{index + 1:04d}"
+
+
+def _assignment_context(data: dict, ids) -> dict:
+    """Limit one semantic dispatch to its assigned requirement evidence."""
+    selected = set(ids)
+    context = dict(data)
+    context["canonical_requirements"] = [
+        row for row in data["canonical_requirements"] if row["id"] in selected
+    ]
+    deterministic = dict(data["deterministic_map"])
+    deterministic["requirements"] = [
+        row for row in deterministic.get("requirements", []) if row["id"] in selected
+    ]
+    summary = deterministic.get("summary")
+    if type(summary) is dict:
+        summary = dict(summary)
+        summary["total_requirements"] = len(deterministic["requirements"])
+        if type(summary.get("fallback_requirement_ids")) is list:
+            summary["fallback_requirement_ids"] = [
+                item for item in summary["fallback_requirement_ids"] if item in selected
+            ]
+        counts = summary.get("counts")
+        if type(counts) is dict:
+            summary["counts"] = {
+                key: sum(
+                    row.get("confidence", row.get("candidate_confidence")) == key
+                    for row in deterministic["requirements"]
+                )
+                for key in counts
+            }
+        deterministic["summary"] = summary
+    context["deterministic_map"] = deterministic
+    coverage = dict(data["coverage"])
+    if type(coverage.get("requirements")) is dict:
+        coverage["requirements"] = {
+            key: value for key, value in coverage["requirements"].items() if key in selected
+        }
+    context["coverage"] = coverage
+    return context
+
+
+def _rows_document(document: dict, ids) -> dict:
+    selected = set(ids)
+    result = dict(document)
+    result["rows"] = [row for row in document["rows"] if row["id"] in selected]
+    return result
 
 
 def _safe_outputs(run: Path) -> None:
@@ -178,7 +237,7 @@ class ControlledFulfillment:
                 "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
                 "provider": getattr(self._executor, "provider_id", self._executor.cli),
                 "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
-                "contract": "controlled-fulfillment-inspection-v5",
+                "contract": "controlled-fulfillment-inspection-v6",
             })
             if saved is None:
                 state_path = context.verify_run_dir / "state.json"
@@ -231,22 +290,29 @@ class ControlledFulfillment:
                         run / "fulfillment-gaps.staged.md", usage["tokens"] if usage["known"] else None, usage["dispatches"])
                 rows = []
                 all_reads = []
+                mapper_read_groups = []
                 if assigned:
-                    mapped, reads = self._dispatch("mapper", assigned, roles["mapper"], context, binding,
-                                                   data, channel, usage, token_budget, recovery)
-                    rows = mapped["rows"]
-                    all_reads.extend(reads)
-                    _verify_citations(rows, reads)
-                    for row in rows:
-                        lead = leads.get(row["id"])
-                        if lead is not None:
-                            row["codegraph_candidates"] = "; ".join(
-                                f"{item['file']}::{item['symbol']}" for item in lead["codegraph_candidates"])
-                            for key in ("evidence_kind", "evidence_strength", "runtime_threshold"):
-                                row[key] = lead[key]
-                        # Threshold classification is deterministic even when
-                        # the graph tool degrades and cannot produce map rows.
-                        row["runtime_threshold"] = thresholds[row["id"]]
+                    for batch_index, batch in enumerate(_assignment_batches(assigned)):
+                        mapped, reads = self._dispatch(
+                            "mapper", batch, roles["mapper"], context, binding,
+                            _assignment_context(data, batch), channel, usage, token_budget, recovery,
+                            journal_key=_batch_key("mapper", batch_index),
+                        )
+                        batch_rows = mapped["rows"]
+                        _verify_citations(batch_rows, reads)
+                        for row in batch_rows:
+                            lead = leads.get(row["id"])
+                            if lead is not None:
+                                row["codegraph_candidates"] = "; ".join(
+                                    f"{item['file']}::{item['symbol']}" for item in lead["codegraph_candidates"])
+                                for key in ("evidence_kind", "evidence_strength", "runtime_threshold"):
+                                    row[key] = lead[key]
+                            # Threshold classification is deterministic even when
+                            # the graph tool degrades and cannot produce map rows.
+                            row["runtime_threshold"] = thresholds[row["id"]]
+                        rows.extend(batch_rows)
+                        all_reads.extend(reads)
+                        mapper_read_groups.append((frozenset(batch), reads))
                 _safe_outputs(run)
                 write_text_atomic(run / "implementation-map.md", render_implementation_map(rows), trusted_root=run)
                 write_judgment_prepass(spec_dir=context.spec_dir, verify_run_dir=run,
@@ -256,13 +322,33 @@ class ControlledFulfillment:
                                      if not row["mechanical"] and row["id"] in scope)
                 fallback = []
                 if fallback_ids:
-                    judged, reads = self._dispatch("judge", fallback_ids, roles["judge"], context, binding,
-                        {**data, "implementation_map": rows, "judgment_prepass": prepass, "mapper_reads": all_reads},
-                        channel, usage, token_budget, recovery)
-                    fallback = judged["rows"]
-                    all_reads.extend(reads)
-                    for row in fallback:
-                        _verify_citation_text(row["evidence"], all_reads, required=row["status"] == "IMPLEMENTED")
+                    for batch_index, batch in enumerate(_assignment_batches(fallback_ids)):
+                        mapper_reads = [
+                            read
+                            for assigned_ids, reads in mapper_read_groups
+                            if assigned_ids.intersection(batch)
+                            for read in reads
+                        ]
+                        judge_data = _assignment_context(data, batch)
+                        judge_data.update(
+                            implementation_map=[row for row in rows if row["id"] in set(batch)],
+                            judgment_prepass=_rows_document(prepass, batch),
+                            mapper_reads=mapper_reads,
+                        )
+                        judged, reads = self._dispatch(
+                            "judge", batch, roles["judge"], context, binding, judge_data,
+                            channel, usage, token_budget, recovery,
+                            journal_key=_batch_key("judge", batch_index),
+                        )
+                        batch_rows = judged["rows"]
+                        visible_reads = [*mapper_reads, *reads]
+                        for row in batch_rows:
+                            _verify_citation_text(
+                                row["evidence"], visible_reads,
+                                required=row["status"] == "IMPLEMENTED",
+                            )
+                        fallback.extend(batch_rows)
+                        all_reads.extend(reads)
                 _verify_reads(channel, all_reads)
                 _safe_outputs(run)
                 fallback_path = run / "fulfillment-report.fallback.md"
@@ -312,13 +398,15 @@ class ControlledFulfillment:
         finally:
             stack.close()
 
-    def _dispatch(self, step, ids, role, context, binding, data, channel, usage, budget, recovery):
+    def _dispatch(self, step, ids, role, context, binding, data, channel, usage, budget, recovery, *,
+                  journal_key=None):
         assignment = FulfillmentAssignment(context.verify_run_dir.name, step, uuid4().hex,
                                             _digest({"inputs": binding, "role": asdict(role), "data": data}), ids)
-        stored = recovery.data["steps"].get(step)
+        journal_key = journal_key or step
+        stored = recovery.data["steps"].get(journal_key)
         if stored is None:
             stored = {"assignment": assignment.identity(), "deadline": time.time() + 300, "records": []}
-            recovery.data["steps"][step] = stored
+            recovery.data["steps"][journal_key] = stored
             recovery.save()
         else:
             identity = stored["assignment"]

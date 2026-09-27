@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 
 from harness.durable_json import write_json_atomic, write_text_atomic
@@ -110,7 +111,9 @@ def _validate(data):
     if budget is not None and (type(budget) not in {int, float} or not math.isfinite(budget) or budget < 0):
         raise ValueError("invalid recovered fulfillment budget")
     steps = data["steps"]
-    if type(steps) is not dict or not set(steps) <= {"mapper", "judge"} or type(data["outputs"]) is not dict:
+    if (type(steps) is not dict
+            or any(re.fullmatch(r"(?:mapper|judge)(?:-[0-9]{4})?", name) is None for name in steps)
+            or type(data["outputs"]) is not dict):
         raise ValueError("invalid fulfillment recovery steps")
     for name, step in steps.items():
         if type(step) is not dict or set(step) != {"assignment", "deadline", "records"}:
@@ -119,7 +122,7 @@ def _validate(data):
         if type(identity) is not dict or identity.get("schema_version") != 1:
             raise ValueError("invalid recovered assignment")
         assignment = FulfillmentAssignment(**{key: value for key, value in identity.items() if key != "schema_version"})
-        if assignment.identity() != identity or assignment.step != name:
+        if assignment.identity() != identity or assignment.step != name.split("-", 1)[0]:
             raise ValueError("invalid recovered assignment binding")
         if type(step["deadline"]) not in {int, float} or not math.isfinite(step["deadline"]):
             raise ValueError("invalid recovered deadline")

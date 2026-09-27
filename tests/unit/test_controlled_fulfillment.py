@@ -153,6 +153,91 @@ def test_reply_contract_declares_one_nested_read_request(preparation_context):
     assert "list_directory" not in contract
 
 
+def test_large_mapper_assignment_is_partitioned_into_bounded_contexts(preparation_context):
+    ids = [f"FR-{index:06d}" for index in range(1, 14)]
+    (preparation_context.spec_dir / "spec.md").write_text(
+        "# Spec\n" + "".join(f"{item}: Requirement {item}.\n" for item in ids)
+    )
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert [dispatch["assignment"]["assigned_ids"] for dispatch in executor.dispatches] == [
+        ids[:12],
+        ids[12:],
+    ]
+    for dispatch, assigned in zip(executor.dispatches, (ids[:12], ids[12:]), strict=True):
+        assert [row["id"] for row in dispatch["context"]["canonical_requirements"]] == assigned
+        assert [row["id"] for row in dispatch["context"]["deterministic_map"]["requirements"]] == assigned
+        assert set(dispatch["context"]["coverage"]["requirements"]) <= set(assigned)
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    assert list(journal["steps"]) == ["mapper", "mapper-0002"]
+    assert result.token_usage == 14
+
+
+def test_large_judge_assignment_uses_only_its_mapper_batch_evidence(preparation_context):
+    ids = [f"FR-{index:06d}" for index in range(1, 14)]
+    (preparation_context.spec_dir / "spec.md").write_text(
+        "# Spec\n" + "".join(f"{item}: Requirement {item}.\n" for item in ids)
+    )
+    (preparation_context.spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        + "".join(
+            f"| {item} | TC-{index:06d} | unit | automated | automated | tests/test_app.py | none |\n"
+            for index, item in enumerate(ids, start=1)
+        )
+    )
+    (preparation_context.spec_dir / "tasks.md").write_text(
+        "".join(
+            f"- [ ] T-{index:06d} complexity=standard phase=build req={item} depends=none\n"
+            for index, item in enumerate(ids, start=1)
+        )
+    )
+    class EvidenceExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            if payload["step"] == "mapper" and payload["action"] == "final":
+                for row in payload["rows"]:
+                    row.update(
+                        verified_implementation_evidence="worktree:app.py:1",
+                        confidence="low",
+                    )
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = EvidenceExecutor(inspect_source=True)
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    judge_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "judge"
+    ]
+    assert [dispatch["assignment"]["assigned_ids"] for dispatch in judge_dispatches] == [
+        ids[:12],
+        ids[12:],
+    ]
+    for dispatch, assigned in zip(judge_dispatches, (ids[:12], ids[12:]), strict=True):
+        assert [row["id"] for row in dispatch["context"]["implementation_map"]] == assigned
+        assert [row["id"] for row in dispatch["context"]["judgment_prepass"]["rows"]] == assigned
+        assert len(dispatch["context"]["mapper_reads"]) == 1
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    assert set(journal["steps"]) == {
+        "mapper",
+        "mapper-0002",
+        "judge",
+        "judge-0002",
+    }
+
+
 def test_mechanical_missing_report_skips_judge_and_stays_staged(preparation_context):
     context = preparation_context
     before = _snapshot(context.spec_dir)
