@@ -6,7 +6,7 @@ starting another.
 **Design:**
 [`2026-09-21-harness-simplification-control-design.md`](superpowers/specs/2026-09-21-harness-simplification-control-design.md)
 
-**Current milestone:** None active — S5 is complete; S6 is next in the queue
+**Current milestone:** STAB-1 — provider finalization / workspace acceptance
 
 ## Status
 
@@ -18,6 +18,7 @@ starting another.
 | S3 | DONE | Complete the Typer CLI cutover. | Executable route recount: 104 public commands, all 104 using modular front doors, 23 hidden routes, and zero direct public or hidden `_legacy_cli()` consumers. Final structural gate: 27 passed. Repository gate against `bfdb744c`: 9,853 passed, 0 skipped, 11,438 deselected, 0 failures in 2,121.92s. `echelon.re_service` is the single quarantine adapter; `echelon.cli` retains the RE protocol kernel for S6. | User-facing commands invoke typed application services; compatibility aliases are isolated; the remaining RE kernel dependency is contained behind one named facade scheduled for S6. |
 | S4 | DONE | Remove the abandoned strategy dimension and decompose single-run Delivery orchestration around its durable checkpoints. | Durable-step decomposition complete: focused acceptance passed 287 tests; final repository gate passed 9,832 tests with 0 failures. `_run_delivery` is 28 lines and `_run_loop_inner` is 159 lines. | Delivery has no strategy option or identity; one `DeliveryController` owns one run and Ralph performs one explicit durable step at a time; focused delivery suite passes. |
 | S5 | DONE | Reduce spec authoring to one controller kernel and publication boundary. | Current state version 1 has one durable `pending_spec_step`, one effect/recovery kernel, and no historical-run migration. The post-cutover recovery checklist is ported and its replacement 9,832-test repository gate passed. | One recover-plan-execute-commit path owns transitions and effects; redundant transactional representations are removed. |
+| STAB-1 | ACTIVE | Close provider-dispatch finalization and operational workspace acceptance before another refactor. | Six provider-finalization implementation commits are present, followed by review/dry-run corrections and 15 Delivery/fulfillment fixes from live execution. Current `main` has no repository-bound receipt after `62a43bdf`. Plan: [`2026-09-27-provider-finalization-workspace-acceptance.md`](superpowers/plans/2026-09-27-provider-finalization-workspace-acceptance.md). | Existing Delivery smoke completes; one newly initialized Phase A → publication → Delivery run exercises resume; exact final commit/tree passes focused, unit, complete-suite, dry-run/install, and range-review gates; receipt is recorded and checkpoint pushed. |
 | S6 | PENDING | Consolidate RE onto one current executable protocol. | Protocols 2.2 through 2.8 and the older extraction lifecycle remain represented in the RE kernel retained in `echelon.cli`; `echelon.re_service` is its single active route adapter. | Historical runs enter through migration/import adapters; current execution does not inherit historical controllers. |
 | S7 | PENDING | Remove residual compatibility code and break large import cycles. | Static import analysis found production cycles far larger than a locally understandable component. | No production strongly connected import component contains more than five modules; full repository verification passes. |
 
@@ -143,6 +144,15 @@ starting another.
 - [x] Delete the retired completion/publication protocols and add structural ownership guards.
 - [x] Flatten the controller around one current-phase step loop.
 - [x] Update current documentation, run focused verification, and record the repository receipt.
+
+## STAB-1 Work Queue
+
+- [x] Establish the stabilization milestone and freeze S6/S7.
+- [ ] Finish the preserved 12-task Delivery smoke and its final gates.
+- [ ] Run one newly initialized Phase A → publication → Delivery acceptance with resume.
+- [ ] Run final focused, unit, complete-suite, dry-run/install, and range-review gates.
+- [ ] Record a receipt for the exact final commit/tree and close provider-finalization tracking.
+- [ ] Complete one fresh whole-range review and push the verified checkpoint.
 
 ## Drift Guard
 
