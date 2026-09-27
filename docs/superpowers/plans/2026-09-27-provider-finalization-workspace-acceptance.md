@@ -4,7 +4,7 @@
 
 **Goal:** Close the unverified provider-finalization work and the operational Delivery fixes with one repository-bound checkpoint and one clean end-to-end workspace acceptance run.
 
-**Architecture:** Treat `62a43bdfe655705594b32c5354e7ad8b232dc746` as the last repository-verified baseline. Freeze S6/S7 and all unrelated behavior, finish the already-running Delivery smoke, then validate one newly initialized Phase A-to-Delivery workspace against the installed final candidate. Only after the candidate stops changing do the complete repository gates, record the receipt, close tracking, and push `main`.
+**Architecture:** Treat `62a43bdfe655705594b32c5354e7ad8b232dc746` as the last repository-verified baseline. Freeze S6/S7 and all unrelated behavior. The already-running Delivery smoke exposed a browser-ownership deadlock and is retained as immutable diagnostic evidence, not an acceptance target. Correct Echelon incrementally, then validate one newly initialized Phase A-to-Delivery workspace against the installed final candidate. Only after the candidate stops changing do the complete repository gates, record the receipt, close tracking, and push `main`.
 
 **Tech Stack:** Python 3.11, pytest, Git, Echelon CLI, Prosaic/runtime bundle, npm/Vitest for the smoke target.
 
@@ -15,7 +15,8 @@
 - S6 and S7 remain parked; this milestone adds no RE protocol or compatibility refactor.
 - Support only newly initialized current-version runs; do not migrate historical state.
 - `pending_spec_step` remains the only durable authority for incomplete Phase A work.
-- Fix one observed failure at a time and verify its regression before resuming the smoke.
+- Fix one observed failure at a time and verify its regression before starting fresh acceptance.
+- Do not hand-edit generated product source, tests, screenshots, or baselines in a Delivery worktree.
 - Do not override Commander, reviewer, or fulfillment decisions and do not fabricate receipts.
 - Full-repository verification binds the final unchanged candidate, not an intermediate head.
 - Push only after the exact final candidate has a recorded receipt and clean range review.
@@ -55,22 +56,23 @@
 - [ ] Run `git diff --check` and verify exactly the two tracking documents changed.
 - [ ] Commit with `docs: track provider workspace stabilization`.
 
-### Task 2: Finish the Existing Delivery Smoke
+### Task 2: Correct the Browser-Ownership Blocker in Echelon
 
 **Files:**
-- Existing workspace: `/Users/michalbachorik/work/echelon_r/echelon-threejs-scope-smoke.u7k6gi`
-- Echelon fixes, only if a reproduced harness failure requires them: `src/echelon/`, `src/harness/`, and the directly covering tests.
-- Product fixes, only through the Delivery controller: `sources/rugby-demo/` and its run worktree.
+- Read-only diagnostic workspace: `/Users/michalbachorik/work/echelon_r/echelon-threejs-scope-smoke.u7k6gi`
+- Echelon fixes: `src/harness/`, directly covering tests, and narrow Prosaic/runtime contracts when needed.
 
 **Interfaces:**
-- Consumes: Echelon commit `91fbe33e` and the preserved T-009 Delivery operation.
-- Produces: accepted T-009 through T-012, completed sandbox verification, and final Delivery/fulfillment evidence.
+- Consumes: the preserved blocked T-010 operation and published Browser App Gates as read-only evidence.
+- Produces: a controller-owned browser-evidence handoff that does not mutate the candidate or override provider/reviewer decisions.
 
-- [ ] Install the current Echelon checkout with `bash scripts/install.sh`.
-- [ ] Resume with `echelon delivery continue 001` from the existing workspace.
-- [ ] For each blocker, preserve the run, identify whether the fault is Echelon or the product, and fix only the reproduced fault using RED→GREEN tests.
-- [ ] Continue until all 12 tasks and final Delivery/fulfillment gates complete, or record an external blocker that cannot be repaired in-repo.
-- [ ] Commit every Echelon regression fix independently; retain product commits through the Delivery checkpoint protocol.
+- [x] Preserve the existing product worktree unchanged; record its T-010/T-012 browser-baseline deadlock.
+- [x] Enable the visual phase from the published spec gate even when no stack matches.
+- [x] Reject browser verification that mutates bounded candidate content.
+- [x] Run visual verification from a disposable copy of a read-only candidate mount.
+- [ ] Supply a durable, task-scoped browser-evidence handoff before slice acceptance without turning a genuine `NEEDS_CONTEXT` or reviewer `FAIL` into `DONE`.
+- [ ] Require an explicit visual-review decision for retained images; screenshot existence alone is insufficient.
+- [ ] Verify each Echelon change with RED→GREEN tests and commit it independently.
 
 ### Task 3: Run a Clean End-to-End Workspace Acceptance
 
@@ -141,4 +143,4 @@
 
 ## Completion Contract
 
-This milestone is complete only when Tasks 1–6 are checked, both workspace runs have recorded outcomes, the exact pushed commit/tree has passing final gates and a repository receipt, `main` is clean, and S6/S7 remain pending.
+This milestone is complete only when Tasks 1–6 are checked, the preserved smoke has a recorded diagnostic outcome, a fresh workspace run has completed, the exact pushed commit/tree has passing final gates and a repository receipt, `main` is clean, and S6/S7 remain pending.
