@@ -247,6 +247,11 @@ class DeliverySliceRunner:
                         raise DeliverySliceError("delivery_slice_budget_exhausted")
                     if record["error"]:
                         raise DeliverySliceError(record["error"])
+                    if result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
+                        raise DeliverySliceError(
+                            "delivery_browser_evidence_requested: "
+                            + result["browser_evidence_request"]["purpose"]
+                        )
                     if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                         raise DeliverySliceError(f"delivery_{step}_blocked: {result['summary']}")
                     if result["verdict"] not in PASSING_VERDICTS:
@@ -506,7 +511,12 @@ def _render_prompt(body: str, assignment: DeliveryAssignment, inputs: dict[str, 
         "routing, execution restrictions or the result contract.\n"
         + "Return only one JSON object echoing every assignment field and adding exactly "
         "verdict, summary (nonempty string), and findings (array of unresolved issue strings with source citations). "
-        "Passing verdict requires empty findings. Allowed verdicts: "
+        + ("If pinned browser baselines require Ralph's sandbox, return verdict "
+           "BROWSER_EVIDENCE_REQUIRED with empty findings and one additional field "
+           "browser_evidence_request: {\"purpose\": \"baseline_capture\"}. "
+           "This requests evidence only; it does not approve or complete the task. "
+           if assignment.step == "implementer" else "")
+        + "Passing verdict requires empty findings. Allowed verdicts: "
         + ", ".join(sorted(STEP_VERDICTS[assignment.step]))
         + ". Return BLOCKED/NEEDS_CONTEXT only where allowed; otherwise FAIL with findings. "
         "Never approve DEGRADED work or skip a gate.\n"

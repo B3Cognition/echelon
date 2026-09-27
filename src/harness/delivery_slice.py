@@ -19,7 +19,7 @@ class DeliveryTasksComplete(DeliverySliceError):
 
 
 STEP_VERDICTS = {
-    "implementer": frozenset({"DONE", "BLOCKED", "NEEDS_CONTEXT"}),
+    "implementer": frozenset({"DONE", "BLOCKED", "NEEDS_CONTEXT", "BROWSER_EVIDENCE_REQUIRED"}),
     "spec_guard": frozenset({"PASS", "FAIL"}),
     "code_reviewer": frozenset({"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}),
     "test_guardian": frozenset({"PASS", "FAIL"}),
@@ -112,7 +112,13 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
     except (ValueError, TypeError) as exc:
         raise DeliverySliceError("delivery result must be JSON") from exc
     identity = assignment.identity()
-    if not isinstance(payload, dict) or set(payload) != set(identity) | {"verdict", "summary", "findings"}:
+    if not isinstance(payload, dict):
+        raise DeliverySliceError("invalid delivery result fields")
+    browser_request = payload.get("verdict") == "BROWSER_EVIDENCE_REQUIRED"
+    expected_fields = set(identity) | {"verdict", "summary", "findings"}
+    if browser_request:
+        expected_fields.add("browser_evidence_request")
+    if set(payload) != expected_fields:
         raise DeliverySliceError("invalid delivery result fields")
     if type(payload["schema_version"]) is not int or any(payload[key] != value for key, value in identity.items()):
         raise DeliverySliceError("delivery result identity mismatch")
@@ -131,6 +137,9 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
         raise DeliverySliceError("passing result cannot contain unresolved findings")
     if verdict in {"FAIL", "CHANGES_REQUESTED"} and not findings:
         raise DeliverySliceError("failed review must identify findings")
+    if browser_request:
+        if findings or payload["browser_evidence_request"] != {"purpose": "baseline_capture"}:
+            raise DeliverySliceError("invalid browser evidence request")
     return payload
 
 
@@ -149,7 +158,12 @@ def bind_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, 
     except (ValueError, TypeError) as exc:
         raise DeliverySliceError("delivery result must be JSON") from exc
     identity = assignment.identity()
-    if not isinstance(payload, dict) or set(payload) != set(identity) | {"verdict", "summary", "findings"}:
+    if not isinstance(payload, dict):
+        raise DeliverySliceError("invalid delivery result fields")
+    expected_fields = set(identity) | {"verdict", "summary", "findings"}
+    if payload.get("verdict") == "BROWSER_EVIDENCE_REQUIRED":
+        expected_fields.add("browser_evidence_request")
+    if set(payload) != expected_fields:
         raise DeliverySliceError("invalid delivery result fields")
     for key in ("schema_version", "dispatch_id", "step", "task_id"):
         if type(payload[key]) is not type(identity[key]) or payload[key] != identity[key]:

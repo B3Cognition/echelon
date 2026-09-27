@@ -128,7 +128,7 @@ def _validate(data):
             if assignment.step != "implementer" and after != candidate:
                 raise DeliverySliceError("mutating delivery review receipt")
             candidate = after
-            if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
+            if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT", "BROWSER_EVIDENCE_REQUIRED"}:
                 terminal = True
             elif assignment.step == "implementer" and result["verdict"] not in PASSING_VERDICTS:
                 repair += 1

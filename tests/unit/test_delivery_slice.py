@@ -74,6 +74,40 @@ def test_bound_passing_result_is_accepted():
     assert validate_delivery_result(_response(), _assignment())["verdict"] == "PASS"
 
 
+def test_implementer_can_request_task_bound_browser_capture():
+    from harness.delivery_slice import DeliveryAssignment, bind_delivery_result
+
+    assignment = DeliveryAssignment("capture-1", "implementer", "T-010", "candidate", "inputs")
+    response = json.dumps({
+        **assignment.identity(), "verdict": "BROWSER_EVIDENCE_REQUIRED",
+        "summary": "Pinned baseline images require the configured browser sandbox",
+        "findings": [], "browser_evidence_request": {"purpose": "baseline_capture"},
+    })
+
+    assert bind_delivery_result(response, assignment)["browser_evidence_request"] == {
+        "purpose": "baseline_capture"
+    }
+
+
+@pytest.mark.parametrize("step,capture_request", [
+    ("spec_guard", {"purpose": "baseline_capture"}),
+    ("implementer", {"purpose": "baseline_capture", "command": "playwright test --update-snapshots"}),
+    ("implementer", {"purpose": "unsupported"}),
+])
+def test_browser_capture_request_cannot_expand_authority(step, capture_request):
+    from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, bind_delivery_result
+
+    assignment = DeliveryAssignment("capture-1", step, "T-010", "candidate", "inputs")
+    response = json.dumps({
+        **assignment.identity(), "verdict": "BROWSER_EVIDENCE_REQUIRED",
+        "summary": "Browser evidence needed", "findings": [],
+        "browser_evidence_request": capture_request,
+    })
+
+    with pytest.raises(DeliverySliceError):
+        bind_delivery_result(response, assignment)
+
+
 @pytest.mark.parametrize("changes", [
     {"schema_version": True}, {"schema_version": 2}, {"dispatch_id": "stale"},
     {"step": "test_guardian"}, {"task_id": "T-002"}, {"candidate_fingerprint": "old"},

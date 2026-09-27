@@ -91,6 +91,35 @@ def test_only_three_sequential_approvals_accept_one_task(slice_project):
     assert len(list(slice_project[2].rglob("result.json"))) == 4
 
 
+def test_browser_capture_request_is_durable_and_cannot_accept_task(slice_project):
+    def request_capture(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED",
+                summary="Pinned visual baselines need sandbox captures",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    first = ScriptedExecutor(request_capture)
+    result = _run(slice_project, first)
+
+    assert result.status == "blocked" and result.task_ids == []
+    assert result.reason == "delivery_browser_evidence_requested: baseline_capture"
+    assert _steps(first) == ["implementer"]
+    assert "BROWSER_EVIDENCE_REQUIRED" in first.calls[0][2]
+    assert "browser_evidence_request" in first.calls[0][2]
+    assert "Reserve NEEDS_CONTEXT for genuinely missing information" in first.calls[0][2]
+    journal_path = next(slice_project[2].rglob("journal.json"))
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["records"][0]["result"]["browser_evidence_request"] == {
+        "purpose": "baseline_capture"
+    }
+    replay = ScriptedExecutor()
+    resumed = _run(slice_project, replay)
+    assert resumed.reason == result.reason and resumed.task_ids == []
+    assert not replay.calls
+
+
 def test_polyrepo_slice_projects_workspace_paths_into_target_worktree(slice_project):
     project, spec, evidence = slice_project
     (spec / "tasks.md").write_text(
