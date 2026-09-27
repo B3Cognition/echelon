@@ -99,6 +99,72 @@ PLAYWRIGHT_FAIL_JSON = json.dumps({
 })
 
 
+def test_baseline_capture_uses_isolated_browser_and_returns_snapshot_bytes(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = candidate / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-1")
+    snapshot_path = "tests/e2e/checkpoints.spec.ts-snapshots/establishing-chromium.png"
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout=f"./{snapshot_path}\0")
+        if "playwright test" in command:
+            assert command.endswith("--update-snapshots")
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"\x89PNG\r\n\x1a\nimage"
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert capture.images == {snapshot_path: b"\x89PNG\r\n\x1a\nimage"}
+    assert capture.verification.passed
+    assert source.read_text(encoding="utf-8") == "export const ready = true;\n"
+    assert provider.create.call_args.args[0].isolate_candidate is True
+    provider.read_file.assert_called_once_with(
+        provider.create.return_value, f"/workspace/{snapshot_path}"
+    )
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_baseline_capture_without_images_fails_and_destroys_sandbox(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-2")
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="")
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+    )
+
+    with pytest.raises(RuntimeError, match="no baseline images"):
+        controller.capture_baselines(str(candidate))
+
+    provider.read_file.assert_not_called()
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
 def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Path):
     from harness.delivery_errors import DeliveryConfigurationError
     from harness.visual_evidence import validate_visual_receipt

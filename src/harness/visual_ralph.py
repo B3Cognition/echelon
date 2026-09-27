@@ -6,13 +6,13 @@ them to the controller-owned repair callback as evidence.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import logging
 import shlex
 import subprocess
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional
 
 from harness.config import HarnessConfig
@@ -28,6 +28,15 @@ from harness.verification_evidence import redact_verification_text
 from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BrowserBaselineCapture:
+    """Unpublished baseline bytes from one isolated browser execution."""
+
+    candidate_fingerprint: str
+    verification: VerifyResult
+    images: Dict[str, bytes]
 
 
 class VisualRalphController:
@@ -62,6 +71,55 @@ class VisualRalphController:
         self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
+
+    def capture_baselines(self, worktree_path: str) -> BrowserBaselineCapture:
+        """Run configured Playwright capture in a disposable candidate copy."""
+        command = self._vc.test_command.strip()
+        if "playwright test" not in command:
+            raise RuntimeError("browser baseline capture requires a Playwright test command")
+        fingerprint = product_evidence_fingerprint(Path(worktree_path))
+        handle = self._provider.create(self._build_sandbox_spec(worktree_path))
+        try:
+            self._prepare_verification_runtime(handle, worktree_path)
+            self._setup_app_runtime(handle)
+            self._start_app_runtime(handle)
+            self._wait_for_app_runtime(handle)
+            verification = self._exec_visual_verify(
+                handle, command=f"{command} --update-snapshots",
+            )
+            listing = self._provider.exec(
+                handle,
+                "find . -type d -name node_modules -prune -o "
+                "-type f -path '*-snapshots/*' -print0",
+                cwd="/workspace", timeout_ms=30_000,
+            )
+            if listing.exit_code != 0:
+                raise RuntimeError("browser baseline paths could not be listed")
+            images: Dict[str, bytes] = {}
+            for raw_path in listing.stdout.split("\0"):
+                if not raw_path:
+                    continue
+                relative = PurePosixPath(raw_path.removeprefix("./"))
+                if (relative.is_absolute() or ".." in relative.parts
+                        or not any(part.endswith("-snapshots") for part in relative.parts[:-1])
+                        or relative.suffix.lower() not in {".png", ".jpg", ".jpeg"}):
+                    raise RuntimeError("invalid browser baseline path")
+                if len(images) >= 32:
+                    raise RuntimeError("browser baseline capture exceeded image limit")
+                content = self._provider.read_file(handle, f"/workspace/{relative}")
+                if len(content) > 10_000_000:
+                    raise RuntimeError("browser baseline image exceeded size limit")
+                images[relative.as_posix()] = content
+            if not images:
+                raise RuntimeError("browser capture produced no baseline images")
+            if fingerprint != product_evidence_fingerprint(Path(worktree_path)):
+                raise RuntimeError("candidate changed during browser baseline capture")
+            return BrowserBaselineCapture(fingerprint, verification, images)
+        finally:
+            try:
+                self._stop_app_runtime(handle)
+            finally:
+                self._provider.destroy(handle)
 
     def run_loop(
         self,
@@ -234,14 +292,14 @@ class VisualRalphController:
 
     # === Verify ===
 
-    def _exec_visual_verify(self, handle: SandboxHandle) -> VerifyResult:
+    def _exec_visual_verify(self, handle: SandboxHandle, *, command: str | None = None) -> VerifyResult:
         """Run Playwright tests inside the sandbox.
 
         Expects playwright.config.ts to handle server startup via webServer.
         """
         result = self._provider.exec(
             handle,
-            self._vc.test_command,
+            command or self._vc.test_command,
             cwd="/workspace",
             env=dict(self._runtime_env),
             timeout_ms=self._vc.timeout_ms,
