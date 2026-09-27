@@ -48,6 +48,20 @@ def _save(path: Path, value) -> None:
     write_json_atomic(path, {"payload": value, "sha256": _hash(value)}, trusted_root=path.parent)
 
 
+def _validate_final_validation(value) -> None:
+    if value is None or value == {"status": "accepted"}:
+        return
+    if (
+        type(value) is dict
+        and set(value) == {"status", "reason"}
+        and value.get("status") == "rejected"
+        and type(value.get("reason")) is str
+        and value["reason"]
+    ):
+        return
+    raise ValueError("invalid recovered final validation")
+
+
 class FulfillmentRecovery:
     """Serialize one selected run; never discover another run or reset its state."""
 
@@ -99,7 +113,7 @@ class FulfillmentRecovery:
 
 def _validate(data):
     fields = {"schema_version", "binding", "phase", "inputs", "budget_limit", "steps", "outputs"}
-    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 3:
+    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 4:
         raise ValueError("invalid fulfillment recovery schema")
     if data["phase"] not in {"preparing", "prepared", "staged"}:
         raise ValueError("invalid fulfillment recovery phase")
@@ -127,12 +141,13 @@ def _validate(data):
         if type(step["deadline"]) not in {int, float} or not math.isfinite(step["deadline"]):
             raise ValueError("invalid recovered deadline")
         records = step["records"]
-        if type(records) is not list or len(records) > 33:
+        if type(records) is not list or len(records) > 34:
             raise ValueError("invalid recovered turn count")
         terminal = False
+        rejected_finals = 0
         for record in records:
             if terminal or type(record) is not dict or set(record) != {
-                "reply", "read", "raw_stdout", "token_usage", "error"
+                "reply", "read", "raw_stdout", "token_usage", "error", "final_validation"
             }:
                 raise ValueError("invalid fulfillment turn receipt")
             raw_stdout = record["raw_stdout"]
@@ -146,6 +161,8 @@ def _validate(data):
                 raise ValueError("invalid recovered fulfillment usage")
             if record["error"] is not None and (type(record["error"]) is not str or not record["error"]):
                 raise ValueError("invalid recovered fulfillment error")
+            validation = record["final_validation"]
+            _validate_final_validation(validation)
             if record["reply"] is not None:
                 reply = validate_semantic_result(record["reply"], assignment)
                 if (
@@ -154,14 +171,29 @@ def _validate(data):
                 ):
                     raise ValueError("recovered fulfillment reply is not provider-bound")
                 if reply["action"] == "read":
+                    if validation is not None:
+                        raise ValueError("unexpected validation on recovered read")
                     if record["read"] is not None and (type(record["read"]) is not dict
                             or set(record["read"]) != {"request", "response"}
                             or record["read"]["request"] != reply["request"]):
                         raise ValueError("invalid recovered read receipt")
                 elif record["read"] is not None:
                     raise ValueError("unexpected recovered read")
-                terminal = reply["action"] != "read"
+                if reply["action"] == "final":
+                    if validation is not None and validation["status"] == "rejected":
+                        rejected_finals += 1
+                        if rejected_finals > 2 or (rejected_finals > 1 and record["error"] is None):
+                            raise ValueError("invalid recovered grounding correction")
+                        terminal = record["error"] is not None
+                    else:
+                        terminal = True
+                else:
+                    if validation is not None:
+                        raise ValueError("unexpected recovered final validation")
+                    terminal = reply["action"] != "read"
             else:
+                if validation is not None:
+                    raise ValueError("validation without recovered reply")
                 terminal = True
             terminal = terminal or record["error"] is not None
 

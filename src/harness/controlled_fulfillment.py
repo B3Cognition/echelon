@@ -74,6 +74,7 @@ _STAGED_OUTPUTS = ("implementation-map.md", "judgment-prepass.json", "judgment-p
                    "fulfillment-report.fallback.md", "progress-integrity.json",
                    "fulfillment-report.staged.md", "fulfillment-gaps.staged.md")
 _MAX_ASSIGNMENT_IDS = 12
+_MAX_GROUNDING_CORRECTIONS = 1
 
 
 def _assignment_batches(ids):
@@ -86,6 +87,28 @@ def _assignment_batches(ids):
 
 def _batch_key(step: str, index: int) -> str:
     return step if index == 0 else f"{step}-{index + 1:04d}"
+
+
+def _grounding_correction(reason: str, rejected_final: dict) -> dict:
+    return {
+        "attempt": 1,
+        "max_attempts": _MAX_GROUNDING_CORRECTIONS,
+        "reason": reason,
+        "required_action": (
+            "Correct the rejected final without weakening any claim. "
+            "Read every cited source range before citing it, or remove the unsupported citation."
+        ),
+        "rejected_final": _json_copy(rejected_final),
+    }
+
+
+def _verify_judge_citations(reply: dict, judge_reads: list, mapper_reads: list) -> None:
+    visible_reads = [*mapper_reads, *judge_reads]
+    for row in reply["rows"]:
+        _verify_citation_text(
+            row["evidence"], visible_reads,
+            required=row["status"] == "IMPLEMENTED",
+        )
 
 
 def _assignment_context(data: dict, ids) -> dict:
@@ -245,7 +268,7 @@ class ControlledFulfillment:
                 _validate_context(context)
                 state["controlled_fulfillment_journal"] = recovery.path.name
                 write_json_atomic(state_path, state, trusted_root=context.verify_run_dir)
-                recovery.data = {"schema_version": 3, "binding": operation_binding, "phase": "preparing",
+                recovery.data = {"schema_version": 4, "binding": operation_binding, "phase": "preparing",
                                  "inputs": None, "budget_limit": token_budget, "steps": {}, "outputs": {}}
                 recovery.save()
                 prepared = prepare_fulfillment_inputs(context)
@@ -297,9 +320,11 @@ class ControlledFulfillment:
                             "mapper", batch, roles["mapper"], context, binding,
                             _assignment_context(data, batch), channel, usage, token_budget, recovery,
                             journal_key=_batch_key("mapper", batch_index),
+                            final_validator=lambda reply, visible_reads: _verify_citations(
+                                reply["rows"], visible_reads
+                            ),
                         )
                         batch_rows = mapped["rows"]
-                        _verify_citations(batch_rows, reads)
                         for row in batch_rows:
                             lead = leads.get(row["id"])
                             if lead is not None:
@@ -339,14 +364,10 @@ class ControlledFulfillment:
                             "judge", batch, roles["judge"], context, binding, judge_data,
                             channel, usage, token_budget, recovery,
                             journal_key=_batch_key("judge", batch_index),
+                            final_validator=lambda reply, judge_reads, mapper_reads=mapper_reads:
+                                _verify_judge_citations(reply, judge_reads, mapper_reads),
                         )
                         batch_rows = judged["rows"]
-                        visible_reads = [*mapper_reads, *reads]
-                        for row in batch_rows:
-                            _verify_citation_text(
-                                row["evidence"], visible_reads,
-                                required=row["status"] == "IMPLEMENTED",
-                            )
                         fallback.extend(batch_rows)
                         all_reads.extend(reads)
                 _verify_reads(channel, all_reads)
@@ -399,7 +420,7 @@ class ControlledFulfillment:
             stack.close()
 
     def _dispatch(self, step, ids, role, context, binding, data, channel, usage, budget, recovery, *,
-                  journal_key=None):
+                  journal_key=None, final_validator=None):
         assignment = FulfillmentAssignment(context.verify_run_dir.name, step, uuid4().hex,
                                             _digest({"inputs": binding, "role": asdict(role), "data": data}), ids)
         journal_key = journal_key or step
@@ -416,6 +437,8 @@ class ControlledFulfillment:
         reads = []
         deadline = stored["deadline"]
         cursor = 0
+        correction = None
+        correction_attempts = 0
         while True:
             if cursor < len(stored["records"]):
                 record = stored["records"][cursor]
@@ -427,7 +450,29 @@ class ControlledFulfillment:
                 accepted = record["reply"]
                 if accepted["action"] == "final":
                     _verify_reads(channel, reads)
-                    return _json_copy(accepted), reads
+                    validation = record["final_validation"]
+                    if validation is None:
+                        try:
+                            if final_validator is not None:
+                                final_validator(accepted, reads)
+                        except ValueError as exc:
+                            validation = {"status": "rejected", "reason": str(exc) or type(exc).__name__}
+                        else:
+                            validation = {"status": "accepted"}
+                        record["final_validation"] = validation
+                        if validation["status"] == "rejected" and correction_attempts >= 1:
+                            record["error"] = (
+                                f"fulfillment {step} grounding correction exhausted: "
+                                f"{validation['reason']}"
+                            )
+                        recovery.save()
+                    if record["error"] is not None:
+                        raise ValueError(record["error"])
+                    if validation["status"] == "accepted":
+                        return _json_copy(accepted), reads
+                    correction_attempts += 1
+                    correction = _grounding_correction(validation["reason"], accepted)
+                    continue
                 if accepted["action"] == "blocked":
                     raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
                 if record["read"] is None:
@@ -464,6 +509,8 @@ class ControlledFulfillment:
                     "instruction": ("Repeat every reply_contract.binding field exactly at top level, "
                         "then action and its fields only. For read, emit exactly one singular request "
                         "object nested under request; never flatten it and never emit a requests array.")}}
+            if correction is not None:
+                payload["correction"] = correction
             prompt = role.body + "\nHOST_INPUT_JSON\n" + json.dumps(payload, allow_nan=False)
             if len(prompt.encode()) > 1024 * 1024:
                 raise ValueError("fulfillment inspection input exceeds provider limit")
@@ -473,6 +520,7 @@ class ControlledFulfillment:
                 "raw_stdout": None,
                 "token_usage": None,
                 "error": None,
+                "final_validation": None,
             }
             stored["records"].append(record)
             recovery.save()  # Durable intent before external execution.
@@ -514,9 +562,28 @@ class ControlledFulfillment:
                         "response": _service_read(channel, request),
                     }
                     reads.append(record["read"])
-                recovery.save()
                 if accepted["action"] == "final":
+                    recovery.save()
+                    try:
+                        if final_validator is not None:
+                            final_validator(accepted, reads)
+                    except ValueError as exc:
+                        reason = str(exc) or type(exc).__name__
+                        record["final_validation"] = {"status": "rejected", "reason": reason}
+                        correction_attempts += 1
+                        if correction_attempts > _MAX_GROUNDING_CORRECTIONS:
+                            record["error"] = (
+                                f"fulfillment {step} grounding correction exhausted: {reason}"
+                            )
+                            recovery.save()
+                            raise ValueError(record["error"])
+                        correction = _grounding_correction(reason, accepted)
+                        recovery.save()
+                        continue
+                    record["final_validation"] = {"status": "accepted"}
+                    recovery.save()
                     return accepted, reads
+                recovery.save()
             except (ValueError, OSError, RuntimeError, TypeError, KeyError, AttributeError) as exc:
                 record["error"] = str(exc) or type(exc).__name__
                 recovery.save()

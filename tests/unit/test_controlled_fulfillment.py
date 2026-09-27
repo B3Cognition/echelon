@@ -133,6 +133,84 @@ def test_host_binds_mapper_input_fingerprint_and_retains_raw_reply(preparation_c
     assert record["reply"]["action"] == "final"
 
 
+def test_unread_mapper_citation_gets_one_grounding_correction_turn(preparation_context):
+    class CorrectingUnreadCitationExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            dispatch = self.dispatches[-1]
+            if payload["step"] != "mapper":
+                return result
+            correction = dispatch.get("correction")
+            if correction is None:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+            elif not dispatch["reads"]:
+                payload = {
+                    **dispatch["reply_contract"]["binding"],
+                    "action": "read",
+                    "request": {
+                        "op": "read_file",
+                        "root": "worktree",
+                        "path": "app.py",
+                        "start_line": 1,
+                        "line_count": 2,
+                    },
+                }
+            else:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = CorrectingUnreadCitationExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    mapper_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "mapper"
+    ]
+    assert len(mapper_dispatches) == 3
+    correction = mapper_dispatches[1]["correction"]
+    assert correction["attempt"] == 1
+    assert correction["max_attempts"] == 1
+    assert correction["reason"] == "verified evidence cites unread source"
+    assert correction["rejected_final"]["action"] == "final"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["raw_stdout"] is not None
+    assert records[0]["final_validation"] == {
+        "status": "rejected",
+        "reason": "verified evidence cites unread source",
+    }
+    assert records[-1]["final_validation"] == {"status": "accepted"}
+
+
+def test_repeated_unread_mapper_citation_exhausts_single_correction(preparation_context):
+    executor = SemanticExecutor(bad="unread_citation")
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == (
+        "fulfillment mapper grounding correction exhausted: "
+        "verified evidence cites unread source"
+    )
+    assert executor.dispatch_count == 2
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert [record["final_validation"]["status"] for record in records] == [
+        "rejected",
+        "rejected",
+    ]
+    assert records[0]["error"] is None
+    assert records[1]["error"] == result.reason
+
+
 def test_reply_contract_declares_bounded_unmapped_candidate_array(preparation_context):
     executor = SemanticExecutor()
 
@@ -358,7 +436,8 @@ def test_failed_semantics_never_publish_and_keep_usage(preparation_context, bad)
     before = _snapshot(preparation_context.spec_dir)
     result = run(preparation_context, SemanticExecutor(bad=bad))
     assert result.exit_code != 0
-    assert result.token_usage == 7
+    assert result.token_usage == (14 if bad == "unread_citation" else 7)
+    assert result.dispatch_count == (2 if bad == "unread_citation" else 1)
     assert result.report_path is None
     assert _snapshot(preparation_context.spec_dir) == before
 
@@ -555,7 +634,8 @@ def test_judge_cannot_publish_implemented_from_unread_or_absent_citations(prepar
     result = run(preparation_context, FabricatingJudge(inspect_source=True))
     assert result.exit_code != 0
     assert "citat" in result.reason or "unread" in result.reason
-    assert result.token_usage == 21
+    assert result.token_usage == 28
+    assert result.dispatch_count == 4
     assert not (preparation_context.verify_run_dir / "fulfillment-report.staged.md").exists()
 
 

@@ -71,6 +71,100 @@ def test_completed_model_turn_survives_host_step_failure(preparation_context, mo
     assert second.token_usage == 7
 
 
+def test_grounding_correction_survives_restart_without_repeating_rejected_final(
+    preparation_context,
+    monkeypatch,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    class CorrectAfterRejection(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            dispatch = self.dispatches[-1]
+            if payload["step"] == "mapper" and dispatch.get("correction") is None:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+                result.stdout = json.dumps(payload)
+            return result
+
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_after_rejection(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (
+            not interrupted[0]
+            and records
+            and records[-1]["final_validation"] is not None
+            and records[-1]["final_validation"]["status"] == "rejected"
+        ):
+            interrupted[0] = True
+            raise Crash()
+
+    executor = CorrectAfterRejection()
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_after_rejection)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    mapper_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "mapper"
+    ]
+    assert len(mapper_dispatches) == 2
+    assert mapper_dispatches[1]["correction"]["reason"] == (
+        "verified evidence cites unread source"
+    )
+
+
+def test_second_rejected_final_becomes_terminal_after_restart(
+    preparation_context,
+    monkeypatch,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_before_second_final_validation(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (
+            not interrupted[0]
+            and len(records) == 2
+            and records[-1]["reply"] is not None
+            and records[-1]["reply"]["action"] == "final"
+            and records[-1]["final_validation"] is None
+        ):
+            interrupted[0] = True
+            raise Crash()
+
+    executor = SemanticExecutor(bad="unread_citation")
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_before_second_final_validation)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == (
+        "fulfillment mapper grounding correction exhausted: "
+        "verified evidence cites unread source"
+    )
+    assert executor.dispatch_count == 2
+
+
 def test_unknown_external_completion_is_not_redispatched(preparation_context):
     class Crash(BaseException):
         pass
