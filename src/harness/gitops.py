@@ -601,9 +601,9 @@ class GitOpsManager:
         prior iteration branch when available, otherwise from the default branch
         HEAD. A fresh delivery resets iteration zero to the target's current
         default branch instead of reusing an identically named branch from an
-        older run.  ``fresh_branch_base`` is an explicit, checkpointed candidate
-        from a prior interrupted delivery; when supplied it is the only exception
-        to that reset rule.
+        older run.  ``fresh_branch_base`` is an explicit retained candidate
+        anchored to a checkpoint from a prior stopped delivery; when supplied it
+        is the only exception to that reset rule.
 
         Returns:
             Absolute path to the worktree directory.
@@ -1550,6 +1550,38 @@ class GitOpsManager:
         if not candidates:
             return None
         return str(max(candidates, key=lambda p: p.stat().st_mtime))
+
+    def get_clean_worktree_head(
+        self,
+        spec_id: str,
+        *,
+        build_id: str,
+    ) -> Optional[str]:
+        """Return the committed HEAD of a clean preserved delivery worktree.
+
+        This is candidate recovery, not checkpoint acceptance.  Callers must
+        separately prove that the commit descends from their trusted delivery
+        lineage before retaining it.
+        """
+        worktree = self.get_latest_worktree(spec_id, build_id=build_id)
+        if not worktree:
+            return None
+        status = _run_git(
+            ["status", "--porcelain", "--untracked-files=all"],
+            cwd=worktree,
+            check=False,
+        )
+        if status.returncode != 0 or status.stdout.strip():
+            return None
+        head = _run_git(
+            ["rev-parse", "HEAD"],
+            cwd=worktree,
+            check=False,
+        )
+        commit = head.stdout.strip() if head.returncode == 0 else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            return None
+        return commit
 
     def detect_language(self, worktree_path: str) -> Dict:
         """Fingerprint target repo: detect language, package manager, Playwright.

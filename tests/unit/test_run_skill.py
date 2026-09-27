@@ -266,6 +266,82 @@ def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
     gitops.commit_is_ancestor_of_default.assert_called_once_with(newest)
 
 
+def test_fresh_delivery_retains_clean_manual_repair_as_untrusted_candidate(
+    tmp_path: Path,
+) -> None:
+    """A committed post-block repair must survive without becoming a receipt."""
+    checkpoint = "a" * 40
+    salvage = "b" * 40
+    repaired = "c" * 40
+    build_id = "build-20260927-094522-127001"
+    state_dir = tmp_path / "runs" / build_id / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "delivery.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_blocked",
+                "checkpoint_commits": [{"commit": checkpoint}],
+                "salvage_commit": salvage,
+                "spec_id": "012",
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "runs" / "current-012.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(build_id, encoding="utf-8")
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.return_value = False
+    gitops.get_clean_worktree_head.return_value = repaired
+    gitops.commit_is_ancestor.side_effect = lambda parent, child: (
+        (parent, child) in {(checkpoint, salvage), (salvage, repaired)}
+    )
+
+    baseline = _fresh_delivery_baseline(tmp_path, intent, gitops)
+
+    assert baseline == repaired
+    gitops.get_clean_worktree_head.assert_called_once_with(
+        "012", build_id=build_id
+    )
+
+
+def test_fresh_delivery_rejects_manual_head_outside_salvaged_lineage(
+    tmp_path: Path,
+) -> None:
+    """An unrelated clean worktree head cannot replace the trusted checkpoint."""
+    checkpoint = "a" * 40
+    salvage = "b" * 40
+    unrelated = "c" * 40
+    build_id = "build-20260927-094522-127001"
+    state_dir = tmp_path / "runs" / build_id / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "delivery.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_blocked",
+                "checkpoint_commits": [{"commit": checkpoint}],
+                "salvage_commit": salvage,
+                "spec_id": "012",
+            }
+        ),
+        encoding="utf-8",
+    )
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.return_value = False
+    gitops.get_clean_worktree_head.return_value = unrelated
+    gitops.commit_is_ancestor.side_effect = lambda parent, child: (
+        (parent, child) == (checkpoint, salvage)
+    )
+
+    baseline = _fresh_delivery_baseline(tmp_path, intent, gitops)
+
+    assert baseline == checkpoint
+
+
 @pytest.mark.unit
 class TestRunContextValidation:
     @patch("harness.skills.run_skill.DeliveryController")

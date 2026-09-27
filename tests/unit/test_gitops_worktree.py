@@ -71,6 +71,34 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     assert result is None
 
 
+def test_get_clean_worktree_head_returns_only_a_clean_commit(tmp_path):
+    gitops = _make_gitops(tmp_path)
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    head = "a" * 40
+
+    with patch(
+        "harness.gitops._run_git",
+        side_effect=(
+            SimpleNamespace(returncode=0, stdout=""),
+            SimpleNamespace(returncode=0, stdout=f"{head}\n"),
+        ),
+    ):
+        assert gitops.get_clean_worktree_head("001", build_id="build-test") == head
+
+
+def test_get_clean_worktree_head_rejects_dirty_worktree(tmp_path):
+    gitops = _make_gitops(tmp_path)
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+
+    with patch(
+        "harness.gitops._run_git",
+        return_value=SimpleNamespace(returncode=0, stdout=" M src/app.ts\n"),
+    ):
+        assert gitops.get_clean_worktree_head("001", build_id="build-test") is None
+
+
 def test_commit_is_ancestor_of_default_checks_the_mirror_default_branch(tmp_path):
     """Stale-checkpoint recovery must query the target mirror, not a worktree."""
     gitops = _make_gitops(tmp_path)

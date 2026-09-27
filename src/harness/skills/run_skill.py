@@ -95,6 +95,56 @@ def _resolve_run_roots(
     return harness_root, workspace_root
 
 
+def _fresh_delivery_repaired_candidate(
+    *,
+    gitops: Any | None,
+    state: Mapping[str, object],
+    spec_id: str,
+    build_id: str,
+    checkpoint: str,
+) -> str | None:
+    """Retain a clean post-block repair without granting checkpoint authority.
+
+    A build-blocked run may be repaired manually after Ralph has salvaged its
+    last candidate.  The next budget may start from that committed descendant,
+    but task recovery remains bound to the actual checkpoint entries in state.
+    This preserves the repair for fresh verification/review without fabricating
+    a receipt or treating the salvaged task as complete.
+    """
+    if gitops is None or state.get("termination_reason") != "build_blocked":
+        return None
+    salvage = state.get("salvage_commit")
+    if not isinstance(salvage, str) or not re.fullmatch(r"[0-9a-f]{40}", salvage):
+        return None
+    clean_head = getattr(gitops, "get_clean_worktree_head", None)
+    ancestry = getattr(gitops, "commit_is_ancestor", None)
+    if not callable(clean_head) or not callable(ancestry):
+        return None
+    try:
+        candidate = clean_head(spec_id, build_id=build_id)
+    except Exception as error:
+        logger.warning("Could not inspect preserved worktree for %s: %s", build_id, error)
+        return None
+    if not isinstance(candidate, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate):
+        return None
+    try:
+        checkpoint_contains_salvage = ancestry(checkpoint, salvage) is True
+        salvage_contains_candidate = ancestry(salvage, candidate) is True
+    except Exception as error:
+        logger.warning("Could not verify repaired candidate lineage for %s: %s", build_id, error)
+        return None
+    if not checkpoint_contains_salvage or not salvage_contains_candidate:
+        return None
+    if candidate != checkpoint:
+        logger.info(
+            "Retaining clean unreviewed candidate %s from %s; checkpoint authority remains %s",
+            candidate[:12],
+            build_id,
+            checkpoint[:12],
+        )
+    return candidate
+
+
 def _fresh_delivery_baseline(
     harness_root: Path,
     intent: Any,
@@ -170,7 +220,14 @@ def _fresh_delivery_baseline(
                     # Once it has landed, an old abandoned candidate must not
                     # be revived merely because its state still says running.
                     return None
-                return commit
+                repaired_candidate = _fresh_delivery_repaired_candidate(
+                    gitops=gitops,
+                    state=state,
+                    spec_id=intent.spec_id,
+                    build_id=prior_build_id,
+                    checkpoint=commit,
+                )
+                return repaired_candidate or commit
     return None
 
 
@@ -851,7 +908,7 @@ def _execute_delivery_run(
     )
     if fresh_branch_base:
         logger.info(
-            "Starting new delivery budget from checkpointed candidate: %s",
+            "Starting new delivery budget from retained checkpoint lineage: %s",
             fresh_branch_base[:12],
         )
     try:
