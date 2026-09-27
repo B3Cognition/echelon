@@ -47,6 +47,8 @@ Return only the JSON envelope specified by the host, repeating its compact
 Cite actual evidence using the returned root, path and line numbers.
 Every row field is one JSON string, never an array or object; join multiple
 citations with `; ` in that one string.
+`unmapped_candidates` is always an array of single-line strings; return `[]`
+when there are no separate unmapped discoveries.
 
 ALWAYS state uncertainty and concrete missing evidence; return `blocked` when
 required context cannot be inspected safely.

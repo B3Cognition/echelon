@@ -107,6 +107,20 @@ def test_mapper_reply_contract_declares_exact_scalar_json_types(preparation_cont
         assert fields[name]["multiple_values"] == "join with ; in one string"
 
 
+def test_reply_contract_declares_bounded_unmapped_candidate_array(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatches[0]["reply_contract"]["unmapped_candidates"] == {
+        "type": "array",
+        "items": {"type": "string", "format": "nonempty safe single-line note"},
+        "maxItems": 100,
+        "when_none": "return []",
+    }
+
+
 def test_mechanical_missing_report_skips_judge_and_stays_staged(preparation_context):
     context = preparation_context
     before = _snapshot(context.spec_dir)

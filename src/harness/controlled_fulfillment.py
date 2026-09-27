@@ -178,7 +178,7 @@ class ControlledFulfillment:
                 "forbidden_paths": [str(Path(path).absolute()) for path in forbidden_paths],
                 "provider": getattr(self._executor, "provider_id", self._executor.cli),
                 "configuration": getattr(self._executor, "constrained_execution_configuration_id", None),
-                "contract": "controlled-fulfillment-inspection-v3",
+                "contract": "controlled-fulfillment-inspection-v4",
             })
             if saved is None:
                 state_path = context.verify_run_dir / "state.json"
@@ -358,6 +358,9 @@ class ControlledFulfillment:
                     "blocked": "reason: nonempty single-line text", "final": "rows and unmapped_candidates"},
                     "binding": assignment.reply_identity(),
                     "row_fields": _MAPPER_FIELDS if step == "mapper" else _JUDGE_FIELDS,
+                    "unmapped_candidates": {"type": "array",
+                        "items": {"type": "string", "format": "nonempty safe single-line note"},
+                        "maxItems": 100, "when_none": "return []"},
                     "roots": ["worktree", "spec", "evidence"],
                     "read_file": {"op": "read_file", "root": "evidence", "path": "requirement-audit.md",
                                   "start_line": 1, "line_count": 200},
