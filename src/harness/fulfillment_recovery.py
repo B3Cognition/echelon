@@ -13,7 +13,7 @@ import stat
 from harness.durable_json import write_json_atomic, write_text_atomic
 from harness.fulfillment_semantics import (
     FulfillmentAssignment,
-    parse_semantic_reply,
+    bind_semantic_reply,
     validate_semantic_result,
 )
 from harness.inspection_io import _open_root_directory
@@ -99,7 +99,7 @@ class FulfillmentRecovery:
 
 def _validate(data):
     fields = {"schema_version", "binding", "phase", "inputs", "budget_limit", "steps", "outputs"}
-    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 2:
+    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 3:
         raise ValueError("invalid fulfillment recovery schema")
     if data["phase"] not in {"preparing", "prepared", "staged"}:
         raise ValueError("invalid fulfillment recovery phase")
@@ -150,7 +150,7 @@ def _validate(data):
                 reply = validate_semantic_result(record["reply"], assignment)
                 if (
                     raw_stdout is None
-                    or parse_semantic_reply(raw_stdout, assignment) != reply
+                    or bind_semantic_reply(raw_stdout, assignment) != reply
                 ):
                     raise ValueError("recovered fulfillment reply is not provider-bound")
                 if reply["action"] == "read":

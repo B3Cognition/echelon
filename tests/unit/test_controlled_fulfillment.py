@@ -107,6 +107,32 @@ def test_mapper_reply_contract_declares_exact_scalar_json_types(preparation_cont
         assert fields[name]["multiple_values"] == "join with ; in one string"
 
 
+def test_host_binds_mapper_input_fingerprint_and_retains_raw_reply(preparation_context):
+    class FingerprintEchoDriftExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            fingerprint = payload["input_fingerprint"]
+            payload["input_fingerprint"] = fingerprint[:32] + "c" + fingerprint[32:]
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = FingerprintEchoDriftExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    record = journal["steps"]["mapper"]["records"][0]
+    raw = json.loads(record["raw_stdout"])
+    assignment = journal["steps"]["mapper"]["assignment"]
+    assert raw["input_fingerprint"] != assignment["input_fingerprint"]
+    assert record["reply"]["input_fingerprint"] == assignment["input_fingerprint"]
+    assert record["reply"]["action"] == "final"
+
+
 def test_reply_contract_declares_bounded_unmapped_candidate_array(preparation_context):
     executor = SemanticExecutor()
 

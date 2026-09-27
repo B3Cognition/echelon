@@ -140,7 +140,7 @@ def validate_semantic_result(value: object, assignment: FulfillmentAssignment) -
     return json.loads(json.dumps(value, allow_nan=False))
 
 
-def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+def _parse_semantic_json(raw: str) -> object:
     def pairs(items):
         result = {}
         for key, value in items:
@@ -158,7 +158,34 @@ def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
         value = json.loads(raw, object_pairs_hook=pairs, parse_constant=nonfinite)
     except (RecursionError, UnicodeError) as exc:
         raise ValueError("invalid fulfillment JSON") from exc
-    return validate_semantic_result(value, assignment)
+    return value
+
+
+def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+    """Strictly validate a reply whose complete binding is already authoritative."""
+    return validate_semantic_result(_parse_semantic_json(raw), assignment)
+
+
+def bind_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+    """Retain a raw provider reply while binding its host-owned input digest.
+
+    The run, step, dispatch, schema, and exact assigned-ID digest remain strict
+    transport identity. The input fingerprint describes host-observed content;
+    a provider echo cannot become authoritative merely by repeating it.
+    """
+    value = _parse_semantic_json(raw)
+    identity = assignment.reply_identity()
+    if type(value) is not dict or type(value.get("schema_version")) is not int:
+        raise ValueError("fulfillment reply must be a versioned object")
+    for key in ("schema_version", "run_id", "step", "dispatch_id", "assigned_ids_sha256"):
+        if value.get(key) != identity[key]:
+            raise ValueError("fulfillment assignment binding mismatch")
+    echo = value.get("input_fingerprint")
+    if type(echo) is not str or not echo or len(echo) > 128:
+        raise ValueError("invalid fulfillment input fingerprint echo")
+    bound = dict(value)
+    bound["input_fingerprint"] = assignment.input_fingerprint
+    return validate_semantic_result(bound, assignment)
 
 
 def render_implementation_map(rows: list[dict]) -> str:

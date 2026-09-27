@@ -23,7 +23,7 @@ from harness.fulfillment_preparation import (
 from harness.fulfillment_recovery import FulfillmentRecovery
 from harness.fulfillment_preparation_steps import load_preparation_observation
 from harness.fulfillment_semantics import (
-    FulfillmentAssignment, parse_semantic_reply, render_fallback_report, render_implementation_map,
+    FulfillmentAssignment, bind_semantic_reply, render_fallback_report, render_implementation_map,
 )
 from harness.inspection_io import BoundedReadChannel, InspectionReadBoundsError
 from harness.judgment_prepass import assemble_fulfillment_report, write_judgment_prepass
@@ -245,7 +245,7 @@ class ControlledFulfillment:
                 _validate_context(context)
                 state["controlled_fulfillment_journal"] = recovery.path.name
                 write_json_atomic(state_path, state, trusted_root=context.verify_run_dir)
-                recovery.data = {"schema_version": 2, "binding": operation_binding, "phase": "preparing",
+                recovery.data = {"schema_version": 3, "binding": operation_binding, "phase": "preparing",
                                  "inputs": None, "budget_limit": token_budget, "steps": {}, "outputs": {}}
                 recovery.save()
                 prepared = prepare_fulfillment_inputs(context)
@@ -501,7 +501,7 @@ class ControlledFulfillment:
                 if _inputs(context) != binding:
                     raise ValueError("fulfillment inputs changed during inspection")
                 _verify_reads(channel, reads)
-                accepted = parse_semantic_reply(result.stdout, assignment)
+                accepted = bind_semantic_reply(result.stdout, assignment)
                 record["reply"] = _json_copy(accepted)
                 if accepted["action"] == "blocked":
                     raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
