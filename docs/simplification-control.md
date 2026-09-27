@@ -148,11 +148,26 @@ starting another.
 ## STAB-1 Work Queue
 
 - [x] Establish the stabilization milestone and freeze S6/S7.
+- [x] Snapshot the published Browser App Gates into new Delivery phase selection
+  even when no stack matches (`a043a63c`; 68 Delivery controller tests passed).
+- [x] Reject visual verification that changes bounded candidate content before
+  issuing a passing receipt (`6a2de222`; 93 Delivery/visual tests passed).
+- [ ] Give browser-required tasks a controller-owned browser-evidence handoff
+  before slice acceptance; keep provider task ownership and reviewer verdicts.
+- [ ] Run browser verification without writing generated baselines or test
+  artifacts into the candidate; retain evidence outside the product worktree.
+- [ ] Define an explicit visual-review decision for retained images before
+  T-012 can count as visually accepted; a screenshot receipt alone is not review.
 - [ ] Finish the preserved 12-task Delivery smoke and its final gates.
 - [ ] Run one newly initialized Phase A → publication → Delivery acceptance with resume.
 - [ ] Run final focused, unit, complete-suite, dry-run/install, and range-review gates.
 - [ ] Record a receipt for the exact final commit/tree and close provider-finalization tracking.
 - [ ] Complete one fresh whole-range review and push the verified checkpoint.
+
+The preserved rugby-demo product worktree is evidence only. Do not hand-edit
+its source, tests, screenshots, or baselines. Product changes, if any, must be
+made by Echelon's Delivery provider after the controller supplies scoped
+evidence; no historical-run migration is required.
 
 ## Drift Guard
 
