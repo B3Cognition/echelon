@@ -81,6 +81,7 @@ class VisualRalphController:
             candidate_before = _safe_product_fingerprint(worktree_path)
             sandbox_spec = self._build_sandbox_spec(worktree_path)
             handle = self._provider.create(sandbox_spec)
+            runtime_stopped = False
 
             try:
                 try:
@@ -114,6 +115,8 @@ class VisualRalphController:
 
                 attempt_sequence = self._next_visual_attempt_sequence()
                 screenshots = self._retrieve_screenshots(handle, attempt_sequence)
+                runtime_stopped = True
+                self._stop_app_runtime(handle)
                 if candidate_before and candidate_before != _safe_product_fingerprint(worktree_path):
                     verify_result = self._with_visual_failure(
                         verify_result,
@@ -217,7 +220,8 @@ class VisualRalphController:
 
             finally:
                 self._cleanup_screenshot_staging()
-                self._stop_app_runtime(handle)
+                if not runtime_stopped:
+                    self._stop_app_runtime(handle)
                 self._provider.destroy(handle)
 
         return VisualResult(

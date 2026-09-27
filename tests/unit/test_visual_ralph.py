@@ -561,6 +561,43 @@ def test_visual_verifier_cannot_pass_after_mutating_candidate(tmp_path: Path) ->
     provider.destroy.assert_called_once()
 
 
+def test_visual_runtime_teardown_cannot_mutate_passing_candidate(tmp_path: Path) -> None:
+    """A passing receipt must describe the candidate after runtime shutdown too."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    source = worktree / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+
+    def execute(_handle, command, **_kwargs):
+        if command == "npx nx reset":
+            source.write_text("export const ready = false;\n", encoding="utf-8")
+        return _exec_result(
+            stdout=PLAYWRIGHT_PASS_JSON if "npx playwright test" in command else "ready"
+        )
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "candidate_mutated_during_visual_verification"
+    assert result.evidence is None
+
+
 def test_retrieve_screenshots_falls_back_to_playwright_test_results(
     tmp_path: Path,
 ) -> None:
