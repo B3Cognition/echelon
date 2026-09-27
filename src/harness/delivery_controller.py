@@ -88,6 +88,29 @@ def _delivery_stack_snapshot(resolved: object) -> dict[str, object] | None:
     }
 
 
+def _published_browser_gate_required(spec_dir: Path | None) -> bool:
+    """Read the published coverage map's browser execution obligation."""
+    if spec_dir is None:
+        return False
+    path = spec_dir / "coverage-map.md"
+    if not path.is_file():
+        return False
+    in_gates = False
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        heading = line.strip()
+        if heading.startswith("## "):
+            in_gates = heading.casefold() == "## browser app gates"
+            continue
+        if not in_gates or not heading.startswith("|"):
+            continue
+        cells = [cell.strip().casefold() for cell in heading.strip("|").split("|")]
+        if len(cells) >= 2 and cells[0] in {
+            "playwright e2e critical journeys", "visual validation task",
+        } and cells[1] == "yes":
+            return True
+    return False
+
+
 def _string_tuple(value: object) -> tuple[str, ...]:
     """Accept only concrete canonical task IDs supplied by the review controller."""
     if not isinstance(value, (tuple, list)):
@@ -459,7 +482,9 @@ class DeliveryController:
         state["inherited_checkpoint_task_ids"] = applied
         state_store.write(state)
 
-    def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
+    def _enabled_phases(
+        self, llm_provider: AICodingCliProvider | None, *, spec_dir: Path | None = None
+    ) -> list[str]:
         """Snapshot the delivery phases selected for a new run."""
         phases = ["implementation"]
         runnability = getattr(self._config, "resolved_runnability", None)
@@ -468,7 +493,8 @@ class DeliveryController:
             and "browser_dom"
             in tuple(getattr(runnability, "required_observations", ()) or ())
         )
-        if self._config.visual_tests.enabled or stack_requires_visual:
+        if (self._config.visual_tests.enabled or stack_requires_visual
+                or _published_browser_gate_required(spec_dir)):
             phases.append("visual")
         if self._config.review_loop.enabled and self._config.pr_host != "none":
             phases.append("review")
@@ -1427,7 +1453,7 @@ class DeliveryController:
                     spec_dir=str(spec_dir) if spec_dir is not None else None,
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
-                    enabled_phases=self._enabled_phases(llm_provider),
+                    enabled_phases=self._enabled_phases(llm_provider, spec_dir=spec_dir),
                     delivery_stack_snapshot=_delivery_stack_snapshot(
                         getattr(self._config, "resolved_stacks", None)
                     ),

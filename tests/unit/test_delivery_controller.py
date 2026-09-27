@@ -923,6 +923,36 @@ class TestSingleStrategy:
 
 
 class TestDeliveryStateMigration:
+    def test_published_browser_gate_enables_visual_phase_without_selected_stack(
+        self, tmp_path: Path
+    ) -> None:
+        """A greenfield browser spec must not silently skip its Playwright gate."""
+        coordinator = _make_controller(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-browser"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "coverage-map.md").write_text(
+            "# Coverage Map\n\n"
+            "## Browser App Gates\n\n"
+            "| Gate | Required | Coverage Evidence |\n"
+            "|------|----------|-------------------|\n"
+            "| Playwright E2E critical journeys | yes | E2E-001 |\n"
+            "| Smoke serving check | yes | HTTP 200 |\n"
+            "| Visual validation task | yes | T-012 |\n",
+            encoding="utf-8",
+        )
+
+        assert coordinator._enabled_phases(None, spec_dir=spec_dir) == [
+            "implementation", "visual", "finalization",
+        ]
+        with patch(
+            "harness.delivery_controller.RalphController.run_loop",
+            return_value=_controlled_implementation(verified=False),
+        ):
+            coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+
+        state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
+        assert state["enabled_phases"] == ["implementation", "visual", "finalization"]
+
     def test_visual_phase_is_required_with_llm_coding_provider(
         self, tmp_path: Path
     ) -> None:
