@@ -154,8 +154,9 @@ starting another.
   issuing a passing receipt (`6a2de222`; 93 Delivery/visual tests passed).
 - [ ] Give browser-required tasks a controller-owned browser-evidence handoff
   before slice acceptance; keep provider task ownership and reviewer verdicts.
-- [ ] Run browser verification without writing generated baselines or test
-  artifacts into the candidate; retain evidence outside the product worktree.
+- [x] Run browser verification from a disposable container copy of a read-only
+  candidate mount; retain evidence outside the product worktree (`d64b7a16`;
+  235 adjacent tests and two real-Docker isolation/runtime smokes passed).
 - [ ] Define an explicit visual-review decision for retained images before
   T-012 can count as visually accepted; a screenshot receipt alone is not review.
 - [ ] Finish the preserved 12-task Delivery smoke and its final gates.
