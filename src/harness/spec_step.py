@@ -366,6 +366,7 @@ def _validate_provider_output_evidence(value: object) -> dict[str, object]:
         "created",
         "replaced",
         "shadow_promoted",
+        "retained",
     }:
         _raise("intent_invalid")
     preimage = value["preimage_identity_sha256"]

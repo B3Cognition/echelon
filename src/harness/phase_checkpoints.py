@@ -139,6 +139,143 @@ def load_checkpoint_ledger(spec_dir: Path) -> CheckpointLedger:
     )
 
 
+def accepted_checkpoint_outputs(
+    project_root: Path,
+    spec_dir: Path,
+    state: Mapping[str, object],
+    phase: str,
+    artifacts: tuple[tuple[str, str, str], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    """Return prior accepted spec artifact digests for a completed phase revisit.
+
+    The completion outcome, ledger row and commit trailers must all identify the
+    same checkpoint. A missing output has no retention authority; an invalid
+    checkpoint fails closed instead of relaxing publication rules.
+    """
+    outcomes = state.get("phase_completion_outcomes")
+    if type(outcomes) is not list:
+        return ()
+    completed = [
+        row for row in outcomes
+        if isinstance(row, Mapping)
+        and row.get("phase") == phase
+        and row.get("outcome") == "executed"
+        and row.get("checkpoint") == "required"
+    ]
+    if not completed:
+        return ()
+    run_id = state.get("run_id")
+    spec_id = state.get("spec_id")
+    if not all(type(value) is str and value for value in (run_id, spec_id)):
+        raise PhaseCheckpointError("prior phase completion identity is invalid")
+    root = project_root.resolve()
+    ledger, _present = _load_completion_checkpoint_ledger(spec_dir)
+    if ledger.spec_id != spec_id:
+        raise PhaseCheckpointError("prior phase checkpoint spec identity drift")
+    # A completed no-change phase has no new checkpoint row. Its artifacts
+    # still trace to the last committed completion of the same phase.
+    for outcome in reversed(completed):
+        completion_id = outcome.get("completion_id")
+        next_phase = outcome.get("next_phase")
+        if not all(type(value) is str and value for value in (
+            completion_id, next_phase,
+        )):
+            raise PhaseCheckpointError("prior phase completion identity is invalid")
+        matches = [
+            row for row in ledger.checkpoints
+            if row.completion_id == completion_id
+        ]
+        if len(matches) > 1:
+            raise PhaseCheckpointError("prior phase checkpoint is ambiguous")
+        if matches:
+            checkpoint = matches[0]
+            break
+        committed = run_git_hardened(
+            root, "log", "HEAD", "--fixed-strings",
+            "--grep", f"Echelon-Completion: {completion_id}",
+            "--format=%H", "--max-count=1",
+        ).stdout.strip()
+        if committed:
+            raise PhaseCheckpointError("prior committed checkpoint row is missing")
+    else:
+        return ()
+    if (
+        checkpoint.phase != phase
+        or checkpoint.next_phase != next_phase
+        or checkpoint.run_id != run_id
+        or checkpoint.spec_id != spec_id
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint.commit) is None
+    ):
+        raise PhaseCheckpointError("prior phase checkpoint identity drift")
+    try:
+        relative_spec = spec_dir.resolve().relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError("prior spec directory escapes project root") from exc
+    record = _show_completion_commit(root, checkpoint.commit, hardened=True)
+    identity = _completion_commit_identity(
+        completion_id=completion_id,
+        run_id=run_id,
+        spec_id=spec_id,
+        phase=phase,
+        next_phase=next_phase,
+        source=checkpoint.source,
+    )
+    if (
+        len(record["parents"].split()) != 1
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(record["parents"]) is None
+        or not _record_has_exact_identity(record, identity, record["parents"])
+    ):
+        raise PhaseCheckpointError("prior phase commit identity drift")
+    ancestry = run_git_hardened(
+        root, "merge-base", "--is-ancestor", checkpoint.commit, "HEAD", check=False,
+    )
+    if ancestry.returncode != 0:
+        raise PhaseCheckpointError("prior phase commit is not in current history")
+
+    accepted: list[tuple[str, str, str]] = []
+    for path, kind, requirement in artifacts:
+        if (
+            type(path) is not str or type(kind) is not str
+            or kind not in {"file", "directory"}
+            or requirement not in {"required", "optional"}
+        ):
+            raise PhaseCheckpointError("prior artifact declaration is invalid")
+        # A checkpoint tree contains inherited optional files too. Without a
+        # prior sealed output receipt, their presence does not prove acceptance.
+        if requirement == "optional":
+            continue
+        relative = (relative_spec / path).as_posix()
+        if Path(path).is_absolute() or any(part in {"", ".", ".."} for part in path.split("/")):
+            raise PhaseCheckpointError("prior artifact path is unsafe")
+        tree = run_git_hardened(
+            root, "ls-tree", "-rz", "--full-tree", checkpoint.commit,
+            "--", relative, text=False,
+        ).stdout
+        members: list[tuple[str, str]] = []
+        for item in tree.split(b"\0"):
+            if not item:
+                continue
+            header, raw_path = item.split(b"\t", 1)
+            mode, entry_kind, oid = header.split(b" ")
+            entry_path = raw_path.decode("utf-8")
+            if mode not in {b"100644", b"100755"} or entry_kind != b"blob":
+                raise PhaseCheckpointError("prior checkpoint artifact kind is unsafe")
+            if kind == "file" and entry_path != relative:
+                continue
+            if kind == "directory" and not entry_path.startswith(relative + "/"):
+                continue
+            blob = run_git_hardened(root, "cat-file", "blob", oid.decode("ascii"), text=False).stdout
+            member_path = entry_path[len(relative) + 1:] if kind == "directory" else path
+            members.append((member_path, hashlib.sha256(blob).hexdigest()))
+        if kind == "file" and len(members) == 1:
+            accepted.append(("active_spec", path, members[0][1]))
+        elif kind == "directory" and members:
+            members.sort()
+            payload = json.dumps(members, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            accepted.append(("active_spec", path, hashlib.sha256(payload).hexdigest()))
+    return tuple(accepted)
+
+
 def _validate_checkpoint_rewind(checkpoint: PhaseCheckpoint) -> None:
     if checkpoint.rewind not in {"supported", "none"}:
         raise PhaseCheckpointError("invalid checkpoint rewind policy")

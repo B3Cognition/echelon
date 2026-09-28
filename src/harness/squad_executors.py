@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping, Optional
 
+from echelon.git_helpers import GitHelperError
 from echelon.spec_authoring import PERFECTIONIST_MODE, normalize_spec_authoring_mode
 from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.evidence_inventory import validate_evidence_inventory_text
@@ -31,6 +32,10 @@ from harness.phase_execution import (
     FinalizedPhaseExecution,
     PhaseExecutionAccumulator,
     empty_phase_execution,
+)
+from harness.phase_checkpoints import (
+    PhaseCheckpointError,
+    accepted_checkpoint_outputs,
 )
 from harness.provider_dispatch_finalizer import (
     FinalizedProviderResult,
@@ -1813,6 +1818,25 @@ class PhaseExecutor(ABC):
         )
         permissions = permission_metadata(resolved)
         metadata = {**dict(prompt_metadata), **permissions}
+        prior_outputs: tuple[tuple[str, str, str], ...] = ()
+        active_spec_artifacts = tuple(
+            (rule.path, rule.kind, rule.requirement)
+            for rule in resolved.contract.artifacts
+            if rule.root == "active_spec"
+        )
+        if resolved.contract.mode == "publish" and active_spec_artifacts:
+            try:
+                prior_outputs = accepted_checkpoint_outputs(
+                    self._project_root,
+                    self._provider_artifact_roots(state)["active_spec"],
+                    state,
+                    node.id,
+                    active_spec_artifacts,
+                )
+            except (PhaseCheckpointError, GitHelperError, UnicodeError, ValueError) as exc:
+                raise ProviderDispatchFailure(
+                    "prior phase checkpoint invalid", details=(str(exc),)
+                ) from exc
         context = ProviderDispatchContext(
             phase_id=node.id,
             assignment_id=assignment.assignment_id,
@@ -1828,6 +1852,7 @@ class PhaseExecutor(ABC):
                     default=str,
                 ).encode("utf-8")
             ).hexdigest(),
+            previously_accepted_outputs=prior_outputs,
         )
         classifier = outcome_classifier or self._classify_provider_outcome
         def execute(exact_permissions):

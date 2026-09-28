@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from harness.provider_output_publication import (
     resolve_provider_artifact_contract,
 )
 from harness.squad_provider import SquadAgentResult
+from harness.spec_step import _validate_provider_output_evidence
 
 
 def _sha(value: str) -> str:
@@ -174,6 +176,93 @@ def test_published_required_output_needs_current_dispatch_evidence(
             context,
             lambda _metadata: _result(output_files=[str(target)]),
         )
+
+
+def test_revisit_retains_only_checkpoint_accepted_required_output(tmp_path: Path) -> None:
+    target = tmp_path / "spec/issues.md"
+    target.parent.mkdir()
+    target.write_text("accepted\n", encoding="utf-8")
+    context = replace(
+        _context(tmp_path),
+        previously_accepted_outputs=(("active_spec", "issues.md", _sha("accepted\n")),),
+    )
+
+    finalized = _dispatch(
+        context,
+        lambda _metadata: _result(output_files=[str(target)]),
+    )
+
+    assert finalized.receipt.outputs[0]["evidence_kind"] == "retained"
+    assert finalized.receipt.outputs[0]["sha256"] == _sha("accepted\n")
+    assert _validate_provider_output_evidence(
+        finalized.receipt.as_dict()["outputs"][0]
+    )["evidence_kind"] == "retained"
+
+
+def test_revisit_rejects_stale_unaccepted_retry_artifact(tmp_path: Path) -> None:
+    target = tmp_path / "spec/issues.md"
+    target.parent.mkdir()
+    target.write_text("failed retry\n", encoding="utf-8")
+    context = replace(
+        _context(tmp_path),
+        previously_accepted_outputs=(("active_spec", "issues.md", _sha("accepted\n")),),
+    )
+
+    with pytest.raises(ProviderDispatchFailure, match="stale claimed output"):
+        _dispatch(context, lambda _metadata: _result(output_files=[str(target)]))
+
+
+def test_revisit_retains_checkpoint_accepted_directory(tmp_path: Path) -> None:
+    target = tmp_path / "spec/reports"
+    target.mkdir(parents=True)
+    (target / "report.md").write_text("accepted\n", encoding="utf-8")
+    digest = hashlib.sha256(
+        b'[["report.md","' + _sha("accepted\n").encode() + b'"]]'
+    ).hexdigest()
+    context = replace(
+        _context(tmp_path, artifacts=(("reports", "directory", "required"),)),
+        previously_accepted_outputs=(("active_spec", "reports", digest),),
+    )
+
+    finalized = _dispatch(context, lambda _metadata: _result())
+
+    assert finalized.receipt.outputs[0]["evidence_kind"] == "retained"
+    assert finalized.receipt.outputs[0]["members"][0]["path"] == "report.md"
+
+
+def test_revisit_publishes_changed_output_and_retains_unchanged_peer(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    glossary = spec / "glossary.md"
+    assumptions = spec / "assumptions.md"
+    glossary.write_text("accepted glossary\n", encoding="utf-8")
+    assumptions.write_text("accepted assumptions\n", encoding="utf-8")
+    context = replace(
+        _context(
+            tmp_path,
+            artifacts=(
+                ("glossary.md", "file", "required"),
+                ("assumptions.md", "file", "required"),
+            ),
+        ),
+        previously_accepted_outputs=(
+            ("active_spec", "glossary.md", _sha("accepted glossary\n")),
+            ("active_spec", "assumptions.md", _sha("accepted assumptions\n")),
+        ),
+    )
+
+    def revise_assumptions(_metadata):
+        assumptions.write_text("revised assumptions\n", encoding="utf-8")
+        return _result(output_files=[str(glossary), str(assumptions)])
+
+    finalized = _dispatch(context, revise_assumptions)
+
+    assert [(row["path"], row["evidence_kind"]) for row in finalized.receipt.outputs] == [
+        ("glossary.md", "retained"),
+        ("assumptions.md", "replaced"),
+    ]
 
 
 def test_optional_omission_is_allowed_but_unclaimed_mutation_is_not(

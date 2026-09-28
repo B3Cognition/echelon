@@ -53,6 +53,8 @@ class ProviderDispatchContext:
     contract: ResolvedProviderArtifactContract
     prompt_sha256: str
     prompt_metadata_sha256: str
+    # Content proven by a previously completed checkpoint of this phase.
+    previously_accepted_outputs: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,12 @@ class _Guard:
                 if matching_claims:
                     raise ProviderDispatchFailure("missing claimed output", details=(rule.path,))
                 continue
+            retained = (
+                outcome == "published"
+                and not changed
+                and (rule.root, rule.path, post.content_sha256)
+                in self.context.previously_accepted_outputs
+            )
             if rule.kind == "directory":
                 item = _directory_evidence(
                     rule_path=rule.path,
@@ -235,12 +243,30 @@ class _Guard:
                     project_root=resolved.project_root,
                     outcome=outcome,
                     evidence_kind=evidence_kind,
+                    retained=retained,
                 )
                 if item is not None:
                     evidence.append(item)
                 continue
             if changed and not matching_claims:
                 raise ProviderDispatchFailure("unclaimed output mutation", details=(rule.path,))
+            if retained:
+                evidence.append(
+                    _freeze_mapping(
+                        {
+                            "root": rule.root,
+                            "path": rule.path,
+                            "kind": rule.kind,
+                            "requirement": rule.requirement,
+                            "sha256": post.content_sha256,
+                            "preimage_identity_sha256": before.identity_sha256,
+                            "postimage_identity_sha256": post.identity_sha256,
+                            "evidence_kind": "retained",
+                            "members": (),
+                        }
+                    )
+                )
+                continue
             if matching_claims and not changed:
                 raise ProviderDispatchFailure("stale claimed output", details=(rule.path,))
             if outcome == "published" and rule.requirement == "required" and not changed:
@@ -489,6 +515,7 @@ def _directory_evidence(
     project_root: Path | None,
     outcome: str,
     evidence_kind: str,
+    retained: bool,
 ) -> Mapping[str, object] | None:
     before_members = {member.path: member for member in before.members} if before else {}
     post_members = {member.path: member for member in post.members}
@@ -503,6 +530,29 @@ def _directory_evidence(
         for member in post.members
         if before_members.get(member.path) != member
     ]
+    if retained and post.members:
+        return _freeze_mapping(
+            {
+                "root": "active_spec",
+                "path": rule_path,
+                "kind": "directory",
+                "requirement": requirement,
+                "sha256": post.content_sha256,
+                "preimage_identity_sha256": before.identity_sha256,
+                "postimage_identity_sha256": post.identity_sha256,
+                "evidence_kind": "retained",
+                "members": tuple(
+                    _freeze_mapping(
+                        {
+                            "path": member.path,
+                            "sha256": member.content_sha256,
+                            "identity_sha256": member.identity_sha256,
+                        }
+                    )
+                    for member in post.members
+                ),
+            }
+        )
     if not changed and claims:
         raise ProviderDispatchFailure("stale directory claim", details=(rule_path,))
     if outcome == "published" and requirement == "required" and not changed:
