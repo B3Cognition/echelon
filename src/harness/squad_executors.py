@@ -1607,17 +1607,26 @@ class PhaseExecutor(ABC):
     ) -> str:
         resolved_agent = str(agent_id or node.agent or "").strip()
         if resolved_agent != "echelon.sage" or node.id not in {
+            "phase1-why1",
             "phase1-why2",
             "phase3-consensus",
         }:
             return ""
         proposal = self._sage_decision_proposal_path(node, state)
-        return (
-            "\n## Required SAGE output paths\n"
-            "Write the current review to `issues.md` and `quality-gates.md` "
+        review_paths = (
+            "Write the current assumption review to `assumption-review.md` "
+            "in the active spec directory, then list its exact path in "
+            "`echelon_result.output_files`. Existing files are not evidence "
+            "of publication by this dispatch.\n"
+            if node.id == "phase1-why1"
+            else "Write the current review to `issues.md` and `quality-gates.md` "
             "in the active spec directory, then list both exact paths in "
             "`echelon_result.output_files`. Existing files are not evidence "
             "of publication by this dispatch.\n"
+        )
+        return (
+            "\n## Required SAGE output paths\n"
+            f"{review_paths}"
             "If this review produces a blocking decision, use this exact path "
             "for the required run-local `sage_decision` proposal:\n"
             f"`{proposal}`\n"
@@ -1760,7 +1769,7 @@ class PhaseExecutor(ABC):
         if (
             assignment.agent_id != "echelon.sage"
             or assignment.contract.mode != "publish"
-            or node.id not in {"phase1-why2", "phase3-consensus"}
+            or node.id not in {"phase1-why1", "phase1-why2", "phase3-consensus"}
         ):
             return assignment
         proposal = runtime_provider_assignment(

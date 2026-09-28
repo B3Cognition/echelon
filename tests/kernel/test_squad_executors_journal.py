@@ -388,6 +388,100 @@ def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> 
     ]
 
 
+def test_agent_why1_publishes_only_its_exact_sage_decision_proposal(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    node = graph.get("phase1-why1")
+    executor = _executor(tmp_path)
+    executor._graph = graph
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    review = spec_dir / "assumption-review.md"
+    proposal = (
+        tmp_path / "squad" / "run-test" / "kb-proposals"
+        / "sage-decision-phase1-why1-rev-17.yaml"
+    )
+    state = {"spec_dir": str(spec_dir), "state_revision": 17}
+
+    def publish(_project: str, _prompt: str, **_kwargs: object) -> SquadAgentResult:
+        review.write_text("# Assumption Review\n", encoding="utf-8")
+        proposal.parent.mkdir(parents=True, exist_ok=True)
+        proposal.write_text("proposal_type: sage_decision\n", encoding="utf-8")
+        result = _result(verdict="PASS")
+        assert result.echelon_result is not None
+        result.echelon_result["output_files"] = [str(review), str(proposal)]
+        return result
+
+    executor._provider.exec_agent.side_effect = publish
+    prompt = executor._sage_output_path_context(node, state)
+    finalized = executor._dispatch_provider(
+        node=node,
+        assignment=node.provider_assignment(),
+        occurrence_id="ordinary",
+        state=state,
+        prompt=prompt,
+        result_contract=executor._result_contract(node),
+        prompt_metadata={},
+    )
+
+    metadata = executor._provider.exec_agent.call_args.kwargs["prompt_metadata"]
+    assert metadata["tool_write_scope_exclusive"] is True
+    assert metadata["tool_write_paths"] == [
+        str(review),
+        str(spec_dir / "unknowns.md"),
+        str(spec_dir / "issues.md"),
+        str(proposal),
+    ]
+    assert str(proposal) in prompt
+    assert "assumption-review.md" in prompt
+    assert finalized.receipt.outcome == "published"
+    assert len(finalized.receipt.outputs) == 2
+
+
+def test_agent_why1_rejects_unassigned_sage_proposal_claim(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    node = graph.get("phase1-why1")
+    executor = _executor(tmp_path)
+    executor._graph = graph
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    review = spec_dir / "assumption-review.md"
+    other_proposal = (
+        tmp_path / "squad" / "run-test" / "kb-proposals" / "kb-prop-sage-why1-001.yaml"
+    )
+    state = {"spec_dir": str(spec_dir), "state_revision": 17}
+
+    def publish(_project: str, _prompt: str, **_kwargs: object) -> SquadAgentResult:
+        review.write_text("# Assumption Review\n", encoding="utf-8")
+        other_proposal.parent.mkdir(parents=True, exist_ok=True)
+        other_proposal.write_text("proposal_type: sage_decision\n", encoding="utf-8")
+        result = _result(verdict="PASS")
+        assert result.echelon_result is not None
+        result.echelon_result["output_files"] = [str(review), str(other_proposal)]
+        return result
+
+    executor._provider.exec_agent.side_effect = publish
+    with pytest.raises(ProviderDispatchFailure, match="claim outside contract"):
+        executor._dispatch_provider(
+            node=node,
+            assignment=node.provider_assignment(),
+            occurrence_id="ordinary",
+            state=state,
+            prompt=executor._sage_output_path_context(node, state),
+            result_contract=executor._result_contract(node),
+            prompt_metadata={},
+        )
+
+
 def test_agent_why2_rejects_unchanged_claimed_review_reports(tmp_path: Path) -> None:
     squad_dir = tmp_path / "squad" / "run-test"
     spec_dir = tmp_path / "specs" / "001-demo"
