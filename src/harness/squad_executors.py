@@ -1804,6 +1804,8 @@ class PhaseExecutor(ABC):
             state,
             assignment,
         )
+        if any(rule.root == "proposal" for rule in assignment.contract.artifacts):
+            (self._squad_dir / "kb-proposals").mkdir(parents=True, exist_ok=True)
         resolved = resolve_provider_artifact_contract(
             assignment.contract,
             assignment_id=assignment.assignment_id,

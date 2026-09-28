@@ -409,7 +409,7 @@ def test_agent_why1_publishes_only_its_exact_sage_decision_proposal(
 
     def publish(_project: str, _prompt: str, **_kwargs: object) -> SquadAgentResult:
         review.write_text("# Assumption Review\n", encoding="utf-8")
-        proposal.parent.mkdir(parents=True, exist_ok=True)
+        assert proposal.parent.is_dir(), "controller must prepare the proposal directory"
         proposal.write_text("proposal_type: sage_decision\n", encoding="utf-8")
         result = _result(verdict="PASS")
         assert result.echelon_result is not None
