@@ -145,16 +145,51 @@ def _fresh_delivery_repaired_candidate(
     return candidate
 
 
+def _fresh_delivery_checkpointless_salvage(
+    *,
+    gitops: Any | None,
+    state: Mapping[str, object],
+    spec_id: str,
+    build_id: str,
+) -> str | None:
+    """Retain only the recorded, clean salvage on the current target lineage."""
+    if gitops is None:
+        return None
+    salvage = state.get("salvage_commit")
+    if not isinstance(salvage, str) or not re.fullmatch(r"[0-9a-f]{40}", salvage):
+        return None
+    try:
+        candidate = gitops.get_clean_worktree_head(spec_id, build_id=build_id)
+        default_branch = gitops.get_default_branch()
+        if (
+            candidate != salvage
+            or not isinstance(default_branch, str)
+            or not default_branch
+            or gitops.commit_is_ancestor(default_branch, salvage) is not True
+            or _checkpoint_is_landed(gitops, salvage)
+        ):
+            return None
+    except Exception as error:
+        logger.warning("Could not verify checkpointless salvage for %s: %s", build_id, error)
+        return None
+    logger.info(
+        "Retaining clean unreviewed salvage %s from %s; no task checkpoint was recorded",
+        salvage[:12],
+        build_id,
+    )
+    return salvage
+
+
 def _fresh_delivery_baseline(
     harness_root: Path,
     intent: Any,
     gitops: Any | None = None,
 ) -> str | None:
-    """Return checkpoint commits a new delivery budget may safely retain.
+    """Return prior delivery work a new budget may safely reverify.
 
     A normal fresh delivery intentionally restarts from the target default branch.
-    The exception is a prior stopped run for the same spec whose last durable
-    checkpoint represents unfinished delivery work.  A state left ``running`` by
+    The exception is a prior stopped run for the same spec with a durable
+    checkpoint or a clean recorded salvage candidate.  A state left ``running`` by
     an ungraceful process exit is recoverable only after its lock owner is dead;
     a live owner prevents a competing delivery.  This decision is made before the
     current-build marker is advanced, so the new build cannot accidentally erase
@@ -249,6 +284,15 @@ def _fresh_delivery_baseline(
             and isinstance(state.get("salvage_commit"), str)
         ):
             pending_repair_states.append((prior_build_id, state))
+    for salvage_build_id, salvage_state in pending_repair_states:
+        candidate = _fresh_delivery_checkpointless_salvage(
+            gitops=gitops,
+            state=salvage_state,
+            spec_id=intent.spec_id,
+            build_id=salvage_build_id,
+        )
+        if candidate is not None:
+            return candidate
     return None
 
 
@@ -929,7 +973,7 @@ def _execute_delivery_run(
     )
     if fresh_branch_base:
         logger.info(
-            "Starting new delivery budget from retained checkpoint lineage: %s",
+            "Starting new delivery budget from retained delivery candidate: %s",
             fresh_branch_base[:12],
         )
     try:

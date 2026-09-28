@@ -601,9 +601,9 @@ class GitOpsManager:
         prior iteration branch when available, otherwise from the default branch
         HEAD. A fresh delivery resets iteration zero to the target's current
         default branch instead of reusing an identically named branch from an
-        older run.  ``fresh_branch_base`` is an explicit retained candidate
-        anchored to a checkpoint from a prior stopped delivery; when supplied it
-        is the only exception to that reset rule.
+        older run. ``fresh_branch_base`` is an explicit retained candidate from
+        a prior stopped delivery; when supplied it is the only exception to
+        that reset rule.
 
         Returns:
             Absolute path to the worktree directory.

@@ -19,6 +19,7 @@ from harness.run_intent import RunIntent
 from harness.skills.run_skill import (
     RunContextError,
     _fresh_delivery_baseline,
+    _fresh_delivery_completed_tasks,
     _resolve_run_roots,
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
@@ -305,6 +306,95 @@ def test_fresh_delivery_retains_clean_manual_repair_as_untrusted_candidate(
     gitops.get_clean_worktree_head.assert_called_once_with(
         "012", build_id=build_id
     )
+
+
+@pytest.mark.parametrize("checkpoint_commits", [None, []])
+def test_fresh_delivery_retains_clean_checkpointless_salvage_without_task_credit(
+    tmp_path: Path,
+    checkpoint_commits: object,
+) -> None:
+    """A blocked first task can get a new budget without being marked done."""
+    salvage = "b" * 40
+    build_id = "build-20260928-152525-805100"
+    state_dir = tmp_path / "runs" / build_id / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "delivery.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_blocked",
+                "checkpoint_commits": checkpoint_commits,
+                "salvage_commit": salvage,
+                "spec_id": "012",
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "runs" / "current-012.txt"
+    marker.write_text(build_id, encoding="utf-8")
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.get_clean_worktree_head.return_value = salvage
+    gitops.commit_is_ancestor.side_effect = lambda parent, child: (
+        (parent, child) == ("main", salvage)
+    )
+    gitops.commit_is_ancestor_of_default.return_value = False
+    spec_dir = tmp_path / "specs" / "012"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=R1 depends=none\n",
+        encoding="utf-8",
+    )
+
+    baseline = _fresh_delivery_baseline(tmp_path, intent, gitops)
+
+    assert baseline == salvage
+    assert _fresh_delivery_completed_tasks(
+        tmp_path, intent, baseline, gitops, spec_dir=spec_dir
+    ) == ()
+
+
+@pytest.mark.parametrize(
+    ("clean_head", "descends_from_default", "landed"),
+    [
+        (None, True, False),
+        ("c" * 40, True, False),
+        ("b" * 40, False, False),
+        ("b" * 40, True, True),
+    ],
+)
+def test_fresh_delivery_rejects_unproven_checkpointless_salvage(
+    tmp_path: Path,
+    clean_head: str | None,
+    descends_from_default: bool,
+    landed: bool,
+) -> None:
+    """A dirty, changed, foreign, or landed candidate is not a fresh baseline."""
+    salvage = "b" * 40
+    build_id = "build-20260928-152525-805100"
+    state_dir = tmp_path / "runs" / build_id / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "delivery.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_blocked",
+                "checkpoint_commits": None,
+                "salvage_commit": salvage,
+                "spec_id": "012",
+            }
+        ),
+        encoding="utf-8",
+    )
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.get_clean_worktree_head.return_value = clean_head
+    gitops.commit_is_ancestor.return_value = descends_from_default
+    gitops.commit_is_ancestor_of_default.return_value = landed
+
+    assert _fresh_delivery_baseline(tmp_path, intent, gitops) is None
 
 
 @pytest.mark.parametrize("empty_checkpoints", [False, True])
