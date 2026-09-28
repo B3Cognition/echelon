@@ -5823,9 +5823,13 @@ class SquadStateStore:
         ]
         | None = None,
         provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+        optional_provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
         _prepare_only: bool = False,
     ) -> AdvanceReceipt | tuple[dict[str, Any], AdvanceReceipt]:
         accepted_output_proofs = _validated_provider_output_proofs(provider_output_proofs)
+        accepted_optional_output_proofs = _validated_provider_output_proofs(
+            optional_provider_output_proofs
+        )
         if (human_input is None) != (human_input_initial_status is None):
             raise StateAdvanceError(
                 "human-input request and initial status must be supplied together",
@@ -6012,6 +6016,8 @@ class SquadStateStore:
                     }
                     if accepted_output_proofs is not None and not decision.conditional_skip:
                         outcome["required_provider_outputs"] = accepted_output_proofs
+                    if accepted_optional_output_proofs is not None and not decision.conditional_skip:
+                        outcome["optional_provider_outputs"] = accepted_optional_output_proofs
                     matching = [
                         row
                         for row in outcomes
@@ -6154,6 +6160,7 @@ class SquadStateStore:
         human_input: PreparedHumanInput | None = None,
         human_input_initial_status: Literal["pending", "awaiting_human"] | None = None,
         provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+        optional_provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
     ) -> tuple[dict[str, Any], AdvanceReceipt]:
         """Compute and validate an advance without making it externally visible."""
         result = self.advance(
@@ -6163,6 +6170,7 @@ class SquadStateStore:
             human_input=human_input,
             human_input_initial_status=human_input_initial_status,
             provider_output_proofs=provider_output_proofs,
+            optional_provider_output_proofs=optional_provider_output_proofs,
             _prepare_only=True,
         )
         if not isinstance(result, tuple):

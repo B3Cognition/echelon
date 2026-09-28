@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
 import pytest
 
+import harness.squad as squad
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.phase_checkpoints import (
     PhaseCheckpoint,
@@ -59,6 +61,137 @@ def test_completion_proof_keeps_only_published_required_spec_outputs() -> None:
         _validated_provider_output_proofs(({
             "path": "../outside.md", "kind": "file", "sha256": digest,
         },))
+
+
+def test_optional_completion_proof_keeps_only_published_spec_outputs() -> None:
+    digest = "a" * 64
+    execution = SimpleNamespace(receipts=({
+        "outcome": "published",
+        "outputs": [
+            {"root": "active_spec", "path": "reference-architectures.md", "kind": "file",
+             "requirement": "optional", "sha256": digest},
+            {"root": "active_spec", "path": "glossary.md", "kind": "file",
+             "requirement": "required", "sha256": digest},
+            {"root": "squad", "path": "notes.md", "kind": "file",
+             "requirement": "optional", "sha256": digest},
+        ],
+    }, {
+        "outcome": "domain_blocked",
+        "outputs": [{"root": "active_spec", "path": "blocked.md", "kind": "file",
+                     "requirement": "optional", "sha256": digest}],
+    }))
+    assert squad._optional_active_spec_output_proofs(execution) == (
+        {"path": "reference-architectures.md", "kind": "file", "sha256": digest},
+    )
+
+
+def test_revisit_retains_only_receipt_proven_optional_output(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    spec = root / "specs/game"
+    spec.mkdir(parents=True)
+    target = spec / "reference-architectures.md"
+    _git(root, "init", "-q")
+    _git(root, "config", "user.name", "Test")
+    _git(root, "config", "user.email", "test@example.invalid")
+    _git(root, "commit", "--allow-empty", "-qm", "initial")
+    target.write_text("accepted architecture\n", encoding="utf-8")
+    digest = hashlib.sha256(b"accepted architecture\n").hexdigest()
+    completion_id = "a" * 32
+    message = build_echelon_commit_message(
+        "echelon-checkpoint: game phase1-discover",
+        EchelonCommitMetadata(
+            origin="phase-a", action="checkpoint", spec_id="game", run_id="run-1",
+            phase="phase1-discover", next_phase="phase1-synthesizer",
+            checkpoint_id="phase1-discover", completion_id=completion_id,
+            checkpoint_source="auto",
+        ),
+    )
+    _git(root, "add", "--", "specs/game/reference-architectures.md")
+    _git(root, "commit", "-qm", message)
+    record_phase_checkpoint(
+        spec,
+        PhaseCheckpoint(
+            id="phase1-discover", spec_id="game", phase="phase1-discover",
+            next_phase="phase1-synthesizer", commit=_git(root, "rev-parse", "HEAD"),
+            metadata_commit="", source="auto", run_id="run-1",
+            created_at="2026-09-28T00:00:00+00:00",
+            completion_id=completion_id, boundary_completion_id=completion_id,
+        ),
+    )
+    outcome = {
+        "phase": "phase1-discover", "next_phase": "phase1-synthesizer",
+        "completion_id": completion_id, "outcome": "executed", "checkpoint": "required",
+        "optional_provider_outputs": [{"path": target.name, "kind": "file", "sha256": digest}],
+    }
+    state = {"run_id": "run-1", "spec_id": "game", "phase_completion_outcomes": [outcome]}
+    artifacts = ((target.name, "file", "optional"),)
+
+    assert accepted_checkpoint_outputs(root, spec, state, "phase1-discover", artifacts) == (
+        ("active_spec", target.name, digest),
+    )
+
+    contract = compile_provider_artifact_contract(
+        {"mode": "publish", "artifacts": [
+            {"root": "active_spec", "path": target.name, "kind": "file", "requirement": "optional"},
+        ]},
+        assignment_id="phase1-discover",
+    )
+    context = ProviderDispatchContext(
+        phase_id="phase1-discover", assignment_id="phase1-discover",
+        occurrence_id="revisit", state_revision=7,
+        contract=resolve_provider_artifact_contract(
+            contract, assignment_id="phase1-discover",
+            roots={"active_spec": spec, "project": root, "squad": root / "runs/run-1"},
+        ),
+        prompt_sha256="a" * 64, prompt_metadata_sha256="b" * 64,
+        previously_accepted_outputs=accepted_checkpoint_outputs(
+            root, spec, state, "phase1-discover", artifacts,
+        ),
+    )
+
+    def result() -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS", "state_updates": {}, "journal_entries": [],
+                "output_files": [str(target)],
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+
+    finalized = ProviderDispatchFinalizer().dispatch(
+        context, execute=lambda _permissions: result(),
+        validate_result=lambda value: value, classify_outcome=lambda _value: "published",
+    )
+    assert finalized.receipt.outputs[0]["evidence_kind"] == "retained"
+
+    del outcome["optional_provider_outputs"]
+    assert accepted_checkpoint_outputs(root, spec, state, "phase1-discover", artifacts) == ()
+    with pytest.raises(ProviderDispatchFailure, match="stale claimed output"):
+        ProviderDispatchFinalizer().dispatch(
+            replace(context, previously_accepted_outputs=()),
+            execute=lambda _permissions: result(),
+            validate_result=lambda value: value, classify_outcome=lambda _value: "published",
+        )
+
+    outcome["optional_provider_outputs"] = [
+        {"path": target.name, "kind": "file", "sha256": digest},
+    ]
+    target.write_text("unaccepted retry\n", encoding="utf-8")
+    assert accepted_checkpoint_outputs(root, spec, state, "phase1-discover", artifacts) == (
+        ("active_spec", target.name, digest),
+    )
+    with pytest.raises(ProviderDispatchFailure, match="stale claimed output"):
+        ProviderDispatchFinalizer().dispatch(
+            context, execute=lambda _permissions: result(),
+            validate_result=lambda value: value, classify_outcome=lambda _value: "published",
+        )
+
+    outcome["optional_provider_outputs"][0]["sha256"] = "b" * 64
+    with pytest.raises(PhaseCheckpointError, match="proof digest drift"):
+        accepted_checkpoint_outputs(root, spec, state, "phase1-discover", artifacts)
 
 
 def test_only_matching_completed_phase_checkpoint_supplies_prior_digest(
@@ -208,8 +341,14 @@ def test_only_matching_completed_phase_checkpoint_supplies_prior_digest(
         accepted_checkpoint_outputs(root, spec, state, "phase1-why2", artifacts)
 
 
-def test_revisit_retains_required_artifact_from_later_completed_owner(
+@pytest.mark.parametrize(
+    ("revisited_requirement", "own_phase_published"),
+    [("required", True), ("optional", True), ("optional", False)],
+)
+def test_revisit_retains_artifact_from_later_completed_required_owner(
     tmp_path: Path,
+    revisited_requirement: str,
+    own_phase_published: bool,
 ) -> None:
     root = tmp_path
     spec = root / "specs/game"
@@ -251,19 +390,25 @@ def test_revisit_retains_required_artifact_from_later_completed_owner(
             "outcome": "executed", "checkpoint": "required",
         })
 
+    if revisited_requirement == "optional" and own_phase_published:
+        outcomes[0]["optional_provider_outputs"] = [{
+            "path": "glossary.md", "kind": "file",
+            "sha256": hashlib.sha256(b"scout version\n").hexdigest(),
+        }]
     outcomes[1]["required_provider_outputs"] = [{
         "path": "glossary.md", "kind": "file",
         "sha256": hashlib.sha256(b"synth version\n").hexdigest(),
     }]
     state = {"run_id": "run-1", "spec_id": "game", "phase_completion_outcomes": outcomes}
-    artifacts = (("glossary.md", "file", "required"),)
+    artifacts = (("glossary.md", "file", revisited_requirement),)
     assert accepted_checkpoint_outputs(
         root, spec, state, "phase1-discover", artifacts,
     ) == (("active_spec", "glossary.md", hashlib.sha256(b"synth version\n").hexdigest()),)
 
     contract = compile_provider_artifact_contract(
         {"mode": "publish", "artifacts": [
-            {"root": "active_spec", "path": "glossary.md", "kind": "file", "requirement": "required"},
+            {"root": "active_spec", "path": "glossary.md", "kind": "file",
+             "requirement": revisited_requirement},
         ]},
         assignment_id="phase1-discover",
     )
@@ -312,4 +457,7 @@ def test_revisit_retains_required_artifact_from_later_completed_owner(
     del outcomes[1]["required_provider_outputs"]
     assert accepted_checkpoint_outputs(
         root, spec, state, "phase1-discover", artifacts,
-    ) == (("active_spec", "glossary.md", hashlib.sha256(b"scout version\n").hexdigest()),)
+    ) == (
+        (("active_spec", "glossary.md", hashlib.sha256(b"scout version\n").hexdigest()),)
+        if own_phase_published else ()
+    )

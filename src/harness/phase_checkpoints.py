@@ -146,12 +146,13 @@ def accepted_checkpoint_outputs(
     phase: str,
     artifacts: tuple[tuple[str, str, str], ...],
 ) -> tuple[tuple[str, str, str], ...]:
-    """Return checkpoint-proven required artifact digests for a phase revisit.
+    """Return checkpoint-proven artifact digests for a phase revisit.
 
     The completion outcome, ledger row and commit trailers must all identify the
     same checkpoint. A later completed phase can supersede a phase's own bytes
-    only with its completion-time required output proof. A missing output has
-    no retention authority; an invalid checkpoint fails closed.
+    only with its completion-time output proof. An optional artifact needs a
+    receipt proof from whichever completed phase owns the retained bytes; mere
+    presence in a checkpoint has no authority. Invalid checkpoints fail closed.
     """
     outcomes = state.get("phase_completion_outcomes")
     if type(outcomes) is not list:
@@ -272,8 +273,14 @@ def accepted_checkpoint_outputs(
             return hashlib.sha256(payload).hexdigest()
         return None
 
-    def required_output_proof(outcome: Mapping[str, object], path: str, kind: str) -> str | None:
-        proofs = outcome.get("required_provider_outputs")
+    def provider_output_proof(
+        outcome: Mapping[str, object], path: str, kind: str, requirement: str,
+    ) -> str | None:
+        field = (
+            "required_provider_outputs" if requirement == "required"
+            else "optional_provider_outputs"
+        )
+        proofs = outcome.get(field)
         if proofs is None:
             return None
         if type(proofs) is not list or len(proofs) > 4096:
@@ -310,10 +317,6 @@ def accepted_checkpoint_outputs(
             or requirement not in {"required", "optional"}
         ):
             raise PhaseCheckpointError("prior artifact declaration is invalid")
-        # Optional outputs are intentionally ineligible without a sealed
-        # per-output receipt, even when inherited in a checkpoint tree.
-        if requirement == "optional":
-            continue
         if Path(path).is_absolute() or any(part in {"", ".", ".."} for part in path.split("/")):
             raise PhaseCheckpointError("prior artifact path is unsafe")
         for outcome in reversed(outcomes[first_completion_index:]):
@@ -324,14 +327,24 @@ def accepted_checkpoint_outputs(
             ):
                 continue
             own_phase = outcome.get("phase") == phase
-            proof_digest = None if own_phase else required_output_proof(outcome, path, kind)
-            if not own_phase and proof_digest is None:
+            if own_phase:
+                proof_digest = (
+                    provider_output_proof(outcome, path, kind, "optional")
+                    if requirement == "optional" else None
+                )
+            else:
+                required_digest = provider_output_proof(outcome, path, kind, "required")
+                optional_digest = provider_output_proof(outcome, path, kind, "optional")
+                if required_digest is not None and optional_digest is not None:
+                    raise PhaseCheckpointError("prior provider output proof is ambiguous")
+                proof_digest = required_digest or optional_digest
+            if proof_digest is None and (not own_phase or requirement == "optional"):
                 continue
             checkpoint = completed_checkpoint(outcome)
             if checkpoint is None:
                 continue
             digest = artifact_digest(checkpoint, path, kind)
-            if not own_phase and digest != proof_digest:
+            if proof_digest is not None and digest != proof_digest:
                 raise PhaseCheckpointError("prior provider output proof digest drift")
             if digest is not None:
                 accepted.append(("active_spec", path, digest))

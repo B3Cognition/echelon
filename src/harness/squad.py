@@ -994,10 +994,12 @@ def _provider_execution_provenance(
     }
 
 
-def _required_active_spec_output_proofs(
+def _active_spec_output_proofs(
     execution: FinalizedPhaseExecution,
+    *,
+    requirement: str,
 ) -> tuple[dict[str, str], ...]:
-    """Keep only required, published spec outputs from sealed phase receipts."""
+    """Keep published spec outputs of one requirement from sealed receipts."""
     return tuple(
         {
             "path": output["path"],
@@ -1007,8 +1009,20 @@ def _required_active_spec_output_proofs(
         for receipt in execution.receipts
         if receipt["outcome"] == "published"
         for output in receipt["outputs"]
-        if output["root"] == "active_spec" and output["requirement"] == "required"
+        if output["root"] == "active_spec" and output["requirement"] == requirement
     )
+
+
+def _required_active_spec_output_proofs(
+    execution: FinalizedPhaseExecution,
+) -> tuple[dict[str, str], ...]:
+    return _active_spec_output_proofs(execution, requirement="required")
+
+
+def _optional_active_spec_output_proofs(
+    execution: FinalizedPhaseExecution,
+) -> tuple[dict[str, str], ...]:
+    return _active_spec_output_proofs(execution, requirement="optional")
 
 
 class SquadController:
@@ -13978,6 +13992,10 @@ class SquadController:
                 human_input_initial_status=human_input_initial_status,
                 provider_output_proofs=(
                     _required_active_spec_output_proofs(execution)
+                    if execution is not None else None
+                ),
+                optional_provider_output_proofs=(
+                    _optional_active_spec_output_proofs(execution)
                     if execution is not None else None
                 ),
             )

@@ -30,6 +30,7 @@ def _install_prepared_routed_completion(
     *,
     token_usage_delta=0,
     provider_output_proofs=None,
+    optional_provider_output_proofs=None,
 ):
     """Install current spec-step authority around a sealed effect companion."""
     route = prepared_completion.intent.route
@@ -72,6 +73,7 @@ def _install_prepared_routed_completion(
         to_phase,
         decision,
         provider_output_proofs=provider_output_proofs,
+        optional_provider_output_proofs=optional_provider_output_proofs,
     )
     final_state.pop("_spec_step_effect_plan", None)
     final_state.pop("_spec_step_publication_plan", None)
@@ -193,6 +195,33 @@ def test_required_output_proof_is_sealed_in_routed_completion_state(prepared):
     outcomes = step.intent.final_state["phase_completion_outcomes"]
     assert outcomes[-1]["completion_id"] == sealed.marker.completion_id
     assert outcomes[-1]["required_provider_outputs"] == [proof]
+
+
+def test_optional_output_proof_is_sealed_in_routed_completion_state(prepared):
+    executor = DiscoveryExecutor()
+    assert execute(prepared, executor, create=True).status == "reviewed"
+    for command in (
+        ("init", "-q"),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.invalid"),
+        ("commit", "--allow-empty", "-qm", "initial"),
+    ):
+        subprocess.run(["git", *command], cwd=prepared[0], check=True, capture_output=True)
+    state = prepared[1].load()
+    state.update(spec_dir="specs/game", checkpoint_policy_version=2, phase_completion_outcomes=[])
+    prepared[1].save(state)
+    ctrl, _, sealed = completion(prepared, executor)
+    proof = {"path": "reference-architectures.md", "kind": "file", "sha256": "a" * 64}
+    _install_prepared_routed_completion(
+        prepared[1], sealed, optional_provider_output_proofs=(proof,),
+    )
+    step = load_prepared_spec_step(
+        ctrl._squad_dir,
+        prepared[1].load()[PENDING_SPEC_STEP_KEY],
+    )
+    outcomes = step.intent.final_state["phase_completion_outcomes"]
+    assert outcomes[-1]["completion_id"] == sealed.marker.completion_id
+    assert outcomes[-1]["optional_provider_outputs"] == [proof]
 
 
 @pytest.mark.parametrize("claim", ["parent", "child"])
