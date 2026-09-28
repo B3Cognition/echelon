@@ -196,6 +196,7 @@ class _Guard:
                 target=target,
                 kind=rule.kind,
                 shadow_target=shadow_paths[index],
+                project_root=resolved.project_root,
             )
             evidence_kind = "created" if before is None else "replaced"
             shadow_before = self.shadow_before[index]
@@ -230,6 +231,8 @@ class _Guard:
                     post=post,
                     claims=matching_claims,
                     target=target,
+                    shadow_target=shadow_target,
+                    project_root=resolved.project_root,
                     outcome=outcome,
                     evidence_kind=evidence_kind,
                 )
@@ -387,6 +390,7 @@ def _reject_claims_outside_contract(
                 target=target,
                 kind=rule.kind,
                 shadow_target=shadow,
+                project_root=resolved.project_root,
             )
             for rule, target, shadow in zip(
                 resolved.contract.artifacts,
@@ -410,6 +414,7 @@ def _matching_claims(
     target: Path,
     kind: str,
     shadow_target: Path | None,
+    project_root: Path | None,
 ) -> tuple[str, ...]:
     return tuple(
         claim
@@ -420,6 +425,7 @@ def _matching_claims(
             target=target,
             kind=kind,
             shadow_target=shadow_target,
+            project_root=project_root,
         )
     )
 
@@ -431,6 +437,7 @@ def _claim_matches(
     target: Path,
     kind: str,
     shadow_target: Path | None,
+    project_root: Path | None,
 ) -> bool:
     candidate = Path(claim)
     if candidate.is_absolute():
@@ -442,9 +449,32 @@ def _claim_matches(
                 return True
         return False
     normalized = PurePosixPath(claim).as_posix()
-    return normalized == rule_path or (
-        kind == "directory" and normalized.startswith(rule_path.rstrip("/") + "/")
+    return any(
+        normalized == alias or (
+            kind == "directory" and normalized.startswith(alias.rstrip("/") + "/")
+        )
+        for alias in _claim_aliases(rule_path, target, shadow_target, project_root)
     )
+
+
+def _claim_aliases(
+    rule_path: str, target: Path, shadow_target: Path | None,
+    project_root: Path | None,
+) -> tuple[str, ...]:
+    aliases = [rule_path]
+    for path in (target, shadow_target):
+        if path is not None and (alias := _project_relative_alias(path, project_root)) is not None:
+            aliases.append(alias)
+    return tuple(aliases)
+
+
+def _project_relative_alias(path: Path, project_root: Path | None) -> str | None:
+    if project_root is None:
+        return None
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        return None
 
 
 def _directory_evidence(
@@ -455,6 +485,8 @@ def _directory_evidence(
     post: _TargetSnapshot,
     claims: tuple[str, ...],
     target: Path,
+    shadow_target: Path | None,
+    project_root: Path | None,
     outcome: str,
     evidence_kind: str,
 ) -> Mapping[str, object] | None:
@@ -481,7 +513,9 @@ def _directory_evidence(
     claimed_members = {
         relative
         for claim in claims
-        if (relative := _directory_claim_relative(claim, rule_path, target))
+        if (relative := _directory_claim_relative(
+            claim, rule_path, target, shadow_target, project_root,
+        ))
     }
     unclaimed = sorted(member.path for member in changed if member.path not in claimed_members)
     if unclaimed:
@@ -524,21 +558,29 @@ def _directory_evidence(
     )
 
 
-def _directory_claim_relative(claim: str, rule_path: str, target: Path) -> str | None:
+def _directory_claim_relative(
+    claim: str, rule_path: str, target: Path,
+    shadow_target: Path | None, project_root: Path | None,
+) -> str | None:
     candidate = Path(claim)
     if candidate.is_absolute():
-        try:
-            relative = candidate.resolve(strict=False).relative_to(target)
-        except ValueError:
-            return None
-        return relative.as_posix() if relative.parts else None
-    normalized = PurePosixPath(claim)
-    prefix = PurePosixPath(rule_path)
-    try:
-        relative = normalized.relative_to(prefix)
-    except ValueError:
+        for base in (target, shadow_target):
+            if base is None:
+                continue
+            try:
+                relative = candidate.resolve(strict=False).relative_to(base)
+            except ValueError:
+                continue
+            return relative.as_posix() if relative.parts else None
         return None
-    return relative.as_posix() if relative.parts else None
+    normalized = PurePosixPath(claim)
+    for alias in _claim_aliases(rule_path, target, shadow_target, project_root):
+        try:
+            relative = normalized.relative_to(PurePosixPath(alias))
+        except ValueError:
+            continue
+        return relative.as_posix() if relative.parts else None
+    return None
 
 
 def _snapshot_target(

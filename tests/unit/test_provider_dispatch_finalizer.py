@@ -90,6 +90,7 @@ def _context(
         assignment_id="phase1-why2",
         roots={
             "active_spec": tmp_path / "spec",
+            "project": tmp_path,
             "squad": tmp_path / "squad",
         },
     )
@@ -204,6 +205,52 @@ def test_false_or_out_of_contract_claim_is_rejected(tmp_path: Path) -> None:
         target.parent.mkdir()
         target.write_text("new\n", encoding="utf-8")
         return _result(output_files=[str(tmp_path / "spec/other.md")])
+
+    with pytest.raises(ProviderDispatchFailure, match="outside contract"):
+        _dispatch(context, execute)
+
+
+def test_exact_workspace_relative_file_claim_publishes_current_artifact(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    target = tmp_path / "spec/issues.md"
+
+    def execute(_metadata):
+        target.parent.mkdir()
+        target.write_text("current\n", encoding="utf-8")
+        return _result(output_files=["spec/issues.md"])
+
+    finalized = _dispatch(context, execute)
+
+    assert finalized.receipt.outcome == "published"
+    assert [item["path"] for item in finalized.receipt.outputs] == ["issues.md"]
+
+
+def test_exact_workspace_relative_directory_member_claim_publishes_leaf(tmp_path: Path) -> None:
+    context = _context(tmp_path, artifacts=(("reports", "directory", "required"),))
+    target = tmp_path / "spec/reports/result.md"
+
+    def execute(_metadata):
+        target.parent.mkdir(parents=True)
+        target.write_text("current\n", encoding="utf-8")
+        return _result(output_files=["spec/reports/result.md"])
+
+    finalized = _dispatch(context, execute)
+
+    assert finalized.receipt.outcome == "published"
+    assert [item["path"] for item in finalized.receipt.outputs[0]["members"]] == ["result.md"]
+
+
+@pytest.mark.parametrize("claim", [
+    "other/spec/issues.md", "spec/../spec/issues.md", "spec/issues.md/extra",
+])
+def test_workspace_relative_lookalike_claim_does_not_publish(tmp_path: Path, claim: str) -> None:
+    context = _context(tmp_path)
+    target = tmp_path / "spec/issues.md"
+
+    def execute(_metadata):
+        target.parent.mkdir()
+        target.write_text("current\n", encoding="utf-8")
+        return _result(output_files=[claim])
 
     with pytest.raises(ProviderDispatchFailure, match="outside contract"):
         _dispatch(context, execute)

@@ -59,6 +59,7 @@ class ResolvedProviderArtifactContract:
     write_paths: tuple[Path, ...]
     read_paths: tuple[Path, ...]
     shadow_write_paths: tuple[Path | None, ...] = ()
+    project_root: Path | None = None
 
 
 def compile_provider_artifact_contract(
@@ -177,6 +178,8 @@ def resolve_provider_artifact_contract(
         write_paths=write_paths,
         read_paths=read_paths,
         shadow_write_paths=shadow_write_paths,
+        project_root=(Path(roots["project"]).resolve(strict=False)
+                      if "project" in roots else None),
     )
 
 
