@@ -994,6 +994,23 @@ def _provider_execution_provenance(
     }
 
 
+def _required_active_spec_output_proofs(
+    execution: FinalizedPhaseExecution,
+) -> tuple[dict[str, str], ...]:
+    """Keep only required, published spec outputs from sealed phase receipts."""
+    return tuple(
+        {
+            "path": output["path"],
+            "kind": output["kind"],
+            "sha256": output["sha256"],
+        }
+        for receipt in execution.receipts
+        if receipt["outcome"] == "published"
+        for output in receipt["outputs"]
+        if output["root"] == "active_spec" and output["requirement"] == "required"
+    )
+
+
 class SquadController:
     """Drives the squad run phase graph deterministically.
 
@@ -13959,6 +13976,10 @@ class SquadController:
                 decision,
                 human_input=human_input,
                 human_input_initial_status=human_input_initial_status,
+                provider_output_proofs=(
+                    _required_active_spec_output_proofs(execution)
+                    if execution is not None else None
+                ),
             )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(

@@ -1,9 +1,10 @@
-"""A revisit may retain only bytes from its own completed checkpoint."""
+"""A revisit may retain bytes proven by completed, authorized owner phases."""
 
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +24,8 @@ from harness.provider_output_publication import (
     compile_provider_artifact_contract,
     resolve_provider_artifact_contract,
 )
+from harness.squad import _required_active_spec_output_proofs
+from harness.squad_state import StateAdvanceError, _validated_provider_output_proofs
 from harness.squad_provider import SquadAgentResult
 
 
@@ -30,6 +33,32 @@ def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+def test_completion_proof_keeps_only_published_required_spec_outputs() -> None:
+    digest = "a" * 64
+    execution = SimpleNamespace(receipts=({
+        "outcome": "published",
+        "outputs": [
+            {"root": "active_spec", "path": "glossary.md", "kind": "file",
+             "requirement": "required", "sha256": digest},
+            {"root": "active_spec", "path": "optional.md", "kind": "file",
+             "requirement": "optional", "sha256": digest},
+            {"root": "squad", "path": "notes.md", "kind": "file",
+             "requirement": "required", "sha256": digest},
+        ],
+    }, {
+        "outcome": "domain_blocked",
+        "outputs": [{"root": "active_spec", "path": "blocked.md", "kind": "file",
+                     "requirement": "required", "sha256": digest}],
+    }))
+    proofs = _required_active_spec_output_proofs(execution)
+    assert proofs == ({"path": "glossary.md", "kind": "file", "sha256": digest},)
+    assert _validated_provider_output_proofs(proofs) == list(proofs)
+    with pytest.raises(StateAdvanceError, match="provider output proof is invalid"):
+        _validated_provider_output_proofs(({
+            "path": "../outside.md", "kind": "file", "sha256": digest,
+        },))
 
 
 def test_only_matching_completed_phase_checkpoint_supplies_prior_digest(
@@ -177,3 +206,110 @@ def test_only_matching_completed_phase_checkpoint_supplies_prior_digest(
     _git(root, "commit", "-qm", missing_message)
     with pytest.raises(PhaseCheckpointError, match="row is missing"):
         accepted_checkpoint_outputs(root, spec, state, "phase1-why2", artifacts)
+
+
+def test_revisit_retains_required_artifact_from_later_completed_owner(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    spec = root / "specs/game"
+    spec.mkdir(parents=True)
+    target = spec / "glossary.md"
+    target.write_text("scout version\n", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "config", "user.name", "Test")
+    _git(root, "config", "user.email", "test@example.invalid")
+    _git(root, "commit", "--allow-empty", "-qm", "initial")
+
+    outcomes = []
+    for phase, next_phase, completion_id, text in (
+        ("phase1-discover", "phase1-synthesizer", "a" * 32, "scout version\n"),
+        ("phase1-synthesizer", "phase1-modeler", "b" * 32, "synth version\n"),
+    ):
+        target.write_text(text, encoding="utf-8")
+        _git(root, "add", "--", "specs/game/glossary.md")
+        message = build_echelon_commit_message(
+            f"echelon-checkpoint: game {phase}",
+            EchelonCommitMetadata(
+                origin="phase-a", action="checkpoint", spec_id="game", run_id="run-1",
+                phase=phase, next_phase=next_phase, checkpoint_id=phase,
+                completion_id=completion_id, checkpoint_source="auto",
+            ),
+        )
+        _git(root, "commit", "-qm", message)
+        record_phase_checkpoint(
+            spec,
+            PhaseCheckpoint(
+                id=phase, spec_id="game", phase=phase, next_phase=next_phase,
+                commit=_git(root, "rev-parse", "HEAD"), metadata_commit="",
+                source="auto", run_id="run-1", created_at="2026-09-28T00:00:00+00:00",
+                completion_id=completion_id, boundary_completion_id=completion_id,
+            ),
+        )
+        outcomes.append({
+            "phase": phase, "next_phase": next_phase, "completion_id": completion_id,
+            "outcome": "executed", "checkpoint": "required",
+        })
+
+    outcomes[1]["required_provider_outputs"] = [{
+        "path": "glossary.md", "kind": "file",
+        "sha256": hashlib.sha256(b"synth version\n").hexdigest(),
+    }]
+    state = {"run_id": "run-1", "spec_id": "game", "phase_completion_outcomes": outcomes}
+    artifacts = (("glossary.md", "file", "required"),)
+    assert accepted_checkpoint_outputs(
+        root, spec, state, "phase1-discover", artifacts,
+    ) == (("active_spec", "glossary.md", hashlib.sha256(b"synth version\n").hexdigest()),)
+
+    contract = compile_provider_artifact_contract(
+        {"mode": "publish", "artifacts": [
+            {"root": "active_spec", "path": "glossary.md", "kind": "file", "requirement": "required"},
+        ]},
+        assignment_id="phase1-discover",
+    )
+    resolved = resolve_provider_artifact_contract(
+        contract, assignment_id="phase1-discover",
+        roots={"active_spec": spec, "project": root, "squad": root / "runs/run-1"},
+    )
+    context = ProviderDispatchContext(
+        phase_id="phase1-discover", assignment_id="phase1-discover",
+        occurrence_id="revisit", state_revision=7, contract=resolved,
+        prompt_sha256="a" * 64, prompt_metadata_sha256="b" * 64,
+        previously_accepted_outputs=accepted_checkpoint_outputs(
+            root, spec, state, "phase1-discover", artifacts,
+        ),
+    )
+
+    def result() -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS", "state_updates": {}, "journal_entries": [],
+                "output_files": [str(target)],
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+
+    finalized = ProviderDispatchFinalizer().dispatch(
+        context, execute=lambda _permissions: result(),
+        validate_result=lambda value: value, classify_outcome=lambda _value: "published",
+    )
+    assert finalized.receipt.outputs[0]["evidence_kind"] == "retained"
+
+    # Merely having the newer bytes in the workspace does not authorize a retry.
+    target.write_text("unaccepted retry\n", encoding="utf-8")
+    assert accepted_checkpoint_outputs(
+        root, spec, state, "phase1-discover", artifacts,
+    ) == (("active_spec", "glossary.md", hashlib.sha256(b"synth version\n").hexdigest()),)
+    with pytest.raises(ProviderDispatchFailure, match="stale claimed output"):
+        ProviderDispatchFinalizer().dispatch(
+            context, execute=lambda _permissions: result(),
+            validate_result=lambda value: value, classify_outcome=lambda _value: "published",
+        )
+
+    # A later checkpoint without its original accepted-output proof cannot
+    # retroactively become an owner after a workflow contract change.
+    del outcomes[1]["required_provider_outputs"]
+    assert accepted_checkpoint_outputs(
+        root, spec, state, "phase1-discover", artifacts,
+    ) == (("active_spec", "glossary.md", hashlib.sha256(b"scout version\n").hexdigest()),)

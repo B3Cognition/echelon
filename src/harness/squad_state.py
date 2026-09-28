@@ -984,6 +984,33 @@ def _valid_completion_sha256(value: object) -> bool:
     )
 
 
+def _validated_provider_output_proofs(
+    value: tuple[Mapping[str, object], ...] | None,
+) -> list[dict[str, str]] | None:
+    if value is None:
+        return None
+    if type(value) is not tuple or len(value) > 4096:
+        raise StateAdvanceError("provider output proofs are invalid", validator="completion_binding")
+    proofs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if type(item) is not dict or frozenset(item) != {"path", "kind", "sha256"}:
+            raise StateAdvanceError("provider output proof is invalid", validator="completion_binding")
+        path, kind, digest = item["path"], item["kind"], item["sha256"]
+        if (
+            type(path) is not str
+            or not path or Path(path).is_absolute()
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or type(kind) is not str or kind not in {"file", "directory"}
+            or not _valid_completion_sha256(digest)
+            or (path, kind) in seen
+        ):
+            raise StateAdvanceError("provider output proof is invalid", validator="completion_binding")
+        seen.add((path, kind))
+        proofs.append({"path": path, "kind": kind, "sha256": digest})
+    return proofs
+
+
 def _canonical_completion_document(
     value: object,
     *,
@@ -5795,8 +5822,10 @@ class SquadStateStore:
             "awaiting_human",
         ]
         | None = None,
+        provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
         _prepare_only: bool = False,
     ) -> AdvanceReceipt | tuple[dict[str, Any], AdvanceReceipt]:
+        accepted_output_proofs = _validated_provider_output_proofs(provider_output_proofs)
         if (human_input is None) != (human_input_initial_status is None):
             raise StateAdvanceError(
                 "human-input request and initial status must be supplied together",
@@ -5981,6 +6010,8 @@ class SquadStateStore:
                         ),
                         "checkpoint": decision.checkpoint_policy,
                     }
+                    if accepted_output_proofs is not None and not decision.conditional_skip:
+                        outcome["required_provider_outputs"] = accepted_output_proofs
                     matching = [
                         row
                         for row in outcomes
@@ -6122,6 +6153,7 @@ class SquadStateStore:
         *,
         human_input: PreparedHumanInput | None = None,
         human_input_initial_status: Literal["pending", "awaiting_human"] | None = None,
+        provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
     ) -> tuple[dict[str, Any], AdvanceReceipt]:
         """Compute and validate an advance without making it externally visible."""
         result = self.advance(
@@ -6130,6 +6162,7 @@ class SquadStateStore:
             decision,
             human_input=human_input,
             human_input_initial_status=human_input_initial_status,
+            provider_output_proofs=provider_output_proofs,
             _prepare_only=True,
         )
         if not isinstance(result, tuple):
