@@ -56,6 +56,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("scripts") / "node" / "context7",
     Path("scripts") / "node" / "codegraph" / "vendor",
     Path("scripts") / "node" / "perlgraph" / "dist",
+    Path("scripts") / "node" / "perlgraph" / "tests",
     Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (

@@ -405,7 +405,7 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
 
 
 def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(tmp_path):
-    """Delivery worktrees keep PerlGraph source but never copied dependencies/build output."""
+    """Delivery worktrees keep PerlGraph source, not its build or test artifacts."""
     source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
@@ -426,6 +426,10 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
     (source / "scripts" / "node" / "perlgraph" / "src").mkdir()
     (source / "scripts" / "node" / "perlgraph" / "src" / "index.ts").write_text(
         "export {}\n", encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "perlgraph" / "tests").mkdir()
+    (source / "scripts" / "node" / "perlgraph" / "tests" / "analyze.test.ts").write_text(
+        "test('harness only', () => {})\n", encoding="utf-8"
     )
     (
         source
@@ -455,6 +459,7 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
     assert (runtime_node / "perlgraph" / "src" / "index.ts").exists()
     assert not (runtime_node / "perlgraph" / "node_modules").exists()
     assert not (runtime_node / "perlgraph" / "dist").exists()
+    assert not (runtime_node / "perlgraph" / "tests").exists()
 
 
 def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tmp_path):
@@ -1017,6 +1022,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
 
     assert not (runtime / "commands").exists()
     assert not (runtime / "agents").exists()
+    assert not (runtime / "scripts" / "node" / "perlgraph" / "tests").exists()
     assert not (prose / "commands" / "echelon.build.md").exists()
     assert (prose / "commands" / "echelon.verify-spec.md").is_file()
     assert (prose / "subagents" / "echelon.implementer.md").is_file()
