@@ -983,19 +983,51 @@ class RalphController:
                 preserve_worktree=True,
             )
 
-        inner_result = self._run_inner_loop(
-            handle=None,
-            verify_result=verify_result,
-            outer_iter=outer_iter,
-            max_inner=max_inner,
-            tokens_used=tokens_used,
-            token_budget=token_budget,
-            state=state,
-            build_command=build_command,
-            delivery_context=delivery_context,
-            worktree_path=worktree_path,
-            build_prompt=build_prompt,
+        total_tasks, completed_tasks = self._task_progress_counts()
+        checkpoints = self._state_store.read().get("checkpoint_commits")
+        last_checkpoint = (
+            checkpoints[-1]
+            if isinstance(checkpoints, list) and checkpoints
+            and isinstance(checkpoints[-1], dict)
+            else {}
         )
+        previously_checkpointed_ids = set(
+            _clean_task_ids(last_checkpoint.get("task_ids"))
+        )
+        partial_fulfillment_checkpoint = (
+            _is_only_fulfillment_gaps(verify_result)
+            and bool(completed_task_ids)
+            and total_tasks > completed_tasks
+            and (
+                progress.checkpoint_commit is not None
+                or set(completed_task_ids) <= previously_checkpointed_ids
+            )
+        )
+        if partial_fulfillment_checkpoint:
+            # The first scoped refresh can establish a full-spec baseline.
+            # Its pending-task gaps remain failed evidence, but are not a
+            # repair assignment for the task just checkpointed.
+            inner_result = {
+                "converged": False,
+                "blocked": False,
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
+        else:
+            inner_result = self._run_inner_loop(
+                handle=None,
+                verify_result=verify_result,
+                outer_iter=outer_iter,
+                max_inner=max_inner,
+                tokens_used=tokens_used,
+                token_budget=token_budget,
+                state=state,
+                build_command=build_command,
+                delivery_context=delivery_context,
+                worktree_path=worktree_path,
+                build_prompt=build_prompt,
+            )
         tokens_used = inner_result["tokens_used"]
         total_inner_iterations += inner_result["inner_count"]
         final_verify = inner_result.get("final_verify")
@@ -1034,7 +1066,9 @@ class RalphController:
             final_verify and _is_fulfillment_refresh_deferred(final_verify)
         )
         last_verify_failures_text = ""
-        if final_verify and final_verify.failures and not fulfillment_refresh_deferred:
+        if (final_verify and final_verify.failures
+                and not fulfillment_refresh_deferred
+                and not partial_fulfillment_checkpoint):
             last_verify_failures_text = "\n".join(
                 f"[{f.category.value}] {f.id}: {f.error}"
                 for f in final_verify.failures

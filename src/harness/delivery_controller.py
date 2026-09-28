@@ -1301,7 +1301,17 @@ class DeliveryController:
             )
             if (
                 should_resume_blocked
-                and existing.get("termination_reason") == "budget_exhausted"
+                and (
+                    existing.get("termination_reason") == "budget_exhausted"
+                    or (
+                        existing.get("termination_reason") == "build_blocked"
+                        and existing.get("blocked_phase") == "implementation"
+                        and existing.get("build_status") == "blocked"
+                        and existing.get("build_reason") == "delivery_slice_budget_exhausted"
+                        and isinstance(existing.get("delivery_slice_operation"), dict)
+                        and not existing["delivery_slice_operation"].get("progress_applied")
+                    )
+                )
                 and budget is not None
                 and isinstance(existing.get("token_budget"), int)
                 and budget > existing["token_budget"]

@@ -2644,6 +2644,161 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
 
+    def test_checkpointed_partial_task_advances_past_full_spec_fulfillment_gaps(
+        self, tmp_path: Path
+    ) -> None:
+        """A full baseline report must not repair pending tasks as T-001 work."""
+        controller, _, _, state_store = _make_controller(tmp_path, mode="banzai")
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 12,
+            "completed_tasks": 1,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state_store.write(state)
+        gap = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.OTHER,
+                "fulfillment-gaps",
+                "full report includes requirements for pending T-002 through T-012",
+            )],
+        )
+        controller._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        controller._apply_post_verify_gates = MagicMock(return_value=gap)
+        controller._exec_feedback = MagicMock(
+            side_effect=AssertionError("pending-task gaps entered source repair")
+        )
+
+        outcome = controller._verify_candidate_checkpoint(
+            worktree_path=str(tmp_path),
+            outer_iter=0,
+            total_inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            max_inner=1,
+            max_outer=12,
+            token_budget=None,
+            build_command="echelon build",
+            delivery_context="",
+            build_prompt="implement next open task",
+            progress=ralph.ProgressCheckpointOutcome(
+                build_result={"task_ids": ["T-001"], "tokens": 0},
+                checkpoint_commit={"commit": "abc123", "task_ids": ["T-001"]},
+                changed_files=(),
+            ),
+            state=state_store.read(),
+        )
+
+        assert outcome.decision == ralph.CandidateDecision.CONTINUE
+        assert outcome.total_inner_iterations == 0
+        assert outcome.final_verify is gap
+        assert outcome.last_verify_failures_text == ""
+
+    def test_completed_task_set_keeps_fulfillment_gaps_blocking(
+        self, tmp_path: Path
+    ) -> None:
+        """The partial-progress exception must never accept final gaps."""
+        controller, _, _, state_store = _make_controller(tmp_path, mode="banzai")
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 1,
+            "completed_tasks": 1,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state_store.write(state)
+        gap = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.OTHER, "fulfillment-gaps", "final requirement missing",
+            )],
+        )
+        controller._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        controller._apply_post_verify_gates = MagicMock(return_value=gap)
+        controller._exec_feedback = MagicMock(return_value={
+            "exit_code": 0,
+            "passed": False,
+            "build_status": "blocked",
+            "build_reason": "final fulfillment gap needs repair",
+            "tokens": 0,
+            "task_ids": [],
+        })
+        controller._try_checkpoint_progress_commit = MagicMock(return_value=None)
+
+        outcome = controller._verify_candidate_checkpoint(
+            worktree_path=str(tmp_path),
+            outer_iter=0,
+            total_inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            max_inner=1,
+            max_outer=12,
+            token_budget=None,
+            build_command="echelon build",
+            delivery_context="",
+            build_prompt="complete final verification",
+            progress=ralph.ProgressCheckpointOutcome(
+                build_result={"task_ids": ["T-001"], "tokens": 0},
+                checkpoint_commit={"commit": "abc123", "task_ids": ["T-001"]},
+                changed_files=(),
+            ),
+            state=state_store.read(),
+        )
+
+        assert outcome.decision == ralph.CandidateDecision.TERMINAL
+        assert outcome.result is not None
+        assert outcome.result.status == "blocked"
+        assert outcome.result.termination_reason == "build_blocked"
+
+    def test_replayed_repair_receipt_for_checkpointed_task_advances(
+        self, tmp_path: Path
+    ) -> None:
+        """A pending T-001 receipt can finish without restarting aggregate repair."""
+        controller, _, _, state_store = _make_controller(tmp_path, mode="banzai")
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 12,
+            "completed_tasks": 1,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state["checkpoint_commits"] = [{"commit": "abc123", "task_ids": ["T-001"]}]
+        state_store.write(state)
+        gap = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.OTHER, "fulfillment-gaps", "pending-task gaps",
+            )],
+        )
+        controller._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        controller._apply_post_verify_gates = MagicMock(return_value=gap)
+        controller._exec_feedback = MagicMock(
+            side_effect=AssertionError("replayed T-001 receipt restarted repair")
+        )
+
+        outcome = controller._verify_candidate_checkpoint(
+            worktree_path=str(tmp_path),
+            outer_iter=2,
+            total_inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            max_inner=1,
+            max_outer=12,
+            token_budget=None,
+            build_command="echelon build",
+            delivery_context="",
+            build_prompt="implement next open task",
+            progress=ralph.ProgressCheckpointOutcome(
+                build_result={"task_ids": ["T-001"], "tokens": 0},
+                checkpoint_commit=None,
+                changed_files=(),
+            ),
+            state=state_store.read(),
+        )
+
+        assert outcome.decision == ralph.CandidateDecision.CONTINUE
+        assert outcome.final_verify is gap
+        assert outcome.last_verify_failures_text == ""
+
 
     def test_refresh_uses_state_workspace_root_for_external_spec_artifacts(
         self, tmp_path: Path

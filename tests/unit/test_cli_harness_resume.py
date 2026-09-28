@@ -223,6 +223,34 @@ class TestCmdHarnessResume:
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert "token budget" in capsys.readouterr().err.lower()
 
+    def test_continue_pending_slice_budget_exhaustion_preserves_build(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "build_blocked",
+            "blocked_phase": "implementation", "build_status": "blocked",
+            "build_reason": "delivery_slice_budget_exhausted",
+            "token_budget": 500, "tokens_used": 900,
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001", "token_budget=900"])
+            assert not mock_run.called
+            _run_delivery_continue(
+                tmp_path, ["001", "token_budget=2000", "mode=banzai", "auto_merge=false"],
+            )
+
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "token_budget=2000" in mock_run.call_args.args[0]
+
     def test_outer_cap_rejection_points_to_checkpoint_preserving_new_budget(
         self,
         tmp_path: Path,

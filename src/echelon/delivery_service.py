@@ -198,6 +198,20 @@ def _is_retryable_delivery_provider_failure(state: dict) -> bool:
     )
 
 
+def _is_pending_slice_budget_exhaustion(state: dict) -> bool:
+    """Recognize a saved review chain stopped by its finite slice budget."""
+    operation = state.get("delivery_slice_operation")
+    return (
+        state.get("termination_reason") == "build_blocked"
+        and state.get("blocked_phase") == "implementation"
+        and state.get("build_status") == "blocked"
+        and state.get("build_reason") == "delivery_slice_budget_exhausted"
+        and isinstance(operation, dict)
+        and bool(str(operation.get("id") or "").strip())
+        and operation.get("progress_applied") is not True
+    )
+
+
 def _delivery_status_next_step(
     state: dict,
     spec_id: str,
@@ -3758,7 +3772,10 @@ def _run_delivery_resume(
         continuation_reasons.add("containment_violation")
     if _is_retryable_delivery_provider_failure(state):
         continuation_reasons.add("build_blocked")
-    if current_status == "blocked" and termination_reason == "budget_exhausted":
+    pending_slice_budget_exhausted = _is_pending_slice_budget_exhaustion(state)
+    if current_status == "blocked" and (
+        termination_reason == "budget_exhausted" or pending_slice_budget_exhausted
+    ):
         try:
             new_budget = int(kv.get("token_budget", ""))
             old_budget = int(state.get("token_budget") or 0)
@@ -3775,7 +3792,7 @@ def _run_delivery_resume(
                 file=sys.stderr,
             )
             sys.exit(1)
-        continuation_reasons.add("budget_exhausted")
+        continuation_reasons.add(termination_reason)
     retryable_error_reasons = {"harness_error"}
 
     resumable_statuses = {
@@ -4089,7 +4106,8 @@ def _run_delivery_resume(
         _exit_if_provider_session_limited(state_store)
         return
 
-    if not config.verify_command and termination_reason != "budget_exhausted":
+    if (not config.verify_command and termination_reason != "budget_exhausted"
+            and not pending_slice_budget_exhausted):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,

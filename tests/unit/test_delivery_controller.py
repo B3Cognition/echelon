@@ -144,8 +144,15 @@ def _controlled_implementation(*, verified: bool = True) -> ImplementationResult
 class TestSingleStrategy:
     """Test N=1 passthrough."""
 
+    @pytest.mark.parametrize(
+        ("termination_reason", "build_reason"),
+        [
+            ("budget_exhausted", None),
+            ("build_blocked", "delivery_slice_budget_exhausted"),
+        ],
+    )
     def test_explicit_budget_bump_authorizes_pending_slice_without_reset(
-        self, tmp_path: Path,
+        self, tmp_path: Path, termination_reason: str, build_reason: str | None,
     ) -> None:
         coord = _make_controller(tmp_path)
         store = StateStore(coord._state_dir, "spec-001")
@@ -155,8 +162,13 @@ class TestSingleStrategy:
         state.update(
             tokens_used=100,
             outer_iter=1,
-            termination_reason="budget_exhausted",
-            delivery_slice_operation={"id": "pending-op", "accounted_tokens": 100},
+            termination_reason=termination_reason,
+            build_status="blocked" if build_reason else None,
+            build_reason=build_reason,
+            delivery_slice_operation={
+                "id": "pending-op", "accounted_tokens": 100,
+                "progress_applied": False,
+            },
         )
         store.write(state)
         store.transition("blocked", updates={"blocked_phase": "implementation"})
