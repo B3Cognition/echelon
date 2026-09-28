@@ -388,6 +388,71 @@ def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> 
     ]
 
 
+def test_discover_revisit_prompt_explains_exact_write_boundary(tmp_path: Path) -> None:
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    node = graph.get("phase1-discover")
+    executor = _executor(tmp_path)
+    executor._graph = graph
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = {"spec_dir": str(spec_dir), "state_revision": 17}
+    executor._provider.exec_agent.return_value = _result(verdict="BLOCKED")
+
+    executor._dispatch_provider(
+        node=node,
+        assignment=node.provider_assignment(),
+        occurrence_id="ordinary",
+        state=state,
+        prompt="Repair assumptions.md and spec.md from the WHY2 findings.",
+        result_contract=executor._result_contract(node),
+        prompt_metadata={},
+    )
+
+    call = executor._provider.exec_agent.call_args
+    writable = call.kwargs["prompt_metadata"]["tool_write_paths"]
+    assert str(spec_dir / "assumptions.md") in writable
+    assert str(spec_dir / "spec.md") not in writable
+    scope = call.args[1].split("## Exact authorized write scope", 1)[1]
+    assert str(spec_dir / "assumptions.md") in scope
+    assert str(spec_dir / "spec.md") not in scope
+    assert "Do not include an out-of-scope file in a multi-file patch" in scope
+    assert "leave the remaining edits for their owning phase" in scope
+
+
+def test_directory_artifact_prompt_authorizes_descendant_files(tmp_path: Path) -> None:
+    graph = PhaseGraph(
+        EXT_ROOT / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=EXT_ROOT / "prosaic/subagents",
+    )
+    node = graph.get("phase1-investigate")
+    executor = _executor(tmp_path)
+    executor._graph = graph
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    executor._provider.exec_agent.return_value = _result(verdict="BLOCKED")
+
+    executor._dispatch_provider(
+        node=node,
+        assignment=node.provider_assignment(),
+        occurrence_id="ordinary",
+        state={"spec_dir": str(spec_dir), "state_revision": 17},
+        prompt="Publish investigation evidence.",
+        result_contract=executor._result_contract(node),
+        prompt_metadata={},
+    )
+
+    scope = executor._provider.exec_agent.call_args.args[1].split(
+        "## Exact authorized write scope", 1
+    )[1]
+    assert (
+        f"- `{spec_dir / 'investigation'}/` "
+        "(directory; includes files beneath it)"
+    ) in scope
+
+
 def test_agent_why1_publishes_only_its_exact_sage_decision_proposal(
     tmp_path: Path,
 ) -> None:

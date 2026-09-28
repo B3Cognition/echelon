@@ -1816,6 +1816,26 @@ class PhaseExecutor(ABC):
             assignment_id=assignment.assignment_id,
             roots=self._provider_artifact_roots(state),
         )
+        if resolved.contract.mode == "publish":
+            scope_paths = []
+            for rule, path in zip(
+                resolved.contract.artifacts, resolved.write_paths, strict=True
+            ):
+                scope_paths.append(
+                    f"- `{path}/` (directory; includes files beneath it)"
+                    if rule.kind == "directory"
+                    else f"- `{path}`"
+                )
+            prompt += (
+                "\n## Exact authorized write scope\n"
+                "This dispatch may create or modify only these paths:\n"
+                + "\n".join(scope_paths)
+                + "\n"
+                + "Do not include an out-of-scope file in a multi-file patch. "
+                "If a finding also needs edits outside this list, complete the "
+                "permitted edits and leave the remaining edits for their owning "
+                "phase; describe that handoff in the normal result.\n"
+            )
         permissions = permission_metadata(resolved)
         metadata = {**dict(prompt_metadata), **permissions}
         prior_outputs: tuple[tuple[str, str, str], ...] = ()
