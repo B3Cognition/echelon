@@ -2937,6 +2937,82 @@ def test_staged_failure_keeps_accepted_sibling_dispatch_in_execution(tmp_path):
     }
 
 
+def test_consensus_stage1_scoped_reports_do_not_collide(tmp_path):
+    """A sibling's authorized publication must not fail the other reviewer."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    sage_started = threading.Event()
+    assess2_published = threading.Event()
+
+    def publish(_cwd, prompt, **_kwargs):
+        if "Operate in **WHY3** mode." in prompt:
+            sage_started.set()
+            assess2_published.wait(timeout=1.0)
+            outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+        else:
+            assert "Operate in **ASSESS2** mode." in prompt
+            sage_started.wait(timeout=1.0)
+            outputs = [
+                spec_dir / "implementability-report.md",
+                spec_dir / "estimates.md",
+            ]
+        for output in outputs:
+            output.write_text(f"# {output.stem}\n", encoding="utf-8")
+        if "Operate in **ASSESS2** mode." in prompt:
+            assess2_published.set()
+        result = _result(verdict="PASS")
+        result.echelon_result["output_files"] = [str(path) for path in outputs]
+        return result
+
+    provider = MagicMock()
+    provider.exec_agent.side_effect = publish
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon.sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+                "outputs": ["issues.md", "quality-gates.md"],
+            },
+            {
+                "id": "echelon.gatekeeper",
+                "mode": "ASSESS2",
+                "stage": 1,
+                "context_pack": [],
+                "outputs": ["implementability-report.md", "estimates.md"],
+            },
+        ],
+    )
+
+    result = executor.execute(node, store)
+
+    assert not isinstance(result, ExecutorBlockedResult), (
+        result.result.raw_output if isinstance(result, ExecutorBlockedResult) else ""
+    )
+    assert result.verdict == "PASS"
+    assert [entry.occurrence_id for entry in result.manifest] == [
+        "why3/initial",
+        "stage1/1",
+    ]
+    assert all((spec_dir / name).is_file() for name in (
+        "issues.md", "quality-gates.md", "implementability-report.md", "estimates.md",
+    ))
+
+
 def test_provider_artifact_roots_resolve_relative_run_paths_from_project(tmp_path):
     squad_dir = tmp_path / "runs" / "run-test"
     executor = StagedParallelExecutor(

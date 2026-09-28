@@ -3077,9 +3077,8 @@ def _normalized_attempts(value: object) -> int:
 class StagedParallelExecutor(PhaseExecutor):
     """Handles type: staged_parallel — phase3-consensus (WHY3+ASSESS2 then PLAN2).
 
-    This is the phase that was previously skipped via EVOI fabrication.
-    Python threading enforces both stage-1 agents run; there is no code path
-    that bypasses Stage 1.
+    Stage 1 reviewers run in order because their per-dispatch output guards
+    inspect the same spec directory. Both reviewers run before PLAN2.
     """
 
     _FINAL_REPORTS = ("issues.md", "quality-gates.md", "implementability-report.md")
@@ -4021,8 +4020,8 @@ class StagedParallelExecutor(PhaseExecutor):
             from harness.phase3_repair_context import planner_handoff_context
             planner_context = planner_handoff_context(state, review_manifest)
 
-        # Stage 1: run in parallel
-        with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
+        # Stage 1: serialize provider writes to the shared spec directory.
+        with ThreadPoolExecutor(max_workers=1) as pool:
             futures: dict = {}
             for agent_entry in stage1_agents:
                 entry_index = next(

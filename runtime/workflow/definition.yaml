@@ -190,8 +190,9 @@ conflict_resolution:
 #   type:          commander_internal | agent | parallel | conditional_sequential | staged_parallel | human_gate | terminal
 #                  conditional_sequential — multiple possible agents, evaluated one at a time in order;
 #                                           each dispatched only after the previous completes post-dispatch.
-#                  staged_parallel        — agents grouped into stages; all agents in a stage run in parallel;
-#                                           next stage dispatched only after all agents in current stage complete.
+#                  staged_parallel        — agents grouped into stages; current shared-workspace
+#                                           provider writes run in order, and the next stage starts
+#                                           only after all agents in the current stage complete.
 #   agent(s):      which agent(s) to invoke (omitted for commander_internal)
 #   tier:          model-tier selection key from echelon-config.yml execution.models
 #   context_pack:  artifacts injected into the agent's dispatch prompt
@@ -1383,11 +1384,11 @@ phases:
     rewind: supported
     label: "Consensus Gate (WHY3 + ASSESS2 → PLAN2)"
     spec_file: workflow/phases/phase3-consensus.md
-    type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
+    type: staged_parallel            # Stage 1: WHY3 then ASSESS2; Stage 2: PLAN2 after both complete
     description: >
-      Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
+      Stage 1: dispatch WHY3 then ASSESS2 with separate output checks. Stage 2: dispatch PLAN2 only after BOTH complete
       (PLAN2 depends on implementability-report.md from ASSESS2). echelon.commander (COMMANDER) must NOT dispatch PLAN2
-      in the same parallel batch as WHY3 and ASSESS2.
+      before both Stage 1 reviewers complete.
       A completed ASSESS2 rejection without an existing accepted-risk disposition
       defers PLAN2 and retains the existing tasks recertification and
       architecture-repair route, even when WHY3 passes.
