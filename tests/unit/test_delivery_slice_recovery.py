@@ -291,6 +291,25 @@ def test_saved_finite_budget_cannot_reset_on_restart(slice_project, monkeypatch)
     assert _steps(resumed) == ["spec_guard"] and result.token_usage == 14
 
 
+def test_explicit_budget_extension_replays_receipt_and_finishes_reviews(slice_project):
+    first = ScriptedExecutor()
+    blocked = _run(slice_project, first, token_budget=7)
+    assert not blocked.succeeded and "budget_exhausted" in blocked.reason
+    assert _steps(first) == ["implementer"]
+
+    resumed = ScriptedExecutor()
+    result = _run(
+        slice_project, resumed, token_budget=100,
+        budget_extension_limit=100, journal_required=True,
+    )
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert _steps(resumed) == ["spec_guard", "code_reviewer", "test_guardian"]
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert journal["budget_limit"] == 100
+    assert len(journal["records"]) == 4
+
+
 @pytest.mark.parametrize("damage", ["json", "schema", "receipt", "symlink"])
 def test_corrupt_or_unsafe_journal_never_becomes_fresh_work(slice_project, damage):
     assert _run(slice_project, ScriptedExecutor()).succeeded

@@ -53,6 +53,32 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert {call[0]["task_id"] for call in executor.calls} == {"T-001"}
 
 
+def test_ralph_replays_pending_slice_after_explicit_budget_extension(slice_project, tmp_path):
+    first = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, first, "banzai")
+    controller._controlled_slice_budget = 7
+    blocked = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+    assert not blocked["passed"] and "budget_exhausted" in blocked["build_reason"]
+    assert _steps(first) == ["implementer"]
+
+    state = store.read()
+    state["token_budget"] = 100
+    state["delivery_slice_operation"]["budget_extension_limit"] = 95
+    store.write(state)
+    resumed = ScriptedExecutor()
+    other = _reconstruct(controller, store, resumed)
+    other._controlled_slice_budget = 95 - state["tokens_used"]
+    result = other._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert _steps(resumed) == ["spec_guard", "code_reviewer", "test_guardian"]
+    assert store.read()["tokens_used"] == 28
+
+
 def test_ralph_supplies_isolated_browser_capture_to_requested_slice(
     slice_project, tmp_path, monkeypatch,
 ):

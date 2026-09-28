@@ -144,6 +144,42 @@ def _controlled_implementation(*, verified: bool = True) -> ImplementationResult
 class TestSingleStrategy:
     """Test N=1 passthrough."""
 
+    def test_explicit_budget_bump_authorizes_pending_slice_without_reset(
+        self, tmp_path: Path,
+    ) -> None:
+        coord = _make_controller(tmp_path)
+        store = StateStore(coord._state_dir, "spec-001")
+        store.initialize("original-run", "banzai", max_outer=1, token_budget=50)
+        store.transition("running")
+        state = store.read()
+        state.update(
+            tokens_used=100,
+            outer_iter=1,
+            termination_reason="budget_exhausted",
+            delivery_slice_operation={"id": "pending-op", "accounted_tokens": 100},
+        )
+        store.write(state)
+        store.transition("blocked", updates={"blocked_phase": "implementation"})
+        observed = []
+
+        def stop_after_resume(self, **kwargs):
+            observed.append((self._state_store.read(), kwargs))
+            return ImplementationResult("blocked", "test_stop", 1, 0, None, 100, None)
+
+        with patch("harness.delivery_controller.RalphController.run_loop", stop_after_resume):
+            coord.run(RunIntent(
+                spec_id="spec-001", mode="banzai", resume=True,
+                token_budget=1000, max_outer=12, auto_merge=False,
+            ))
+
+        assert len(observed) == 1
+        resumed_state, kwargs = observed[0]
+        assert resumed_state["run_id"] == "original-run"
+        assert resumed_state["token_budget"] == 1000
+        assert resumed_state["max_outer"] == 12
+        assert resumed_state["delivery_slice_operation"]["budget_extension_limit"] == 950
+        assert kwargs["token_budget"] == 1000
+
     def test_new_delivery_persists_authoritative_resolved_stack_snapshot(
         self, tmp_path: Path
     ) -> None:

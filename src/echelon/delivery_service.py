@@ -40,6 +40,9 @@ class DeliveryRecoveryRequest:
     extra_args: tuple[str, ...] = ()
     answer: str | None = None
     mode: str | None = None
+    token_budget: int | None = None
+    max_outer: int | None = None
+    auto_merge: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -2486,7 +2489,10 @@ def _recovery_args(request: DeliveryRecoveryRequest) -> list[str]:
     if request.answer is not None:
         args.append(request.answer)
     args.extend(request.extra_args)
-    args.extend(_option_pairs(mode=request.mode))
+    args.extend(_option_pairs(
+        mode=request.mode, token_budget=request.token_budget,
+        max_outer=request.max_outer, auto_merge=request.auto_merge,
+    ))
     return args
 
 
@@ -3428,16 +3434,17 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     i = 1
     while i < len(args):
         arg = args[i]
-        if arg == "--mode" and i + 1 < len(args):
-            kv[arg.removeprefix("--")] = args[i + 1].strip()
+        if arg in {"--mode", "--token-budget", "--max-outer"} and i + 1 < len(args):
+            kv[arg.removeprefix("--").replace("-", "_")] = args[i + 1].strip()
             i += 2
             continue
-        if arg.startswith("--mode="):
-            kv["mode"] = arg.partition("=")[2].strip()
+        if any(arg.startswith(prefix) for prefix in ("--mode=", "--token-budget=", "--max-outer=")):
+            key, _, value = arg.partition("=")
+            kv[key.removeprefix("--").replace("-", "_")] = value.strip()
         elif "=" in arg:
             key, _, value = arg.partition("=")
             key = key.strip()
-            if key == "mode":
+            if key in {"mode", "token_budget", "max_outer", "auto_merge"}:
                 kv[key] = value.strip()
             elif key == "answer":
                 answer_parts.append(value.strip())
@@ -3751,6 +3758,24 @@ def _run_delivery_resume(
         continuation_reasons.add("containment_violation")
     if _is_retryable_delivery_provider_failure(state):
         continuation_reasons.add("build_blocked")
+    if current_status == "blocked" and termination_reason == "budget_exhausted":
+        try:
+            new_budget = int(kv.get("token_budget", ""))
+            old_budget = int(state.get("token_budget") or 0)
+            used_tokens = int(state.get("tokens_used") or 0)
+        except ValueError:
+            new_budget = 0
+            old_budget = 0
+            used_tokens = 0
+        if new_budget <= old_budget or new_budget <= used_tokens / 0.95:
+            print(
+                f"✗ Token budget exhausted for spec {spec_id!r}. "
+                "Continue with an explicit higher --token-budget that exceeds "
+                "the recorded usage plus headroom.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        continuation_reasons.add("budget_exhausted")
     retryable_error_reasons = {"harness_error"}
 
     resumable_statuses = {
@@ -4064,7 +4089,7 @@ def _run_delivery_resume(
         _exit_if_provider_session_limited(state_store)
         return
 
-    if not config.verify_command:
+    if not config.verify_command and termination_reason != "budget_exhausted":
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,
@@ -4073,7 +4098,7 @@ def _run_delivery_resume(
 
     _banner("HARNESS RESUME", [
         ("Spec", spec_id),
-        ("Verify", config.verify_command),
+        ("Verify", config.verify_command or "auto-detect from candidate"),
     ])
 
     from harness.skills.run_skill import run
@@ -4082,6 +4107,12 @@ def _run_delivery_resume(
         container_cli=_container_runtime_cli(config),
     )
     user_message = f"spec {spec_id} mode={mode} resume"
+    if kv.get("token_budget"):
+        user_message += f" token_budget={kv['token_budget']}"
+    if kv.get("max_outer"):
+        user_message += f" max {kv['max_outer']} outer iterations"
+    if kv.get("auto_merge", "").lower() in {"0", "false", "no", "off"}:
+        user_message += " no_auto_merge"
     try:
         outcome = run(
             user_message,

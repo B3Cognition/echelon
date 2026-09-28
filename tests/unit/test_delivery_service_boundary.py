@@ -202,6 +202,31 @@ def test_delivery_continue_routes_answerless_request(monkeypatch):
     )]
 
 
+def test_delivery_continue_routes_explicit_budget_and_outer_limit(monkeypatch):
+    from echelon.cli_app import app
+    from echelon.delivery_service import DeliveryRecoveryRequest
+
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.continue_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
+    result = CliRunner().invoke(
+        app,
+        ["delivery", "continue", "001-demo", "--mode", "banzai",
+         "--token-budget", "5000000", "--max-outer", "12", "--no-auto-merge"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001-demo", mode="banzai",
+            token_budget=5000000, max_outer=12, auto_merge=False,
+        ),
+    )]
+
+
 def test_delivery_land_routes_immutable_request(monkeypatch):
     from echelon.cli_app import app
     from echelon.delivery_service import DeliveryLandRequest

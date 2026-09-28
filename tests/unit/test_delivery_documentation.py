@@ -109,6 +109,23 @@ def test_repeated_rejection_survives_reconstruction(documentation_project):
     assert provider.steps == ["tech_writer", "docs_verifier"] * 3
 
 
+def test_explicit_budget_extension_replays_documentation_author_receipt(documentation_project):
+    runner, provider, paths = documentation_project()
+    blocked = runner.run(**paths, token_budget=7)
+    assert not blocked.succeeded and "budget_exhausted" in blocked.reason
+    assert provider.steps == ["tech_writer"]
+
+    resumed = type(runner)(provider, runner._project_dir).run(
+        **paths, journal_required=True, token_budget=100,
+        budget_extension_limit=100,
+    )
+
+    assert resumed.succeeded, resumed.reason
+    assert provider.steps == ["tech_writer", "docs_verifier"]
+    journal = json.loads(next(paths["evidence_root"].rglob("journal.json")).read_text())
+    assert journal["budget_limit"] == 100
+
+
 @pytest.mark.parametrize("fault", ["identity", "fields", "legacy", "report_verdict", "passing_findings", "source", "spec", "control", "reviewer", "report_write"])
 def test_invalid_dispatch_cannot_publish(documentation_project, fault):
     def script(assignment, payload, root):

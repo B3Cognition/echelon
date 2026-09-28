@@ -1299,6 +1299,23 @@ class DeliveryController:
             should_resume_verified_publication = (
                 resume_plan.resume_verified_publication
             )
+            if (
+                should_resume_blocked
+                and existing.get("termination_reason") == "budget_exhausted"
+                and budget is not None
+                and isinstance(existing.get("token_budget"), int)
+                and budget > existing["token_budget"]
+                and budget > existing.get("tokens_used", 0) / 0.95
+            ):
+                # An explicit increase on the same blocked build is durable
+                # authority to lift its pending slice's saved budget. A plain
+                # restart never gets that authority.
+                existing["token_budget"] = budget
+                existing["max_outer"] = intent.max_outer
+                operation = existing.get("delivery_slice_operation")
+                if isinstance(operation, dict) and not operation.get("progress_applied"):
+                    operation["budget_extension_limit"] = budget * 0.95
+                state_store.write(existing)
             if should_resume_running or should_resume_blocked or pending_effects_only_resume:
                 persisted_target = existing.get("implementation_target")
                 if (

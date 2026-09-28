@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -140,6 +141,7 @@ class DeliveryDocumentationRunner:
             allowed_task_ids: set[str] | None = None, feedback: str = "", changed_files: list[str] | None = None,
             runnability_report: RunnabilityEvidenceRef | None = None, runnability_required: bool = False,
             containment_policy_file: str | None = None, token_budget: float | None = None,
+            budget_extension_limit: float | None = None,
             operation_id: str = "active", journal_required: bool = False, on_journal_ready=None, stop_requested=None,
             runnability_checkpoint=None) -> BuildResult:
         start, data, dispatches = time.monotonic(), None, 0
@@ -153,6 +155,12 @@ class DeliveryDocumentationRunner:
                                                                                 "dispatches": dispatches, "token_usage": usage,
                                                                                 "runnability_reviewed": bool(success and data and data["checkpoints"])})
         try:
+            if budget_extension_limit is not None and (
+                type(budget_extension_limit) not in (int, float)
+                or not math.isfinite(budget_extension_limit)
+                or budget_extension_limit <= 0
+            ):
+                raise DeliverySliceError("invalid delivery budget extension")
             if getattr(self._executor, "supports_read_only_review", False) is not True:
                 raise DeliverySliceError("unsupported_read_only_boundary")
             worktree = Path(worktree).resolve(strict=True)
@@ -225,7 +233,10 @@ class DeliveryDocumentationRunner:
             if provided_evidence != evidence:
                 raise DeliverySliceError("delivery_reconciliation_required: current documentation evidence changed")
             if data["budget_limit"] is not None:
-                token_budget = min(token_budget, data["budget_limit"]) if token_budget is not None else data["budget_limit"]
+                saved_limit = data["budget_limit"]
+                if token_budget is not None and budget_extension_limit is not None:
+                    saved_limit = max(saved_limit, budget_extension_limit)
+                token_budget = min(token_budget, saved_limit) if token_budget is not None else saved_limit
             if token_budget != data["budget_limit"]:
                 data["budget_limit"] = token_budget
                 journal.save(data)

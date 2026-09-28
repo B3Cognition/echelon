@@ -4581,6 +4581,9 @@ def delivery_continue(
     ctx: typer.Context,
     spec_id: str,
     mode: Optional[str] = typer.Option(None, "--mode"),
+    token_budget: Optional[int] = typer.Option(None, "--token-budget"),
+    max_outer: Optional[int] = typer.Option(None, "--max-outer"),
+    auto_merge: Optional[bool] = typer.Option(None, "--auto-merge/--no-auto-merge"),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""
     from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
@@ -4591,6 +4594,9 @@ def delivery_continue(
             spec_id=spec_id,
             extra_args=tuple(ctx.args),
             mode=mode,
+            token_budget=token_budget,
+            max_outer=max_outer,
+            auto_merge=auto_merge,
         ),
     )
 

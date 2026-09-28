@@ -2336,6 +2336,12 @@ class RalphController:
                         or type(operation.get("accounted_tokens")) is not int
                         or operation["accounted_tokens"] < 0):
                     raise DeliverySliceError("invalid pending delivery operation")
+                extension_limit = operation.get("budget_extension_limit")
+                if extension_limit is not None and (
+                    type(extension_limit) not in (int, float)
+                    or not 0 < extension_limit <= state.get("token_budget", 0) * 0.95
+                ):
+                    raise DeliverySliceError("invalid pending delivery budget extension")
                 repair_task_id = operation.get("repair_task_id")
                 prompt = operation["feedback"]
                 documentation = operation.get("kind", "task") == "documentation"
@@ -2428,6 +2434,7 @@ class RalphController:
                 containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
                 token_budget=(self._controlled_slice_budget + operation["accounted_tokens"]
                               if self._controlled_slice_budget is not None else None),
+                budget_extension_limit=operation.get("budget_extension_limit"),
                 operation_id=operation["id"], journal_required=resuming,
                 on_journal_ready=remember_operation,
             )

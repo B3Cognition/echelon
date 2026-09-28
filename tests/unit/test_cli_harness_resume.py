@@ -171,7 +171,7 @@ class TestCmdHarnessResume:
         rc = self._call(["001"], tmp_path)
         assert rc == 1
 
-    def test_unsupported_blocked_reason_exits_without_run_to_resume_guidance(
+    def test_budget_exhaustion_without_increase_exits_with_continue_guidance(
         self,
         tmp_path: Path,
         capsys,
@@ -184,12 +184,44 @@ class TestCmdHarnessResume:
         rc = self._call(["001"], tmp_path)
         assert rc == 1
         err = capsys.readouterr().err
-        assert "unsupported resume reason" in err
-        assert "echelon delivery resume 001" in err
-        assert "echelon delivery run 001 --reset" in err
+        assert "Token budget exhausted" in err
+        assert "--token-budget" in err
+        assert "echelon delivery run 001 --reset" not in err
         assert "echelon spec status" not in err
-        assert "delivery state" in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
+
+    def test_continue_budget_exhaustion_requires_explicit_sufficient_increase(
+        self, tmp_path: Path, capsys,
+    ) -> None:
+        # An implementation slice may be interrupted before the candidate
+        # exists in the source repo; runtime verification detects from that
+        # preserved candidate after the slice is accepted.
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "budget_exhausted",
+            "token_budget": 50, "tokens_used": 100, "max_outer": 1,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001", "token_budget=100", "max_outer=12"])
+            assert not mock_run.called
+            _run_delivery_continue(
+                tmp_path, ["001", "token_budget=1000", "max_outer=12", "mode=banzai", "auto_merge=false"],
+            )
+
+        message = mock_run.call_args.args[0]
+        assert "token_budget=1000" in message
+        assert "max 12 outer iterations" in message
+        assert "mode=banzai" in message
+        assert "no_auto_merge" in message
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "token budget" in capsys.readouterr().err.lower()
 
     def test_outer_cap_rejection_points_to_checkpoint_preserving_new_budget(
         self,
