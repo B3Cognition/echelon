@@ -25,6 +25,7 @@ from echelon.topology_model import (
     TopologyTraversalResult,
     TopologyTraversalStep,
     TopologyValidationError,
+    canonical_occurrence_groups_valid,
     normalize_source_path,
     validate_generation,
     validate_provider,
@@ -850,7 +851,7 @@ def _load_symbols(
     raw_symbols: list[object], *, provider: str, source_id: str
 ) -> tuple[TopologySymbol, ...]:
     symbols: list[TopologySymbol] = []
-    locators: set[tuple[str, str, str, str]] = set()
+    locators: set[tuple[str, str, str, str, int | None]] = set()
     keys: set[str] = set()
     for raw_symbol in raw_symbols:
         symbol = _require_object_value(raw_symbol, "provider symbol")
@@ -865,7 +866,12 @@ def _load_symbols(
             raise TopologyProviderError("provider symbol name must be a string")
         key = validate_symbol_key(_require_string(symbol, "symbol_key"))
         normalized_path = normalize_source_path(path)
-        locator = (normalized_path, qualified_name, kind, signature)
+        occurrence = symbol.get("locator_occurrence")
+        if occurrence is not None and (
+            not isinstance(occurrence, int) or isinstance(occurrence, bool) or occurrence < 1
+        ):
+            raise TopologyProviderError("provider locator occurrence must be a positive integer")
+        locator = (normalized_path, qualified_name, kind, signature, occurrence)
         if locator in locators:
             raise TopologyProviderError("duplicate canonical provider symbol locator")
         if key in keys:
@@ -881,11 +887,16 @@ def _load_symbols(
                 qualified_name=qualified_name,
                 kind=kind,
                 signature=signature,
+                locator_occurrence=occurrence,
                 name=name,
                 line_start=_optional_positive_int(symbol, "line_start"),
                 line_end=_optional_positive_int(symbol, "line_end"),
             )
         )
+    if provider == "codegraph" and not canonical_occurrence_groups_valid(
+        [_require_object_value(raw, "provider symbol") for raw in raw_symbols]
+    ):
+        raise TopologyProviderError("invalid canonical provider symbol occurrence positions")
     return tuple(sorted(symbols, key=lambda symbol: (symbol.path, symbol.qualified_name, symbol.kind, symbol.symbol_key)))
 
 

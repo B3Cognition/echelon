@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from harness.config import HarnessConfig
@@ -199,6 +200,227 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert (runtime / "workflow" / "definition.yaml").read_text(encoding="utf-8") == "workflow\n"
     assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert ".echelon/runtime/" in exclude.read_text(encoding="utf-8")
+
+
+def test_sync_runtime_extension_initializes_persistent_dependency_ignore(tmp_path):
+    """The initializer is idempotent for an empty greenfield target."""
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(worktree)
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# Echelon-managed generated-file rules", "node_modules/",
+    ]
+
+
+def test_sync_runtime_extension_preserves_existing_ignore_and_adds_python_rules(tmp_path):
+    """Detected stack rules extend rather than replace a target's policy."""
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    (worktree / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (worktree / ".gitignore").write_text("# own policy\ncustom/\n", encoding="utf-8")
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# own policy", "custom/", "# Echelon-managed generated-file rules",
+        "node_modules/", ".venv/", "__pycache__/", "*.py[cod]",
+    ]
+
+
+def test_sync_runtime_extension_uses_resolved_stack_rules_before_files_exist(tmp_path):
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._config.resolved_stacks = SimpleNamespace(
+        capabilities={"web_app.framework": SimpleNamespace(value="nextjs")}
+    )
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# Echelon-managed generated-file rules", "node_modules/", ".next/",
+    ]
+
+
+def test_runtime_resync_does_not_migrate_existing_product_ignore(tmp_path):
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-old" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(tmp_path / "git-exclude") + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert not (worktree / ".gitignore").exists()
+
+
+def test_product_ignore_initializer_preserves_existing_bytes(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".gitignore").write_bytes(b"# custom \xff\ncustom/\n")
+
+    _make_gitops(tmp_path)._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_bytes() == (
+        b"# custom \xff\ncustom/\n# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("generated_dir", "framework", "python_target"),
+    (("node_modules", None, False), (".venv", None, True),
+     (".next", "nextjs", False), ("DerivedData", "swiftui", False),
+     (".build", "swiftui", False)),
+)
+def test_commit_rejects_already_tracked_node_dependencies(
+    tmp_path, generated_dir, framework, python_target
+):
+    """A polluted branch needs explicit repair, never silent evidence omission."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    dependency = repo / generated_dir / "package" / "index.js"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("module.exports = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", generated_dir], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    gitops = _make_gitops(tmp_path)
+    if python_target:
+        (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    if framework:
+        gitops._config.resolved_stacks = SimpleNamespace(
+            capabilities={"web_app.framework": SimpleNamespace(value=framework)}
+        )
+    with pytest.raises(GitOpsError, match=f"tracked {generated_dir}"):
+        gitops.commit(str(repo), "checkpoint")
+
+
+def test_commit_does_not_block_unmanaged_build_directory(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    artifact = repo / ".build" / "intentional.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("source-controlled\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".build"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    gitops = _make_gitops(tmp_path)
+    gitops.commit(str(repo), "checkpoint")
+
+
+@pytest.mark.parametrize("bytecode_name", ("module.pyc", "module.pyo", "module.pyd"))
+def test_commit_rejects_tracked_python_bytecode(tmp_path, bytecode_name):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (repo / bytecode_name).write_bytes(b"generated")
+    subprocess.run(["git", "add", "pyproject.toml", bytecode_name], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    with pytest.raises(GitOpsError, match="tracked Python bytecode"):
+        _make_gitops(tmp_path).commit(str(repo), "checkpoint")
+
+
+def test_greenfield_checkpoint_commits_ignore_and_source_not_installed_dependencies(tmp_path):
+    """Real git staging honors the policy created before a Delivery slice."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(repo)
+    gitops.sync_runtime_extension(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "main.js").write_text("export const demo = true;\n", encoding="utf-8")
+    (repo / "dist").mkdir()
+    (repo / "dist" / "bundle.js").write_text("deliverable\n", encoding="utf-8")
+    dependency = repo / "node_modules" / "package" / "index.js"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("module.exports = 1\n", encoding="utf-8")
+
+    gitops.commit(str(repo), "checkpoint")
+
+    committed = subprocess.run(
+        ["git", "show", "--format=", "--name-only", "HEAD"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert committed == [".gitignore", "dist/bundle.js", "src/main.js"]
+    assert subprocess.run(
+        ["git", "ls-files", "node_modules"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout == ""
+
+
+def test_greenfield_checkpoint_refreshes_rules_for_late_python_stack(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(repo)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    dependency = repo / ".venv" / "lib" / "package.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("installed = True\n", encoding="utf-8")
+
+    gitops.commit(str(repo), "checkpoint")
+
+    assert ".venv/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    assert subprocess.run(
+        ["git", "ls-files", ".venv"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout == ""
+
+
+def test_commit_never_publishes_new_generated_dependencies_without_marker(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    dependency = repo / ".venv" / "lib" / "package.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("installed = True\n", encoding="utf-8")
+
+    with pytest.raises(GitOpsError, match="tracked .venv"):
+        _make_gitops(tmp_path).commit(str(repo), "checkpoint")
+
+    assert subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout.strip() == "base"
+    assert not (repo / ".gitignore").exists()
 
 
 def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
@@ -1159,6 +1381,35 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
     sync_runtime.assert_called_once_with(expected, prepare_codegraph=False)
 
 
+def test_create_worktree_initializes_reused_external_checkout_for_new_run(tmp_path):
+    mirror = tmp_path / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
+    existing = tmp_path / "external-checkout"
+    existing.mkdir()
+    gitops = _make_gitops(tmp_path)
+
+    def fake_run_git(args, cwd=None, **_kwargs):
+        if args[:2] == ["worktree", "add"]:
+            raise GitOpsError(
+                f"fatal: '001-feature' is already used by worktree at '{existing}'",
+                command="git worktree add",
+            )
+        return SimpleNamespace(stdout="")
+
+    with patch("harness.gitops._run_git", side_effect=fake_run_git), patch.object(
+        gitops, "sync_runtime_extension"
+    ):
+        result = gitops.create_worktree(
+            "001-feature", 0, base_branch="001-feature", build_id="build-new",
+            fresh_branch=True,
+        )
+
+    assert result == str(existing)
+    assert (existing / ".gitignore").read_text(encoding="utf-8") == (
+        "# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
+
+
 def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_path):
     """Legacy harness/* branches must not be blocked by stale prior worktrees."""
     mirror = tmp_path / "runs" / "mirror.git"
@@ -1255,6 +1506,9 @@ def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
 
     assert (worktree / "current.txt").read_text(encoding="utf-8") == "current main\n"
     assert not (worktree / "stale.txt").exists()
+    assert (worktree / ".gitignore").read_text(encoding="utf-8") == (
+        "# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
 
 
 def test_fresh_legacy_worktree_retains_explicit_checkpoint_baseline(tmp_path):

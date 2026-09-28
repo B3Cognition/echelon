@@ -78,6 +78,7 @@ PROSAIC_RUNTIME_EXCLUDES = (
     ".echelon/prosaic/",
     ".echelon/runtime/",
 )
+PRODUCT_GITIGNORE_MARKER = "# Echelon-managed generated-file rules"
 CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
 CODEGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
 PERLGRAPH_RUNTIME_REL = Path("scripts") / "node" / "perlgraph"
@@ -711,6 +712,7 @@ class GitOpsManager:
                             Path(existing_path),
                             prepare_codegraph=prepare_codegraph,
                         )
+                        self._initialize_product_gitignore(Path(existing_path))
                         return existing_path
                 else:
                     raise
@@ -845,6 +847,7 @@ class GitOpsManager:
             worktree_dir,
             prepare_codegraph=prepare_codegraph,
         )
+        self._initialize_product_gitignore(worktree_dir)
         return str(worktree_dir)
 
     def _is_harness_runs_worktree(self, worktree_path: str) -> bool:
@@ -998,12 +1001,57 @@ class GitOpsManager:
 
     @staticmethod
     def _append_unique_line(path: Path, line: str) -> None:
-        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-        if line in existing.splitlines():
+        existing = path.read_bytes() if path.exists() else b""
+        encoded = line.encode("utf-8")
+        if encoded in existing.splitlines():
             return
-        suffix = "" if not existing or existing.endswith("\n") else "\n"
+        suffix = b"" if not existing or existing.endswith(b"\n") else b"\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{existing}{suffix}{line}\n", encoding="utf-8")
+        path.write_bytes(existing + suffix + encoded + b"\n")
+
+    def _initialize_product_gitignore(self, worktree: Path) -> None:
+        """Persist generated-dependency exclusions in the product branch.
+
+        Delivery can start from an empty target with no selected stack. Node
+        dependencies therefore need a safe baseline before the implementer can
+        install them. Additional rules follow files already present in the
+        target; build output such as dist remains deliverable by default.
+        """
+        gitignore = worktree / ".gitignore"
+        if gitignore.is_symlink() or (gitignore.exists() and not gitignore.is_file()):
+            raise GitOpsError(f"Cannot initialize product .gitignore at {gitignore}")
+        self._append_unique_line(gitignore, PRODUCT_GITIGNORE_MARKER)
+        for rule in self._product_gitignore_rules(worktree):
+            self._append_unique_line(gitignore, rule)
+
+    @staticmethod
+    def _has_product_gitignore_marker(worktree: Path) -> bool:
+        gitignore = worktree / ".gitignore"
+        return (
+            gitignore.is_file()
+            and not gitignore.is_symlink()
+            and PRODUCT_GITIGNORE_MARKER.encode("utf-8") in gitignore.read_bytes().splitlines()
+        )
+
+    def _product_gitignore_rules(self, worktree: Path) -> tuple[str, ...]:
+        """Return the narrow generated-file policy for this target's stack."""
+        rules = ["node_modules/"]
+        resolved = getattr(self._config, "resolved_stacks", None)
+        capabilities = getattr(resolved, "capabilities", {}) or {}
+        framework = getattr(capabilities.get("web_app.framework"), "value", None)
+        service_framework = getattr(capabilities.get("service.framework"), "value", None)
+        service_runtime = getattr(capabilities.get("service.runtime"), "value", None)
+        if framework == "nextjs":
+            rules.append(".next/")
+        if framework == "swiftui":
+            rules.extend(("DerivedData/", ".build/"))
+        if (
+            service_framework == "fastapi"
+            or service_runtime == "uv-python"
+            or any((worktree / name).is_file() for name in ("pyproject.toml", "requirements.txt", "setup.py"))
+        ):
+            rules.extend((".venv/", "__pycache__/", "*.py[cod]"))
+        return tuple(rules)
 
     @staticmethod
     def _git_exclude_path(worktree: Path) -> Path:
@@ -1078,6 +1126,9 @@ class GitOpsManager:
         FR-CI-001
         """
         self._guard_default_branch_delivery_commit(worktree_path, message)
+        if self._has_product_gitignore_marker(Path(worktree_path)):
+            self._initialize_product_gitignore(Path(worktree_path))
+        self._guard_tracked_generated_dependencies(worktree_path)
 
         # Stage all changes except caller-owned generated output. Verification
         # traces must remain available locally without entering product commits.
@@ -1091,6 +1142,10 @@ class GitOpsManager:
             _run_git(["reset", "--", *exclusions], cwd=worktree_path, check=False)
         else:
             _run_git(["add", "-A"], cwd=worktree_path)
+        # A target without Echelon's marker is deliberately not migrated. If
+        # its existing ignore policy missed generated files, fail before the
+        # checkpoint instead of silently publishing newly staged dependencies.
+        self._guard_tracked_generated_dependencies(worktree_path)
         secret_scan = scan_git_staged(worktree_path)
         if not secret_scan.ok:
             raise GitOpsError(
@@ -1121,6 +1176,35 @@ class GitOpsManager:
         sha = result.stdout.strip()
         logger.info("Committed in %s: %s", worktree_path, sha[:12])
         return sha
+
+    def _guard_tracked_generated_dependencies(self, worktree_path: str) -> None:
+        tracked = _run_git(["ls-files", "-z", "--cached"], cwd=worktree_path).stdout
+        rules = self._product_gitignore_rules(Path(worktree_path))
+        generated_parts = {rule[:-1] for rule in rules if rule.endswith("/")}
+        python_bytecode = "*.py[cod]" in rules
+        example = next(
+            (
+                (
+                    path,
+                    next(
+                        (part for part in Path(path).parts if part in generated_parts),
+                        "Python bytecode",
+                    ),
+                )
+                for path in tracked.split("\0")
+                if generated_parts.intersection(Path(path).parts)
+                or (python_bytecode and Path(path).suffix in {".pyc", ".pyo", ".pyd"})
+            ),
+            None,
+        )
+        if example is not None:
+            path, generated_dir = example
+            raise GitOpsError(
+                f"Cannot commit with tracked {generated_dir} dependencies "
+                f"(example: {path}). Remove them explicitly from the target branch "
+                "or start a fresh greenfield run; .gitignore cannot untrack files.",
+                command="git ls-files",
+            )
 
     def _guard_default_branch_delivery_commit(
         self,

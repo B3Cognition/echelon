@@ -79,6 +79,41 @@ def _codegraph(
     }
 
 
+@pytest.mark.unit
+def test_codegraph_accepts_explicit_occurrences_for_same_native_locator(tmp_path: Path) -> None:
+    from echelon.topology_model import canonical_symbol_key
+    from echelon.topology_provider import load_provider_document
+    from harness.codegraph_evidence import _analysis_is_usable
+
+    symbols = []
+    for occurrence, line in ((1, 6), (2, 11)):
+        symbol = _symbol("tests/node-builtins.d.ts", "client", "constant", "")
+        symbol["locator_occurrence"] = occurrence
+        symbol["symbol_key"] = canonical_symbol_key(
+            "tests/node-builtins.d.ts", "client", "constant", "", occurrence
+        )
+        symbol["line_start"] = symbol["line_end"] = line
+        symbol["column_start"] = 8
+        symbol["column_end"] = 14
+        symbols.append(symbol)
+    document = _codegraph(symbols=symbols, relationships=[])
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(json.dumps(document), encoding="utf-8")
+
+    assert _analysis_is_usable(analysis)
+    loaded = load_provider_document(document, provider="codegraph", source_id="api")
+    assert len(loaded.symbols) == 2
+    assert {symbol.locator_occurrence for symbol in loaded.symbols} == {1, 2}
+
+    corrupt = _codegraph(symbols=[dict(symbol) for symbol in symbols], relationships=[])
+    corrupt["symbols"][1]["line_start"] = 6
+    corrupt["symbols"][1]["line_end"] = 6
+    analysis.write_text(json.dumps(corrupt), encoding="utf-8")
+    assert not _analysis_is_usable(analysis)
+    with pytest.raises(Exception, match="occurrence|position"):
+        load_provider_document(corrupt, provider="codegraph", source_id="api")
+
+
 def _perlgraph(
     *,
     symbols: list[dict[str, object]] | None = None,
