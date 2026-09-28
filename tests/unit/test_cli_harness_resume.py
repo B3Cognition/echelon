@@ -230,8 +230,14 @@ class TestCmdHarnessResume:
         sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked", "termination_reason": "build_blocked",
-            "blocked_phase": "implementation", "build_status": "blocked",
-            "build_reason": "delivery_slice_budget_exhausted",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_budget_exhausted",
+                }],
+            },
             "token_budget": 500, "tokens_used": 900,
             "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
         })

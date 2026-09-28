@@ -66,6 +66,27 @@ from kernel.fulfillment import latest_fulfillment_report, read_fulfillment_metad
 logger = logging.getLogger(__name__)
 
 
+def pending_slice_budget_exhausted(state: dict[str, Any]) -> bool:
+    """Identify a blocked pending slice from its durable failure receipt."""
+    operation = state.get("delivery_slice_operation")
+    verification = state.get("last_verify_result")
+    failures = verification.get("failures") if isinstance(verification, dict) else None
+    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
+    return (
+        state.get("termination_reason") == "build_blocked"
+        and state.get("blocked_phase") == "implementation"
+        and isinstance(operation, dict)
+        and bool(str(operation.get("id") or "").strip())
+        and operation.get("progress_applied") is not True
+        and isinstance(verification, dict)
+        and verification.get("passed") is False
+        and isinstance(failure, dict)
+        and failure.get("category") == "other"
+        and failure.get("id") == "build-blocked"
+        and failure.get("error") == "delivery_slice_budget_exhausted"
+    )
+
+
 def _split_env_list(raw: str | None) -> list[str]:
     """Parse a comma-separated orchestrator contract without empty entries."""
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
@@ -1303,14 +1324,7 @@ class DeliveryController:
                 should_resume_blocked
                 and (
                     existing.get("termination_reason") == "budget_exhausted"
-                    or (
-                        existing.get("termination_reason") == "build_blocked"
-                        and existing.get("blocked_phase") == "implementation"
-                        and existing.get("build_status") == "blocked"
-                        and existing.get("build_reason") == "delivery_slice_budget_exhausted"
-                        and isinstance(existing.get("delivery_slice_operation"), dict)
-                        and not existing["delivery_slice_operation"].get("progress_applied")
-                    )
+                    or pending_slice_budget_exhausted(existing)
                 )
                 and budget is not None
                 and isinstance(existing.get("token_budget"), int)

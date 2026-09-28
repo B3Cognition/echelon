@@ -163,8 +163,13 @@ class TestSingleStrategy:
             tokens_used=100,
             outer_iter=1,
             termination_reason=termination_reason,
-            build_status="blocked" if build_reason else None,
-            build_reason=build_reason,
+            last_verify_result={
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": build_reason,
+                }],
+            } if build_reason else None,
             delivery_slice_operation={
                 "id": "pending-op", "accounted_tokens": 100,
                 "progress_applied": False,
