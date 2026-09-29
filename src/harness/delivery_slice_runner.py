@@ -528,10 +528,11 @@ def _validate_reviewed_candidate_tests(worktree: Path, reviewed: list[str]) -> N
     candidate = ({raw.decode("utf-8", errors="surrogateescape")
                   for raw in result.stdout.split(b"\0") if raw}
                  if result.returncode == 0 else None)
+    # Extra reviewed files may use nonstandard test names; only audit paths
+    # count toward completeness, but every reported path must exist in-candidate.
     for relative in reviewed:
         path = worktree / relative
         if ((candidate is not None and relative not in candidate)
-                or not _looks_like_test_path(relative)
                 or path.is_symlink() or not path.resolve().is_relative_to(worktree)
                 or not path.is_file()):
             raise DeliverySliceError("delivery_review_unknown_test_path")

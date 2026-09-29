@@ -186,6 +186,26 @@ def test_review_context_recheck_rejects_unknown_reviewed_path(slice_project):
     assert _steps(executor) == ["implementer", "spec_guard"]
 
 
+def test_review_allows_existing_nonstandard_candidate_test_as_extra_evidence(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    (fixture[0] / "tests/toolchain-contract.mjs").write_text(
+        "import test from 'node:test'; test('contract', () => {});\n"
+    )
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload["reviewed_test_paths"] = [
+                "tests/integration/bootstrap.test.ts",
+                "tests/integration/main-entry.test.ts",
+                "tests/toolchain-contract.mjs",
+            ]
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+
+
 def test_review_context_recheck_reviewer_mutation_blocks(slice_project):
     fixture = _review_context_recheck_project(slice_project)
     reviews = 0
