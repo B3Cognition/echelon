@@ -183,6 +183,31 @@ def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
     assert not (preparation_context.spec_dir / "fulfillment-report.md").exists()
 
 
+@pytest.mark.parametrize("read_request", [
+    {"op": "delete", "root": "worktree", "path": "app.py"},
+    {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1},
+    {"op": "read_file", "root": "worktree", "path": "../app.py", "start_line": 1, "line_count": 2},
+    {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 201},
+])
+def test_digest_correction_requires_a_valid_read_request(preparation_context, read_request):
+    class BadReadExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                payload["assigned_ids_sha256"] += "e"
+                payload["request"] = read_request
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = BadReadExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == "fulfillment assignment binding mismatch"
+    assert executor.dispatch_count == 1
+
+
 def test_unread_mapper_citation_gets_one_grounding_correction_turn(preparation_context):
     class CorrectingUnreadCitationExecutor(SemanticExecutor):
         def run_inspection_turn(self, *args, **kwargs):

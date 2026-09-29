@@ -8,6 +8,7 @@ import re
 import unicodedata
 
 from harness.canonical_requirements import REQ_ID_RE
+from harness.inspection_io import validate_inspection_read_request
 from harness.judgment_prepass import FULFILLMENT_STATUSES
 
 
@@ -172,13 +173,14 @@ def is_correctable_assigned_digest_echo(raw: str, assignment: FulfillmentAssignm
     try:
         value = _parse_semantic_json(raw)
         identity = assignment.reply_identity()
+        if type(value) is not dict or value.get("action") != "read":
+            return False
+        validate_inspection_read_request(value.get("request"), ("worktree", "spec", "evidence"))
     except (ValueError, TypeError):
         return False
     return (
         type(value) is dict
         and set(value) == set(identity) | {"action", "request"}
-        and value.get("action") == "read"
-        and type(value.get("request")) is dict
         and all(value.get(key) == expected for key, expected in identity.items()
                 if key != "assigned_ids_sha256")
         and type(value.get("assigned_ids_sha256")) is str

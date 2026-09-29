@@ -1,4 +1,5 @@
 """Recover exact fulfillment work without resetting calls, usage or publication."""
+from copy import deepcopy
 import json
 from dataclasses import replace
 
@@ -162,6 +163,34 @@ def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
     assert result.exit_code == 0, result.reason
     assert executor.dispatch_count == 3
     assert executor.dispatches[1]["correction"]["reason"] == "assigned-ID digest echo mismatch"
+
+
+def test_recovery_accepts_full_read_limit_with_both_allowed_corrections(preparation_context):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    assert run(preparation_context, SemanticExecutor(inspect_source=True)).exit_code == 0
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        data = journal.load()
+        read_record, final_record = data["steps"]["mapper"]["records"]
+        bad_read = json.loads(read_record["raw_stdout"])
+        bad_read["assigned_ids_sha256"] += "e"
+        digest_correction = {
+            **deepcopy(read_record), "reply": None, "read": None,
+            "raw_stdout": json.dumps(bad_read),
+            "error": "fulfillment assigned-ID digest echo mismatch",
+        }
+        rejected_final = deepcopy(final_record)
+        rejected_final["final_validation"] = {
+            "status": "rejected", "reason": "verified evidence cites unread source",
+        }
+        data["steps"]["mapper"]["records"] = (
+            [deepcopy(read_record) for _ in range(32)]
+            + [digest_correction, rejected_final, deepcopy(final_record)]
+        )
+        journal.save()
+
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        assert len(journal.load()["steps"]["mapper"]["records"]) == 35
 
 
 def test_recovery_rejects_digest_correction_that_would_replace_grounding_feedback(

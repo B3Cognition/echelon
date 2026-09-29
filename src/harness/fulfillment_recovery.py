@@ -143,7 +143,7 @@ def _validate(data):
         if type(step["deadline"]) not in {int, float} or not math.isfinite(step["deadline"]):
             raise ValueError("invalid recovered deadline")
         records = step["records"]
-        if type(records) is not list or len(records) > 34:
+        if type(records) is not list or len(records) > 35:
             raise ValueError("invalid recovered turn count")
         terminal = False
         rejected_finals = 0
