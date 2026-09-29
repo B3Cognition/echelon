@@ -608,6 +608,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "lark" },
     { name = "mempalace" },
+    { name = "prosaic-runtime" },
     { name = "pypdf" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -633,6 +634,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "lark", specifier = ">=1.1" },
     { name = "mempalace", url = "https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz" },
+    { name = "prosaic-runtime", git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
@@ -1787,6 +1789,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/6a/1d966f367a14c703dde629d150d996c1b727d442f620300b21c9ec1a24d1/preshed-3.0.13-cp314-cp314t-win_amd64.whl", hash = "sha256:b03e21b0bf95eb56e23973f32cabb930e94f352228652f81c0955dbd6967d904", size = 146229, upload-time = "2026-03-23T08:57:17.457Z" },
     { url = "https://files.pythonhosted.org/packages/22/80/368139067603e590a000122355f9c8576c8ebed4fb0b8849feaa2698489d/preshed-3.0.13-cp314-cp314t-win_arm64.whl", hash = "sha256:b980f3ea9bb74b7f94464bc3d6eb3c9162b6b79b531febd14c6465c24344d2cc", size = 119339, upload-time = "2026-03-23T08:57:18.882Z" },
 ]
+
+[[package]]
+name = "prosaic-runtime"
+version = "0.1.0"
+source = { git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3#24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3" }
 
 [[package]]
 name = "protobuf"
