@@ -1787,7 +1787,7 @@ class RalphController:
                     inner_iterations=total_inner_iterations,
                     pr_url=pr_url,
                     tokens_used=tokens_used,
-                    final_verify=None,
+                    final_verify=final_verify,
                 )
 
             outcome = self._run_outer_iteration(

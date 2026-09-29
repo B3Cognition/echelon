@@ -686,6 +686,8 @@ def _print_delivery_summary(
     fv = result.final_verify
     if fv is not None:
         duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
+        if not fv.passed and fv.verification_evidence.get("passed") is True:
+            lines.append("candidate sandbox: ✓ passed")
         deferred = (
             reason == "checkpoint_outer_cap"
             and not fv.passed
@@ -703,7 +705,7 @@ def _print_delivery_summary(
             prefix = "deferred" if deferred else "✗"
             lines.append(f"        {prefix} [{failure.category.value}] {failure.error}")
     else:
-        lines.append("verify: skipped (no sandbox / project type undetected)")
+        lines.append("verify: not completed")
     if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
         lines.append(f"recommended action: {fulfillment_recommendation}")
     verified_ledger = _verified_ledger_line(info)

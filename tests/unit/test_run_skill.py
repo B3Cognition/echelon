@@ -1413,6 +1413,64 @@ class TestRunSkillAutoLand:
         captured = capsys.readouterr()
         assert "verified ledger: reused 70, rechecked 5, invalidated 1, unresolved 2" in captured.err
 
+    def test_delivery_summary_distinguishes_candidate_verify_from_fulfillment_failure(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        result = replace(
+            _make_checkpoint_result(),
+            termination_reason="budget_exhausted",
+            final_verify=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="verify-spec-failed",
+                        error="fulfillment token budget exhausted",
+                    )
+                ],
+                verification_evidence={"passed": True, "candidate_commit": "candidate-123"},
+            ),
+        )
+
+        _print_delivery_summary(
+            RunIntent(spec_id="001-demo", mode="semi"),
+            result,
+            {},
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
+        )
+
+        output = capsys.readouterr().err
+        assert "candidate sandbox: ✓ passed" in output
+        assert "verify: ✗ FAILED" in output
+        assert "fulfillment token budget exhausted" in output
+        assert "verify: skipped" not in output
+
+    def test_delivery_summary_does_not_invent_reason_when_verify_not_completed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        result = replace(_make_checkpoint_result(), termination_reason="budget_exhausted")
+
+        _print_delivery_summary(
+            RunIntent(spec_id="001-demo", mode="semi"),
+            result,
+            {},
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
+        )
+
+        output = capsys.readouterr().err
+        assert "verify: not completed" in output
+        assert "no sandbox / project type undetected" not in output
+
     def test_delivery_summary_renders_next_step_for_failed_outer_cap(
         self,
         capsys: pytest.CaptureFixture[str],

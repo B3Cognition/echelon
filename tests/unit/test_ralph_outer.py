@@ -3406,6 +3406,36 @@ class TestOuterLoopCap:
 class TestBudgetExhaustion:
     """Test budget exhaustion terminates loop."""
 
+    def test_budget_stop_retains_latest_candidate_verification(self, tmp_path: Path) -> None:
+        """A budget stop after a candidate gate must not erase its verdict."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        latest_verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "verify-spec-failed",
+                    "fulfillment token budget exhausted",
+                )
+            ],
+            verification_evidence={"passed": True, "candidate_commit": "candidate-123"},
+        )
+        outcome = ralph.OuterIterationOutcome(
+            decision=ralph.CandidateDecision.CONTINUE,
+            result=None,
+            outer_iter=1,
+            total_inner_iterations=0,
+            tokens_used=100,
+            pr_url=None,
+            final_verify=latest_verify,
+        )
+
+        with patch.object(controller, "_run_outer_iteration", return_value=outcome):
+            result = controller.run_loop(max_outer=2, max_inner=1, token_budget=100)
+
+        assert result.termination_reason == "budget_exhausted"
+        assert result.final_verify == latest_verify
+
     def test_budget_exhaustion(self, tmp_path: Path) -> None:
         """Token budget hit -> budget_exhausted."""
         controller, provider, gitops, state_store = _make_controller(
