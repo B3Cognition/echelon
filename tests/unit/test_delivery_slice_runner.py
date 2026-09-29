@@ -76,6 +76,191 @@ def _steps(executor):
     return [call[0]["step"] for call in executor.calls]
 
 
+def _review_context_recheck_project(slice_project):
+    project, spec, evidence = slice_project
+    tests = project / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "bootstrap.test.ts").write_text("// declared bootstrap test\n")
+    (tests / "main-entry.test.ts").write_text("// verifies startup entry\n")
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n"
+        "  - `app.py` - Implementation.\n"
+        "  - `tests/integration/bootstrap.test.ts` - Startup test.\n"
+        "  **Acceptance Criteria:**\n  - [ ] Return hello\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "."], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=project, check=True,
+    )
+    return project, spec, evidence
+
+
+def test_review_context_recheck_corrects_false_absence_without_repair(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["tests/integration/main-entry.test.ts absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard",
+                                "code_reviewer", "test_guardian"]
+    assert "// verifies startup entry" in executor.calls[2][2]
+    assert result.token_usage == 35
+    journal = json.loads(next(fixture[2].rglob("journal.json")).read_text())
+    assert journal["records"][1]["review_evidence"]["incomplete"] is True
+    assert journal["records"][2]["review_evidence"]["incomplete"] is False
+    assert {record["repair_attempt"] for record in journal["records"]} == {0}
+
+
+def test_review_context_recheck_complete_real_failure_still_repairs(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts",
+                                               "tests/integration/main-entry.test.ts"]
+            if reviews == 1:
+                payload["reviewed_test_paths"].pop()
+            if reviews <= 2:
+                payload.update(verdict="FAIL", findings=["app.py:1 genuine missing assertion"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard",
+                                "code_reviewer", "test_guardian", "implementer",
+                                "spec_guard", "code_reviewer", "test_guardian"]
+    assert "genuine missing assertion" in executor.calls[5][2]
+
+
+def test_review_context_recheck_second_incomplete_pass_blocks(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry coverage absent"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_review_context_unresolved:spec_guard"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard"]
+    journal = json.loads(next(fixture[2].rglob("journal.json")).read_text())
+    assert journal["records"][2]["result"]["verdict"] == "PASS"
+    assert journal["records"][2]["review_evidence"]["incomplete"] is True
+
+
+def test_review_context_recheck_rejects_unknown_reviewed_path(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["missing coverage"],
+                           reviewed_test_paths=["tests/integration/does-not-exist.test.ts"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_review_unknown_test_path"
+    assert _steps(executor) == ["implementer", "spec_guard"]
+
+
+def test_review_context_recheck_reviewer_mutation_blocks(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                (root / "app.py").write_text("reviewer wrote product code\n")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_reviewer_mutated_candidate"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard"]
+
+
+def test_review_context_recheck_budget_blocks_before_second_call(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["main-entry test absent"],
+                           reviewed_test_paths=["tests/integration/bootstrap.test.ts"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor, token_budget=14)
+    assert result.reason == "delivery_slice_budget_exhausted"
+    assert _steps(executor) == ["implementer", "spec_guard"]
+
+
+def test_review_context_recheck_large_test_uses_exact_paths(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    (fixture[0] / "tests/integration/main-entry.test.ts").write_text("x" * 128_001)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert '"omitted_test_sources": null' in executor.calls[2][2]
+    assert "tests/integration/main-entry.test.ts" in executor.calls[2][2]
+
+
+def test_review_context_recheck_test_guardian_uses_same_role(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "test_guardian":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer",
+                                "test_guardian", "test_guardian"]
+
+
 def test_only_three_sequential_approvals_accept_one_task(slice_project):
     executor = ScriptedExecutor()
     result = _run(slice_project, executor)
@@ -493,8 +678,7 @@ def test_reviewers_receive_new_candidate_tests_outside_declared_task_files(slice
     subprocess.run(["git", "add", "app.py"], cwd=project, check=True)
     subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
-         "commit", "-qm", "baseline"],
-        cwd=project, check=True,
+         "commit", "-qm", "baseline"], cwd=project, check=True,
     )
 
     def add_candidate_tests(assignment, payload, root):
@@ -629,6 +813,24 @@ def test_candidate_test_audit_overflow_blocks_instead_of_truncating(tmp_path):
 
     with pytest.raises(DeliverySliceError, match="audit"):
         _candidate_test_audit_set(tmp_path, tasks_markdown, "T-001", None, inventory)
+
+
+def test_candidate_test_audit_without_git_uses_bounded_full_scan(tmp_path):
+    from harness.delivery_slice import DeliverySliceError
+    from harness.delivery_slice_runner import _candidate_test_audit_set
+
+    tests = tmp_path / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "bootstrap.test.ts").write_text("// declared\n")
+    (tests / "main-entry.test.ts").write_text("// sibling\n")
+    tasks = "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n  **Files:**\n  - `tests/integration/bootstrap.test.ts` - Test.\n"
+    assert _candidate_test_audit_set(tmp_path, tasks, "T-001", None, None) == [
+        "tests/integration/bootstrap.test.ts", "tests/integration/main-entry.test.ts",
+    ]
+    for index in range(201):
+        (tests / f"extra-{index:03}.test.ts").write_text("// sibling\n")
+    with pytest.raises(DeliverySliceError, match="audit_overflow"):
+        _candidate_test_audit_set(tmp_path, tasks, "T-001", None, None)
 
 
 def test_polyrepo_slice_rejects_selected_task_from_another_target(slice_project):

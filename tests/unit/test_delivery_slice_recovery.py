@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor, _run, _steps
+from tests.unit.test_delivery_slice_runner import (slice_project, ScriptedExecutor, _run, _steps,
+                                                   _review_context_recheck_project)
 
 
 class ProcessLost(BaseException):
@@ -110,6 +111,63 @@ def test_review_evidence_recheck_requires_same_audit_on_second_receipt(slice_pro
     data["records"].append(repeat)
     with pytest.raises(Exception):
         _validate(data)
+
+
+@pytest.mark.parametrize("crash_after", [2, 3])
+def test_review_evidence_recheck_replays_without_duplicate_provider_call(
+    slice_project, monkeypatch, crash_after,
+):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    with monkeypatch.context() as patch:
+        _crash_after_receipt(patch, crash_after)
+        with pytest.raises(ProcessLost):
+            _run(fixture, ScriptedExecutor(review))
+    resumed = ScriptedExecutor(review)
+    result = _run(fixture, resumed)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(resumed) == (
+        ["spec_guard", "code_reviewer", "test_guardian"] if crash_after == 2
+        else ["code_reviewer", "test_guardian"]
+    )
+    assert result.token_usage == 35
+
+
+def test_review_evidence_recheck_unknown_intent_blocks_replay(slice_project, monkeypatch):
+    from harness.delivery_slice_journal import DeliverySliceJournal
+
+    fixture = _review_context_recheck_project(slice_project)
+    original = DeliverySliceJournal.save
+
+    def crash_on_recheck_intent(self, data):
+        original(self, data)
+        if len(data["records"]) == 3 and data["records"][-1]["result"] is None:
+            raise ProcessLost()
+
+    def first_review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["main-entry test absent"],
+                           reviewed_test_paths=["tests/integration/bootstrap.test.ts"])
+
+    with monkeypatch.context() as patch:
+        patch.setattr(DeliverySliceJournal, "save", crash_on_recheck_intent)
+        with pytest.raises(ProcessLost):
+            _run(fixture, ScriptedExecutor(first_review))
+    resumed = ScriptedExecutor()
+    result = _run(fixture, resumed)
+    assert "reconciliation_required" in result.reason
+    assert not resumed.calls
 
 
 def _crash_after_receipt(monkeypatch, count):
