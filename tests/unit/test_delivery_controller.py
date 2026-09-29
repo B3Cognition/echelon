@@ -197,6 +197,39 @@ class TestSingleStrategy:
         assert resumed_state["delivery_slice_operation"]["budget_extension_limit"] == 950
         assert kwargs["token_budget"] == 1000
 
+    def test_checkpoint_resume_persists_raised_budget_for_status(
+        self, tmp_path: Path,
+    ) -> None:
+        from echelon.delivery_service import _delivery_status_fields, _delivery_status_summary
+
+        coord = _make_controller(tmp_path)
+        store = StateStore(coord._state_dir, "spec-001")
+        store.initialize("original-run", "banzai", max_outer=1, token_budget=50)
+        store.transition("running")
+        state = store.read()
+        state.update(
+            tokens_used=100,
+            outer_iter=1,
+            termination_reason="checkpoint_outer_cap",
+        )
+        store.write(state)
+        store.transition("blocked", updates={"blocked_phase": "implementation"})
+
+        def stop_after_resume(self, **kwargs):
+            return ImplementationResult("blocked", "test_stop", 1, 0, None, 100, None)
+
+        with patch("harness.delivery_controller.RalphController.run_loop", stop_after_resume):
+            coord.run(RunIntent(
+                spec_id="spec-001", mode="banzai", resume=True,
+                token_budget=1000, max_outer=12, auto_merge=False,
+            ))
+
+        resumed_state = store.read()
+        summary = _delivery_status_summary(resumed_state, project_root=tmp_path)
+        assert resumed_state["run_id"] == "original-run"
+        assert ("tokens", "100 / 1,000 (10%)") in _delivery_status_fields(summary)
+        assert resumed_state["max_outer"] == 12
+
     def test_new_delivery_persists_authoritative_resolved_stack_snapshot(
         self, tmp_path: Path
     ) -> None:

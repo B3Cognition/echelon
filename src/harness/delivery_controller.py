@@ -1323,7 +1323,7 @@ class DeliveryController:
             if (
                 should_resume_blocked
                 and (
-                    existing.get("termination_reason") == "budget_exhausted"
+                    existing.get("termination_reason") in {"budget_exhausted", "checkpoint_outer_cap"}
                     or pending_slice_budget_exhausted(existing)
                 )
                 and budget is not None
