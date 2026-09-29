@@ -7,7 +7,7 @@ preset:
   description: "Templates for migrating applications to cloud-native architecture with 12-factor assessment"
   author: "Michal Bachorik"
   repository: "https://github.com/B3Cognition/echelon"
-  license: "MIT"
+  license: "Apache-2.0"
 
 requires:
   echelon_version: ">=3.9.0"
