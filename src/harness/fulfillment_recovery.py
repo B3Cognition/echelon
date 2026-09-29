@@ -13,9 +13,11 @@ import stat
 from harness.durable_json import write_json_atomic, write_text_atomic
 from harness.fulfillment_semantics import (
     CORRECTABLE_ASSIGNED_DIGEST_ECHO,
+    CORRECTABLE_DISPATCH_ECHO,
     FulfillmentAssignment,
     bind_semantic_reply,
     is_correctable_assigned_digest_echo,
+    is_correctable_dispatch_echo,
     validate_semantic_result,
 )
 from harness.inspection_io import _open_root_directory
@@ -147,7 +149,7 @@ def _validate(data):
             raise ValueError("invalid recovered turn count")
         terminal = False
         rejected_finals = 0
-        digest_corrections = 0
+        echo_corrections = 0
         for record in records:
             if terminal or type(record) is not dict or set(record) != {
                 "reply", "read", "raw_stdout", "token_usage", "error", "final_validation"
@@ -166,8 +168,8 @@ def _validate(data):
                 raise ValueError("invalid recovered fulfillment error")
             validation = record["final_validation"]
             _validate_final_validation(validation)
-            if record["error"] == CORRECTABLE_ASSIGNED_DIGEST_ECHO and record["reply"] is not None:
-                raise ValueError("invalid recovered digest correction")
+            if record["error"] in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO} and record["reply"] is not None:
+                raise ValueError("invalid recovered read echo correction")
             if record["reply"] is not None:
                 reply = validate_semantic_result(record["reply"], assignment)
                 if (
@@ -199,16 +201,20 @@ def _validate(data):
             else:
                 if validation is not None:
                     raise ValueError("validation without recovered reply")
-                if record["error"] == CORRECTABLE_ASSIGNED_DIGEST_ECHO:
-                    digest_corrections += 1
-                    if (digest_corrections > 1 or rejected_finals or record["read"] is not None or raw_stdout is None
-                            or not is_correctable_assigned_digest_echo(raw_stdout, assignment)):
-                        raise ValueError("invalid recovered digest correction")
+                if record["error"] in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO}:
+                    echo_corrections += 1
+                    correctable = (
+                        is_correctable_assigned_digest_echo(raw_stdout, assignment)
+                        if record["error"] == CORRECTABLE_ASSIGNED_DIGEST_ECHO
+                        else is_correctable_dispatch_echo(raw_stdout, assignment)
+                    ) if raw_stdout is not None else False
+                    if echo_corrections > 1 or rejected_finals or record["read"] is not None or not correctable:
+                        raise ValueError("invalid recovered read echo correction")
                 else:
                     terminal = True
             terminal = terminal or (
                 record["error"] is not None
-                and record["error"] != CORRECTABLE_ASSIGNED_DIGEST_ECHO
+                and record["error"] not in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO}
             )
 
 

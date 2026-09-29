@@ -33,6 +33,7 @@ _ENUMS = {
     "status": FULFILLMENT_STATUSES - {"DEFERRED_SCOPE"},
 }
 CORRECTABLE_ASSIGNED_DIGEST_ECHO = "fulfillment assigned-ID digest echo mismatch"
+CORRECTABLE_DISPATCH_ECHO = "fulfillment dispatch ID echo mismatch"
 
 
 @dataclass(frozen=True)
@@ -170,23 +171,45 @@ def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
 
 def is_correctable_assigned_digest_echo(raw: str, assignment: FulfillmentAssignment) -> bool:
     """Identify an unexecuted read with only its assigned-ID digest echo wrong."""
+    value = _correctable_read_echo(raw, assignment, "assigned_ids_sha256")
+    return value is not None and type(value["assigned_ids_sha256"]) is str and (
+        0 < len(value["assigned_ids_sha256"]) <= 128
+    )
+
+
+def is_correctable_dispatch_echo(raw: str, assignment: FulfillmentAssignment) -> bool:
+    """Identify a short contiguous omission from this read's dispatch ID."""
+    value = _correctable_read_echo(raw, assignment, "dispatch_id")
+    if value is None:
+        return False
+    actual = value["dispatch_id"]
+    expected = assignment.dispatch_id
+    if type(actual) is not str or re.fullmatch(r"[0-9a-f]{32}", expected) is None:
+        return False
+    omitted = len(expected) - len(actual)
+    return 1 <= omitted <= 3 and any(
+        expected[:index] + expected[index + omitted:] == actual
+        for index in range(len(expected) - omitted + 1)
+    )
+
+
+def _correctable_read_echo(raw: str, assignment: FulfillmentAssignment, wrong_field: str) -> dict | None:
     try:
         value = _parse_semantic_json(raw)
         identity = assignment.reply_identity()
         if type(value) is not dict or value.get("action") != "read":
-            return False
+            return None
         validate_inspection_read_request(value.get("request"), ("worktree", "spec", "evidence"))
     except (ValueError, TypeError):
-        return False
-    return (
-        type(value) is dict
-        and set(value) == set(identity) | {"action", "request"}
+        return None
+    if (
+        set(value) == set(identity) | {"action", "request"}
         and all(value.get(key) == expected for key, expected in identity.items()
-                if key != "assigned_ids_sha256")
-        and type(value.get("assigned_ids_sha256")) is str
-        and 0 < len(value["assigned_ids_sha256"]) <= 128
-        and value["assigned_ids_sha256"] != identity["assigned_ids_sha256"]
-    )
+                if key != wrong_field)
+        and value.get(wrong_field) != identity[wrong_field]
+    ):
+        return value
+    return None
 
 
 def bind_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:

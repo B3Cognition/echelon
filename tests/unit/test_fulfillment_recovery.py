@@ -125,8 +125,12 @@ def test_grounding_correction_survives_restart_without_repeating_rejected_final(
     )
 
 
-def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
-    preparation_context, monkeypatch,
+@pytest.mark.parametrize("wrong_field, marker, reason", [
+    ("assigned_ids_sha256", "fulfillment assigned-ID digest echo mismatch", "assigned-ID digest echo mismatch"),
+    ("dispatch_id", "fulfillment dispatch ID echo mismatch", "dispatch ID echo mismatch"),
+])
+def test_read_echo_correction_survives_restart_without_repeating_bad_read(
+    preparation_context, monkeypatch, wrong_field, marker, reason,
 ):
     from harness.fulfillment_recovery import FulfillmentRecovery
 
@@ -138,7 +142,11 @@ def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
             result = super().run_inspection_turn(*args, **kwargs)
             if len(self.dispatches) == 1:
                 payload = json.loads(result.stdout)
-                payload["assigned_ids_sha256"] += "e"
+                if wrong_field == "dispatch_id":
+                    dispatch_id = payload["dispatch_id"]
+                    payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                else:
+                    payload["assigned_ids_sha256"] += "e"
                 result.stdout = json.dumps(payload)
             return result
 
@@ -150,7 +158,7 @@ def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
         original(journal)
         records = journal.data["steps"].get("mapper", {}).get("records", [])
         if (not interrupted[0] and records
-                and records[-1]["error"] == "fulfillment assigned-ID digest echo mismatch"):
+                and records[-1]["error"] == marker):
             interrupted[0] = True
             raise Crash()
 
@@ -162,7 +170,7 @@ def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
     result = run(preparation_context, executor)
     assert result.exit_code == 0, result.reason
     assert executor.dispatch_count == 3
-    assert executor.dispatches[1]["correction"]["reason"] == "assigned-ID digest echo mismatch"
+    assert executor.dispatches[1]["correction"]["reason"] == reason
 
 
 def test_recovery_accepts_full_read_limit_with_both_allowed_corrections(preparation_context):
@@ -216,7 +224,7 @@ def test_recovery_rejects_digest_correction_that_would_replace_grounding_feedbac
             reply=None, read=None, raw_stdout=json.dumps(bad_read),
             final_validation=None, error="fulfillment assigned-ID digest echo mismatch",
         )
-        with pytest.raises(ValueError, match="invalid recovered digest correction"):
+        with pytest.raises(ValueError, match="invalid recovered read echo correction"):
             journal.save()
 
 

@@ -159,8 +159,37 @@ def test_mapper_read_digest_echo_typo_gets_one_bound_correction(preparation_cont
     assert records[2]["final_validation"] == {"status": "accepted"}
 
 
-@pytest.mark.parametrize("fault", ["repeat_digest", "wrong_dispatch"])
-def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
+def test_truncated_dispatch_echo_on_read_gets_one_bound_correction(preparation_context):
+    class DispatchEchoTypoExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = DispatchEchoTypoExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == "dispatch ID echo mismatch"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["reply"] is None and records[0]["read"] is None
+    assert records[0]["error"] == "fulfillment dispatch ID echo mismatch"
+    assert records[1]["reply"]["dispatch_id"] == journal["steps"]["mapper"]["assignment"]["dispatch_id"]
+
+
+@pytest.mark.parametrize("fault", [
+    "repeat_digest", "repeat_dispatch", "wrong_dispatch", "wrong_run", "digest_and_dispatch",
+    "unrelated_hex_dispatch", "unrelated_29_hex_dispatch",
+])
+def test_read_echo_correction_does_not_accept_repeated_or_other_identity_errors(
     preparation_context, fault,
 ):
     class BadBindingExecutor(SemanticExecutor):
@@ -169,6 +198,19 @@ def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
             payload = json.loads(result.stdout)
             if fault == "wrong_dispatch":
                 payload["dispatch_id"] = "stale-dispatch"
+            elif fault in {"unrelated_hex_dispatch", "unrelated_29_hex_dispatch"}:
+                dispatch_id = payload["dispatch_id"]
+                replacement = "f" if dispatch_id[0] != "f" else "e"
+                payload["dispatch_id"] = replacement * (29 if fault == "unrelated_29_hex_dispatch" else 32)
+            elif fault == "wrong_run":
+                payload["run_id"] = "stale-run"
+            elif fault == "digest_and_dispatch":
+                payload["assigned_ids_sha256"] += "e"
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+            elif fault == "repeat_dispatch":
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
             elif len(self.dispatches) <= 2:
                 payload["assigned_ids_sha256"] += "e"
             result.stdout = json.dumps(payload)
@@ -179,7 +221,7 @@ def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
 
     assert result.exit_code == 2
     assert result.reason == "fulfillment assignment binding mismatch"
-    assert executor.dispatch_count == (2 if fault == "repeat_digest" else 1)
+    assert executor.dispatch_count == (2 if fault in {"repeat_digest", "repeat_dispatch"} else 1)
     assert not (preparation_context.spec_dir / "fulfillment-report.md").exists()
 
 
@@ -189,13 +231,18 @@ def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
     {"op": "read_file", "root": "worktree", "path": "../app.py", "start_line": 1, "line_count": 2},
     {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 201},
 ])
-def test_digest_correction_requires_a_valid_read_request(preparation_context, read_request):
+@pytest.mark.parametrize("wrong_field", ["assigned_ids_sha256", "dispatch_id"])
+def test_read_echo_correction_requires_a_valid_read_request(preparation_context, read_request, wrong_field):
     class BadReadExecutor(SemanticExecutor):
         def run_inspection_turn(self, *args, **kwargs):
             result = super().run_inspection_turn(*args, **kwargs)
             if len(self.dispatches) == 1:
                 payload = json.loads(result.stdout)
-                payload["assigned_ids_sha256"] += "e"
+                if wrong_field == "dispatch_id":
+                    dispatch_id = payload["dispatch_id"]
+                    payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                else:
+                    payload["assigned_ids_sha256"] += "e"
                 payload["request"] = read_request
                 result.stdout = json.dumps(payload)
             return result
