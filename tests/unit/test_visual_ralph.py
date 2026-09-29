@@ -166,7 +166,7 @@ def test_passing_baseline_capture_without_images_returns_observation_and_destroy
     provider.destroy.assert_called_once_with(provider.create.return_value)
 
 
-def test_failing_baseline_capture_without_images_does_not_request_snapshot_repair(tmp_path: Path):
+def test_failing_baseline_capture_without_images_returns_test_diagnostics(tmp_path: Path):
     from harness.visual_ralph import VisualRalphController
 
     candidate = tmp_path / "candidate"
@@ -185,9 +185,11 @@ def test_failing_baseline_capture_without_images_does_not_request_snapshot_repai
     provider.exec.side_effect = execute
     controller = VisualRalphController(provider=provider, config=_make_config(), spec_id="001")
 
-    with pytest.raises(RuntimeError, match="browser capture failed"):
-        controller.capture_baselines(str(candidate))
+    capture = controller.capture_baselines(str(candidate))
 
+    assert capture.images == {}
+    assert capture.verification.passed is False
+    assert capture.diagnostic
     provider.destroy.assert_called_once_with(provider.create.return_value)
 
 

@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from harness.build_result import BuildResult
 from harness.browser_baseline_evidence import (
-    BrowserBaselineEvidenceRef, read_browser_baseline_receipt,
+    BrowserBaselineEvidenceRef, read_browser_baseline_observation,
     write_browser_baseline_receipt,
 )
 from harness.delivery_slice import (
@@ -319,20 +319,35 @@ class DeliverySliceRunner:
                         ref = BrowserBaselineEvidenceRef(
                             path=Path(reference["path"]), receipt_sha256=reference["receipt_sha256"],
                         )
-                        browser_paths = read_browser_baseline_receipt(
+                        observation = read_browser_baseline_observation(
                             ref, operation_id=operation_id, task_id=task_id,
                             candidate_fingerprint=product_evidence_fingerprint(worktree),
                             input_fingerprint=input_fingerprint,
                         )
+                        browser_paths = observation.images
                         if not browser_paths and browser_requests >= 2:
-                            raise DeliverySliceError("delivery_browser_capture_no_snapshots_after_retry")
+                            reason = (
+                                "delivery_browser_capture_failed_after_retry"
+                                if not observation.verification_passed else
+                                "delivery_browser_capture_no_snapshots_after_retry"
+                            )
+                            raise DeliverySliceError(reason)
                         needs_snapshot_recapture = not browser_paths
                         repair_context = json.dumps({
                             "original_feedback": context_before_browser,
                             "browser_baseline_proposal": {
                                 candidate_path: str(path) for candidate_path, path in browser_paths.items()
                             },
+                            "browser_verification": {
+                                "passed": observation.verification_passed,
+                                "diagnostic": observation.diagnostic,
+                            },
                             "instruction": (
+                                "Browser tests failed and produced no snapshot image. Fix the reported "
+                                "test failures within this task, add a real snapshot assertion or test, "
+                                "then request browser capture again. Do not fabricate a baseline or "
+                                "claim visual approval."
+                                if not browser_paths and not observation.verification_passed else
                                 "Browser tests passed but produced no snapshot image. Add a real "
                                 "snapshot assertion or test within this task, then request browser "
                                 "capture again. Do not fabricate a baseline or claim visual approval."

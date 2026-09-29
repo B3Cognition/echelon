@@ -38,7 +38,7 @@ def test_baseline_proposal_retains_path_and_bytes_without_claiming_pass(tmp_path
     assert receipt["task_id"] == "T-010"
 
 
-def test_passing_browser_run_without_snapshots_is_durable_but_not_an_image_proposal(tmp_path):
+def test_browser_run_without_snapshots_retains_pass_or_failure_observation(tmp_path):
     from harness.browser_baseline_evidence import (
         BrowserBaselineEvidenceError, read_browser_baseline_receipt, write_browser_baseline_receipt,
     )
@@ -57,12 +57,19 @@ def test_passing_browser_run_without_snapshots_is_durable_but_not_an_image_propo
     assert receipt["authority"] == "browser-baseline-proposal"
     assert receipt["verification_passed"] is True
     assert receipt["artifacts"] == []
-    with pytest.raises(BrowserBaselineEvidenceError):
-        write_browser_baseline_receipt(
-            **args, capture=BrowserBaselineCapture(
-                candidate_fingerprint="candidate-a", verification=VerifyResult(passed=False), images={},
-            ),
-        )
+    failed = write_browser_baseline_receipt(
+        **args, capture=BrowserBaselineCapture(
+            candidate_fingerprint="candidate-a", verification=VerifyResult(passed=False),
+            images={}, diagnostic="playwright_skipped::critical journey",
+        ),
+    )
+    assert read_browser_baseline_receipt(
+        failed, operation_id="operation-1", task_id="T-010",
+        candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
+    ) == {}
+    failure_receipt = json.loads(failed.path.read_text(encoding="utf-8"))
+    assert failure_receipt["verification_passed"] is False
+    assert failure_receipt["verification_diagnostic"] == "playwright_skipped::critical journey"
 
 
 @pytest.mark.parametrize("changed", ["task_id", "candidate_fingerprint", "input_fingerprint", "operation_id", "artifact"])

@@ -559,6 +559,47 @@ def test_no_image_browser_capture_returns_to_same_implementer_then_recaptures(sl
     assert len([record for record in journal["records"] if "browser_evidence" in record]) == 2
 
 
+def test_failed_no_image_browser_capture_returns_diagnostics_to_same_implementer(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementation_calls = 0
+
+    def implement(assignment, payload, root):
+        nonlocal implementation_calls
+        if assignment["step"] != "implementer":
+            return
+        implementation_calls += 1
+        if implementation_calls == 2:
+            assert "playwright_skipped::critical journey" in executor.calls[-1][2]
+            assert "Browser tests failed" in executor.calls[-1][2]
+            (root / "snapshot.spec.ts").write_text("expect(page).toHaveScreenshot()\n")
+        if implementation_calls <= 2:
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        root = Path(worktree)
+        has_fix = (root / "snapshot.spec.ts").exists()
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(root),
+            verification=VerifyResult(passed=has_fix),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"image"}
+            if has_fix else {},
+            diagnostic="" if has_fix else "playwright_skipped::critical journey",
+        )
+
+    executor = ScriptedExecutor(implement)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert implementation_calls == 3
+    assert _steps(executor) == ["implementer"] * 3 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
 def test_no_image_browser_capture_cannot_become_approval_without_recapture(slice_project):
     from harness.product_inventory import product_evidence_fingerprint
     from harness.verify_result import VerifyResult

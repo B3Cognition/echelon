@@ -24,6 +24,13 @@ class BrowserBaselineEvidenceRef:
     receipt_sha256: str
 
 
+@dataclass(frozen=True)
+class BrowserBaselineObservation:
+    images: dict[str, Path]
+    verification_passed: bool
+    diagnostic: str
+
+
 def write_browser_baseline_receipt(
     *, evidence_root: Path, operation_id: str, task_id: str,
     input_fingerprint: str, capture: BrowserBaselineCapture,
@@ -31,8 +38,10 @@ def write_browser_baseline_receipt(
     """Store one exclusive proposal under the delivery operation's evidence root."""
     if not all(isinstance(value, str) and value for value in (
         operation_id, task_id, input_fingerprint, capture.candidate_fingerprint,
-    )) or (not capture.images and capture.verification.passed is not True):
+    )) or (not capture.images and not capture.verification.passed and not capture.diagnostic):
         raise BrowserBaselineEvidenceError("invalid browser baseline identity or images")
+    if not isinstance(capture.diagnostic, str) or len(capture.diagnostic) > 4000:
+        raise BrowserBaselineEvidenceError("invalid browser verification diagnostic")
     evidence_root = Path(evidence_root)
     if evidence_root.is_symlink():
         raise BrowserBaselineEvidenceError("symlinked browser evidence root")
@@ -61,13 +70,14 @@ def write_browser_baseline_receipt(
             "size": len(content),
         })
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "authority": "browser-baseline-proposal",
         "operation_id": operation_id,
         "task_id": task_id,
         "candidate_fingerprint": capture.candidate_fingerprint,
         "input_fingerprint": input_fingerprint,
         "verification_passed": capture.verification.passed,
+        "verification_diagnostic": capture.diagnostic,
         "artifacts": artifacts,
     }
     digest = _digest(receipt)
@@ -81,6 +91,18 @@ def read_browser_baseline_receipt(
     ref: BrowserBaselineEvidenceRef, *, operation_id: str, task_id: str,
     candidate_fingerprint: str, input_fingerprint: str,
 ) -> dict[str, Path]:
+    """Read validated baseline images; a capture can also contain only diagnostics."""
+    return read_browser_baseline_observation(
+        ref, operation_id=operation_id, task_id=task_id,
+        candidate_fingerprint=candidate_fingerprint,
+        input_fingerprint=input_fingerprint,
+    ).images
+
+
+def read_browser_baseline_observation(
+    ref: BrowserBaselineEvidenceRef, *, operation_id: str, task_id: str,
+    candidate_fingerprint: str, input_fingerprint: str,
+) -> BrowserBaselineObservation:
     """Validate every binding and byte before exposing retained proposal paths."""
     try:
         path = ref.path
@@ -95,7 +117,7 @@ def read_browser_baseline_receipt(
         expected_keys = {
             "schema_version", "authority", "operation_id", "task_id",
             "candidate_fingerprint", "input_fingerprint", "verification_passed",
-            "artifacts", "receipt_sha256",
+            "verification_diagnostic", "artifacts", "receipt_sha256",
         }
         if not isinstance(payload, dict) or set(payload) != expected_keys:
             raise BrowserBaselineEvidenceError("invalid browser receipt schema")
@@ -105,17 +127,20 @@ def read_browser_baseline_receipt(
             and hmac.compare_digest(digest, ref.receipt_sha256)
         ):
             raise BrowserBaselineEvidenceError("browser receipt digest mismatch")
-        if (payload["schema_version"] != 1
+        if (payload["schema_version"] != 2
                 or payload["authority"] != "browser-baseline-proposal"
                 or payload["operation_id"] != operation_id
                 or payload["task_id"] != task_id
                 or payload["candidate_fingerprint"] != candidate_fingerprint
                 or payload["input_fingerprint"] != input_fingerprint
-                or type(payload["verification_passed"]) is not bool):
+                or type(payload["verification_passed"]) is not bool
+                or not isinstance(payload["verification_diagnostic"], str)
+                or len(payload["verification_diagnostic"]) > 4000):
             raise BrowserBaselineEvidenceError("browser receipt binding mismatch")
         artifacts = payload["artifacts"]
         if (not isinstance(artifacts, list) or len(artifacts) > 32
-                or (not artifacts and not payload["verification_passed"])):
+                or (not artifacts and not payload["verification_passed"]
+                    and not payload["verification_diagnostic"])):
             raise BrowserBaselineEvidenceError("invalid browser artifact inventory")
         artifact_dir = root / "artifacts"
         if artifact_dir.is_symlink() or not artifact_dir.is_dir():
@@ -142,7 +167,11 @@ def read_browser_baseline_receipt(
             if candidate_path in retained:
                 raise BrowserBaselineEvidenceError("duplicate browser baseline path")
             retained[candidate_path] = retained_path
-        return retained
+        return BrowserBaselineObservation(
+            images=retained,
+            verification_passed=payload["verification_passed"],
+            diagnostic=payload["verification_diagnostic"],
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         if isinstance(exc, BrowserBaselineEvidenceError):
             raise

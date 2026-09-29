@@ -37,6 +37,7 @@ class BrowserBaselineCapture:
     candidate_fingerprint: str
     verification: VerifyResult
     images: Dict[str, bytes]
+    diagnostic: str = ""
 
 
 class VisualRalphController:
@@ -110,11 +111,18 @@ class VisualRalphController:
                 if len(content) > 10_000_000:
                     raise RuntimeError("browser baseline image exceeded size limit")
                 images[relative.as_posix()] = content
-            if not images and not verification.passed:
-                raise RuntimeError("browser capture failed and produced no baseline images")
             if fingerprint != product_evidence_fingerprint(Path(worktree_path)):
                 raise RuntimeError("candidate changed during browser baseline capture")
-            return BrowserBaselineCapture(fingerprint, verification, images)
+            diagnostic = ""
+            if not verification.passed:
+                failures = (
+                    f"{failure.id}: {failure.error}" for failure in verification.failures[:8]
+                )
+                diagnostic = redact_verification_text(
+                    "; ".join(failures) or "Playwright verification failed",
+                    self._runtime_env,
+                )[:4000]
+            return BrowserBaselineCapture(fingerprint, verification, images, diagnostic)
         finally:
             try:
                 self._stop_app_runtime(handle)
