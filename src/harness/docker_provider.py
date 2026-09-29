@@ -354,6 +354,10 @@ class DockerWorktreeProvider(SandboxProvider):
                 "--label", f"echelon-harness.session_id={session_id}",
                 "--label", "echelon-harness.type=sandbox",
             ]
+            if spec.image.startswith("mcr.microsoft.com/playwright:v"):
+                # The official arm64 variant can lack its pinned browser and
+                # ship an older Node runtime. Use the browser-populated image.
+                docker_args.extend(["--platform", "linux/amd64"])
 
             if candidate_volume is not None:
                 docker_args.extend([

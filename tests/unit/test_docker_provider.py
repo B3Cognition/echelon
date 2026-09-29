@@ -70,6 +70,33 @@ def test_isolated_candidate_is_copied_from_read_only_mount(tmp_path) -> None:
 
 
 @pytest.mark.unit
+def test_official_playwright_image_uses_browser_populated_amd64_variant(tmp_path) -> None:
+    """The arm64 image may lack the pinned browser and current Node runtime."""
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        docker.return_value = MagicMock(stdout="sandbox-id\n")
+        provider.create(spec)
+
+    sandbox_command = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "-d"] and spec.image in call.args[0]
+    )
+    assert sandbox_command[sandbox_command.index("--platform") + 1] == "linux/amd64"
+
+
+@pytest.mark.unit
 def test_failed_isolated_copy_releases_candidate_volume(tmp_path) -> None:
     squid_conf = tmp_path / "squid.conf"
     squid_conf.write_text("test", encoding="utf-8")
