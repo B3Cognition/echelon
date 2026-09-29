@@ -21,7 +21,7 @@ from harness.delivery_slice import (
     bind_delivery_result, select_delivery_task,
 )
 from harness.durable_json import write_json_atomic
-from harness.delivery_slice_journal import DeliverySliceJournal
+from harness.delivery_slice_journal import DeliverySliceJournal, MAX_GATE_ROUNDS
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
 from harness.delivery_containment import containment_policy_env
 from harness.product_inventory import product_evidence_fingerprint
@@ -221,7 +221,7 @@ class DeliverySliceRunner:
             cursor = 0
             browser_requests = 0
             needs_snapshot_recapture = False
-            for repair in range(3):  # initial implementation, then two repairs
+            for repair in range(MAX_GATE_ROUNDS):
                 rejected = False
                 review_failures: list[dict[str, object]] = []
                 for step, artifact in roles.items():
@@ -347,7 +347,9 @@ class DeliverySliceRunner:
                     return outcome("delivery_gates_passed", task_id)
                 if review_failures:
                     repair_context = _repair_context(feedback, review_failures)
-            return outcome("delivery_gate_repair_limit: required review still failed after two repairs")
+            return outcome(
+                f"delivery_gate_repair_limit: required review still failed after {MAX_GATE_ROUNDS - 1} repairs"
+            )
         except (ValueError, OSError, RuntimeError, TypeError, AttributeError, KeyError) as exc:
             return outcome(str(exc))
         finally:

@@ -882,17 +882,61 @@ def test_host_binds_fingerprints_and_preserves_the_review_decision(slice_project
     assert review["result"]["findings"] == [finding]
 
 
-def test_two_failed_repairs_block_without_degraded_progress(slice_project):
+def test_three_failed_repairs_block_without_degraded_progress(slice_project):
     def script(assignment, payload, root):
         if assignment["step"] == "spec_guard":
             payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain * 3
+    assert _steps(executor) == chain * 4
     assert result.status == "blocked" and not result.task_ids
     assert "repair_limit" in result.reason
-    assert result.token_usage == 84
+    assert result.token_usage == 112
+
+
+def test_third_repair_can_accept_after_three_rejected_review_rounds(slice_project):
+    rejected_rounds = 0
+
+    def script(assignment, payload, root):
+        nonlocal rejected_rounds
+        if assignment["step"] == "spec_guard" and rejected_rounds < 3:
+            rejected_rounds += 1
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    executor = ScriptedExecutor(script)
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert rejected_rounds == 3
+    assert _steps(executor) == chain * 4
+    assert result.token_usage == 112
+
+
+def test_exhausted_repair_journal_resumes_with_only_new_round_dispatches(slice_project):
+    def reject(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    first_executor = ScriptedExecutor(reject)
+    first = _run(
+        slice_project, first_executor,
+        stop_requested=lambda: len(first_executor.calls) >= 12,
+    )
+    assert first.status == "blocked" and not first.task_ids
+    assert len(first_executor.calls) == 12
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert resumed.token_usage == 112
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len(journal["records"]) == 16
 
 
 @pytest.mark.parametrize("fault", ["degraded", "skip", "stale", "malformed", "exit", "timeout",

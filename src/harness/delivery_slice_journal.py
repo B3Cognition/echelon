@@ -13,6 +13,9 @@ from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, PASSI
 from harness.durable_json import write_json_atomic
 
 
+MAX_GATE_ROUNDS = 4  # Initial implementation plus three review-guided repairs.
+
+
 class DeliverySliceJournal:
     def __init__(self, root: Path, operation_id: str, *, validator=None):
         if not isinstance(operation_id, str) or not operation_id:
@@ -74,10 +77,10 @@ def _validate(data):
     budget = data["budget_limit"]
     if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget)):
         raise DeliverySliceError("invalid delivery journal budget")
-    records = data["records"]
-    if not isinstance(records, list) or len(records) > 14:
-        raise DeliverySliceError("invalid delivery journal receipts")
     steps = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    records = data["records"]
+    if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * len(steps) + 2:
+        raise DeliverySliceError("invalid delivery journal receipts")
     step_index, repair = 0, 0
     candidate = data["candidate_fingerprint"]
     seen = set()
@@ -85,7 +88,7 @@ def _validate(data):
     review_rejected = False
     browser_requests = 0
     for index, record in enumerate(records):
-        if terminal or repair > 2 or step_index >= 4:
+        if terminal or repair >= MAX_GATE_ROUNDS or step_index >= len(steps):
             raise DeliverySliceError("delivery receipt after terminal result")
         base_fields = {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}
         if not isinstance(record, dict) or set(record) not in (base_fields, base_fields | {"browser_evidence"}):
