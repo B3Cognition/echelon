@@ -29,6 +29,10 @@ from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
 
 logger = logging.getLogger(__name__)
 
+MAX_BROWSER_BASELINE_IMAGES = 64
+MAX_BROWSER_BASELINE_IMAGE_BYTES = 10_000_000
+MAX_BROWSER_BASELINE_TOTAL_BYTES = 64_000_000
+
 
 @dataclass(frozen=True)
 class BrowserBaselineCapture:
@@ -97,6 +101,7 @@ class VisualRalphController:
             if listing.exit_code != 0:
                 raise RuntimeError("browser baseline paths could not be listed")
             images: Dict[str, bytes] = {}
+            total_image_bytes = 0
             for raw_path in listing.stdout.split("\0"):
                 if not raw_path:
                     continue
@@ -105,11 +110,14 @@ class VisualRalphController:
                         or not any(part.endswith("-snapshots") for part in relative.parts[:-1])
                         or relative.suffix.lower() not in {".png", ".jpg", ".jpeg"}):
                     raise RuntimeError("invalid browser baseline path")
-                if len(images) >= 32:
+                if len(images) >= MAX_BROWSER_BASELINE_IMAGES:
                     raise RuntimeError("browser baseline capture exceeded image limit")
                 content = self._provider.read_file(handle, f"/workspace/{relative}")
-                if len(content) > 10_000_000:
+                if len(content) > MAX_BROWSER_BASELINE_IMAGE_BYTES:
                     raise RuntimeError("browser baseline image exceeded size limit")
+                total_image_bytes += len(content)
+                if total_image_bytes > MAX_BROWSER_BASELINE_TOTAL_BYTES:
+                    raise RuntimeError("browser baseline capture exceeded total size limit")
                 images[relative.as_posix()] = content
             if fingerprint != product_evidence_fingerprint(Path(worktree_path)):
                 raise RuntimeError("candidate changed during browser baseline capture")

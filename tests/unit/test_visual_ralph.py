@@ -137,6 +137,67 @@ def test_baseline_capture_uses_isolated_browser_and_returns_snapshot_bytes(tmp_p
     provider.destroy.assert_called_once_with(provider.create.return_value)
 
 
+def test_baseline_capture_accepts_full_thirty_three_checkpoint_suite(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-many")
+    paths = [f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i:02d}.png" for i in range(33)]
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="".join(f"./{path}\0" for path in paths))
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"image"
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert list(capture.images) == paths
+    assert capture.verification.passed
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_baseline_capture_rejects_aggregate_image_bytes(tmp_path: Path, monkeypatch):
+    import harness.visual_ralph as visual_ralph
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-overweight")
+    paths = [f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i}.png" for i in range(3)]
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="".join(f"./{path}\0" for path in paths))
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"1234"
+    monkeypatch.setattr(visual_ralph, "MAX_BROWSER_BASELINE_TOTAL_BYTES", 10, raising=False)
+    controller = visual_ralph.VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    with pytest.raises(RuntimeError, match="total size limit"):
+        controller.capture_baselines(str(candidate))
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
 def test_passing_baseline_capture_without_images_returns_observation_and_destroys_sandbox(tmp_path: Path):
     from harness.visual_ralph import VisualRalphController
 

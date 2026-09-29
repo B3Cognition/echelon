@@ -11,7 +11,10 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from harness.durable_json import write_json_atomic
-from harness.visual_ralph import BrowserBaselineCapture
+from harness.visual_ralph import (
+    BrowserBaselineCapture, MAX_BROWSER_BASELINE_IMAGE_BYTES,
+    MAX_BROWSER_BASELINE_IMAGES, MAX_BROWSER_BASELINE_TOTAL_BYTES,
+)
 
 
 class BrowserBaselineEvidenceError(ValueError):
@@ -42,6 +45,11 @@ def write_browser_baseline_receipt(
         raise BrowserBaselineEvidenceError("invalid browser baseline identity or images")
     if not isinstance(capture.diagnostic, str) or len(capture.diagnostic) > 4000:
         raise BrowserBaselineEvidenceError("invalid browser verification diagnostic")
+    if (len(capture.images) > MAX_BROWSER_BASELINE_IMAGES
+            or any(not isinstance(content, bytes) or len(content) > MAX_BROWSER_BASELINE_IMAGE_BYTES
+                   for content in capture.images.values())
+            or sum(len(content) for content in capture.images.values()) > MAX_BROWSER_BASELINE_TOTAL_BYTES):
+        raise BrowserBaselineEvidenceError("invalid browser baseline image inventory")
     evidence_root = Path(evidence_root)
     if evidence_root.is_symlink():
         raise BrowserBaselineEvidenceError("symlinked browser evidence root")
@@ -59,7 +67,7 @@ def write_browser_baseline_receipt(
     artifacts: list[dict[str, object]] = []
     for index, (candidate_path, content) in enumerate(sorted(capture.images.items()), start=1):
         relative = _candidate_path(candidate_path)
-        if index > 32 or not isinstance(content, bytes) or len(content) > 10_000_000:
+        if index > MAX_BROWSER_BASELINE_IMAGES:
             raise BrowserBaselineEvidenceError("invalid browser baseline image")
         artifact_path = Path("artifacts") / f"{index:04d}{relative.suffix.lower()}"
         _write_bytes_exclusive(root / artifact_path, content)
@@ -138,7 +146,7 @@ def read_browser_baseline_observation(
                 or len(payload["verification_diagnostic"]) > 4000):
             raise BrowserBaselineEvidenceError("browser receipt binding mismatch")
         artifacts = payload["artifacts"]
-        if (not isinstance(artifacts, list) or len(artifacts) > 32
+        if (not isinstance(artifacts, list) or len(artifacts) > MAX_BROWSER_BASELINE_IMAGES
                 or (not artifacts and not payload["verification_passed"]
                     and not payload["verification_diagnostic"])):
             raise BrowserBaselineEvidenceError("invalid browser artifact inventory")
@@ -146,6 +154,7 @@ def read_browser_baseline_observation(
         if artifact_dir.is_symlink() or not artifact_dir.is_dir():
             raise BrowserBaselineEvidenceError("browser artifact directory unavailable")
         retained: dict[str, Path] = {}
+        total_image_bytes = 0
         for artifact in artifacts:
             if not isinstance(artifact, dict) or set(artifact) != {
                 "candidate_path", "path", "sha256", "size",
@@ -160,7 +169,10 @@ def read_browser_baseline_observation(
             if retained_path.is_symlink() or not retained_path.is_file():
                 raise BrowserBaselineEvidenceError("browser artifact unavailable")
             content = retained_path.read_bytes()
+            total_image_bytes += len(content)
             if (type(artifact["size"]) is not int or len(content) != artifact["size"]
+                    or len(content) > MAX_BROWSER_BASELINE_IMAGE_BYTES
+                    or total_image_bytes > MAX_BROWSER_BASELINE_TOTAL_BYTES
                     or not isinstance(artifact["sha256"], str)
                     or not hmac.compare_digest(hashlib.sha256(content).hexdigest(), artifact["sha256"])):
                 raise BrowserBaselineEvidenceError("browser artifact digest mismatch")

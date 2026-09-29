@@ -38,6 +38,53 @@ def test_baseline_proposal_retains_path_and_bytes_without_claiming_pass(tmp_path
     assert receipt["task_id"] == "T-010"
 
 
+def test_baseline_proposal_round_trips_thirty_three_checkpoint_images(tmp_path):
+    from harness.browser_baseline_evidence import (
+        read_browser_baseline_receipt, write_browser_baseline_receipt,
+    )
+
+    paths = [f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i:02d}.png" for i in range(33)]
+    capture = BrowserBaselineCapture(
+        candidate_fingerprint="candidate-a", verification=VerifyResult(passed=True),
+        images={path: f"image-{i}".encode() for i, path in enumerate(paths)},
+    )
+    ref = write_browser_baseline_receipt(
+        evidence_root=tmp_path / "evidence", operation_id="operation-1",
+        task_id="T-010", input_fingerprint="inputs-a", capture=capture,
+    )
+
+    retained = read_browser_baseline_receipt(
+        ref, operation_id="operation-1", task_id="T-010",
+        candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
+    )
+    assert list(retained) == paths
+    assert retained[paths[-1]].read_bytes() == b"image-32"
+
+
+def test_baseline_proposal_rejects_aggregate_image_bytes_on_write_and_read(tmp_path, monkeypatch):
+    import harness.browser_baseline_evidence as evidence
+
+    capture = BrowserBaselineCapture(
+        candidate_fingerprint="candidate-a", verification=VerifyResult(passed=True),
+        images={
+            f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i}.png": b"1234"
+            for i in range(3)
+        },
+    )
+    args = dict(evidence_root=tmp_path / "evidence", operation_id="operation-1",
+                task_id="T-010", input_fingerprint="inputs-a")
+    ref = evidence.write_browser_baseline_receipt(**args, capture=capture)
+    monkeypatch.setattr(evidence, "MAX_BROWSER_BASELINE_TOTAL_BYTES", 10, raising=False)
+
+    with pytest.raises(evidence.BrowserBaselineEvidenceError, match="image"):
+        evidence.write_browser_baseline_receipt(**args, capture=capture)
+    with pytest.raises(evidence.BrowserBaselineEvidenceError, match="artifact"):
+        evidence.read_browser_baseline_receipt(
+            ref, operation_id="operation-1", task_id="T-010",
+            candidate_fingerprint="candidate-a", input_fingerprint="inputs-a",
+        )
+
+
 def test_browser_run_without_snapshots_retains_pass_or_failure_observation(tmp_path):
     from harness.browser_baseline_evidence import (
         BrowserBaselineEvidenceError, read_browser_baseline_receipt, write_browser_baseline_receipt,
