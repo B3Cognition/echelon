@@ -23,7 +23,8 @@ from harness.fulfillment_preparation import (
 from harness.fulfillment_recovery import FulfillmentRecovery
 from harness.fulfillment_preparation_steps import load_preparation_observation
 from harness.fulfillment_semantics import (
-    FulfillmentAssignment, bind_semantic_reply, render_fallback_report, render_implementation_map,
+    CORRECTABLE_ASSIGNED_DIGEST_ECHO, FulfillmentAssignment, bind_semantic_reply,
+    is_correctable_assigned_digest_echo, render_fallback_report, render_implementation_map,
 )
 from harness.inspection_io import BoundedReadChannel, InspectionReadBoundsError
 from harness.judgment_prepass import assemble_fulfillment_report, write_judgment_prepass
@@ -99,6 +100,18 @@ def _grounding_correction(reason: str, rejected_final: dict) -> dict:
             "Read every cited source range before citing it, or remove the unsupported citation."
         ),
         "rejected_final": _json_copy(rejected_final),
+    }
+
+
+def _digest_echo_correction() -> dict:
+    return {
+        "attempt": 1,
+        "max_attempts": 1,
+        "reason": "assigned-ID digest echo mismatch",
+        "required_action": (
+            "The previous read was not executed. Copy every reply_contract.binding field "
+            "exactly, especially assigned_ids_sha256, then send one new read or final reply."
+        ),
     }
 
 
@@ -439,10 +452,17 @@ class ControlledFulfillment:
         cursor = 0
         correction = None
         correction_attempts = 0
+        digest_corrections = 0
+        digest_correction_active = False
         while True:
             if cursor < len(stored["records"]):
                 record = stored["records"][cursor]
                 cursor += 1
+                if record["error"] == CORRECTABLE_ASSIGNED_DIGEST_ECHO:
+                    digest_corrections += 1
+                    correction = _digest_echo_correction()
+                    digest_correction_active = True
+                    continue
                 if record["error"]:
                     raise ValueError(record["error"])
                 if record["reply"] is None:
@@ -479,6 +499,9 @@ class ControlledFulfillment:
                     raise ValueError("fulfillment reconciliation required: read completion unknown")
                 reads.append(record["read"])
                 _verify_reads(channel, reads)
+                if digest_correction_active:
+                    correction = None
+                    digest_correction_active = False
                 continue
             _check_budget(usage, budget)
             if time.time() >= deadline:
@@ -549,7 +572,18 @@ class ControlledFulfillment:
                 if _inputs(context) != binding:
                     raise ValueError("fulfillment inputs changed during inspection")
                 _verify_reads(channel, reads)
-                accepted = bind_semantic_reply(result.stdout, assignment)
+                try:
+                    accepted = bind_semantic_reply(result.stdout, assignment)
+                except ValueError:
+                    if (correction is None and digest_corrections == 0
+                            and is_correctable_assigned_digest_echo(result.stdout, assignment)):
+                        record["error"] = CORRECTABLE_ASSIGNED_DIGEST_ECHO
+                        digest_corrections += 1
+                        correction = _digest_echo_correction()
+                        digest_correction_active = True
+                        recovery.save()
+                        continue
+                    raise
                 record["reply"] = _json_copy(accepted)
                 if accepted["action"] == "blocked":
                     raise ValueError(f"fulfillment {step} blocked: {accepted['reason']}")
@@ -562,6 +596,9 @@ class ControlledFulfillment:
                         "response": _service_read(channel, request),
                     }
                     reads.append(record["read"])
+                    if digest_correction_active:
+                        correction = None
+                        digest_correction_active = False
                 if accepted["action"] == "final":
                     recovery.save()
                     try:

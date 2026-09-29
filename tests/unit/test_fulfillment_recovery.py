@@ -124,6 +124,73 @@ def test_grounding_correction_survives_restart_without_repeating_rejected_final(
     )
 
 
+def test_digest_echo_correction_survives_restart_without_repeating_bad_read(
+    preparation_context, monkeypatch,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    class TypoOnFirstRead(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                payload["assigned_ids_sha256"] += "e"
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = TypoOnFirstRead(inspect_source=True)
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_after_bad_read(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (not interrupted[0] and records
+                and records[-1]["error"] == "fulfillment assigned-ID digest echo mismatch"):
+            interrupted[0] = True
+            raise Crash()
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_after_bad_read)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == "assigned-ID digest echo mismatch"
+
+
+def test_recovery_rejects_digest_correction_that_would_replace_grounding_feedback(
+    preparation_context,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+    from harness.fulfillment_semantics import FulfillmentAssignment
+
+    assert run(preparation_context, SemanticExecutor(bad="unread_citation")).exit_code == 2
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        data = journal.load()
+        step = data["steps"]["mapper"]
+        assignment = FulfillmentAssignment(**{
+            key: value for key, value in step["assignment"].items() if key != "schema_version"
+        })
+        bad_read = {
+            **assignment.reply_identity(),
+            "action": "read",
+            "request": {"op": "list_directory", "root": "worktree", "path": "."},
+        }
+        bad_read["assigned_ids_sha256"] += "e"
+        step["records"][1].update(
+            reply=None, read=None, raw_stdout=json.dumps(bad_read),
+            final_validation=None, error="fulfillment assigned-ID digest echo mismatch",
+        )
+        with pytest.raises(ValueError, match="invalid recovered digest correction"):
+            journal.save()
+
+
 def test_second_rejected_final_becomes_terminal_after_restart(
     preparation_context,
     monkeypatch,

@@ -133,6 +133,56 @@ def test_host_binds_mapper_input_fingerprint_and_retains_raw_reply(preparation_c
     assert record["reply"]["action"] == "final"
 
 
+def test_mapper_read_digest_echo_typo_gets_one_bound_correction(preparation_context):
+    class DigestEchoTypoExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                payload["assigned_ids_sha256"] += "e"
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = DigestEchoTypoExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == "assigned-ID digest echo mismatch"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["reply"] is None and records[0]["read"] is None
+    assert records[0]["error"] == "fulfillment assigned-ID digest echo mismatch"
+    assert records[1]["reply"]["action"] == "read"
+    assert records[2]["final_validation"] == {"status": "accepted"}
+
+
+@pytest.mark.parametrize("fault", ["repeat_digest", "wrong_dispatch"])
+def test_digest_correction_does_not_accept_repeated_or_other_identity_errors(
+    preparation_context, fault,
+):
+    class BadBindingExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            if fault == "wrong_dispatch":
+                payload["dispatch_id"] = "stale-dispatch"
+            elif len(self.dispatches) <= 2:
+                payload["assigned_ids_sha256"] += "e"
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = BadBindingExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == "fulfillment assignment binding mismatch"
+    assert executor.dispatch_count == (2 if fault == "repeat_digest" else 1)
+    assert not (preparation_context.spec_dir / "fulfillment-report.md").exists()
+
+
 def test_unread_mapper_citation_gets_one_grounding_correction_turn(preparation_context):
     class CorrectingUnreadCitationExecutor(SemanticExecutor):
         def run_inspection_turn(self, *args, **kwargs):

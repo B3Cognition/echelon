@@ -31,6 +31,7 @@ _ENUMS = {
     "confidence": {"high", "medium", "low", "none"},
     "status": FULFILLMENT_STATUSES - {"DEFERRED_SCOPE"},
 }
+CORRECTABLE_ASSIGNED_DIGEST_ECHO = "fulfillment assigned-ID digest echo mismatch"
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,26 @@ def _parse_semantic_json(raw: str) -> object:
 def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
     """Strictly validate a reply whose complete binding is already authoritative."""
     return validate_semantic_result(_parse_semantic_json(raw), assignment)
+
+
+def is_correctable_assigned_digest_echo(raw: str, assignment: FulfillmentAssignment) -> bool:
+    """Identify an unexecuted read with only its assigned-ID digest echo wrong."""
+    try:
+        value = _parse_semantic_json(raw)
+        identity = assignment.reply_identity()
+    except (ValueError, TypeError):
+        return False
+    return (
+        type(value) is dict
+        and set(value) == set(identity) | {"action", "request"}
+        and value.get("action") == "read"
+        and type(value.get("request")) is dict
+        and all(value.get(key) == expected for key, expected in identity.items()
+                if key != "assigned_ids_sha256")
+        and type(value.get("assigned_ids_sha256")) is str
+        and 0 < len(value["assigned_ids_sha256"]) <= 128
+        and value["assigned_ids_sha256"] != identity["assigned_ids_sha256"]
+    )
 
 
 def bind_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
