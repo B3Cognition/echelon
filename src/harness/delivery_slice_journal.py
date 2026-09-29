@@ -9,7 +9,8 @@ import os
 from pathlib import Path
 import stat
 
-from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, PASSING_VERDICTS, bind_delivery_result
+from harness.delivery_slice import (DeliveryAssignment, DeliverySliceError, PASSING_VERDICTS,
+                                    _valid_review_test_path, bind_delivery_result)
 from harness.durable_json import write_json_atomic
 
 
@@ -79,19 +80,24 @@ def _validate(data):
         raise DeliverySliceError("invalid delivery journal budget")
     steps = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
     records = data["records"]
-    if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * len(steps) + 2:
+    if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * 6 + 2:
         raise DeliverySliceError("invalid delivery journal receipts")
     step_index, repair = 0, 0
     candidate = data["candidate_fingerprint"]
     seen = set()
     terminal = False
     review_rejected = False
+    rechecks_for_step = 0
+    recheck_audit_paths = None
     browser_requests = 0
     for index, record in enumerate(records):
         if terminal or repair >= MAX_GATE_ROUNDS or step_index >= len(steps):
             raise DeliverySliceError("delivery receipt after terminal result")
         base_fields = {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}
-        if not isinstance(record, dict) or set(record) not in (base_fields, base_fields | {"browser_evidence"}):
+        if (not isinstance(record, dict) or not base_fields <= set(record)
+                or set(record) - base_fields - {"browser_evidence", "review_evidence"}):
+            raise DeliverySliceError("invalid delivery receipt fields")
+        if "browser_evidence" in record and "review_evidence" in record:
             raise DeliverySliceError("invalid delivery receipt fields")
         if type(record["repair_attempt"]) is not int or record["repair_attempt"] != repair:
             raise DeliverySliceError("invalid delivery repair history")
@@ -113,12 +119,14 @@ def _validate(data):
         ):
             raise DeliverySliceError("invalid raw delivery result")
         if record["error"] is not None:
-            if not isinstance(record["error"], str) or not record["error"] or record["result"] is not None:
+            if (not isinstance(record["error"], str) or not record["error"]
+                    or record["result"] is not None or "review_evidence" in record):
                 raise DeliverySliceError("invalid delivery failure receipt")
             terminal = True
         elif record["result"] is None:
             if (index != len(records) - 1 or record["candidate_after"] is not None
-                    or usage is not None or raw_result is not None):
+                    or usage is not None or raw_result is not None
+                    or "review_evidence" in record):
                 raise DeliverySliceError("invalid pending delivery receipt")
             terminal = True
         else:
@@ -127,6 +135,32 @@ def _validate(data):
             result = bind_delivery_result(raw_result, assignment)
             if result != record["result"]:
                 raise DeliverySliceError("delivery result binding mismatch")
+            review_evidence = record.get("review_evidence")
+            if "review_evidence" in record and review_evidence is None:
+                raise DeliverySliceError("invalid delivery review evidence")
+            if rechecks_for_step and review_evidence is None:
+                raise DeliverySliceError("delivery recheck missing review evidence")
+            if review_evidence is not None:
+                if (assignment.step not in {"spec_guard", "test_guardian"}
+                        or not isinstance(review_evidence, dict)
+                        or set(review_evidence) != {"audit_test_paths", "incomplete"}):
+                    raise DeliverySliceError("invalid delivery review evidence")
+                audit_paths = review_evidence["audit_test_paths"]
+                if (not isinstance(audit_paths, list) or len(audit_paths) > 200
+                        or any(not _valid_review_test_path(path) for path in audit_paths)
+                        or audit_paths != sorted(set(audit_paths))
+                        or type(review_evidence["incomplete"]) is not bool):
+                    raise DeliverySliceError("invalid delivery review evidence")
+                missing = set(audit_paths) - set(result.get("reviewed_test_paths", []))
+                if review_evidence["incomplete"] != bool(missing):
+                    raise DeliverySliceError("delivery review evidence mismatch")
+                if rechecks_for_step and audit_paths != recheck_audit_paths:
+                    raise DeliverySliceError("delivery recheck audit set changed")
+                if rechecks_for_step == 0 and result["verdict"] in PASSING_VERDICTS:
+                    if missing:
+                        raise DeliverySliceError("passing review cannot start evidence recheck")
+                elif rechecks_for_step == 0 and result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
+                    raise DeliverySliceError("blocked review cannot start evidence recheck")
             evidence = record.get("browser_evidence")
             if evidence is not None and (
                 result["verdict"] != "BROWSER_EVIDENCE_REQUIRED"
@@ -153,9 +187,18 @@ def _validate(data):
                 repair += 1
                 step_index = 0
             else:
+                if review_evidence is not None and review_evidence["incomplete"]:
+                    if rechecks_for_step:
+                        terminal = True
+                    else:
+                        rechecks_for_step = 1
+                        recheck_audit_paths = audit_paths
+                    continue
                 if result["verdict"] not in PASSING_VERDICTS:
                     review_rejected = True
                 step_index += 1
+                rechecks_for_step = 0
+                recheck_audit_paths = None
                 if step_index == len(steps):
                     if review_rejected:
                         repair += 1

@@ -1,5 +1,6 @@
 """Reconstruct real controllers across interrupted durable/external boundaries."""
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,106 @@ from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecuto
 
 class ProcessLost(BaseException):
     pass
+
+
+def _review_evidence_recheck_journal(slice_project):
+    from harness.delivery_slice_journal import _validate
+
+    assert _run(slice_project, ScriptedExecutor()).succeeded
+    data = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    data["records"] = data["records"][:2]
+    first = data["records"][1]
+    raw = json.loads(first["raw_result"])
+    raw.update(verdict="FAIL", findings=["tests/integration/bootstrap.test.ts:1 missing coverage"],
+               reviewed_test_paths=["tests/integration/bootstrap.test.ts"])
+    first["raw_result"] = json.dumps(raw)
+    first["result"] = {**first["result"], **{
+        key: raw[key] for key in ("verdict", "findings", "reviewed_test_paths")
+    }}
+    first["review_evidence"] = {
+        "audit_test_paths": ["tests/integration/bootstrap.test.ts",
+                             "tests/integration/main-entry.test.ts"],
+        "incomplete": True,
+    }
+    _validate(data)
+    return data
+
+
+def test_review_evidence_recheck_allows_one_same_role_intent(slice_project):
+    from harness.delivery_slice_journal import _validate
+
+    data = _review_evidence_recheck_journal(slice_project)
+    repeat = deepcopy(data["records"][1])
+    repeat["assignment"]["dispatch_id"] = "same-role-recheck"
+    repeat.update(raw_result=None, result=None, candidate_after=None, token_usage=None,
+                  error=None)
+    repeat.pop("review_evidence")
+    data["records"].append(repeat)
+
+    assert repeat["assignment"]["step"] == "spec_guard"
+    assert repeat["repair_attempt"] == data["records"][1]["repair_attempt"]
+    _validate(data)
+
+
+def test_review_evidence_recheck_second_incomplete_is_terminal(slice_project):
+    from harness.delivery_slice_journal import _validate
+
+    data = _review_evidence_recheck_journal(slice_project)
+    repeat = deepcopy(data["records"][1])
+    repeat["assignment"]["dispatch_id"] = "same-role-recheck"
+    repeat["raw_result"] = json.dumps({**json.loads(repeat["raw_result"]),
+                                       "dispatch_id": "same-role-recheck",
+                                       "verdict": "PASS", "findings": []})
+    repeat["result"].update(dispatch_id="same-role-recheck", verdict="PASS", findings=[])
+    data["records"].append(repeat)
+    _validate(data)
+
+    third = deepcopy(repeat)
+    third["assignment"]["dispatch_id"] = "forbidden-third-recheck"
+    third.update(raw_result=None, result=None, candidate_after=None, token_usage=None,
+                 error=None)
+    third.pop("review_evidence")
+    data["records"].append(third)
+    with pytest.raises(Exception, match="terminal"):
+        _validate(data)
+
+
+@pytest.mark.parametrize("damage", ["forged_complete", "unsafe_audit_path", "review_mutation"])
+def test_review_evidence_recheck_rejects_forged_receipt(slice_project, damage):
+    from harness.delivery_slice_journal import _validate
+
+    data = _review_evidence_recheck_journal(slice_project)
+    first = data["records"][1]
+    if damage == "forged_complete":
+        first["review_evidence"]["incomplete"] = False
+    elif damage == "unsafe_audit_path":
+        first["review_evidence"]["audit_test_paths"].append("../outside.test.ts")
+    else:
+        first["candidate_after"] = "mutated"
+    with pytest.raises(Exception):
+        _validate(data)
+
+
+@pytest.mark.parametrize("damage", ["missing_evidence", "narrowed_audit"])
+def test_review_evidence_recheck_requires_same_audit_on_second_receipt(slice_project, damage):
+    from harness.delivery_slice_journal import _validate
+
+    data = _review_evidence_recheck_journal(slice_project)
+    repeat = deepcopy(data["records"][1])
+    repeat["assignment"]["dispatch_id"] = "same-role-recheck"
+    raw = json.loads(repeat["raw_result"])
+    raw.update(dispatch_id="same-role-recheck", verdict="PASS", findings=[])
+    repeat["raw_result"] = json.dumps(raw)
+    repeat["result"].update(dispatch_id="same-role-recheck", verdict="PASS", findings=[])
+    if damage == "missing_evidence":
+        repeat.pop("review_evidence")
+    else:
+        repeat["review_evidence"] = {
+            "audit_test_paths": ["tests/integration/bootstrap.test.ts"], "incomplete": False,
+        }
+    data["records"].append(repeat)
+    with pytest.raises(Exception):
+        _validate(data)
 
 
 def _crash_after_receipt(monkeypatch, count):
