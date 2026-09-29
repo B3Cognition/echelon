@@ -118,6 +118,8 @@ def test_review_context_recheck_corrects_false_absence_without_repair(slice_proj
     assert _steps(executor) == ["implementer", "spec_guard", "spec_guard",
                                 "code_reviewer", "test_guardian"]
     assert "// verifies startup entry" in executor.calls[2][2]
+    assert '"prior_reviewed_test_paths": ["tests/integration/bootstrap.test.ts"]' in executor.calls[2][2]
+    assert '"audit_test_paths": ["tests/integration/bootstrap.test.ts", "tests/integration/main-entry.test.ts"]' in executor.calls[2][2]
     assert result.token_usage == 35
     journal = json.loads(next(fixture[2].rglob("journal.json")).read_text())
     assert journal["records"][1]["review_evidence"]["incomplete"] is True

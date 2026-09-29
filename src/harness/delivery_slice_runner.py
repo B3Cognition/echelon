@@ -560,13 +560,15 @@ def _review_recheck_context(worktree: Path, record: dict[str, object],
         "original_feedback": original_feedback,
         "prior_review": {"verdict": result["verdict"], "summary": result["summary"],
                          "findings": result["findings"]},
+        "audit_test_paths": evidence["audit_test_paths"],
+        "prior_reviewed_test_paths": result.get("reviewed_test_paths", []),
         "omitted_test_paths": omitted,
         "omitted_test_sources": sources,
         "instruction": (
             "Read every omitted candidate test at the exact paths above; source content is "
             "provided when within the packet bound. Reassess your prior finding against them. "
-            "This is a read-only recheck, not an implementation repair. Return reviewed_test_paths "
-            "covering the task-relevant audit set even if your verdict is PASS."
+            "This is a read-only recheck, not an implementation repair. Inspect all audit_test_paths "
+            "and return reviewed_test_paths covering that set even if your verdict is PASS."
         ),
     })
 
