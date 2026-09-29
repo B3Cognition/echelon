@@ -789,6 +789,15 @@ knowledge generation. Its neutral `fast`, `balanced`, `strong`, and `ultra`
 tiers currently resolve to the single configured `harness.llm.model`; delivery
 build execution remains unsupported.
 
+The HTTP transport, streaming parser, tool loop, compaction and file-tool
+implementation come from the pinned
+[Prosaic Runtime](https://github.com/B3Cognition/prosaic-runtime) dependency.
+Echelon supplies its RE tools, execution policy, result contracts and transcript
+location discovery. Explicit read-only roles and exclusive empty write scopes
+cannot write files. Echelon's provider selection and model configuration remain
+unchanged; the standalone runtime also offers its own Prosaic-only CLI and
+endpoint profiles for other applications.
+
 Echelon starts Codex with user configuration ignored by default. Authentication
 and Codex sessions still work, but personal plugins and skills do not leak into
 Echelon agents. To deliberately restore the normal personal Codex environment,
