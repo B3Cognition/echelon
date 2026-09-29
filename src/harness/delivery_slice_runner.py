@@ -66,6 +66,7 @@ class DeliverySliceRunner:
         operation_id: str = "active", journal_required: bool = False,
         on_journal_ready: Callable[[], None] | None = None,
         browser_baseline_capture: Callable[[str], BrowserBaselineCapture] | None = None,
+        semantic_visual_gate_required: bool = False,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -101,6 +102,8 @@ class DeliverySliceRunner:
                 raise DeliverySliceError("invalid delivery budget extension")
             if getattr(self._executor, "supports_read_only_review", False) is not True:
                 raise DeliverySliceError("unsupported_read_only_boundary")
+            if type(semantic_visual_gate_required) is not bool:
+                raise DeliverySliceError("invalid semantic visual gate assignment")
             worktree = Path(worktree).resolve(strict=True)
             spec_dir = Path(spec_dir)
             evidence_root = Path(evidence_root)
@@ -144,7 +147,7 @@ class DeliverySliceRunner:
             nested_target_fingerprint = _nested_target_fingerprint(
                 worktree, nested_target_prefix,
             )
-            binding = _digest({
+            binding_inputs = {
                 "worktree": str(worktree), "spec_dir": str(spec_dir.resolve()),
                 "scope": sorted(allowed_task_ids) if allowed_task_ids is not None else None,
                 "repair_task_id": repair_task_id, "feedback": feedback,
@@ -153,7 +156,10 @@ class DeliverySliceRunner:
                 "nested_target_fingerprint": nested_target_fingerprint,
                 "roles": {step: {"body": role.body, "metadata": role.frontmatter}
                           for step, role in roles.items()},
-            })
+            }
+            if semantic_visual_gate_required:
+                binding_inputs["semantic_visual_gate_required"] = True
+            binding = _digest(binding_inputs)
             if data is None:
                 try:
                     task_id = select_delivery_task(spec_dir, allowed_task_ids, repair_task_id)
@@ -268,6 +274,7 @@ class DeliverySliceRunner:
                                 worktree, spec_dir,
                                 evidence_root, run_id, extra_env, input_fingerprint,
                                 record, data, journal, browser_paths,
+                                semantic_visual_gate_required=semantic_visual_gate_required,
                                 review_recheck=bool(review_rechecks),
                             )
                             invocation_count += 1
@@ -421,7 +428,8 @@ class DeliverySliceRunner:
                   nested_target_prefix, nested_target_fingerprint, repair_context,
                   worktree, spec_dir,
                   evidence_root, run_id, extra_env, input_fingerprint,
-                  record, data, journal, browser_paths=None, *, review_recheck=False):
+                  record, data, journal, browser_paths=None, *,
+                  semantic_visual_gate_required=False, review_recheck=False):
         step = assignment.step
         forbidden_roots = [str(spec_dir), str(evidence_root), str(worktree / ".git")]
         if nested_target_prefix is not None:
@@ -455,7 +463,7 @@ class DeliverySliceRunner:
             return None
         prompt = _render_prompt(
             artifact.body, assignment, inputs, path_projection, repair_context, worktree,
-            file_inventory,
+            file_inventory, semantic_visual_gate_required=semantic_visual_gate_required,
         )
         dispatch_protected_fingerprint = _protected_fingerprint(
             worktree, spec_dir,
@@ -698,7 +706,8 @@ def _durable_protected_fingerprint(
 
 def _render_prompt(body: str, assignment: DeliveryAssignment, inputs: dict[str, str],
                    path_projection: dict[str, object] | None, feedback: str,
-                   worktree: Path, file_inventory: dict[str, object] | None) -> str:
+                   worktree: Path, file_inventory: dict[str, object] | None,
+                   *, semantic_visual_gate_required: bool = False) -> str:
     repair_instructions = (
         "You may run focused non-browser checks. For repairs, diagnose the supplied failure and "
         "evidence before editing; a repeated failure requires a focused reproduction, not speculative "
@@ -742,6 +751,17 @@ def _render_prompt(body: str, assignment: DeliveryAssignment, inputs: dict[str, 
            "test inventory and task-relevant siblings first. On a review-context recheck, "
            "include reviewed_test_paths even for PASS.\n"
            if assignment.step in {"spec_guard", "test_guardian"} else "")
+        + ("\n## Deferred semantic visual verdict\n"
+           "The published spec requires VISUAL VALIDATOR, but the controller-owned visual "
+           "phase owns that semantic gate after task review. It blocks Delivery before merge "
+           "until an independent verdict passes. At this task review, inspect implementer-owned "
+           "source, tests, "
+           "browser execution, screenshot capture, and evidence metadata. "
+           "Do not require a candidate-side validator invocation or receipt. "
+           "Do not treat screenshots or numeric checks as semantic approval. "
+           "Still reject concrete defects in code, tests, browser coverage, or evidence handoff; "
+           "only the semantic visual verdict is deferred.\n"
+           if semantic_visual_gate_required and assignment.step != "implementer" else "")
         + ("\n## Candidate path projection (controller authority)\n"
            + json.dumps(path_projection, ensure_ascii=False)
            + "\nCanonical workspace paths in the selected task MUST be interpreted through "

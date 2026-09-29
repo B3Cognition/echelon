@@ -422,6 +422,7 @@ class StateStore:
         target_task_ids: list[str] | None = None,
         enabled_phases: list[str] | None = None,
         delivery_stack_snapshot: dict[str, Any] | None = None,
+        semantic_visual_gate_required: bool = False,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -452,6 +453,7 @@ class StateStore:
             "status": "initialized",
             "delivery_state_version": DELIVERY_STATE_VERSION,
             "enabled_phases": list(enabled_phases or ["implementation", "finalization"]),
+            "semantic_visual_gate_required": semantic_visual_gate_required,
             "last_completed_phase": None,
             "blocked_phase": None,
             "interrupted_phase": None,

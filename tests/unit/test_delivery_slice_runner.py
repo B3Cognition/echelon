@@ -76,6 +76,51 @@ def _steps(executor):
     return [call[0]["step"] for call in executor.calls]
 
 
+def test_visual_validator_handoff_is_review_scoped_and_not_visual_approval(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Acceptance Criteria:**\n"
+        "  - [ ] Retain screenshots and obtain a VISUAL VALIDATOR receipt before merge\n"
+    )
+    executor = ScriptedExecutor()
+
+    result = _run(
+        (project, spec, evidence), executor,
+        semantic_visual_gate_required=True,
+    )
+
+    assert result.succeeded
+    assert _steps(executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert "Deferred semantic visual verdict" not in executor.calls[0][2]
+    for assignment, _, prompt in executor.calls[1:]:
+        assert "Deferred semantic visual verdict" in prompt
+        assert "Do not require a candidate-side validator invocation or receipt" in prompt
+        assert "Do not treat screenshots or numeric checks as semantic approval" in prompt
+        assert assignment["step"] in {"spec_guard", "code_reviewer", "test_guardian"}
+
+
+def test_visual_handoff_change_cannot_replay_old_review_receipts(slice_project):
+    first = ScriptedExecutor()
+    interrupted = _run(
+        slice_project, first, operation_id="visual-handoff-op",
+        stop_requested=lambda: bool(first.calls),
+    )
+    assert interrupted.reason == "delivery_slice_cancelled"
+    resumed = ScriptedExecutor()
+
+    result = _run(
+        slice_project, resumed, operation_id="visual-handoff-op",
+        journal_required=True, semantic_visual_gate_required=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_reconciliation_required: operation binding changed"
+    assert resumed.calls == []
+
+
 def _review_context_recheck_project(slice_project):
     project, spec, evidence = slice_project
     tests = project / "tests/integration"

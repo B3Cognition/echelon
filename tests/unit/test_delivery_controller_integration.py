@@ -53,6 +53,28 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert {call[0]["task_id"] for call in executor.calls} == {"T-001"}
 
 
+def test_ralph_passes_persisted_semantic_gate_handoff_to_task_reviews(
+    slice_project, tmp_path,
+):
+    executor = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, executor)
+    state = store.read()
+    state["semantic_visual_gate_required"] = True
+    store.write(state)
+
+    result = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] is True
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert all(
+        "Deferred semantic visual verdict" in prompt
+        for assignment, _, prompt in executor.calls
+        if assignment["step"] != "implementer"
+    )
+
+
 def test_ralph_replays_pending_slice_after_explicit_budget_extension(slice_project, tmp_path):
     first = ScriptedExecutor()
     controller, store = _controller(slice_project, tmp_path, first, "banzai")

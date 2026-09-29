@@ -3774,6 +3774,7 @@ def _run_delivery_resume(
         "visual": {
             "app_runtime_failed",
             "missing_registered_worktree",
+            "semantic_visual_validator_unavailable",
             "verified_provenance_mismatch",
             "visual_failed",
             "visual_feedback_failed",

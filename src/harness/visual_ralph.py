@@ -63,6 +63,7 @@ class VisualRalphController:
             Callable[[SandboxHandle, str, VerifyResult, List[str]], Dict[str, Any]]
             | None
         ) = None,
+        semantic_visual_gate_required: bool = False,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -73,6 +74,7 @@ class VisualRalphController:
         self._last_staging_dir: Path | None = None
         self._sandbox_spec_factory = sandbox_spec_factory
         self._feedback_runner = feedback_runner
+        self._semantic_visual_gate_required = semantic_visual_gate_required
         self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
@@ -232,6 +234,23 @@ class VisualRalphController:
                         )
 
                 if verify_result.passed and evidence is not None and evidence.passed:
+                    if self._semantic_visual_gate_required:
+                        verify_result = self._with_visual_failure(
+                            verify_result,
+                            failure_id="semantic-visual-validator-unavailable",
+                            error=(
+                                "The published semantic visual gate has no independent "
+                                "VISUAL VALIDATOR verdict for this candidate."
+                            ),
+                        )
+                        return VisualResult(
+                            status="blocked",
+                            termination_reason="semantic_visual_validator_unavailable",
+                            iterations=iteration + 1,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                            evidence=evidence,
+                        )
                     return VisualResult(
                         status="passed",
                         termination_reason="converged",

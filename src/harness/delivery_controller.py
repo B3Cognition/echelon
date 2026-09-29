@@ -109,7 +109,13 @@ def _delivery_stack_snapshot(resolved: object) -> dict[str, object] | None:
     }
 
 
-def _published_browser_gate_required(spec_dir: Path | None) -> bool:
+def _published_browser_gate_required(
+    spec_dir: Path | None,
+    *,
+    gates: frozenset[str] = frozenset({
+        "playwright e2e critical journeys", "visual validation task",
+    }),
+) -> bool:
     """Read the published coverage map's browser execution obligation."""
     if spec_dir is None:
         return False
@@ -125,11 +131,15 @@ def _published_browser_gate_required(spec_dir: Path | None) -> bool:
         if not in_gates or not heading.startswith("|"):
             continue
         cells = [cell.strip().casefold() for cell in heading.strip("|").split("|")]
-        if len(cells) >= 2 and cells[0] in {
-            "playwright e2e critical journeys", "visual validation task",
-        } and cells[1] == "yes":
+        if len(cells) >= 2 and cells[0] in gates and cells[1] == "yes":
             return True
     return False
+
+
+def _published_semantic_visual_gate_required(spec_dir: Path | None) -> bool:
+    return _published_browser_gate_required(
+        spec_dir, gates=frozenset({"visual validation task"}),
+    )
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -1495,6 +1505,9 @@ class DeliveryController:
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
                     enabled_phases=self._enabled_phases(llm_provider, spec_dir=spec_dir),
+                    semantic_visual_gate_required=(
+                        _published_semantic_visual_gate_required(spec_dir)
+                    ),
                     delivery_stack_snapshot=_delivery_stack_snapshot(
                         getattr(self._config, "resolved_stacks", None)
                     ),
@@ -1675,6 +1688,9 @@ class DeliveryController:
                             token_budget=budget,
                             tokens_used=implementation_tokens + visual_tokens + verify.token_usage,
                         )
+                    ),
+                    semantic_visual_gate_required=(
+                        state_store.read().get("semantic_visual_gate_required") is True
                     ),
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])

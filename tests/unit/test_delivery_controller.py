@@ -1009,8 +1009,12 @@ class TestSingleStrategy:
 
 
 class TestDeliveryStateMigration:
+    @pytest.mark.parametrize(
+        ("visual_required", "semantic_required"),
+        [("yes", True), ("no", False)],
+    )
     def test_published_browser_gate_enables_visual_phase_without_selected_stack(
-        self, tmp_path: Path
+        self, tmp_path: Path, visual_required: str, semantic_required: bool,
     ) -> None:
         """A greenfield browser spec must not silently skip its Playwright gate."""
         coordinator = _make_controller(tmp_path)
@@ -1023,7 +1027,7 @@ class TestDeliveryStateMigration:
             "|------|----------|-------------------|\n"
             "| Playwright E2E critical journeys | yes | E2E-001 |\n"
             "| Smoke serving check | yes | HTTP 200 |\n"
-            "| Visual validation task | yes | T-012 |\n",
+            f"| Visual validation task | {visual_required} | T-012 |\n",
             encoding="utf-8",
         )
 
@@ -1038,6 +1042,7 @@ class TestDeliveryStateMigration:
 
         state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
         assert state["enabled_phases"] == ["implementation", "visual", "finalization"]
+        assert state["semantic_visual_gate_required"] is semantic_required
 
     def test_visual_phase_is_required_with_llm_coding_provider(
         self, tmp_path: Path

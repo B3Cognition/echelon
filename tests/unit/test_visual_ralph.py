@@ -473,6 +473,41 @@ def test_run_loop_converges_on_first_pass(tmp_path: Path):
     provider.destroy.assert_called_once()
 
 
+def test_semantic_visual_gate_blocks_after_browser_pass_without_validator_receipt(
+    tmp_path: Path,
+) -> None:
+    """Passing Playwright and retained images are not a semantic verdict."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    feedback = MagicMock()
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        feedback_runner=feedback, semantic_visual_gate_required=True,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "semantic_visual_validator_unavailable"
+    assert result.final_verify is not None
+    assert any(
+        failure.id == "semantic-visual-validator-unavailable"
+        for failure in result.final_verify.failures
+    )
+    assert result.evidence is not None
+    feedback.assert_not_called()
+
+
 def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
     tmp_path: Path,
 ) -> None:

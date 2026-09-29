@@ -2432,6 +2432,9 @@ class RalphController:
                 }
             else:
                 runner_options["repair_task_id"] = repair_task_id
+                runner_options["semantic_visual_gate_required"] = (
+                    state.get("semantic_visual_gate_required") is True
+                )
                 def capture_browser_baselines(candidate: str):
                     from harness.visual_ralph import VisualRalphController
 
