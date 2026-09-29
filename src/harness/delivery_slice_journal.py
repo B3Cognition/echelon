@@ -13,7 +13,7 @@ from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, PASSI
 from harness.durable_json import write_json_atomic
 
 
-MAX_GATE_ROUNDS = 4  # Initial implementation plus three review-guided repairs.
+MAX_GATE_ROUNDS = 5  # Initial implementation plus four review-guided repairs.
 
 
 class DeliverySliceJournal:

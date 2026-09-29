@@ -963,17 +963,17 @@ def test_host_binds_fingerprints_and_preserves_the_review_decision(slice_project
     assert review["result"]["findings"] == [finding]
 
 
-def test_three_failed_repairs_block_without_degraded_progress(slice_project):
+def test_four_failed_repairs_block_without_degraded_progress(slice_project):
     def script(assignment, payload, root):
         if assignment["step"] == "spec_guard":
             payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain * 4
+    assert _steps(executor) == chain * 5
     assert result.status == "blocked" and not result.task_ids
     assert "repair_limit" in result.reason
-    assert result.token_usage == 112
+    assert result.token_usage == 140
 
 
 def test_third_repair_can_accept_after_three_rejected_review_rounds(slice_project):
@@ -993,6 +993,50 @@ def test_third_repair_can_accept_after_three_rejected_review_rounds(slice_projec
     assert rejected_rounds == 3
     assert _steps(executor) == chain * 4
     assert result.token_usage == 112
+
+
+def test_fourth_repair_can_accept_after_four_rejected_review_rounds(slice_project):
+    rejected_rounds = 0
+
+    def reject_four_rounds(assignment, payload, root):
+        nonlocal rejected_rounds
+        if assignment["step"] == "spec_guard" and rejected_rounds < 4:
+            rejected_rounds += 1
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    executor = ScriptedExecutor(reject_four_rounds)
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert rejected_rounds == 4
+    assert _steps(executor) == chain * 5
+    assert result.token_usage == 140
+
+
+def test_four_rejected_rounds_replay_only_one_new_round(slice_project, monkeypatch):
+    def reject(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    first_executor = ScriptedExecutor(reject)
+    with monkeypatch.context() as old_cap:
+        old_cap.setattr("harness.delivery_slice_runner.MAX_GATE_ROUNDS", 4)
+        old_cap.setattr("harness.delivery_slice_journal.MAX_GATE_ROUNDS", 4)
+        first = _run(slice_project, first_executor)
+    assert first.status == "blocked" and not first.task_ids
+    assert len(first_executor.calls) == 16
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert resumed.token_usage == 140
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len(journal["records"]) == 20
 
 
 def test_exhausted_repair_journal_resumes_with_only_new_round_dispatches(slice_project):

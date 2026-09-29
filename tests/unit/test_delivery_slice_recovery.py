@@ -231,11 +231,11 @@ def test_exhausted_repairs_remain_exhausted_after_restart(slice_project):
     first = ScriptedExecutor(reject)
     assert not _run(slice_project, first).succeeded
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(first) == chain * 4
+    assert _steps(first) == chain * 5
     second = ScriptedExecutor()
     result = _run(slice_project, second)
     assert not result.succeeded and "repair_limit" in result.reason
-    assert not second.calls and result.token_usage == 112
+    assert not second.calls and result.token_usage == 140
 
 
 def test_restart_after_rejection_preserves_repair_count_and_feedback(slice_project, monkeypatch):
@@ -250,7 +250,7 @@ def test_restart_after_rejection_preserves_repair_count_and_feedback(slice_proje
     result = _run(slice_project, resumed)
     assert not result.succeeded and "repair_limit" in result.reason
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(resumed) == chain * 3
+    assert _steps(resumed) == chain * 4
     assert "wrong result" in resumed.calls[0][2]
 
 

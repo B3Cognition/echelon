@@ -206,6 +206,24 @@ def _is_pending_prior_review_cap(state: dict) -> bool:
     verification = state.get("last_verify_result")
     failures = verification.get("failures") if isinstance(verification, dict) else None
     failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
+    prior_cap_reasons = {
+        f"delivery_gate_repair_limit: required review still failed after {repairs} repairs"
+        for repairs in range(3, MAX_GATE_ROUNDS - 1)
+    }
+    if MAX_GATE_ROUNDS > 3:
+        prior_cap_reasons.add(
+            "delivery_gate_repair_limit: required review still failed after two repairs"
+        )
+    build_reason = state.get("build_reason")
+    verified_reason = (
+        failure.get("error")
+        if isinstance(verification, dict)
+        and verification.get("passed") is False
+        and isinstance(failure, dict)
+        and failure.get("category") == "other"
+        and failure.get("id") == "build-blocked"
+        else None
+    )
     return (
         MAX_GATE_ROUNDS > 3
         and state.get("status") == "blocked"
@@ -214,13 +232,12 @@ def _is_pending_prior_review_cap(state: dict) -> bool:
         and isinstance(operation, dict)
         and bool(str(operation.get("id") or "").strip())
         and operation.get("progress_applied") is not True
-        and isinstance(verification, dict)
-        and verification.get("passed") is False
-        and isinstance(failure, dict)
-        and failure.get("category") == "other"
-        and failure.get("id") == "build-blocked"
-        and failure.get("error") == (
-            "delivery_gate_repair_limit: required review still failed after two repairs"
+        and (
+            verified_reason in prior_cap_reasons
+            or (
+                state.get("build_status") == "blocked"
+                and build_reason in prior_cap_reasons
+            )
         )
     )
 
