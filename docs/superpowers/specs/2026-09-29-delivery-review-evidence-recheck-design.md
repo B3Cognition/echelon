@@ -18,11 +18,14 @@ read-only evidence recheck. Keep the four roles, their gate order, and all
 passing requirements. This is a correction of review context, not a new
 implementation attempt or an approval override.
 
-The controller snapshots runnable candidate test paths independently of the
-task's non-exhaustive Files list and binds that inventory to the candidate
-fingerprint. A negative SPEC GUARD or TEST GUARDIAN result must report which
-candidate test files it inspected. The controller validates that report against
-the inventory. Incomplete evidence is not yet an actionable product finding.
+The controller indexes runnable candidate tests independently of the task's
+non-exhaustive Files list. It derives a bounded task-relevant audit set from
+declared tests, their runnable siblings, changed tests, and tests referencing
+the selected task's source paths. Both the full path inventory and audit set
+are bound to the candidate fingerprint. A negative SPEC GUARD or TEST
+GUARDIAN result must report which candidate tests it inspected. The controller
+validates that the audit set was accounted for. Incomplete evidence is not yet
+an actionable product finding.
 The controller records the incomplete result, supplies the omitted test sources
 as read-only context, and dispatches the same reviewer once more. The second
 result replaces the first review verdict for this candidate and gate. A
@@ -50,12 +53,17 @@ silently become an implementation-repair instruction.
 
 1. Before each review dispatch, enumerate runnable tracked and untracked test
    files in the current candidate. Exclude fixtures and non-test support files.
-   Treat the task Files list as a starting point, not a whitelist. Bind the
-   inventory to the exact candidate fingerprint already in the assignment.
+   Derive a bounded audit set from declared tests, all runnable tests in their
+   directories, tests changed since the candidate's current Git HEAD, and
+   tests whose content references selected source paths or their extensionless
+   stems. Treat the task Files list as a starting point, not a whitelist.
+   Bind both inventories to the exact candidate fingerprint already in the
+   assignment. Never silently truncate the audit set.
 2. For a negative SPEC GUARD or TEST GUARDIAN result, require a structured
    `reviewed_test_paths` list. Validate that each path is in the candidate and
-   that the current inventory is accounted for. Existing stored receipts retain
-   their prior meaning; new dispatches use the new check.
+   that the audit set is accounted for. The reviewer may inspect and cite any
+   additional candidate test. Existing stored receipts retain their prior
+   meaning; new dispatches use the new check.
 3. Persist the provider result, its inventory identity, and the controller's
    evidence-completeness decision in one journal save before advancing. A
    recorded incomplete result permits exactly one repeat of the same role on
@@ -76,7 +84,8 @@ silently become an implementation-repair instruction.
 
 - Rechecks are read-only and cannot edit the candidate, task progress, or
   control-plane files. They do not reset or raise the implementation repair cap.
-- Inventory failures, path escapes, changed candidate contents, unknown
+- Inventory failures, audit-set overflow, path escapes, changed candidate
+  contents, unknown
   provider completion, and a second incomplete review stop with explicit
   reconciliation/context reasons. No attempt is retried merely because it
   returned an unfavorable verdict.
