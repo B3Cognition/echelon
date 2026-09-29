@@ -60,6 +60,7 @@ def test_fresh_checkpoint_progress_is_restored_before_provider_dispatch(
         state_store=store,
         tasks_file=tasks_file,
         task_ids=("T-001", "T-999"),
+        repair_task_id="T-001",
     )
 
     assert "- [x] T-001" in tasks_file.read_text(encoding="utf-8")
@@ -68,6 +69,17 @@ def test_fresh_checkpoint_progress_is_restored_before_provider_dispatch(
     assert state["inherited_checkpoint_task_ids"] == ["T-001"]
     assert state["build"]["task_results"] == {"T-001": {"status": "DONE"}}
     assert state["build"]["completed_tasks"] == 1
+    assert state["delivery_slice_task_id"] == "T-001"
+
+    state.pop("delivery_slice_task_id")
+    store.write(state)
+    DeliveryController._inherit_fresh_task_progress(
+        state_store=store,
+        tasks_file=tasks_file,
+        task_ids=("T-001",),
+        repair_task_id="T-999",
+    )
+    assert store.read().get("delivery_slice_task_id") is None
 
 
 class MockProvider(SandboxProvider):

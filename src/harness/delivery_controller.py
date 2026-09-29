@@ -287,6 +287,7 @@ class DeliveryController:
         orchestration_root: str | Path | None = None,
         fresh_branch_base: str | None = None,
         fresh_completed_task_ids: tuple[str, ...] = (),
+        fresh_repair_task_id: str | None = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -303,6 +304,7 @@ class DeliveryController:
         self._escalation_dir = self._build_dir
         self._fresh_branch_base = fresh_branch_base
         self._fresh_completed_task_ids = tuple(fresh_completed_task_ids)
+        self._fresh_repair_task_id = fresh_repair_task_id
         self._state_store: StateStore | None = None
 
     def run(self, intent: RunIntent) -> DeliveryResult:
@@ -479,6 +481,7 @@ class DeliveryController:
         state_store: StateStore,
         tasks_file: Path | None,
         task_ids: tuple[str, ...],
+        repair_task_id: str | None = None,
     ) -> None:
         """Restore checkpoint-owned progress before the next provider dispatch."""
         if not task_ids or tasks_file is None or not tasks_file.is_file():
@@ -511,6 +514,8 @@ class DeliveryController:
             },
         }
         state["inherited_checkpoint_task_ids"] = applied
+        if repair_task_id in applied:
+            state["delivery_slice_task_id"] = repair_task_id
         state_store.write(state)
 
     def _enabled_phases(
@@ -1554,6 +1559,7 @@ class DeliveryController:
                     state_store=state_store,
                     tasks_file=tasks_file,
                     task_ids=self._fresh_completed_task_ids,
+                    repair_task_id=self._fresh_repair_task_id,
                 )
 
             stack_context = self._build_stack_context(spec_dir)

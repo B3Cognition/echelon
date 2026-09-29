@@ -408,6 +408,64 @@ def _fresh_delivery_completed_tasks(
     return tuple(sorted(recovered))
 
 
+def _fresh_delivery_repair_task_id(
+    harness_root: Path,
+    intent: Any,
+    baseline: str | None,
+    gitops: Any | None = None,
+    *,
+    spec_dir: Path | None = None,
+    completed_task_ids: tuple[str, ...] = (),
+) -> str | None:
+    """Recover the last accepted slice target, never an unreviewed salvage task.
+
+    Checkpoints are ordered within each run; newer run IDs take precedence.
+    A candidate on a different lineage or changed spec inputs grants no repair
+    target, even if its provider reported a task as done.
+    """
+    if baseline is None or gitops is None or not completed_task_ids:
+        return None
+    from harness.task_progress import checkpoint_input_hash
+
+    input_hash = checkpoint_input_hash(spec_dir)
+    ancestry = getattr(gitops, "commit_is_ancestor", None)
+    if input_hash is None or not callable(ancestry):
+        return None
+    completed = set(completed_task_ids)
+    for state_path in sorted(
+        runs_dir(harness_root).glob("build-*/state/delivery.json"), reverse=True,
+    ):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or state.get("spec_id") != intent.spec_id:
+            continue
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            continue
+        for checkpoint in reversed(checkpoints):
+            if not isinstance(checkpoint, dict) or checkpoint.get("checkpoint_input_hash") != input_hash:
+                continue
+            commit = checkpoint.get("commit")
+            task_ids = checkpoint.get("task_ids")
+            if (
+                not isinstance(commit, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", commit)
+                or not isinstance(task_ids, list)
+                or len(task_ids) != 1
+                or not isinstance(task_ids[0], str)
+                or task_ids[0] not in completed
+            ):
+                continue
+            try:
+                if ancestry(commit, baseline) is True:
+                    return task_ids[0]
+            except Exception:
+                continue
+    return None
+
+
 def _checkpoint_is_landed(gitops: Any | None, commit: str) -> bool:
     """Return whether a prior delivery checkpoint is already on target main."""
     if gitops is None:
@@ -1004,6 +1062,14 @@ def _execute_delivery_run(
         gitops,
         spec_dir=spec_dir,
     )
+    fresh_repair_task_id = _fresh_delivery_repair_task_id(
+        harness_root,
+        intent,
+        fresh_branch_base,
+        gitops,
+        spec_dir=spec_dir,
+        completed_task_ids=fresh_completed_task_ids,
+    )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)
     rd.mkdir(parents=True, exist_ok=True)
@@ -1019,6 +1085,7 @@ def _execute_delivery_run(
         orchestration_root=workspace_root,
         fresh_branch_base=fresh_branch_base,
         fresh_completed_task_ids=fresh_completed_task_ids,
+        fresh_repair_task_id=fresh_repair_task_id,
     )
     if fresh_branch_base:
         logger.info(

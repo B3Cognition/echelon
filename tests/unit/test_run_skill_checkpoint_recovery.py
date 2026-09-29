@@ -13,6 +13,7 @@ from harness.skills.run_skill import (
     RunContextError,
     _fresh_delivery_baseline,
     _fresh_delivery_completed_tasks,
+    _fresh_delivery_repair_task_id,
 )
 
 
@@ -299,3 +300,46 @@ def test_fresh_delivery_recovers_only_checkpointed_tasks_on_baseline_ancestry(
     )
 
     assert recovered == ("T-001", "T-002")
+
+
+@pytest.mark.unit
+def test_fresh_delivery_repair_target_comes_from_latest_retained_task_checkpoint(
+    tmp_path: Path,
+) -> None:
+    from harness.task_progress import checkpoint_input_hash
+
+    spec = tmp_path / "specs/012"
+    spec.mkdir(parents=True)
+    (spec / "tasks.md").write_text("- [ ] T-001 first\n- [ ] T-002 second\n")
+    digest = checkpoint_input_hash(spec)
+    older = "a" * 40
+    latest = "b" * 40
+    baseline = "c" * 40
+    unrelated = "d" * 40
+    for build_id, commit, task_id in (
+        ("build-001", older, "T-002"),
+        ("build-002", latest, "T-001"),
+        ("build-003", unrelated, "T-099"),
+    ):
+        state_path = _write_state(tmp_path, build_id, status="blocked", checkpoint=commit)
+        payload = json.loads(state_path.read_text())
+        payload["checkpoint_commits"][0].update(
+            task_ids=[task_id], checkpoint_input_hash=digest,
+        )
+        state_path.write_text(json.dumps(payload))
+
+    class GitOps:
+        @staticmethod
+        def commit_is_ancestor(commit: str, descendant: str) -> bool:
+            return descendant == baseline and commit in {older, latest}
+
+    assert _fresh_delivery_repair_task_id(
+        tmp_path, _intent(), baseline, GitOps(), spec_dir=spec,
+        completed_task_ids=("T-001", "T-002"),
+    ) == "T-001"
+
+    (spec / "tasks.md").write_text("- [ ] T-001 changed\n- [ ] T-002 second\n")
+    assert _fresh_delivery_repair_task_id(
+        tmp_path, _intent(), baseline, GitOps(), spec_dir=spec,
+        completed_task_ids=("T-001", "T-002"),
+    ) is None
