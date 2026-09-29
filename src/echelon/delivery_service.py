@@ -198,6 +198,30 @@ def _is_retryable_delivery_provider_failure(state: dict) -> bool:
     )
 
 
+def _is_retryable_cancelled_delivery_slice(state: dict) -> bool:
+    """Continue only a cancelled slice whose unreviewed operation is retained."""
+    operation = state.get("delivery_slice_operation")
+    verification = state.get("last_verify_result")
+    failures = verification.get("failures") if isinstance(verification, dict) else None
+    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
+    return (
+        state.get("status") == "blocked"
+        and state.get("termination_reason") == "build_blocked"
+        and state.get("blocked_phase") == "implementation"
+        and isinstance(operation, dict)
+        and bool(str(operation.get("id") or "").strip())
+        and operation.get("progress_applied") is not True
+        and isinstance(operation.get("worktree_path"), str)
+        and Path(operation["worktree_path"]).is_absolute()
+        and isinstance(verification, dict)
+        and verification.get("passed") is False
+        and isinstance(failure, dict)
+        and failure.get("category") == "other"
+        and failure.get("id") == "build-blocked"
+        and failure.get("error") == "delivery_slice_cancelled"
+    )
+
+
 def _is_pending_prior_review_cap(state: dict) -> bool:
     """Allow an unfinished slice to use one newly available repair round."""
     from harness.delivery_slice_journal import MAX_GATE_ROUNDS
@@ -253,7 +277,11 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
-        if _is_retryable_delivery_provider_failure(state) or _is_pending_prior_review_cap(state):
+        if (
+            _is_retryable_delivery_provider_failure(state)
+            or _is_retryable_cancelled_delivery_slice(state)
+            or _is_pending_prior_review_cap(state)
+        ):
             return f"echelon delivery continue {effective_spec}"
         if termination_reason == "outer_cap":
             command, explanation = _outer_cap_delivery_action(
@@ -3824,7 +3852,10 @@ def _run_delivery_resume(
         continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
-    if _is_retryable_delivery_provider_failure(state):
+    if (
+        _is_retryable_delivery_provider_failure(state)
+        or _is_retryable_cancelled_delivery_slice(state)
+    ):
         continuation_reasons.add("build_blocked")
     pending_prior_review_cap = _is_pending_prior_review_cap(state)
     if pending_prior_review_cap:

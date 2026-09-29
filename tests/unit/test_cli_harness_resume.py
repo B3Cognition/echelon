@@ -525,6 +525,73 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    def test_delivery_continue_retries_cancelled_pending_slice(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A stopped controlled repair retains its unreviewed candidate."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": str(tmp_path / "pending-worktree"),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    @pytest.mark.parametrize("operation", [None, {"id": "done", "progress_applied": True}])
+    def test_delivery_continue_rejects_cancelled_slice_without_pending_work(
+        self,
+        tmp_path: Path,
+        capsys,
+        operation: dict | None,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": operation,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(Path.cwd(), ["001"])
+
+        assert not mock_run.called
+        assert "do not retry delivery" in capsys.readouterr().err
+
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
         sd = _setup_build(tmp_path, "001")

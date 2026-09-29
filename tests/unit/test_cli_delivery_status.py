@@ -180,6 +180,34 @@ def test_provider_failed_status_matches_checkpoint_preserving_continue() -> None
 
 
 @pytest.mark.unit
+def test_cancelled_pending_slice_status_offers_checkpoint_preserving_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": "/tmp/pending-worktree",
+            },
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
     from echelon.delivery_service import _delivery_status_next_step
