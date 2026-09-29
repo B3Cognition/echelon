@@ -630,6 +630,28 @@ class TestCmdHarnessResume:
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
+    def test_checkpoint_outer_cap_uses_candidate_detection_without_configured_verify_command(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "checkpoint_outer_cap",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "auto-detect from candidate" in capsys.readouterr().out
+
     def test_no_progress_resumes_without_unsupported_reason_error(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
         sd = _setup_build(tmp_path, "001")

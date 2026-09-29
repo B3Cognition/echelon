@@ -4094,8 +4094,11 @@ def _run_delivery_resume(
         _exit_if_provider_session_limited(state_store)
         return
 
-    if (not config.verify_command and termination_reason != "budget_exhausted"
-            and not pending_slice_budget_exhausted):
+    if (
+        not config.verify_command
+        and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
+        and not pending_slice_budget_exhausted
+    ):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,
