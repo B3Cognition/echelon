@@ -23,7 +23,7 @@ from harness.delivery_slice import (
 )
 from harness.durable_json import write_json_atomic
 from harness.delivery_slice_journal import (
-    DeliverySliceJournal, MAX_BROWSER_REQUESTS, MAX_GATE_ROUNDS,
+    DeliverySliceJournal, MAX_GATE_ROUNDS, browser_request_limit,
 )
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
 from harness.delivery_containment import containment_policy_env
@@ -238,6 +238,7 @@ class DeliverySliceRunner:
             last_browser_capture_passed = False
             last_browser_reference: dict[str, str] | None = None
             for repair in range(MAX_GATE_ROUNDS):
+                browser_requests_in_round = 0
                 rejected = False
                 review_failures: list[dict[str, object]] = []
                 for step, artifact in roles.items():
@@ -331,9 +332,10 @@ class DeliverySliceRunner:
                                 })
                                 continue
                             raise DeliverySliceError("delivery_browser_evidence_request_repeated")
-                        if browser_requests >= MAX_BROWSER_REQUESTS:
+                        if browser_requests_in_round >= browser_request_limit(repair):
                             raise DeliverySliceError("delivery_browser_evidence_request_repeated")
                         browser_requests += 1
+                        browser_requests_in_round += 1
                         if browser_baseline_capture is None:
                             raise DeliverySliceError("delivery_browser_evidence_requested: baseline_capture")
                         if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:

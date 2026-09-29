@@ -15,7 +15,12 @@ from harness.durable_json import write_json_atomic
 
 
 MAX_GATE_ROUNDS = 5  # Initial implementation plus four review-guided repairs.
-MAX_BROWSER_REQUESTS = 4  # Bounded recaptures after image inspection and repair.
+MAX_BROWSER_REQUESTS = 4  # Initial implementation's bounded image recaptures.
+MAX_BROWSER_REPAIR_REQUESTS = 2  # Fresh captures for each review-guided repair.
+
+
+def browser_request_limit(repair: int) -> int:
+    return MAX_BROWSER_REQUESTS if repair == 0 else MAX_BROWSER_REPAIR_REQUESTS
 
 
 class DeliverySliceJournal:
@@ -81,7 +86,9 @@ def _validate(data):
         raise DeliverySliceError("invalid delivery journal budget")
     steps = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
     records = data["records"]
-    if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * 6 + 2:
+    # Each round may include captures, one correction per capture, and review
+    # context rechecks in addition to the four ordinary role receipts.
+    if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * 12:
         raise DeliverySliceError("invalid delivery journal receipts")
     step_index, repair = 0, 0
     candidate = data["candidate_fingerprint"]
@@ -90,7 +97,7 @@ def _validate(data):
     review_rejected = False
     rechecks_for_step = 0
     recheck_audit_paths = None
-    browser_requests = 0
+    browser_requests_in_round = 0
     last_browser_evidence = None
     last_browser_candidate = None
     browser_correction_used = False
@@ -192,16 +199,17 @@ def _validate(data):
                         raise DeliverySliceError("repeated browser evidence correction")
                     browser_correction_used = True
                 else:
-                    browser_requests += 1
+                    browser_requests_in_round += 1
                     last_browser_evidence = evidence
                     last_browser_candidate = after
                     browser_correction_used = False
-                if browser_requests > MAX_BROWSER_REQUESTS:
+                if browser_requests_in_round > browser_request_limit(repair):
                     terminal = True
                 elif index < len(records) - 1 and evidence is None:
                     raise DeliverySliceError("browser evidence missing before continuation")
             elif assignment.step == "implementer" and result["verdict"] not in PASSING_VERDICTS:
                 repair += 1
+                browser_requests_in_round = 0
                 step_index = 0
             else:
                 if review_evidence is not None and review_evidence["incomplete"]:
@@ -219,6 +227,7 @@ def _validate(data):
                 if step_index == len(steps):
                     if review_rejected:
                         repair += 1
+                        browser_requests_in_round = 0
                         step_index = 0
                         review_rejected = False
                     else:

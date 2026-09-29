@@ -925,6 +925,91 @@ def test_changed_candidate_browser_recaptures_remain_bounded(slice_project):
     assert _steps(executor) == ["implementer"] * 5
 
 
+def test_review_guided_repair_gets_its_own_bounded_browser_captures(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementer_calls = 0
+    reviewer_calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal implementer_calls, reviewer_calls
+        if assignment["step"] == "implementer":
+            implementer_calls += 1
+            candidate = min(implementer_calls, 4) if implementer_calls <= 5 else 6
+            (root / "app.py").write_text(f"def hello(): return 'candidate-{candidate}'\n")
+            if implementer_calls in {1, 2, 3, 4, 6}:
+                payload.update(
+                    verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                    browser_evidence_request={"purpose": "baseline_capture"},
+                )
+        elif assignment["step"] == "code_reviewer":
+            reviewer_calls += 1
+            if reviewer_calls == 1:
+                payload.update(
+                    verdict="CHANGES_REQUESTED", summary="Repair visual test",
+                    findings=["Screenshot helper needs a redraw fix"],
+                )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 5
+    assert reviewer_calls == 2
+
+
+def test_review_guided_browser_recaptures_remain_bounded(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementer_calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal implementer_calls
+        if assignment["step"] == "implementer":
+            implementer_calls += 1
+            (root / "app.py").write_text(
+                f"def hello(): return 'candidate-{implementer_calls}'\n"
+            )
+            if implementer_calls > 1:
+                payload.update(
+                    verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                    browser_evidence_request={"purpose": "baseline_capture"},
+                )
+        elif assignment["step"] == "code_reviewer":
+            payload.update(
+                verdict="CHANGES_REQUESTED", summary="Repair visual test",
+                findings=["Screenshot helper needs a redraw fix"],
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    result = _run(slice_project, ScriptedExecutor(decide), browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_evidence_request_repeated"
+    assert len(captures) == 2
+
+
 def test_no_image_browser_capture_cannot_become_approval_without_recapture(slice_project):
     from harness.product_inventory import product_evidence_fingerprint
     from harness.verify_result import VerifyResult
