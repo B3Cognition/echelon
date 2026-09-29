@@ -15,7 +15,8 @@ authors = [
 ]
 
 dependencies = [
-  "prosaic-runtime @ git+https://github.com/B3Cognition/prosaic-runtime.git@24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3",
+  # Prosaic Runtime v0.2.0, pinned to the immutable release commit.
+  "prosaic-runtime @ git+https://github.com/B3Cognition/prosaic-runtime.git@17e4669bd1bd8e0bb6f25fdf8e23776c69e21671",
   # codegen
   "pyyaml>=6.0",
   "jsonschema>=4.23,<5",

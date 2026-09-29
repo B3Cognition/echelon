@@ -634,7 +634,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "lark", specifier = ">=1.1" },
     { name = "mempalace", url = "https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz" },
-    { name = "prosaic-runtime", git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3" },
+    { name = "prosaic-runtime", git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=17e4669bd1bd8e0bb6f25fdf8e23776c69e21671" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
@@ -1792,8 +1792,11 @@ wheels = [
 
 [[package]]
 name = "prosaic-runtime"
-version = "0.1.0"
-source = { git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3#24c212239c75c52cb68ff6fc93e76fc3ea9d6fd3" }
+version = "0.2.0"
+source = { git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=17e4669bd1bd8e0bb6f25fdf8e23776c69e21671#17e4669bd1bd8e0bb6f25fdf8e23776c69e21671" }
+dependencies = [
+    { name = "pyyaml" },
+]
 
 [[package]]
 name = "protobuf"
