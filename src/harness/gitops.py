@@ -451,7 +451,11 @@ class GitOpsManager:
     def fetch_mirror(self) -> None:
         """Fetch all updates in the mirror.
 
-        git -C mirror.git fetch --all --prune
+        git -C mirror.git fetch --all --no-prune
+
+        A mirror fetch maps origin refs into the same namespace as local
+        delivery candidate branches. Pruning would erase candidate refs that
+        do not exist in origin, including branches checked out in worktrees.
 
         Raises:
             GitOpsError: On failure (network, auth).
@@ -465,7 +469,7 @@ class GitOpsManager:
             )
         try:
             _run_git(
-                ["fetch", "--all", "--prune"],
+                ["fetch", "--all", "--no-prune"],
                 cwd=str(self._mirror_path),
             )
         except GitOpsError as e:

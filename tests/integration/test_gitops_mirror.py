@@ -40,6 +40,31 @@ class TestCloneMirror:
 class TestFetchMirror:
     """Tests for GitOpsManager.fetch_mirror."""
 
+    def test_fetch_preserves_local_delivery_candidate_branch(
+        self, tmp_path, bare_repo, harness_config,
+    ):
+        mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
+        mgr.clone_mirror(str(bare_repo))
+        mirror = str(mgr.mirror_path)
+        head = subprocess.run(
+            ["git", "-C", mirror, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        branch = "refs/heads/harness/001-feature/build-1/iter-0"
+        subprocess.run(
+            ["git", "-C", mirror, "update-ref", branch, head],
+            capture_output=True, check=True,
+        )
+
+        mgr.fetch_mirror()
+
+        result = subprocess.run(
+            ["git", "-C", mirror, "rev-parse", "--verify", branch],
+            capture_output=True, text=True, check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == head
+
     def test_fetch_updates_mirror(self, tmp_path, bare_repo, harness_config):
         """fetch_mirror updates mirror from remote."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))

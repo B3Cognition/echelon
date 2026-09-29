@@ -676,7 +676,7 @@ class TestHarnessRunTaskFormatErrors:
 
         user_message = mock_run.call_args.args[0]
         intent = parse_intent(user_message)
-        assert intent.spec_id == "003"
+        assert intent.spec_id == "003-test"
         assert intent.mode == "banzai"
         assert intent.task_description == "strategy=codegen kill_losers=true"
         assert intent.max_outer == 3
@@ -877,6 +877,7 @@ class TestHarnessTargetPreflight:
 
         assert exc.value.code == 0
         mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == "001-feature"
         assert not list((root / "runs").glob("build-*"))
 
     def test_target_child_prepares_and_runs_in_same_build_root(
@@ -959,6 +960,7 @@ class TestHarnessTargetPreflight:
         assert kwargs["base_dir"] == str(harness_base)
         assert kwargs["orchestration_root"] == root.resolve()
         assert kwargs["summary_command"] == "echelon delivery run"
+        assert mock_run.call_args.args[0].startswith("spec 001-feature ")
         assert not list((root / "runs").glob("build-*"))
 
     @pytest.mark.parametrize(

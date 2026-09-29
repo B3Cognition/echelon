@@ -2963,6 +2963,11 @@ def _run_delivery(
     spec_dir = find_spec_dir(spec_id, spec_search_root)
     if spec_dir is not None:
         resolved_spec_id = spec_dir.name
+        # Recovery state and candidate branches use the canonical spec name.
+        # Keep a CLI shorthand only for locating the spec, never for a run.
+        spec_id = resolved_spec_id
+        parts[0] = f"spec {spec_id}"
+        user_message = " ".join(parts)
         polyrepo_root = spec_dir.parent.parent
         try:
             snapshot_spec_dir(spec_dir, polyrepo_root)
