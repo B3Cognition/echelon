@@ -7037,6 +7037,11 @@ class RalphController:
         """Write phase evidence and return an implementation result."""
 
         try:
+            if reason == "user_cancel":
+                retain_interrupted_candidate(
+                    self._state_store,
+                    spec_id=self._spec_id,
+                )
             state = self._state_store.read()
             if reason in _NON_CHARGEABLE_INFRASTRUCTURE_REASONS:
                 state["convergence_lease"] = (
@@ -8571,6 +8576,57 @@ def _salvage_build_worktree(
     except Exception as exc:
         logger.warning("Could not salvage dirty harness worktree %s: %s", worktree_path, exc)
         return None
+
+
+def retain_interrupted_candidate(
+    state_store: StateStore,
+    *,
+    spec_id: str,
+) -> Optional[Dict[str, str]]:
+    """Checkpoint a pending, unreviewed slice without granting task credit.
+
+    This is also callable for a previously interrupted run whose candidate was
+    left dirty before interruption retention was available.
+    """
+    state = state_store.read()
+    if state.get("status") not in {"running", "interrupted"}:
+        return None
+    operation = state.get("delivery_slice_operation")
+    if not isinstance(operation, dict) or operation.get("progress_applied") is True:
+        return None
+    candidate = operation.get("worktree_path")
+    if not isinstance(candidate, str):
+        return None
+    worktree = Path(candidate)
+    worktrees_root = state_store.state_dir.parent / "worktrees"
+    if (
+        not worktree.is_absolute()
+        or worktree.is_symlink()
+        or not worktree.is_dir()
+        or not worktree.resolve().is_relative_to(worktrees_root.resolve())
+    ):
+        logger.warning("Cannot retain pending candidate outside run worktrees: %s", candidate)
+        return None
+    git_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=worktree, capture_output=True, text=True, timeout=30, check=False,
+    )
+    if git_root.returncode != 0 or Path(git_root.stdout.strip()).resolve() != worktree.resolve():
+        logger.warning("Cannot retain pending candidate without an exact git worktree: %s", candidate)
+        return None
+    outer_iter = operation.get("outer_iter", state.get("outer_iter", 0))
+    if type(outer_iter) is not int or outer_iter < 0:
+        return None
+    salvage = _salvage_build_worktree(
+        worktree_path=str(worktree),
+        spec_id=spec_id,
+        build_id=state_store.state_dir.parent.name,
+        outer_iter=outer_iter,
+    )
+    if salvage:
+        state.update(salvage)
+        state_store.write(state)
+    return salvage
 
 
 

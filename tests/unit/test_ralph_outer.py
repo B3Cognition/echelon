@@ -155,6 +155,57 @@ def test_infrastructure_finalization_is_excluded_from_meaningful_attempts(
     assert lease["last_infrastructure_reason"] == "sandbox_verification_unavailable"
 
 
+def test_user_cancel_salvages_pending_dirty_candidate_without_task_credit(
+    tmp_path: Path,
+) -> None:
+    """An interrupted review must not strand generated changes as loose files."""
+    controller, _, _, _ = _make_controller(tmp_path)
+    run_root = tmp_path / "delivery-run"
+    store = StateStore(run_root / "state", "spec-001")
+    store.initialize("run-1", "semi")
+    store.transition("running")
+    controller._state_store = store
+    worktree = run_root / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    (worktree / "app.ts").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "initial"],
+        cwd=worktree, check=True,
+    )
+    (worktree / "app.ts").write_text("candidate\n", encoding="utf-8")
+    (worktree / "snapshot.png").write_bytes(b"candidate image")
+    state = store.read()
+    state["delivery_slice_operation"] = {
+        "id": "slice-1", "worktree_path": str(worktree),
+        "progress_applied": False,
+    }
+    store.write(state)
+
+    result = controller._finalize(
+        status="interrupted", reason="user_cancel", outer_iterations=0,
+        inner_iterations=0, pr_url=None, tokens_used=0, final_verify=None,
+    )
+
+    persisted = store.read()
+    assert result.status == "interrupted"
+    assert persisted["delivery_slice_operation"]["id"] == "slice-1"
+    assert persisted.get("checkpoint_commits") in (None, [])
+    assert persisted["salvage_verified"] == "not_run"
+    assert persisted["salvage_commit"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert subprocess.run(
+        ["git", "status", "--porcelain"], cwd=worktree, check=True,
+        capture_output=True, text=True,
+    ).stdout == ""
+    assert (worktree / "app.ts").read_text(encoding="utf-8") == "candidate\n"
+    assert (worktree / "snapshot.png").read_bytes() == b"candidate image"
+
+
 def test_regressed_high_water_context_is_bounded_and_provider_actionable(
     tmp_path: Path,
 ) -> None:

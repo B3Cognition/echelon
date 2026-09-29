@@ -12,6 +12,7 @@ import logging
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -111,7 +112,7 @@ def _fresh_delivery_repaired_candidate(
     This preserves the repair for fresh verification/review without fabricating
     a receipt or treating the salvaged task as complete.
     """
-    if gitops is None or state.get("termination_reason") != "build_blocked":
+    if gitops is None or not _has_retainable_salvage(state):
         return None
     salvage = state.get("salvage_commit")
     if not isinstance(salvage, str) or not re.fullmatch(r"[0-9a-f]{40}", salvage):
@@ -126,6 +127,8 @@ def _fresh_delivery_repaired_candidate(
         logger.warning("Could not inspect preserved worktree for %s: %s", build_id, error)
         return None
     if not isinstance(candidate, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate):
+        return None
+    if state.get("status") == "interrupted" and candidate != salvage:
         return None
     try:
         checkpoint_contains_salvage = ancestry(checkpoint, salvage) is True
@@ -180,6 +183,49 @@ def _fresh_delivery_checkpointless_salvage(
     return salvage
 
 
+def _has_retainable_salvage(state: Mapping[str, object]) -> bool:
+    return (
+        state.get("status") == "blocked"
+        and state.get("termination_reason") == "build_blocked"
+    ) or (
+        state.get("status") == "interrupted"
+        and state.get("termination_reason") == "user_cancel"
+    )
+
+
+def _reject_unretained_pending_candidate(
+    state: Mapping[str, object],
+    *,
+    build_dir: Path,
+) -> None:
+    """A new budget must not silently bypass loose, unreviewed provider output."""
+    operation = state.get("delivery_slice_operation")
+    if not isinstance(operation, dict) or operation.get("progress_applied") is True:
+        return
+    candidate = operation.get("worktree_path")
+    if not isinstance(candidate, str):
+        return
+    worktree = Path(candidate)
+    if (
+        not worktree.is_absolute()
+        or worktree.is_symlink()
+        or not worktree.is_dir()
+        or not worktree.resolve().is_relative_to((build_dir / "worktrees").resolve())
+    ):
+        raise RunContextError(
+            f"pending delivery candidate is missing or unsafe: {candidate}"
+        )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=worktree, capture_output=True, text=True, timeout=30, check=False,
+    )
+    if status.returncode != 0 or status.stdout.strip():
+        raise RunContextError(
+            f"prior delivery has an uncommitted candidate: {worktree}; "
+            "retain or reconcile it before starting a new run"
+        )
+
+
 def _fresh_delivery_baseline(
     harness_root: Path,
     intent: Any,
@@ -215,6 +261,7 @@ def _fresh_delivery_baseline(
     )
 
     pending_repair_states: list[tuple[str, Mapping[str, object]]] = []
+    latest_recoverable_checked = False
     for prior_build_id in build_ids:
         state_path = runs_dir(harness_root) / prior_build_id / "state" / "delivery.json"
         try:
@@ -238,12 +285,15 @@ def _fresh_delivery_baseline(
         )
         if not recoverable:
             continue
+        if not latest_recoverable_checked:
+            _reject_unretained_pending_candidate(
+                state,
+                build_dir=state_path.parent.parent,
+            )
+            latest_recoverable_checked = True
         checkpoints = state.get("checkpoint_commits")
         if not isinstance(checkpoints, list):
-            if (
-                state.get("termination_reason") == "build_blocked"
-                and isinstance(state.get("salvage_commit"), str)
-            ):
+            if _has_retainable_salvage(state) and isinstance(state.get("salvage_commit"), str):
                 pending_repair_states.append((prior_build_id, state))
             continue
         for checkpoint in reversed(checkpoints):
@@ -279,10 +329,7 @@ def _fresh_delivery_baseline(
                     checkpoint=commit,
                 )
                 return repaired_candidate or commit
-        if (
-            state.get("termination_reason") == "build_blocked"
-            and isinstance(state.get("salvage_commit"), str)
-        ):
+        if _has_retainable_salvage(state) and isinstance(state.get("salvage_commit"), str):
             pending_repair_states.append((prior_build_id, state))
     for salvage_build_id, salvage_state in pending_repair_states:
         candidate = _fresh_delivery_checkpointless_salvage(

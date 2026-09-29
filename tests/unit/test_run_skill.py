@@ -355,6 +355,36 @@ def test_fresh_delivery_retains_clean_checkpointless_salvage_without_task_credit
     ) == ()
 
 
+def test_fresh_delivery_retains_recorded_interruption_salvage_without_task_credit(
+    tmp_path: Path,
+) -> None:
+    """A cancelled first task's committed candidate can be re-reviewed."""
+    salvage = "b" * 40
+    build_id = "build-20260929-193625-223917"
+    state_dir = tmp_path / "runs" / build_id / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "delivery.json").write_text(
+        json.dumps({
+            "status": "interrupted", "termination_reason": "user_cancel",
+            "checkpoint_commits": None, "salvage_commit": salvage,
+            "spec_id": "012",
+        }), encoding="utf-8",
+    )
+    marker = tmp_path / "runs" / "current-012.txt"
+    marker.write_text(build_id, encoding="utf-8")
+    intent = RunIntent(spec_id="012", mode="semi")
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.get_clean_worktree_head.return_value = salvage
+    gitops.commit_is_ancestor.side_effect = lambda parent, child: (
+        (parent, child) == ("main", salvage)
+    )
+    gitops.commit_is_ancestor_of_default.return_value = False
+
+    assert _fresh_delivery_baseline(tmp_path, intent, gitops) == salvage
+    assert _fresh_delivery_completed_tasks(tmp_path, intent, salvage, gitops) == ()
+
+
 @pytest.mark.parametrize(
     ("clean_head", "descends_from_default", "landed"),
     [

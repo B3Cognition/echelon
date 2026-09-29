@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -136,6 +137,85 @@ def test_new_budget_refuses_to_compete_with_live_running_delivery(tmp_path: Path
 
     with pytest.raises(RunContextError, match="already active"):
         _fresh_delivery_baseline(tmp_path, _intent())
+
+
+@pytest.mark.unit
+def test_new_budget_refuses_dirty_interrupted_candidate_without_retention(
+    tmp_path: Path,
+) -> None:
+    """Do not silently replace a loose interrupted candidate with an older checkpoint."""
+    _write_state(
+        tmp_path, "build-older", status="blocked", checkpoint="a" * 40,
+        termination_reason="outer_cap",
+    )
+    latest = _write_state(
+        tmp_path, "build-newest", status="interrupted",
+        termination_reason="user_cancel",
+    )
+    worktree = latest.parent.parent / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    (worktree / "app.ts").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.ts"], cwd=worktree, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+         "commit", "-qm", "initial"],
+        cwd=worktree, check=True,
+    )
+    (worktree / "app.ts").write_text("unretained candidate\n", encoding="utf-8")
+    state = json.loads(latest.read_text(encoding="utf-8"))
+    state["delivery_slice_operation"] = {
+        "id": "slice-1", "worktree_path": str(worktree), "progress_applied": False,
+    }
+    latest.write_text(json.dumps(state), encoding="utf-8")
+    marker = current_build_marker(tmp_path, "012")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("build-newest", encoding="utf-8")
+
+    with pytest.raises(RunContextError, match="uncommitted candidate"):
+        _fresh_delivery_baseline(tmp_path, _intent())
+
+
+@pytest.mark.unit
+def test_newer_retained_salvage_supersedes_older_dirty_interruption(
+    tmp_path: Path,
+) -> None:
+    """Historical loose work cannot veto a newer retained delivery lineage."""
+    older = _write_state(
+        tmp_path, "build-older", status="interrupted",
+        termination_reason="user_cancel",
+    )
+    worktree = older.parent.parent / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    (worktree / "loose.txt").write_text("old candidate\n", encoding="utf-8")
+    state = json.loads(older.read_text(encoding="utf-8"))
+    state["delivery_slice_operation"] = {
+        "id": "old-slice", "worktree_path": str(worktree), "progress_applied": False,
+    }
+    older.write_text(json.dumps(state), encoding="utf-8")
+    older_state = json.loads(older.read_text(encoding="utf-8"))
+    older_state["checkpoint_commits"] = [{"commit": "a" * 40}]
+    older.write_text(json.dumps(older_state), encoding="utf-8")
+    newer = _write_state(
+        tmp_path, "build-newer", status="interrupted",
+        termination_reason="user_cancel",
+    )
+    newer_state = json.loads(newer.read_text(encoding="utf-8"))
+    newer_state["salvage_commit"] = "b" * 40
+    newer.write_text(json.dumps(newer_state), encoding="utf-8")
+    marker = current_build_marker(tmp_path, "012")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("build-newer", encoding="utf-8")
+
+    gitops = SimpleNamespace(
+        get_clean_worktree_head=lambda *args, **kwargs: "b" * 40,
+        commit_is_ancestor=lambda parent, child: (parent, child) in {
+            ("a" * 40, "b" * 40), ("b" * 40, "b" * 40),
+        },
+        commit_is_ancestor_of_default=lambda commit: False,
+    )
+    assert _fresh_delivery_baseline(tmp_path, _intent(), gitops) == "b" * 40
 
 
 @pytest.mark.unit
