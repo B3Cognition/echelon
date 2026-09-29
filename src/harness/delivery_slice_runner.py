@@ -22,7 +22,9 @@ from harness.delivery_slice import (
     bind_delivery_result, select_delivery_task,
 )
 from harness.durable_json import write_json_atomic
-from harness.delivery_slice_journal import DeliverySliceJournal, MAX_GATE_ROUNDS
+from harness.delivery_slice_journal import (
+    DeliverySliceJournal, MAX_BROWSER_REQUESTS, MAX_GATE_ROUNDS,
+)
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
 from harness.delivery_containment import containment_policy_env
 from harness.product_inventory import product_evidence_fingerprint
@@ -224,6 +226,8 @@ class DeliverySliceRunner:
             cursor = 0
             browser_requests = 0
             needs_snapshot_recapture = False
+            consecutive_empty_browser_captures = 0
+            last_browser_candidate_after: str | None = None
             for repair in range(MAX_GATE_ROUNDS):
                 rejected = False
                 review_failures: list[dict[str, object]] = []
@@ -294,7 +298,11 @@ class DeliverySliceRunner:
                                     and result["verdict"] not in {"BLOCKED", "NEEDS_CONTEXT"}):
                                 raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             break
-                        if browser_requests and (not needs_snapshot_recapture or browser_requests >= 2):
+                        if browser_requests and (
+                            browser_requests >= MAX_BROWSER_REQUESTS
+                            or (not needs_snapshot_recapture
+                                and record["candidate_after"] == last_browser_candidate_after)
+                        ):
                             raise DeliverySliceError("delivery_browser_evidence_request_repeated")
                         browser_requests += 1
                         if browser_baseline_capture is None:
@@ -325,7 +333,11 @@ class DeliverySliceRunner:
                             input_fingerprint=input_fingerprint,
                         )
                         browser_paths = observation.images
-                        if not browser_paths and browser_requests >= 2:
+                        last_browser_candidate_after = record["candidate_after"]
+                        consecutive_empty_browser_captures = (
+                            consecutive_empty_browser_captures + 1 if not browser_paths else 0
+                        )
+                        if consecutive_empty_browser_captures >= 2:
                             reason = (
                                 "delivery_browser_capture_failed_after_retry"
                                 if not observation.verification_passed else

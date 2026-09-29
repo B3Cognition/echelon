@@ -15,6 +15,7 @@ from harness.durable_json import write_json_atomic
 
 
 MAX_GATE_ROUNDS = 5  # Initial implementation plus four review-guided repairs.
+MAX_BROWSER_REQUESTS = 4  # Bounded recaptures after image inspection and repair.
 
 
 class DeliverySliceJournal:
@@ -179,7 +180,7 @@ def _validate(data):
                 terminal = True
             elif result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
                 browser_requests += 1
-                if browser_requests > 2:
+                if browser_requests > MAX_BROWSER_REQUESTS:
                     terminal = True
                 elif index < len(records) - 1 and evidence is None:
                     raise DeliverySliceError("browser evidence missing before continuation")
