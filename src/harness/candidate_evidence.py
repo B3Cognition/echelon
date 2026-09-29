@@ -235,7 +235,10 @@ class CandidateEvidenceRunner:
 
             started_at = _now()
             result = self._provider.exec(
-                handle, command, env=service_env, timeout_ms=600_000
+                handle,
+                command,
+                env=service_env,
+                timeout_ms=config.verification.command_timeout_ms,
             )
             if legacy_structured:
                 try:
@@ -348,7 +351,10 @@ class CandidateEvidenceRunner:
                             )
                 started_at = _now()
                 result = self._provider.exec(
-                    handle, command, env=service_env, timeout_ms=600_000
+                    handle,
+                    command,
+                    env=service_env,
+                    timeout_ms=config.verification.command_timeout_ms,
                 )
                 stages = retry_stages
                 detection_evidence = (
