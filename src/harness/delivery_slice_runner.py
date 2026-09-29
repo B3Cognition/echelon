@@ -231,9 +231,12 @@ class DeliverySliceRunner:
             repair_context = feedback
             cursor = 0
             browser_requests = 0
+            browser_duplicate_corrections = 0
             needs_snapshot_recapture = False
             consecutive_empty_browser_captures = 0
             last_browser_candidate_after: str | None = None
+            last_browser_capture_passed = False
+            last_browser_reference: dict[str, str] | None = None
             for repair in range(MAX_GATE_ROUNDS):
                 rejected = False
                 review_failures: list[dict[str, object]] = []
@@ -301,15 +304,34 @@ class DeliverySliceRunner:
                             review_rechecks += 1
                             continue
                         if result["verdict"] != "BROWSER_EVIDENCE_REQUIRED":
+                            if (browser_duplicate_corrections
+                                    and result["verdict"] in PASSING_VERDICTS
+                                    and record["candidate_after"] != last_browser_candidate_after):
+                                raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             if (needs_snapshot_recapture
                                     and result["verdict"] not in {"BLOCKED", "NEEDS_CONTEXT"}):
                                 raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             break
-                        if browser_requests and (
-                            browser_requests >= MAX_BROWSER_REQUESTS
-                            or (not needs_snapshot_recapture
-                                and record["candidate_after"] == last_browser_candidate_after)
-                        ):
+                        if (browser_requests and not needs_snapshot_recapture
+                                and record["candidate_after"] == last_browser_candidate_after):
+                            if (last_browser_capture_passed and browser_paths
+                                    and last_browser_reference
+                                    and browser_duplicate_corrections == 0):
+                                browser_duplicate_corrections = 1
+                                record["browser_evidence"] = last_browser_reference
+                                journal.save(data)
+                                repair_context = json.dumps({
+                                    "browser_context": repair_context,
+                                    "controller_correction": (
+                                        "This unchanged candidate already has passing browser evidence. "
+                                        "Do not request capture again. Inspect the retained proposal: "
+                                        "return DONE if task criteria are met, or change the candidate "
+                                        "before requesting a fresh capture. No gate has been waived."
+                                    ),
+                                })
+                                continue
+                            raise DeliverySliceError("delivery_browser_evidence_request_repeated")
+                        if browser_requests >= MAX_BROWSER_REQUESTS:
                             raise DeliverySliceError("delivery_browser_evidence_request_repeated")
                         browser_requests += 1
                         if browser_baseline_capture is None:
@@ -341,6 +363,9 @@ class DeliverySliceRunner:
                         )
                         browser_paths = observation.images
                         last_browser_candidate_after = record["candidate_after"]
+                        last_browser_capture_passed = observation.verification_passed
+                        last_browser_reference = reference
+                        browser_duplicate_corrections = 0
                         consecutive_empty_browser_captures = (
                             consecutive_empty_browser_captures + 1 if not browser_paths else 0
                         )
@@ -736,10 +761,13 @@ def _render_prompt(body: str, assignment: DeliveryAssignment, inputs: dict[str, 
         + "Return only one JSON object echoing every assignment field and adding "
         "verdict, summary (nonempty string), findings (array of unresolved issue strings with source citations), "
         "and only the additional fields explicitly allowed below. "
-        + ("If pinned browser baselines require Ralph's sandbox, return verdict "
+        + ("If pinned browser baselines require Ralph's sandbox and no passing "
+           "proposal exists for the current candidate, return verdict "
            "BROWSER_EVIDENCE_REQUIRED with empty findings and one additional field "
            "browser_evidence_request: {\"purpose\": \"baseline_capture\"}. "
            "This requests evidence only; it does not approve or complete the task. "
+           "If a passing proposal is supplied for an unchanged candidate, inspect it "
+           "and return DONE when the task is ready, not another capture request. "
            if assignment.step == "implementer" else "")
         + "Passing verdict requires empty findings. Allowed verdicts: "
         + ", ".join(sorted(STEP_VERDICTS[assignment.step]))

@@ -91,6 +91,9 @@ def _validate(data):
     rechecks_for_step = 0
     recheck_audit_paths = None
     browser_requests = 0
+    last_browser_evidence = None
+    last_browser_candidate = None
+    browser_correction_used = False
     for index, record in enumerate(records):
         if terminal or repair >= MAX_GATE_ROUNDS or step_index >= len(steps):
             raise DeliverySliceError("delivery receipt after terminal result")
@@ -179,7 +182,20 @@ def _validate(data):
             if result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"}:
                 terminal = True
             elif result["verdict"] == "BROWSER_EVIDENCE_REQUIRED":
-                browser_requests += 1
+                reused = (
+                    evidence is not None
+                    and evidence == last_browser_evidence
+                    and after == last_browser_candidate
+                )
+                if reused:
+                    if browser_correction_used:
+                        raise DeliverySliceError("repeated browser evidence correction")
+                    browser_correction_used = True
+                else:
+                    browser_requests += 1
+                    last_browser_evidence = evidence
+                    last_browser_candidate = after
+                    browser_correction_used = False
                 if browser_requests > MAX_BROWSER_REQUESTS:
                     terminal = True
                 elif index < len(records) - 1 and evidence is None:

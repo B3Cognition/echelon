@@ -560,6 +560,211 @@ def test_browser_capture_request_cannot_loop_indefinitely(slice_project):
     assert result.task_ids == [] and _steps(executor) == ["implementer", "implementer"]
 
 
+def test_repeated_passing_browser_request_gets_one_corrective_reentry(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        (root / "app.py").write_text("def hello(): return 'stable'\n")
+        if calls <= 2:
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need fresh capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 1
+    assert _steps(executor) == ["implementer"] * 3 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert "already has passing browser evidence" in executor.calls[2][2]
+    assert "Do not request capture again" in executor.calls[2][2]
+
+
+def test_passing_browser_request_still_blocks_after_corrective_reentry(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    captures = []
+
+    def repeat(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need fresh capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(repeat)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_evidence_request_repeated"
+    assert len(captures) == 1
+    assert _steps(executor) == ["implementer"] * 3
+
+
+def test_corrective_reentry_works_after_four_real_captures(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        (root / "app.py").write_text(
+            f"def hello(): return 'candidate-{min(calls, 4)}'\n"
+        )
+        if calls <= 5:
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 4
+    assert _steps(executor) == ["implementer"] * 6 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_corrective_browser_reentry_replays_without_recapture(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    stop = False
+    calls = 0
+
+    def repeat_twice(assignment, payload, root):
+        nonlocal stop, calls
+        if assignment["step"] == "implementer":
+            calls += 1
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+            stop = calls == 2
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    first = _run(
+        slice_project, ScriptedExecutor(repeat_twice), operation_id="correction-op",
+        browser_baseline_capture=capture, stop_requested=lambda: stop,
+    )
+    assert first.reason == "delivery_slice_cancelled"
+
+    def finish(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+
+    resumed_executor = ScriptedExecutor(finish)
+    resumed = _run(
+        slice_project, resumed_executor, operation_id="correction-op",
+        journal_required=True,
+        browser_baseline_capture=lambda _worktree: pytest.fail("must not recapture"),
+    )
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_corrective_reentry_cannot_accept_changed_candidate_without_recapture(
+    slice_project,
+):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        if calls == 1:
+            (root / "app.py").write_text("def hello(): return 'initial'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+        elif calls == 2:
+            (root / "app.py").write_text("def hello(): return 'initial'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+        else:
+            (root / "app.py").write_text("def hello(): return 'changed'\n")
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_snapshot_recapture_required"
+    assert _steps(executor) == ["implementer"] * 3
+
+
 def test_no_image_browser_capture_returns_to_same_implementer_then_recaptures(slice_project):
     from harness.product_inventory import product_evidence_fingerprint
     from harness.verify_result import VerifyResult
