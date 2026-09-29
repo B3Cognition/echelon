@@ -256,7 +256,7 @@ class DeliverySliceRunner:
                                 artifact, assignment, inputs, path_projection,
                                 nested_target_prefix, nested_target_fingerprint,
                                 repair_context, worktree, spec_dir,
-                                evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
+                                evidence_root, run_id, extra_env, input_fingerprint,
                                 record, data, journal, browser_paths,
                             )
                             invocation_count += 1
@@ -356,7 +356,7 @@ class DeliverySliceRunner:
     def _dispatch(self, artifact, assignment, inputs, path_projection,
                   nested_target_prefix, nested_target_fingerprint, repair_context,
                   worktree, spec_dir,
-                  evidence_root, run_id, extra_env, stop_requested, input_fingerprint,
+                  evidence_root, run_id, extra_env, input_fingerprint,
                   record, data, journal, browser_paths=None):
         step = assignment.step
         forbidden_roots = [str(spec_dir), str(evidence_root), str(worktree / ".git")]
@@ -399,8 +399,6 @@ class DeliverySliceRunner:
         try:
             if len(response.stdout.encode("utf-8")) <= 100_000:
                 record["raw_result"] = response.stdout
-            if stop_requested and stop_requested():
-                raise DeliverySliceError("delivery_slice_cancelled")
             if _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint:
                 raise DeliverySliceError("delivery_spec_inputs_changed")
             if (

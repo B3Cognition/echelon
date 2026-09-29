@@ -945,6 +945,15 @@ def test_cancellation_between_steps_never_accepts_slice(slice_project):
     result = _run(slice_project, executor, stop_requested=lambda: bool(executor.calls))
     assert result.status == "blocked" and not result.task_ids
     assert _steps(executor) == ["implementer"]
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert journal["records"][0]["result"]["verdict"] == "DONE"
+    assert journal["records"][0]["candidate_after"]
+    assert journal["records"][0]["error"] is None
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == ["spec_guard", "code_reviewer", "test_guardian"]
 
 
 def test_prior_marker_and_receipts_cannot_substitute_for_new_reviews(slice_project):
