@@ -198,6 +198,33 @@ def _is_retryable_delivery_provider_failure(state: dict) -> bool:
     )
 
 
+def _is_pending_prior_review_cap(state: dict) -> bool:
+    """Allow an unfinished slice to use one newly available repair round."""
+    from harness.delivery_slice_journal import MAX_GATE_ROUNDS
+
+    operation = state.get("delivery_slice_operation")
+    verification = state.get("last_verify_result")
+    failures = verification.get("failures") if isinstance(verification, dict) else None
+    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
+    return (
+        MAX_GATE_ROUNDS > 3
+        and state.get("status") == "blocked"
+        and state.get("termination_reason") == "build_blocked"
+        and state.get("blocked_phase") == "implementation"
+        and isinstance(operation, dict)
+        and bool(str(operation.get("id") or "").strip())
+        and operation.get("progress_applied") is not True
+        and isinstance(verification, dict)
+        and verification.get("passed") is False
+        and isinstance(failure, dict)
+        and failure.get("category") == "other"
+        and failure.get("id") == "build-blocked"
+        and failure.get("error") == (
+            "delivery_gate_repair_limit: required review still failed after two repairs"
+        )
+    )
+
+
 def _delivery_status_next_step(
     state: dict,
     spec_id: str,
@@ -209,7 +236,7 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
-        if _is_retryable_delivery_provider_failure(state):
+        if _is_retryable_delivery_provider_failure(state) or _is_pending_prior_review_cap(state):
             return f"echelon delivery continue {effective_spec}"
         if termination_reason == "outer_cap":
             command, explanation = _outer_cap_delivery_action(
@@ -3758,6 +3785,9 @@ def _run_delivery_resume(
         continuation_reasons.add("containment_violation")
     if _is_retryable_delivery_provider_failure(state):
         continuation_reasons.add("build_blocked")
+    pending_prior_review_cap = _is_pending_prior_review_cap(state)
+    if pending_prior_review_cap:
+        continuation_reasons.add("build_blocked")
     from harness.delivery_controller import pending_slice_budget_exhausted as _pending_slice_budget_exhausted
 
     pending_slice_budget_exhausted = _pending_slice_budget_exhausted(state)
@@ -4098,6 +4128,7 @@ def _run_delivery_resume(
         not config.verify_command
         and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
         and not pending_slice_budget_exhausted
+        and not pending_prior_review_cap
     ):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),

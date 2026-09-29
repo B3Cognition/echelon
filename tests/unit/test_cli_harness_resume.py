@@ -416,6 +416,63 @@ class TestCmdHarnessResume:
         assert "echelon spec reopen 001" in err
         assert "echelon delivery continue 001" not in err
 
+    def test_delivery_continue_replays_pending_review_after_prior_repair_cap(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after two repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(tmp_path, ["001", "token_budget=50000000"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_delivery_continue_does_not_replay_current_repair_cap(
+        self, tmp_path: Path, capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after three repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001"])
+
+        assert not mock_run.called
+        assert "do not retry delivery" in capsys.readouterr().err
+
     def test_delivery_continue_retries_implementation_provider_failure(
         self,
         tmp_path: Path,

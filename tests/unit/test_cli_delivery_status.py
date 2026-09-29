@@ -137,6 +137,30 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
+def test_prior_repair_cap_with_pending_slice_status_offers_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after two repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
 def test_provider_failed_status_matches_checkpoint_preserving_continue() -> None:
     from echelon.delivery_service import _delivery_status_next_step
 
