@@ -26,6 +26,7 @@ SUBAGENT_POLICY = {
     "echelon.delivery-spec-guard.md": ("strong", "medium"),
     "echelon.delivery-code-reviewer.md": ("strong", "high"),
     "echelon.delivery-test-guardian.md": ("strong", "medium"),
+    "echelon.delivery-visual-validator.md": ("strong", "high"),
     "echelon.docs-verifier.md": ("balanced", "medium"),
     "echelon.engineering-manager.md": ("strong", "medium"),
     "echelon.gatekeeper.md": ("strong", "high"),

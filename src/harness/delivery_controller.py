@@ -990,6 +990,43 @@ class DeliveryController:
         state = state_store.read()
         if state.get("status") != "finalizing":
             state_store.transition("finalizing", updates={"blocked_phase": None})
+        if state.get("semantic_visual_gate_required") is True:
+            from harness.semantic_visual_validator import semantic_spec_digest
+            from harness.visual_evidence import (
+                VisualEvidenceRef, validate_semantic_visual_receipt,
+            )
+
+            try:
+                worktree_text = state.get("registered_worktree")
+                visual_mapping = state.get("visual_evidence")
+                semantic_mapping = state.get("semantic_visual_evidence")
+                if (
+                    spec_dir is None
+                    or not isinstance(worktree_text, str)
+                    or not worktree_text
+                    or not isinstance(visual_mapping, dict)
+                    or not isinstance(semantic_mapping, dict)
+                ):
+                    raise ValueError("semantic visual evidence is missing")
+                candidate = product_evidence_fingerprint(Path(worktree_text))
+                visual_ref = VisualEvidenceRef.from_mapping(visual_mapping)
+                semantic_valid = validate_semantic_visual_receipt(
+                    semantic_mapping,
+                    visual_ref=visual_ref,
+                    candidate_fingerprint=candidate,
+                    spec_digest=semantic_spec_digest(spec_dir),
+                ).valid
+            except (OSError, RuntimeError, TypeError, ValueError):
+                semantic_valid = False
+            if not semantic_valid:
+                return self._persist_phase_block(
+                    state_store, phase="visual",
+                    reason="semantic_visual_evidence_invalid",
+                    implementation=implementation,
+                    outer_iterations=outer_iterations,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                )
         if len(declared_targets) != 1 and not self._publish_deferred_target(
             state_store, implementation, publication_controller
         ):
@@ -1665,6 +1702,19 @@ class DeliveryController:
             visual_tokens = 0
             # Phase 2 is harness-owned. A coding provider's self-reported browser
             # checks never substitute for deterministic sandbox Playwright evidence.
+            def validate_semantic_visual(worktree: str, evidence: Any) -> dict[str, object]:
+                if spec_dir is None:
+                    return {"status": "blocked", "reason": "published spec unavailable", "tokens_used": 0}
+                from harness.semantic_visual_validator import run_semantic_visual_validation
+
+                return run_semantic_visual_validation(
+                    executor=llm_provider,
+                    project_dir=Path(self._orchestration_root or self._base_dir),
+                    spec_dir=spec_dir,
+                    worktree=Path(worktree),
+                    visual_ref=evidence,
+                )
+
             visual_controller = (
                 VisualRalphController(
                     provider=self._provider,
@@ -1692,6 +1742,7 @@ class DeliveryController:
                     semantic_visual_gate_required=(
                         state_store.read().get("semantic_visual_gate_required") is True
                     ),
+                    semantic_validator=validate_semantic_visual,
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])
                 else None
@@ -1785,6 +1836,7 @@ class DeliveryController:
             if visual_result is not None and visual_result.evidence is not None:
                 visual_updates: dict[str, object] = {
                     "visual_evidence": visual_result.evidence.as_mapping(),
+                    "semantic_visual_evidence": visual_result.semantic_evidence,
                 }
                 if visual_result.status == "passed":
                     visual_updates["last_completed_phase"] = "visual"

@@ -508,6 +508,107 @@ def test_semantic_visual_gate_blocks_after_browser_pass_without_validator_receip
     feedback.assert_not_called()
 
 
+def test_semantic_visual_gate_accepts_independent_passing_verdict(
+    tmp_path: Path,
+) -> None:
+    """A passing browser receipt alone is insufficient; the validator must run."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    accepted = []
+
+    def validate(candidate: str, evidence):
+        from harness.visual_evidence import write_semantic_visual_receipt
+
+        accepted.append((candidate, evidence))
+        image = json.loads(evidence.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+        receipt = write_semantic_visual_receipt(
+            visual_ref=evidence, candidate_fingerprint=evidence.candidate_fingerprint,
+            spec_digest="a" * 64, verdict="PASS", summary="Pitch and sky render correctly",
+            findings=[], reviewed_artifacts=[image], token_usage=7,
+        )
+        return {
+            "status": "passed",
+            "tokens_used": 7,
+            "receipt": receipt,
+        }
+
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        semantic_visual_gate_required=True, semantic_validator=validate,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "passed"
+    assert result.tokens_used >= 7
+    assert result.semantic_evidence is not None
+    assert result.semantic_evidence["verdict"] == "PASS"
+    assert len(accepted) == 1
+    assert accepted[0][0] == str(worktree)
+    assert accepted[0][1].receipt_sha256 == result.evidence.receipt_sha256
+
+
+def test_semantic_visual_failure_uses_existing_visual_repair_path(
+    tmp_path: Path,
+) -> None:
+    """A concrete semantic finding is repair feedback, not gate unavailability."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    feedback = MagicMock(return_value={"passed": True, "tokens": 5})
+
+    def validate(_candidate, evidence):
+        from harness.visual_evidence import write_semantic_visual_receipt
+
+        image = json.loads(evidence.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+        finding = "Pitch markings are invisible in journey.png"
+        receipt = write_semantic_visual_receipt(
+            visual_ref=evidence, candidate_fingerprint=evidence.candidate_fingerprint,
+            spec_digest="a" * 64, verdict="FAIL", summary="Pitch markings missing",
+            findings=[finding], reviewed_artifacts=[image], token_usage=7,
+        )
+        return {
+            "status": "failed", "tokens_used": 7,
+            "findings": [finding], "receipt": receipt,
+        }
+
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        feedback_runner=feedback, semantic_visual_gate_required=True,
+        semantic_validator=validate,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "fix_applied"
+    assert result.tokens_used >= 12
+    assert result.final_verify is not None
+    assert any(
+        failure.id == "semantic-visual-failed"
+        for failure in result.final_verify.failures
+    )
+    feedback.assert_called_once()
+
+
 def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
     tmp_path: Path,
 ) -> None:

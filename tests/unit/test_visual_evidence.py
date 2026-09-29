@@ -96,3 +96,42 @@ def test_required_visual_receipt_with_zero_artifacts_fails_closed(tmp_path: Path
     assert ref.passed is False
     assert payload["failure_id"] == "visual_artifacts_missing"
     assert not validate_visual_receipt(ref, candidate_fingerprint="product-a").valid
+
+
+def test_semantic_verdict_receipt_binds_candidate_browser_images_and_spec(
+    tmp_path: Path,
+) -> None:
+    """Changing any accepted input invalidates the independent visual verdict."""
+    from harness import visual_evidence
+
+    visual = _write_receipt(tmp_path)
+    image = json.loads(visual.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+    writer = getattr(visual_evidence, "write_semantic_visual_receipt", None)
+    validator = getattr(visual_evidence, "validate_semantic_visual_receipt", None)
+    assert callable(writer) and callable(validator)
+
+    ref = writer(
+        visual_ref=visual, candidate_fingerprint="product-a",
+        spec_digest="a" * 64, verdict="PASS", summary="Pitch and sky render correctly",
+        findings=[], reviewed_artifacts=[image], token_usage=13,
+    )
+
+    assert validator(
+        ref, visual_ref=visual, candidate_fingerprint="product-a",
+        spec_digest="a" * 64,
+    ).valid
+    assert not validator(
+        ref, visual_ref=visual, candidate_fingerprint="product-b",
+        spec_digest="a" * 64,
+    ).valid
+    assert not validator(
+        ref, visual_ref=visual, candidate_fingerprint="product-a",
+        spec_digest="b" * 64,
+    ).valid
+    payload = json.loads(Path(ref["path"]).read_text(encoding="utf-8"))
+    payload["summary"] = "tampered"
+    Path(ref["path"]).write_text(json.dumps(payload), encoding="utf-8")
+    assert not validator(
+        ref, visual_ref=visual, candidate_fingerprint="product-a",
+        spec_digest="a" * 64,
+    ).valid

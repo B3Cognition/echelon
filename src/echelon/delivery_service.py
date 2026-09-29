@@ -532,6 +532,13 @@ def _delivery_status_summary(
                 visual_evidence.get("candidate_fingerprint") or ""
             ),
         }
+    if state.get("semantic_visual_gate_required") is True:
+        semantic = state.get("semantic_visual_evidence")
+        recorded = isinstance(semantic, dict) and semantic.get("verdict") == "PASS"
+        summary["semantic_visual"] = {
+            "status": "receipt_recorded" if recorded else "pending",
+            "path": str(semantic.get("path") or "") if recorded else "",
+        }
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -680,6 +687,16 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         visual_path = str(visual_evidence.get("path") or "").strip()
         if visual_path:
             fields.append(("visual evidence", visual_path))
+    semantic_visual = summary.get("semantic_visual")
+    if isinstance(semantic_visual, dict):
+        status = semantic_visual.get("status")
+        fields.append((
+            "semantic visual",
+            "PASS receipt recorded" if status == "receipt_recorded" else "pending",
+        ))
+        semantic_path = str(semantic_visual.get("path") or "").strip()
+        if semantic_path:
+            fields.append(("semantic receipt", semantic_path))
     local_verification = summary.get("local_verification")
     if isinstance(local_verification, dict):
         fields.append(
@@ -3774,6 +3791,7 @@ def _run_delivery_resume(
         "visual": {
             "app_runtime_failed",
             "missing_registered_worktree",
+            "semantic_visual_evidence_invalid",
             "semantic_visual_validator_unavailable",
             "verified_provenance_mismatch",
             "visual_failed",

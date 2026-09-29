@@ -464,6 +464,7 @@ class StateStore:
             # historical candidate through mutable project configuration.
             "delivery_stack_snapshot": delivery_stack_snapshot,
             "visual_evidence": None,
+            "semantic_visual_evidence": None,
             "mode": mode,
             "outer_iter": 0,
             "max_outer": max_outer,

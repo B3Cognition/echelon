@@ -313,6 +313,7 @@ class TestCmdHarnessResume:
         ("blocked_phase", "reason"),
         [
             ("visual", "visual_feedback_failed"),
+            ("visual", "semantic_visual_evidence_invalid"),
             ("visual", "semantic_visual_validator_unavailable"),
             ("visual", "app_runtime_failed"),
             ("review", "review_provider_failed"),

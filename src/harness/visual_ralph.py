@@ -64,6 +64,7 @@ class VisualRalphController:
             | None
         ) = None,
         semantic_visual_gate_required: bool = False,
+        semantic_validator: Callable[[str, VisualEvidenceRef], Dict[str, Any]] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -75,6 +76,7 @@ class VisualRalphController:
         self._sandbox_spec_factory = sandbox_spec_factory
         self._feedback_runner = feedback_runner
         self._semantic_visual_gate_required = semantic_visual_gate_required
+        self._semantic_validator = semantic_validator
         self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
@@ -235,30 +237,69 @@ class VisualRalphController:
 
                 if verify_result.passed and evidence is not None and evidence.passed:
                     if self._semantic_visual_gate_required:
-                        verify_result = self._with_visual_failure(
-                            verify_result,
-                            failure_id="semantic-visual-validator-unavailable",
-                            error=(
-                                "The published semantic visual gate has no independent "
-                                "VISUAL VALIDATOR verdict for this candidate."
-                            ),
-                        )
+                        verdict = None
+                        if self._semantic_validator is not None:
+                            try:
+                                verdict = self._semantic_validator(worktree_path, evidence)
+                            except Exception as exc:
+                                verdict = {"status": "blocked", "reason": str(exc)}
+                        if isinstance(verdict, dict):
+                            usage = verdict.get("tokens_used")
+                            if type(usage) is int and usage > 0:
+                                tokens_used += usage
+                        if isinstance(verdict, dict):
+                            if (
+                                verdict.get("status") == "passed"
+                                and isinstance(verdict.get("receipt"), dict)
+                                and verdict["receipt"].get("verdict") == "PASS"
+                            ):
+                                return VisualResult(
+                                    status="passed",
+                                    termination_reason="converged",
+                                    iterations=iteration + 1,
+                                    tokens_used=tokens_used,
+                                    final_verify=verify_result,
+                                    evidence=evidence,
+                                    semantic_evidence=verdict["receipt"],
+                                )
+                            if (
+                                verdict.get("status") == "failed"
+                                and isinstance(verdict.get("receipt"), dict)
+                                and verdict["receipt"].get("verdict") == "FAIL"
+                                and isinstance(verdict.get("findings"), list)
+                                and verdict["findings"]
+                            ):
+                                verify_result = self._with_visual_failure(
+                                    verify_result,
+                                    failure_id="semantic-visual-failed",
+                                    error="; ".join(str(item) for item in verdict["findings"]),
+                                )
+                        if verify_result.passed:
+                            verify_result = self._with_visual_failure(
+                                verify_result,
+                                failure_id="semantic-visual-validator-unavailable",
+                                error=str(
+                                    verdict.get("reason") if isinstance(verdict, dict)
+                                    else "The published semantic visual gate has no independent verdict."
+                                ),
+                            )
+                            return VisualResult(
+                                status="blocked",
+                                termination_reason="semantic_visual_validator_unavailable",
+                                iterations=iteration + 1,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                evidence=evidence,
+                            )
+                    else:
                         return VisualResult(
-                            status="blocked",
-                            termination_reason="semantic_visual_validator_unavailable",
+                            status="passed",
+                            termination_reason="converged",
                             iterations=iteration + 1,
                             tokens_used=tokens_used,
                             final_verify=verify_result,
                             evidence=evidence,
                         )
-                    return VisualResult(
-                        status="passed",
-                        termination_reason="converged",
-                        iterations=iteration + 1,
-                        tokens_used=tokens_used,
-                        final_verify=verify_result,
-                        evidence=evidence,
-                    )
 
                 fingerprint_before_fix = _safe_product_fingerprint(worktree_path)
                 fix_result = self._exec_visual_feedback(

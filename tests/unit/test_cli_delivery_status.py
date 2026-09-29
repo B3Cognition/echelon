@@ -436,6 +436,7 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
         "artifact_count": 3,
         "candidate_fingerprint": "product-1",
     }
+    state["semantic_visual_gate_required"] = True
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
     from echelon.delivery_status import command
@@ -444,11 +445,14 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
     payload = json.loads(capsys.readouterr().out)["latest"]
     assert payload["playwright"] == {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
     assert payload["visual_evidence"]["artifact_count"] == 3
+    assert payload["semantic_visual"]["status"] == "pending"
 
     command(spec_id="001", project_root=tmp_path)
     output = capsys.readouterr().out
     assert "2 passed, 0 failed, 0 skipped" in output
     assert "3 retained (passed)" in output
+    assert "semantic visual" in output
+    assert "pending" in output
     assert "pnpm session:local" in output
     assert "postgres-host: pg_isready -h 127.0.0.1" in output
 

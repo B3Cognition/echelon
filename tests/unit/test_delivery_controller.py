@@ -871,6 +871,110 @@ class TestSingleStrategy:
         )
         assert publish_args[2].passed is True
 
+    def test_semantic_visual_gate_blocks_publication_without_bound_verdict(
+        self, tmp_path: Path,
+    ) -> None:
+        """A direct or resumed finalization cannot bypass the visual verdict."""
+        coord = _make_controller(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# A visible pitch\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("- [x] T-001 render\n", encoding="utf-8")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize(
+            "run-1", "semi", semantic_visual_gate_required=True,
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified", updates={
+                "registered_worktree": str(tmp_path),
+                "target_merge": {"status": "deferred", "branch": "candidate"},
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, VerifyResult(passed=True),
+            branch="candidate",
+        )
+        publication_controller = MagicMock()
+
+        result = coord._finalize_delivery(
+            store, spec_dir=spec_dir,
+            declared_targets=["sources/api", "sources/web"],
+            implementation=implementation, outer_iterations=1, tokens_used=0,
+            final_verify=implementation.final_verify,
+            publication_controller=publication_controller,
+        )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "visual"
+        assert result.termination_reason == "semantic_visual_evidence_invalid"
+        publication_controller.publish_verified_branch.assert_not_called()
+
+    def test_semantic_visual_gate_allows_bound_pass_before_publication(
+        self, tmp_path: Path,
+    ) -> None:
+        """Only a digest-bound passing image review can release publication."""
+        from harness.semantic_visual_validator import semantic_spec_digest
+        from harness.visual_evidence import write_visual_receipt, write_semantic_visual_receipt
+
+        coord = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+        candidate = product_evidence_fingerprint(worktree)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# A visible pitch\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("- [x] T-001 render\n", encoding="utf-8")
+        screenshot = tmp_path / "journey.png"
+        screenshot.write_bytes(b"image")
+        visual = write_visual_receipt(
+            evidence_dir=tmp_path / "runs" / "build-1" / "evidence" / "visual",
+            spec_id="spec-001", build_id="build-1", candidate_commit="abc123",
+            candidate_fingerprint=candidate, screenshot_dir="test-results",
+            playwright={"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+            artifact_paths=[screenshot], required_artifacts=True, attempt_sequence=1,
+        )
+        image = json.loads(visual.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+        semantic = write_semantic_visual_receipt(
+            visual_ref=visual, candidate_fingerprint=candidate,
+            spec_digest=semantic_spec_digest(spec_dir), verdict="PASS",
+            summary="Pitch rendered correctly", findings=[],
+            reviewed_artifacts=[image], token_usage=11,
+        )
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize(
+            "run-1", "semi", semantic_visual_gate_required=True,
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified", updates={
+                "registered_worktree": str(worktree),
+                "target_merge": {"status": "deferred", "branch": "candidate"},
+                "visual_evidence": visual.as_mapping(),
+                "semantic_visual_evidence": semantic,
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, VerifyResult(passed=True),
+            branch="candidate",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = True
+
+        result = coord._finalize_delivery(
+            store, spec_dir=spec_dir,
+            declared_targets=["sources/api", "sources/web"],
+            implementation=implementation, outer_iterations=1, tokens_used=0,
+            final_verify=implementation.final_verify,
+            publication_controller=publication_controller,
+        )
+
+        assert result.status == "converged"
+        publication_controller.publish_verified_branch.assert_called_once()
+
     def test_implementation_resume_restores_persisted_verification_result(
         self, tmp_path: Path
     ) -> None:
@@ -1175,6 +1279,43 @@ class TestDeliveryStateMigration:
         implementation.assert_not_called()
         visual.assert_called_once()
         assert result.status == "converged"
+
+    def test_required_semantic_visual_gate_wires_controller_validator(
+        self, tmp_path: Path,
+    ) -> None:
+        """A required published visual gate must not enter Phase 2 without its reviewer."""
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_controller(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize(
+            "run-1", "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+            semantic_visual_gate_required=True,
+        )
+        store.transition("running")
+        store.transition(
+            "verified", updates={
+                "last_completed_phase": "implementation",
+                "registered_worktree": str(tmp_path),
+                "verified_commit": "verified-head",
+            },
+        )
+        store.transition("validating")
+        observed = []
+
+        def visual_attempt(self, worktree_path, token_budget=None):
+            observed.append(callable(self._semantic_validator))
+            return VisualResult("blocked", "semantic_visual_validator_unavailable", 1, 0, None)
+
+        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
+             patch.object(VisualRalphController, "run_loop", visual_attempt):
+            result = coordinator.run(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )
+
+        assert result.blocked_phase == "visual"
+        assert observed == [True]
 
     def test_changed_visual_checkpoint_reenters_implementation_before_visual(
         self, tmp_path: Path
