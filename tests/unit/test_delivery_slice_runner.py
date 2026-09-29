@@ -482,6 +482,87 @@ def test_polyrepo_slice_preserves_repository_relative_task_paths(slice_project):
     )
 
 
+def test_reviewers_receive_new_candidate_tests_outside_declared_task_files(slice_project):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n  - `app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "app.py"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"],
+        cwd=project, check=True,
+    )
+
+    def add_candidate_tests(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            tests = root / "tests/integration"
+            tests.mkdir(parents=True)
+            (tests / "main-entry.test.ts").write_text("// entry coverage\n")
+            (tests / "outcomes-style.test.ts").write_text("// outcome coverage\n")
+
+    executor = ScriptedExecutor(add_candidate_tests)
+    result = _run(slice_project, executor)
+
+    assert result.succeeded, result.reason
+    for _, _, prompt in executor.calls[1:]:
+        assert '"tests/integration/main-entry.test.ts"' in prompt
+        assert '"tests/integration/outcomes-style.test.ts"' in prompt
+        assert "not approval evidence or an expanded task scope" in prompt
+
+
+def test_reviewers_receive_committed_candidate_tests_outside_declared_task_files(slice_project):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n  - `app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    tests = project / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "main-entry.test.ts").write_text("// entry coverage\n")
+    (tests / "outcomes-style.test.ts").write_text("// outcome coverage\n")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "app.py", "tests/integration"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "salvaged candidate"],
+        cwd=project, check=True,
+    )
+
+    executor = ScriptedExecutor()
+    result = _run(slice_project, executor)
+
+    assert result.succeeded, result.reason
+    for _, _, prompt in executor.calls[1:]:
+        assert '"tests/integration/main-entry.test.ts"' in prompt
+        assert '"tests/integration/outcomes-style.test.ts"' in prompt
+
+
+def test_candidate_inventory_bounds_large_changed_file_lists(tmp_path):
+    from harness.delivery_slice_runner import _candidate_file_inventory
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "baseline.txt").write_text("baseline\n")
+    subprocess.run(["git", "add", "baseline.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"],
+        cwd=tmp_path, check=True,
+    )
+    for index in range(205):
+        (tmp_path / f"file-{index:03}.txt").write_text("candidate\n")
+
+    inventory = _candidate_file_inventory(tmp_path)
+
+    assert inventory is not None
+    assert len(inventory["changed_paths"]) == 200
+    assert inventory["changed_paths_truncated"] is True
+
+
 def test_polyrepo_slice_rejects_selected_task_from_another_target(slice_project):
     project, spec, evidence = slice_project
     (spec / "tasks.md").write_text(
