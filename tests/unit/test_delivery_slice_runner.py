@@ -563,6 +563,74 @@ def test_candidate_inventory_bounds_large_changed_file_lists(tmp_path):
     assert inventory["changed_paths_truncated"] is True
 
 
+def test_candidate_inventory_and_audit_include_off_task_coverage_not_fixtures(tmp_path):
+    from harness.delivery_slice_runner import _candidate_file_inventory, _candidate_test_audit_set
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.ts").write_text("export const startBrowserApplication = () => 1;\n")
+    for directory in ("tests/aa", "tests/integration", "tests/contract", "tests/fixtures"):
+        (tmp_path / directory).mkdir(parents=True)
+    for index in range(205):
+        (tmp_path / f"tests/aa/unrelated-{index:03}.test.ts").write_text("// unrelated\n")
+    (tmp_path / "tests/integration/bootstrap.test.ts").write_text("// declared\n")
+    (tmp_path / "tests/integration/main-entry.test.ts").write_text("// sibling\n")
+    (tmp_path / "tests/contract/runtime.test.ts").write_text(
+        "import { startBrowserApplication } from '../../src/main.js';\n"
+    )
+    (tmp_path / "tests/fixtures/browser.ts").write_text("// support file\n")
+    subprocess.run(["git", "add", "src", "tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=tmp_path, check=True,
+    )
+    (tmp_path / "tests/contract/changed.test.ts").write_text("// new test\n")
+    tasks_markdown = (
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Files:**\n"
+        "  - `src/main.ts` - Browser entry.\n"
+        "  - `tests/integration/bootstrap.test.ts` - Startup test.\n"
+    )
+    projection = {"selected_task_paths": {"src/main.ts": "src/main.ts",
+                                          "tests/integration/bootstrap.test.ts":
+                                          "tests/integration/bootstrap.test.ts"}}
+
+    inventory = _candidate_file_inventory(tmp_path)
+    assert inventory is not None
+    assert inventory["test_paths_truncated"] is True
+    assert "tests/fixtures/browser.ts" not in inventory["test_paths"]
+    assert _candidate_test_audit_set(tmp_path, tasks_markdown, "T-001", projection, inventory) == [
+        "tests/contract/changed.test.ts",
+        "tests/contract/runtime.test.ts",
+        "tests/integration/bootstrap.test.ts",
+        "tests/integration/main-entry.test.ts",
+    ]
+
+
+def test_candidate_test_audit_overflow_blocks_instead_of_truncating(tmp_path):
+    from harness.delivery_slice import DeliverySliceError
+    from harness.delivery_slice_runner import _candidate_file_inventory, _candidate_test_audit_set
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    tests = tmp_path / "tests/integration"
+    tests.mkdir(parents=True)
+    for index in range(205):
+        (tests / f"sibling-{index:03}.test.ts").write_text("// relevant sibling\n")
+    subprocess.run(["git", "add", "tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=tmp_path, check=True,
+    )
+    tasks_markdown = (
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Files:**\n  - `tests/integration/sibling-000.test.ts` - Test.\n"
+    )
+    inventory = _candidate_file_inventory(tmp_path)
+
+    with pytest.raises(DeliverySliceError, match="audit"):
+        _candidate_test_audit_set(tmp_path, tasks_markdown, "T-001", None, inventory)
+
+
 def test_polyrepo_slice_rejects_selected_task_from_another_target(slice_project):
     project, spec, evidence = slice_project
     (spec / "tasks.md").write_text(

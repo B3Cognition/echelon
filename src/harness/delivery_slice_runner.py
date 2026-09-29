@@ -42,6 +42,7 @@ _ROLES = {
 _INPUTS = tuple(dict.fromkeys((*SCOPE_INPUT_FILENAMES, "research.md", "test-strategy.md",
                               "data-model.md", "constitution.md")))
 _MAX_REVIEW_PATHS = 200
+_MAX_REVIEW_AUDIT_PATHS = 200
 
 
 class DeliverySliceRunner:
@@ -661,12 +662,89 @@ def _looks_like_test_path(relative: str) -> bool:
     path = Path(relative)
     name = path.name.lower()
     return (
-        any(part in {"test", "tests", "__tests__"} for part in path.parts[:-1])
-        or name.startswith("test_")
+        name.startswith("test_")
         or "_test." in name
         or ".test." in name
         or ".spec." in name
     )
+
+
+def _candidate_test_audit_set(
+    worktree: Path, tasks_markdown: str, task_id: str,
+    path_projection: dict[str, object] | None, inventory: dict[str, object] | None,
+) -> list[str]:
+    """Find tests a negative task review must account for, not the whole suite."""
+    if inventory is None:
+        raise DeliverySliceError("delivery_review_audit_unavailable")
+    worktree = Path(worktree).resolve()
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=worktree, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        raise DeliverySliceError("delivery_review_audit_unavailable")
+    all_tests: dict[str, Path] = {}
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        relative = raw.decode("utf-8", errors="surrogateescape")
+        if not _looks_like_test_path(relative):
+            continue
+        path = worktree / relative
+        if path.is_symlink() or not path.resolve().is_relative_to(worktree):
+            raise DeliverySliceError("delivery_review_audit_unsafe_path")
+        if path.is_file():
+            all_tests[relative] = path
+
+    files_section = task_files_section_for(tasks_markdown, task_id)
+    if files_section is None:
+        raise DeliverySliceError("delivery_review_audit_missing_task")
+    if path_projection is not None:
+        selected_paths = set(path_projection["selected_task_paths"].values())
+    else:
+        selected_paths = {
+            match.group(1)
+            for line in files_section.splitlines()
+            if (match := re.match(r"^\s*[-*+]\s+(?:\*\*[^*]+:\*\*\s*)?`([^`]+)`", line))
+        }
+    declared_tests = {path for path in selected_paths if _looks_like_test_path(path)}
+    test_directories = {str(Path(path).parent) for path in declared_tests}
+    source_stems = {
+        str(Path(path).with_suffix(""))
+        for path in selected_paths if not _looks_like_test_path(path)
+    }
+    source_markers = source_stems | {stem.replace("/", ".") for stem in source_stems}
+    changed: set[str] = set()
+    for args in (
+        ["git", "diff", "--name-only", "-z", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    ):
+        result = subprocess.run(args, cwd=worktree, capture_output=True, check=False)
+        if result.returncode != 0:
+            raise DeliverySliceError("delivery_review_audit_unavailable")
+        changed.update(raw.decode("utf-8", errors="surrogateescape")
+                       for raw in result.stdout.split(b"\0") if raw)
+    audit: set[str] = set()
+    for relative, path in all_tests.items():
+        if (relative in declared_tests or str(Path(relative).parent) in test_directories
+                or relative in changed):
+            audit.add(relative)
+        elif source_markers:
+            try:
+                source = path.open("rb")
+                with source:
+                    contents = source.read(128_000).decode("utf-8", errors="replace")
+            except OSError as exc:
+                raise DeliverySliceError("delivery_review_audit_unavailable") from exc
+            if any(marker in contents for marker in source_markers):
+                audit.add(relative)
+        if len(audit) > _MAX_REVIEW_AUDIT_PATHS:
+            raise DeliverySliceError("delivery_review_audit_overflow")
+    if not selected_paths and not audit:
+        if len(all_tests) > _MAX_REVIEW_AUDIT_PATHS:
+            raise DeliverySliceError("delivery_review_audit_overflow")
+        audit.update(all_tests)
+    return sorted(audit)
 
 
 def _candidate_path_projection(

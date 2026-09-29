@@ -118,6 +118,8 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
     expected_fields = set(identity) | {"verdict", "summary", "findings"}
     if browser_request:
         expected_fields.add("browser_evidence_request")
+    if assignment.step in {"spec_guard", "test_guardian"} and "reviewed_test_paths" in payload:
+        expected_fields.add("reviewed_test_paths")
     if set(payload) != expected_fields:
         raise DeliverySliceError("invalid delivery result fields")
     if type(payload["schema_version"]) is not int or any(payload[key] != value for key, value in identity.items()):
@@ -137,6 +139,12 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
         raise DeliverySliceError("passing result cannot contain unresolved findings")
     if verdict in {"FAIL", "CHANGES_REQUESTED"} and not findings:
         raise DeliverySliceError("failed review must identify findings")
+    if "reviewed_test_paths" in payload:
+        paths = payload["reviewed_test_paths"]
+        if (not isinstance(paths, list) or len(paths) > 500
+                or any(not _valid_review_test_path(path) for path in paths)
+                or len(set(paths)) != len(paths)):
+            raise DeliverySliceError("invalid reviewed test paths")
     if browser_request:
         if findings or payload["browser_evidence_request"] != {"purpose": "baseline_capture"}:
             raise DeliverySliceError("invalid browser evidence request")
@@ -163,6 +171,8 @@ def bind_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, 
     expected_fields = set(identity) | {"verdict", "summary", "findings"}
     if payload.get("verdict") == "BROWSER_EVIDENCE_REQUIRED":
         expected_fields.add("browser_evidence_request")
+    if assignment.step in {"spec_guard", "test_guardian"} and "reviewed_test_paths" in payload:
+        expected_fields.add("reviewed_test_paths")
     if set(payload) != expected_fields:
         raise DeliverySliceError("invalid delivery result fields")
     for key in ("schema_version", "dispatch_id", "step", "task_id"):
@@ -175,3 +185,15 @@ def bind_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, 
     bound["candidate_fingerprint"] = assignment.candidate_fingerprint
     bound["input_fingerprint"] = assignment.input_fingerprint
     return validate_delivery_result(json.dumps(bound), assignment)
+
+
+def _valid_review_test_path(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not value.startswith("/")
+        and not re.match(r"^[A-Za-z]:", value)
+        and "\\" not in value
+        and not any(ord(char) < 32 for char in value)
+        and all(part not in {"", ".", ".."} for part in value.split("/"))
+    )
