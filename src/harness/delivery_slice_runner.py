@@ -345,6 +345,33 @@ class DeliverySliceRunner:
                             )
                             raise DeliverySliceError(reason)
                         needs_snapshot_recapture = not browser_paths
+                        if not browser_paths and not observation.verification_passed:
+                            browser_instruction = (
+                                "Browser tests failed and produced no snapshot image. Fix the reported "
+                                "test failures within this task, add a real snapshot assertion or test, "
+                                "then request browser capture again. Do not fabricate a baseline or "
+                                "claim visual approval."
+                            )
+                        elif not browser_paths:
+                            browser_instruction = (
+                                "Browser tests passed but produced no snapshot image. Add a real "
+                                "snapshot assertion or test within this task, then request browser "
+                                "capture again. Do not fabricate a baseline or claim visual approval."
+                            )
+                        elif observation.verification_passed:
+                            browser_instruction = (
+                                "Browser tests passed and produced read-only baseline proposals. "
+                                "Inspect them. If acceptable and no candidate change is needed, return DONE; "
+                                "independent reviews and visual validation run next. If you change the "
+                                "candidate, request a fresh capture before DONE. Do not request capture "
+                                "again for an unchanged candidate. Proposals are not visual approval."
+                            )
+                        else:
+                            browser_instruction = (
+                                "Browser tests failed but produced read-only image proposals. Inspect "
+                                "them, fix the reported failures, and request a fresh capture after "
+                                "changing the candidate. Do not claim visual approval."
+                            )
                         repair_context = json.dumps({
                             "original_feedback": context_before_browser,
                             "browser_baseline_proposal": {
@@ -354,19 +381,7 @@ class DeliverySliceRunner:
                                 "passed": observation.verification_passed,
                                 "diagnostic": observation.diagnostic,
                             },
-                            "instruction": (
-                                "Browser tests failed and produced no snapshot image. Fix the reported "
-                                "test failures within this task, add a real snapshot assertion or test, "
-                                "then request browser capture again. Do not fabricate a baseline or "
-                                "claim visual approval."
-                                if not browser_paths and not observation.verification_passed else
-                                "Browser tests passed but produced no snapshot image. Add a real "
-                                "snapshot assertion or test within this task, then request browser "
-                                "capture again. Do not fabricate a baseline or claim visual approval."
-                                if not browser_paths else
-                                "Inspect these read-only sandbox captures. They are proposals, "
-                                "not passing verification or review."
-                            ),
+                            "instruction": browser_instruction,
                         })
                     if browser_paths is not None:
                         repair_context = context_before_browser

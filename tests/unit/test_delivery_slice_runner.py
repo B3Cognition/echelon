@@ -350,7 +350,7 @@ def test_browser_request_returns_scoped_capture_to_same_task_before_review(slice
         captures.append(worktree)
         return BrowserBaselineCapture(
             candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
-            verification=VerifyResult(passed=False),
+            verification=VerifyResult(passed=True),
             images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
         )
 
@@ -366,6 +366,8 @@ def test_browser_request_returns_scoped_capture_to_same_task_before_review(slice
     retained_root = next(slice_project[2].rglob("browser-baselines/*/*/artifacts"))
     assert executor.calls[1][1]["tool_read_roots"] == [str(retained_root)]
     assert "pitch-chromium.png" in executor.calls[1][2]
+    assert "return DONE" in executor.calls[1][2]
+    assert "Do not request capture again for an unchanged candidate" in executor.calls[1][2]
     assert (retained_root / "0001.png").read_bytes() == b"proposal"
     assert all("pitch-chromium.png" not in prompt for _, _, prompt in executor.calls[2:])
 
