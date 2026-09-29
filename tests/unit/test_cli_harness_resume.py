@@ -530,7 +530,9 @@ class TestCmdHarnessResume:
         tmp_path: Path,
     ) -> None:
         """A stopped controlled repair retains its unreviewed candidate."""
-        _make_echelon_yml(tmp_path, verify_command="pytest")
+        # A greenfield target may acquire its verify command only from the
+        # generated candidate, not from the target's default branch.
+        _make_echelon_yml(tmp_path)
         sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked",

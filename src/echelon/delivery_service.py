@@ -4199,9 +4199,12 @@ def _run_delivery_resume(
     if (
         not config.verify_command
         and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
-        and not pending_slice_budget_exhausted
-        and not pending_prior_review_cap
-    ):
+            and not pending_slice_budget_exhausted
+            and not pending_prior_review_cap
+            # A pending greenfield slice already has a candidate worktree. Its
+            # verify command is resolved from that candidate during execution.
+            and not _is_retryable_cancelled_delivery_slice(state)
+        ):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,
