@@ -96,6 +96,174 @@ def test_custom_capabilities_admit_readiness_before_code_exists(tmp_path, generi
     assert not (tmp_path / "package.json").exists()
 
 
+def test_required_runnability_needs_one_task_to_declare_candidate_contract(tmp_path):
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+
+    missing = check(tmp_path, directory)
+    assert not missing.ready
+    assert "runnability_contract_owner_required" in "\n".join(missing.blockers)
+
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `.echelon/runnability.yml` - local journey\n")
+    owned = check(tmp_path, directory)
+    assert owned.ready, owned.blockers
+    assert not (tmp_path / ".echelon/runnability.yml").exists()
+
+
+def test_required_runnability_rejects_two_declared_owners(tmp_path):
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `.echelon/runnability.yml` - local journey\n"
+        "- [ ] T-002 complexity=standard phase=build req=INFRA depends=T-001\n"
+        "  **Files:**\n  - `.echelon/runnability.yml` - duplicate owner\n")
+
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert "runnability_contract_owner_ambiguous" in "\n".join(result.blockers)
+
+
+def test_required_runnability_owner_must_belong_to_its_target(tmp_path):
+    custom_stack(tmp_path, "front", ("e2e",), browser=True)
+    custom_stack(tmp_path, "back", ("unit",))
+    select(tmp_path / "sources/front", ["front"])
+    select(tmp_path / "sources/back", ["back"])
+    directory = spec(tmp_path, targets=("sources/front", "sources/back"), types=("e2e", "unit"))
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `sources/back/.echelon/runnability.yml` - other target\n")
+
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert any("sources/front: runnability_contract_owner_required" in item for item in result.blockers)
+
+
+def test_owner_deferred_runnability_does_not_require_current_task_owner(tmp_path):
+    from harness.runnability_disposition import defer_runnability, plan_runnability
+    from tests.unit.test_runnability_disposition import _report
+
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path / "sources/game", ["custom"])
+    directory = spec(tmp_path, targets=("sources/game",), types=("e2e",))
+    defer_runnability(spec_dir=directory, target="sources/game",
+                       reason="Owner approved separate work.", evidence_report=_report(tmp_path))
+    deferred = check(tmp_path, directory)
+    assert deferred.ready, deferred.blockers
+
+    plan_runnability(directory)
+    planned = check(tmp_path, directory)
+    assert not planned.ready
+    assert "runnability_contract_owner_required" in "\n".join(planned.blockers)
+
+
+def test_native_basename_deferral_exempts_its_unique_target(tmp_path):
+    from harness.runnability_disposition import defer_runnability
+    from tests.unit.test_runnability_disposition import _report
+
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path / "sources/game", ["custom"])
+    directory = spec(tmp_path, targets=("sources/game",), types=("e2e",))
+    defer_runnability(spec_dir=directory, target="game", reason="Owner approved follow-up.",
+                       evidence_report=_report(tmp_path, target_id="game"))
+    result = check(tmp_path, directory)
+    assert result.ready, result.blockers
+
+
+def test_basename_deferral_does_not_exempt_ambiguous_sibling_targets(tmp_path):
+    from harness.runnability_disposition import defer_runnability
+    from tests.unit.test_runnability_disposition import _report
+
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path / "sources/game", ["custom"])
+    select(tmp_path / "examples/game", ["custom"])
+    directory = spec(tmp_path, targets=("sources/game", "examples/game"), types=("e2e", "e2e"))
+    defer_runnability(spec_dir=directory, target="game", reason="Owner approved follow-up.",
+                       evidence_report=_report(tmp_path, target_id="game"))
+
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert sum("runnability_contract_owner_required" in item for item in result.blockers) == 2
+
+
+def test_valid_spike_task_can_own_required_runnability(tmp_path):
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "- [ ] T-S01 complexity=standard phase=build req=INFRA depends=T-001\n"
+        "  **Files:**\n  - `.echelon/runnability.yml` - local journey\n")
+    result = check(tmp_path, directory)
+    assert result.ready, result.blockers
+
+
+@pytest.mark.parametrize("suffix", [
+    "- [ ] T-002 implement runtime\n  **Files:**\n"
+    "  - `.echelon/runnability.yml` - malformed task\n",
+    "  **Files:**\n  ```markdown\n"
+    "  - `.echelon/runnability.yml` - example only\n  ```\n",
+    "~~~markdown\n"
+    "- [ ] T-002 complexity=standard phase=build req=INFRA depends=T-001\n"
+    "  **Files:**\n  - `.echelon/runnability.yml` - fenced task example\n~~~\n",
+])
+def test_noncanonical_or_fenced_example_cannot_claim_runnability_owner(tmp_path, suffix):
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() + suffix)
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert "runnability_contract_owner_required" in "\n".join(result.blockers)
+
+
+def test_explicit_root_target_cannot_borrow_other_targets_task(tmp_path):
+    custom_stack(tmp_path, "front", ("e2e",), browser=True)
+    custom_stack(tmp_path, "back", ("unit",))
+    select(tmp_path, ["front"])
+    select(tmp_path / "sources/back", ["back"])
+    directory = spec(tmp_path, targets=(".", "sources/back"), types=("e2e", "unit"))
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `.echelon/runnability.yml` - wrong target owner\n")
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert any(".: runnability_contract_owner_required" in item for item in result.blockers)
+
+
+def test_workspace_deferral_alias_cannot_exempt_root_and_named_sibling(tmp_path):
+    from harness.runnability_disposition import defer_runnability
+    from tests.unit.test_runnability_disposition import _report
+
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    select(tmp_path / "sources/workspace", ["custom"])
+    directory = spec(tmp_path, targets=(".", "sources/workspace"), types=("e2e", "e2e"))
+    defer_runnability(spec_dir=directory, target="workspace",
+                       reason="Owner approved follow-up.",
+                       evidence_report=_report(tmp_path, target_id="workspace"))
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert sum("runnability_contract_owner_required" in item for item in result.blockers) == 2
+
+
+def test_invalid_runnability_disposition_is_not_reported_as_stack_failure(tmp_path):
+    custom_stack(tmp_path, browser=True, types=("e2e",))
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+    (directory / "runnability-disposition.json").write_text("{")
+
+    result = check(tmp_path, directory)
+    assert not result.ready
+    assert "runnability_disposition_invalid" in "\n".join(result.blockers)
+    assert "verification_stack_invalid" not in "\n".join(result.blockers)
+
+
 def test_optional_observer_does_not_satisfy_required_coverage(tmp_path):
     custom_stack(tmp_path, required=False)
     select(tmp_path, ["custom"])
@@ -109,7 +277,14 @@ def test_targets_only_need_their_owned_coverage_types(tmp_path):
     custom_stack(tmp_path, "back", ("unit",))
     select(tmp_path / "sources/front", ["front"])
     select(tmp_path / "sources/back", ["back"])
-    result = check(tmp_path, spec(tmp_path, targets=("sources/front", "sources/back"), types=("e2e", "unit"), visual=True))
+    directory = spec(tmp_path, targets=("sources/front", "sources/back"), types=("e2e", "unit"), visual=True)
+    tasks = directory / "tasks.md"
+    tasks.write_text(tasks.read_text().replace(
+        "  **Named Test Ownership:** TC-001",
+        "  **Named Test Ownership:** TC-001\n  **Files:**\n"
+        "  - `sources/front/.echelon/runnability.yml` - composed browser journey",
+    ))
+    result = check(tmp_path, directory)
     assert result.ready, result.blockers
 
 

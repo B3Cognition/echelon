@@ -17,7 +17,10 @@ from harness.coverage_evidence import (
 )
 from harness.deferred_scope import DeferredScopeError, active_entries
 from harness.spec_frontmatter import read_canonical_target_entries
-from harness.task_targets import analyze_task_targets, validate_task_targets
+from harness.task_targets import analyze_task_targets, task_files_section_for, validate_task_targets
+from harness.runnability_contract import CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH
+from harness.runnability_disposition import RunnabilityDispositionError, read_runnability_disposition
+from kernel.task_contract import parse_task_rows
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
     "00-overview.md",
@@ -202,6 +205,7 @@ def verification_capability_blockers(
         if not targets and (spec_dir / "targets.yml").exists():
             return ["verification_ownership_unresolved: targets.yml has no valid targets"]
         markdown = (spec_dir / "tasks.md").read_text(encoding="utf-8")
+        canonical_task_ids = {row.task_id for row in parse_task_rows(markdown)}
         task_cases = task_owned_coverage_case_ids(spec_dir / "tasks.md")
         if targets:
             ownership = validate_task_targets(
@@ -242,9 +246,39 @@ def verification_capability_blockers(
             gate_targets[gate] = owners
 
         blockers: list[str] = []
+        deferred_target: str | None = None
+        disposition_checked = False
         for target in targets:
             try:
                 resolved = resolve_verification_stacks(project_root, project_root / target)
+                if resolved.runnability.policy == "required":
+                    if not disposition_checked:
+                        disposition = read_runnability_disposition(spec_dir)
+                        disposition_checked = True
+                        if disposition is not None and disposition.status == "deferred":
+                            matches = []
+                            for item in targets:
+                                aliases = {item, (project_root / item).name}
+                                if item == ".":
+                                    aliases.add("workspace")
+                                if disposition.target in aliases:
+                                    matches.append(item)
+                            if len(matches) == 1:
+                                deferred_target = matches[0]
+                    if deferred_target != target:
+                        contract = (Path(target) / RUNNABILITY_CONTRACT_PATH).as_posix()
+                        owner_scope = canonical_task_ids if not entries else target_tasks.get(target, ())
+                        owners = [task_id for task_id in owner_scope
+                                  if task_id in canonical_task_ids
+                                  if any(match.group("path") == contract for match in re.finditer(
+                                      r"(?m)^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)",
+                                      task_files_section_for(markdown, task_id) or ""))]
+                        if not owners:
+                            blockers.append(f"{target}: runnability_contract_owner_required: "
+                                            f"one task must declare `{contract}` in Files")
+                        elif len(owners) > 1:
+                            blockers.append(f"{target}: runnability_contract_owner_ambiguous: "
+                                            f"{', '.join(owners)} declare `{contract}` in Files")
                 cases = {case for task in target_tasks.get(target, ()) for case in task_cases.get(task, ())}
                 types = {item.test_type for item in obligations if not entries or item.test_case_id in cases}
                 visual = target in gate_targets.get("visual validation task", ())
@@ -260,6 +294,8 @@ def verification_capability_blockers(
                     ),
                 )
                 blockers.extend(f"{target}: {item.code}: {item.message}" for item in findings if item.severity == "error")
+            except RunnabilityDispositionError as exc:
+                blockers.append(f"{target}: runnability_disposition_invalid: {exc}")
             except (StackError, ValueError) as exc:
                 blockers.append(f"{target}: verification_stack_invalid: {exc}")
         return blockers

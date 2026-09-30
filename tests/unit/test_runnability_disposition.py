@@ -20,11 +20,12 @@ def _report(
     *,
     status: str = "not_runnable",
     failure_class: str = "primary_journey_failed",
+    target_id: str = "sources/game",
 ) -> Path:
     ref = write_runnability_report(
         evidence_dir=root / "evidence" / "user-runnability",
         spec_id="003-browser-game",
-        target_id="sources/game",
+        target_id=target_id,
                 build_id="build-1",
         candidate_commit="a" * 40,
         candidate_fingerprint="product-1",

@@ -145,7 +145,7 @@ def validate_task_targets(
 def task_files_section_for(markdown: str, task_id: str) -> str | None:
     """Return one canonical task's fence-aware Files section, if the task exists."""
     for candidate_id, block in _task_blocks(markdown):
-        if candidate_id == task_id:
+        if candidate_id == task_id and parse_task_rows(block.splitlines()[0]):
             return _task_files_section(block)
     return None
 
@@ -153,12 +153,16 @@ def task_files_section_for(markdown: str, task_id: str) -> str | None:
 def _task_blocks(markdown: str) -> list[tuple[str, str]]:
     lines = markdown.splitlines()
     starts: list[tuple[int, str]] = []
-    in_fence = False
+    fence = ""
     for index, line in enumerate(lines):
-        if line.startswith("```"):
-            in_fence = not in_fence
+        stripped = line.strip()
+        if fence:
+            if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + ",}", stripped):
+                fence = ""
             continue
-        if in_fence:
+        fence_start = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_start:
+            fence = fence_start.group(1)
             continue
         match = _TASK_ROW_RE.match(line)
         if match is not None:
@@ -180,15 +184,18 @@ def _normalize_target(target: object) -> str:
 
 def _task_files_section(block: str) -> str:
     selected: list[str] = []
-    in_fence = False
+    fence = ""
     in_files = False
     for line in block.splitlines():
-        if line.startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
         stripped = line.strip()
+        if fence:
+            if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + ",}", stripped):
+                fence = ""
+            continue
+        fence_start = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_start:
+            fence = fence_start.group(1)
+            continue
         if not in_files:
             if stripped == "**Files:**":
                 in_files = True

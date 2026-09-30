@@ -248,6 +248,40 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   `3b51c655`; stopped Delivery state and published spec/tasks hashes are unchanged.
   No demo edits, live dispatch, restart, migration, caps changes or push.
   Candidate runnability contract remains another explicitly open prerequisite.
+- [x] Bind required candidate runnability work to an explicit planning owner.
+  Read-only current-workspace probe after `8a467619` confirms that configured
+  Phase A readiness returns `ready=True`, but the real candidate gate returns
+  `user-runnability-contract-missing`; the existing source-repair selector then
+  rejects it with `missing failed test identity`. None of the twelve published
+  tasks declares `.echelon/runnability.yml`. Required stack context tells agents
+  to author that file, but readiness does not verify a declared task owner.
+  Retained diagnostic: local `stack-wiring/runnability-admission-probe.log`.
+  Ordinary verification was assumed passing solely to isolate this gate; the
+  probe executed no provider, sandbox or agent and issued no acceptance receipt.
+  `spec plan-runnability` reverses a prior owner deferral, not task planning; it
+  cannot supply the missing owner. Do not infer T-012 from the last task, weaken
+  the gate, manually write the demo contract, or mutate historical snapshots.
+  Approved planning increment: require exactly one canonical task `Files`
+  declaration for each required target's contract before Phase A can publish or
+  Delivery can allocate a run. The file itself remains greenfield work. The
+  Phase A PLAN instruction names this output; non-runnable stacks are unaffected.
+  Native owner deferral remains valid, including unique basename target IDs;
+  ambiguous sibling basenames never grant a broad exemption. Canonical spike
+  rows can own the file, while malformed rows and fenced examples cannot.
+  Targeted red-to-green tests cover each edge and the actual Delivery service
+  admission boundary. The preserved demo is now correctly reported as missing
+  a declared owner. This increment does not add one to the published spec or
+  create the candidate contract. Pending next: connect contract-failure repair
+  to an explicitly declared owner through the existing controlled slice, then
+  verify a native candidate repair. Final affected gate: 272 passed. Bundle
+  dry-run: nine checks passed. Repository fail-fast: 96 passed, then the known
+  `test_converges_within_3_outer_iterations` fixture failure. Review identified
+  and regression-tested native basename disposition, canonical T-S01 and fenced
+  task parsing, explicit root target scope, and ambiguous workspace alias cases.
+  The final independent read-only review found no remaining issues in this
+  bounded increment.
+  Probe/test logs are retained in local `stack-wiring/runnability-owner-*.log`.
+  Live Delivery has not restarted.
 - [ ] Correct semantic visual gate ordering, then test its phase handoff.
 - [ ] Address requirement-level fulfillment repair routing separately, with
   evidence-bound ownership and no fallback to the last executed task.

@@ -30,6 +30,22 @@ def test_service_rejects_generic_before_allocating_delivery(tmp_path, capsys):
     assert not (tmp_path / "runs").exists()
 
 
+def test_service_rejects_unowned_required_runnability_before_allocating_delivery(tmp_path, capsys):
+    from echelon.delivery_service import _block_if_harness_phase_a_not_ready
+
+    custom_stack(tmp_path, types=("e2e",), browser=True)
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path, types=("e2e",))
+    before = (directory / "tasks.md").read_bytes()
+
+    with pytest.raises(SystemExit):
+        _block_if_harness_phase_a_not_ready(directory, directory.name, project_root=tmp_path)
+
+    assert "runnability_contract_owner_required" in capsys.readouterr().err
+    assert (directory / "tasks.md").read_bytes() == before
+    assert not (tmp_path / "runs").exists()
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_all_target_admission_reports_unsupported_sibling(tmp_path, capsys, reverse, monkeypatch):
     from echelon.delivery_service import _run_delivery
