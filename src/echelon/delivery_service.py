@@ -222,6 +222,52 @@ def _is_retryable_cancelled_delivery_slice(state: dict) -> bool:
     )
 
 
+def _has_interrupted_pending_candidate(state: dict, state_dir: Path) -> bool:
+    """Let a retained implementation candidate supply its own verifier."""
+    if (
+        state.get("status") != "interrupted"
+        or state.get("termination_reason") != "user_cancel"
+        or state.get("interrupted_phase") != "implementation"
+    ):
+        return False
+    operation = state.get("delivery_slice_operation")
+    if not isinstance(operation, dict) or operation.get("progress_applied") is True:
+        return False
+    if not str(operation.get("id") or "").strip():
+        return False
+    worktree_path = operation.get("worktree_path")
+    if not isinstance(worktree_path, str):
+        return False
+    candidate = Path(worktree_path)
+    worktrees_root = state_dir.parent / "worktrees"
+    if (
+        not candidate.is_absolute()
+        or not candidate.is_dir()
+        or candidate.is_symlink()
+        or candidate.parent.resolve() != worktrees_root.resolve()
+        or re.fullmatch(r"iter-\d+", candidate.name) is None
+    ):
+        return False
+    try:
+        git_paths = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel", "--git-common-dir"],
+            cwd=candidate, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    paths = git_paths.stdout.splitlines()
+    if git_paths.returncode != 0 or len(paths) != 2:
+        return False
+    common_dir = Path(paths[1])
+    if not common_dir.is_absolute():
+        common_dir = candidate / common_dir
+    return (
+        Path(paths[0]).resolve() == candidate.resolve()
+        and common_dir.resolve() == (state_dir.parent.parent / "mirror.git").resolve()
+        and (candidate / ".git").is_file()
+    )
+
+
 def _is_pending_prior_review_cap(state: dict) -> bool:
     """Allow an unfinished slice to use one newly available repair round."""
     from harness.delivery_slice_journal import MAX_GATE_ROUNDS
@@ -4199,12 +4245,13 @@ def _run_delivery_resume(
     if (
         not config.verify_command
         and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
-            and not pending_slice_budget_exhausted
-            and not pending_prior_review_cap
-            # A pending greenfield slice already has a candidate worktree. Its
-            # verify command is resolved from that candidate during execution.
-            and not _is_retryable_cancelled_delivery_slice(state)
-        ):
+        and not pending_slice_budget_exhausted
+        and not pending_prior_review_cap
+        # A pending greenfield slice already has a candidate worktree. Its
+        # verify command is resolved from that candidate during execution.
+        and not _is_retryable_cancelled_delivery_slice(state)
+        and not _has_interrupted_pending_candidate(state, state_dir)
+    ):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,

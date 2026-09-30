@@ -38,6 +38,34 @@ def _setup_build(base: Path, spec_id: str) -> Path:
     return sd
 
 
+def _make_linked_candidate(base: Path, state_dir: Path, *, foreign: bool = False) -> Path:
+    source = base / "candidate-source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+    (source / "package.json").write_text(
+        json.dumps({"scripts": {"verify": "bash verify.sh"}}), encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "package.json"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source, check=True)
+    mirror = state_dir.parent.parent / "mirror.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(source), str(mirror)], check=True)
+    checkout_mirror = mirror
+    if foreign:
+        checkout_mirror = base / "foreign-mirror.git"
+        subprocess.run(
+            ["git", "clone", "-q", "--bare", str(source), str(checkout_mirror)], check=True,
+        )
+    candidate = state_dir.parent / "worktrees" / "iter-1"
+    candidate.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "--git-dir", str(checkout_mirror), "worktree", "add", "--detach", str(candidate), "HEAD"],
+        check=True, capture_output=True,
+    )
+    return candidate
+
+
 def _make_echelon_yml(
     base: Path,
     verify_command: str = "",
@@ -369,6 +397,84 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_continue_interrupted_pending_candidate_without_source_verify_command(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A greenfield candidate can supply the verifier after interruption."""
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        candidate = _make_linked_candidate(tmp_path, sd)
+        _write_state(sd, "001", "default", {
+            "status": "interrupted",
+            "termination_reason": "user_cancel",
+            "interrupted_phase": "implementation",
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": str(candidate),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(tmp_path, ["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "auto-detect from candidate" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "candidate_kind", ["missing", "outside", "symlink", "applied", "plain", "root", "foreign"]
+    )
+    def test_continue_interrupted_without_valid_pending_candidate_still_needs_verify_command(
+        self, tmp_path: Path, capsys, candidate_kind: str
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        candidate = sd.parent / "worktrees" / "iter-1"
+        if candidate_kind in {"outside", "symlink"}:
+            outside = tmp_path / "unrelated-candidate"
+            outside.mkdir()
+            if candidate_kind == "outside":
+                candidate = outside
+            else:
+                candidate.parent.mkdir(parents=True)
+                candidate.symlink_to(outside, target_is_directory=True)
+        elif candidate_kind == "applied":
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "plain":
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "root":
+            candidate = candidate.parent
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "foreign":
+            candidate = _make_linked_candidate(tmp_path, sd, foreign=True)
+        _write_state(sd, "001", "default", {
+            "status": "interrupted",
+            "termination_reason": "user_cancel",
+            "interrupted_phase": "implementation",
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": candidate_kind == "applied",
+                "worktree_path": str(candidate),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit) as exit_info:
+                _run_delivery_continue(tmp_path, ["001"])
+
+        assert exit_info.value.code == 1
+        mock_run.assert_not_called()
+        assert "verify_command is still not set" in capsys.readouterr().err
 
     def test_non_docs_containment_violation_stays_unsupported(
         self,
