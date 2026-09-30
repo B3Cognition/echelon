@@ -483,7 +483,7 @@ def _assert_only_native_state_bookkeeping(root, before, run):
 @pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
 @pytest.mark.parametrize("witness", ["record", "removed", "malformed"])
 def test_cli_rewind_refuses_native_preview_noop_and_confirm_before_effects(retarget_cli_workspace, monkeypatch, capsys, kind, moving, confirm, mode, witness):
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     import echelon.rewind as rewind
     import echelon.spec_retarget_recovery as recovery
     import harness.phase_checkpoints as checkpoints
@@ -597,7 +597,7 @@ with lock:
 @pytest.mark.parametrize("lease", ["spec", "phase", "run"])
 def test_busy_native_lease_precedes_managed_admission(retarget_cli_workspace, capsys, entry, lease):
     from echelon.spec_retarget import prepare_spec_retarget
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     from echelon.spec_lifecycle import SpecLifecycleLocked
     root = retarget_cli_workspace
     if entry == "rewind":
@@ -624,7 +624,10 @@ def test_busy_native_lease_precedes_managed_admission(retarget_cli_workspace, ca
 @pytest.mark.parametrize("valid", [False, True])
 def test_cli_keeps_failed_gate_preflight_but_never_consumes_managed_claim(retarget_cli_workspace, monkeypatch, capsys, valid):
     from tests.unit.test_blocked_decision import _v3_decision
-    from echelon.cli import _cmd_rewind, _failed_gate_rewind_authority
+    from echelon.spec_service import (
+        _cmd_rewind,
+        _failed_gate_rewind_authority,
+    )
     from harness.squad_state import SquadStateStore
     root = retarget_cli_workspace
     checkpoint, _ = _rewind_checkpoint(root)
@@ -652,7 +655,7 @@ def test_cli_keeps_failed_gate_preflight_but_never_consumes_managed_claim(retarg
 
 @pytest.mark.parametrize("witness", ["selected", "physical", "declared", "claimed", "invalid-authority"])
 def test_cli_uses_selected_spec_and_original_run_claims_independently(retarget_cli_workspace, capsys, witness):
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     root = retarget_cli_workspace
     checkpoint, _ = _rewind_checkpoint(root)
     if witness == "selected":
@@ -678,7 +681,7 @@ def test_cli_uses_selected_spec_and_original_run_claims_independently(retarget_c
 
 
 def test_unrelated_authority_keeps_legacy_cli_same_head_preview_effects(retarget_cli_workspace, capsys):
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     from tests.unit.test_element_identity_legacy_guard import sql_state
     root = retarget_cli_workspace
     checkpoint, _ = _rewind_checkpoint(root)
@@ -713,7 +716,7 @@ def test_optional_baseline_read_bounds_io_failure_and_preserves_process_control(
 
 
 def test_cli_rewind_rejects_baseline_only_metadata_before_first_effect(retarget_cli_workspace, monkeypatch, capsys):
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     from echelon.spec_retarget import prepare_spec_retarget
     import echelon.rewind as rewind
     import harness.phase_checkpoints as checkpoints
@@ -790,7 +793,7 @@ def _native_retarget_rewind(root, head):
 @pytest.mark.parametrize("confirm", [False, True])
 @pytest.mark.parametrize("witness", ["metadata", "physical", "declared", "claimed", "missing-state", "missing-run", "malformed", "symlink"])
 def test_cli_baseline_only_recovery_admission_precedes_every_rewind_route(retarget_cli_workspace, monkeypatch, capsys, head, confirm, witness):
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
     from echelon.rewind import RewindError
     import echelon.rewind as rewind
     import echelon.spec_retarget_recovery as recovery

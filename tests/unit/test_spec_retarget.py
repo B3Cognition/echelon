@@ -264,7 +264,7 @@ def test_collect_evidence_reads_exact_spec_delivery_markers_without_writing(
     (tmp_path / "runs/.current").write_text("squad-base\n", encoding="utf-8")
     state_dir = tmp_path / "runs/build-001/state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps({"spec_id": "001-demo"}), encoding="utf-8"
     )
     before = {
@@ -277,7 +277,7 @@ def test_collect_evidence_reads_exact_spec_delivery_markers_without_writing(
     assert evidence.canonical_targets == ("services/api",)
     assert evidence.state_targets == ("services/api",)
     assert evidence.phase_b_history == ("run-history.json:build-1",)
-    assert evidence.delivery_state_paths == ("runs/build-001/state/default.json",)
+    assert evidence.delivery_state_paths == ("runs/build-001/state/delivery.json",)
     assert evidence.completed_task_ids == ("T-001",)
     assert evidence.product_inputs_recoverable is True
     assert evidence.published_re_recoverable is True

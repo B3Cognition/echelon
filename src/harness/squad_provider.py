@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import secrets
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -90,6 +92,7 @@ class SquadAgentResult:
     token_budget_exhausted: bool = False
     quarantined_state_updates: dict = field(default_factory=dict)
     stderr: str = ""
+    provider_attempts: tuple[dict[str, object], ...] = ()
 
     @property
     def verdict(self) -> Optional[str]:
@@ -400,7 +403,10 @@ class SquadCliProvider(AICodingCliProvider):
             request_metadata["isolated_workspace"] = True
         if request_metadata:
             run_kwargs["request_metadata"] = request_metadata
+        primary_attempt_id = secrets.token_hex(16)
+        primary_started_at = _utc_timestamp()
         backend_result = self.run_agent_result(project_root, prompt, **run_kwargs)
+        primary_ended_at = _utc_timestamp()
         _verify_git_boundary(project_root, git_before)
         duration_ms = int((time.monotonic() - start) * 1000)
         exit_code = backend_result.exit_code
@@ -429,6 +435,7 @@ class SquadCliProvider(AICodingCliProvider):
             parsed_result,
             result_contract,
         )
+        primary_validation_reason = validation_reason
         repair_attempted = False
         repair_succeeded = False
         repair_duration_ms: int | None = None
@@ -436,6 +443,7 @@ class SquadCliProvider(AICodingCliProvider):
         repair_outcome = ""
         repair_started_at = ""
         repair_ended_at = ""
+        repair_attempt: dict[str, object] | None = None
 
         if (
             allow_result_repair
@@ -452,13 +460,26 @@ class SquadCliProvider(AICodingCliProvider):
                 validation_reason,
             )
             repair_git_before = _git_boundary_snapshot(project_root)
-            repair_started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            repair_attempt_id = secrets.token_hex(16)
+            repair_started_at = _utc_timestamp()
             repair_started = time.monotonic()
+            repair_request_metadata = {
+                "prompt_metadata": {
+                    "tool_read_roots": [
+                        str(Path(project_root).resolve(strict=False))
+                    ],
+                    "tool_write_paths": [],
+                    "tool_write_scope_exclusive": True,
+                }
+            }
             repair_result = self.run_agent_result(
-                project_root, repair_prompt, **run_kwargs
+                project_root,
+                repair_prompt,
+                timeout_ms=timeout_ms,
+                request_metadata=repair_request_metadata,
             )
             repair_duration_ms = int((time.monotonic() - repair_started) * 1000)
-            repair_ended_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            repair_ended_at = _utc_timestamp()
             repair_model_name = _provider_model_name(repair_result.metadata)
             repair_outcome = (
                 "OK"
@@ -491,6 +512,16 @@ class SquadCliProvider(AICodingCliProvider):
                 else:
                     validation_reason = repair_reason or validation_reason
                     repair_outcome = "INVALID"
+            repair_attempt = _provider_attempt_record(
+                attempt_id=repair_attempt_id,
+                kind="result_repair",
+                provider=self.cli,
+                model=repair_model_name,
+                started_at=repair_started_at,
+                ended_at=repair_ended_at,
+                outcome=repair_outcome,
+                response=repair_result.stdout,
+            )
 
         if echelon_result is None and parsed_result is not None:
             echelon_result = _validation_block_result(validation_reason or "invalid")
@@ -503,6 +534,30 @@ class SquadCliProvider(AICodingCliProvider):
             debug_path = (
                 _write_debug_capture(raw, echelon_result, exit_code, duration_ms) or ""
             )
+
+        primary_outcome = (
+            "TIMEOUT"
+            if timed_out
+            else "ERROR"
+            if exit_code != 0
+            else "INVALID_RESULT"
+            if primary_validation_reason
+            else "OK"
+        )
+        provider_attempts = [
+            _provider_attempt_record(
+                attempt_id=primary_attempt_id,
+                kind="primary",
+                provider=self.cli,
+                model=_provider_model_name(backend_result.metadata),
+                started_at=primary_started_at,
+                ended_at=primary_ended_at,
+                outcome=primary_outcome,
+                response=backend_result.stdout,
+            )
+        ]
+        if repair_attempt is not None:
+            provider_attempts.append(repair_attempt)
 
         return SquadAgentResult(
             exit_code=exit_code if exit_code is not None else -1,
@@ -530,6 +585,7 @@ class SquadCliProvider(AICodingCliProvider):
             ),
             quarantined_state_updates=quarantined_state_updates,
             stderr=backend_result.stderr,
+            provider_attempts=tuple(provider_attempts),
         )
 
 
@@ -566,3 +622,30 @@ def _provider_model_name(metadata: object) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _provider_attempt_record(
+    *,
+    attempt_id: str,
+    kind: str,
+    provider: str,
+    model: str,
+    started_at: str,
+    ended_at: str,
+    outcome: str,
+    response: str,
+) -> dict[str, object]:
+    return {
+        "attempt_id": attempt_id,
+        "kind": kind,
+        "provider": provider,
+        "model": model,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "outcome": outcome,
+        "response_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
+    }

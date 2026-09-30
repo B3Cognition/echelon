@@ -48,7 +48,11 @@ class _CoverageProvider(SandboxProvider):
             else f"observer-vitest-{len(self.created_session_ids)}"
         )
         self.created_session_ids.append(session_id)
-        return SandboxHandle(id=session_id, session_id=session_id)
+        return SandboxHandle(
+            id=session_id,
+            session_id=session_id,
+            platform="linux/amd64" if session_id == "standard" else "linux/arm64",
+        )
 
     def exec(
         self,
@@ -134,8 +138,7 @@ def _standard_receipt(root: Path, fingerprint: str) -> object:
         evidence_dir=root / "verification",
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         candidate_commit="a" * 40,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -213,8 +216,7 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -232,6 +234,8 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
     assert bundle.observer_runs[0].executions[0].test_type == "unit"
     assert bundle.observer_runs[0].receipt is not None
     assert bundle.observer_runs[0].receipt.passed is True
+    observer_receipt = json.loads(bundle.observer_runs[0].receipt.path.read_text())
+    assert observer_receipt["execution"]["platform"] == "linux/arm64"
     assert not (tmp_path / ".echelon" / "coverage-reports").exists()
     assert product_evidence_fingerprint(tmp_path) == fingerprint
     assert list(
@@ -272,8 +276,7 @@ def test_isolated_observer_normalizes_report_paths_under_its_sandbox_mount(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -307,8 +310,7 @@ def test_isolated_observer_retries_transient_browser_loss_in_fresh_sandbox(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -339,8 +341,7 @@ def test_isolated_observer_classifies_repeated_browser_loss_as_infrastructure(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -395,8 +396,7 @@ def test_captured_observer_reuses_passing_standard_receipt_without_session(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 
@@ -430,8 +430,7 @@ def test_isolated_observer_rejects_a_candidate_mutation_in_its_receipt(
         evidence_dir=evidence_dir,
         spec_id="spec-001",
         target_id="game",
-        strategy_id="default",
-        build_id="build-001",
+                build_id="build-001",
         sensitive_environment={},
     )
 

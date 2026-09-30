@@ -70,7 +70,6 @@ def run_coverage_observers(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageVerificationBundle:
@@ -137,7 +136,6 @@ def run_coverage_observers(
                 evidence_dir=Path(evidence_dir),
                 spec_id=spec_id,
                 target_id=target_id,
-                strategy_id=strategy_id,
                 build_id=build_id,
                 sensitive_environment=sensitive_environment,
             )
@@ -159,7 +157,6 @@ def _run_observer(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageObserverRun:
@@ -183,7 +180,6 @@ def _run_observer(
         evidence_dir=evidence_dir,
         spec_id=spec_id,
         target_id=target_id,
-        strategy_id=strategy_id,
         build_id=build_id,
         sensitive_environment=sensitive_environment,
     )
@@ -265,12 +261,12 @@ def _run_isolated_observer_once(
     evidence_dir: Path,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     sensitive_environment: Mapping[str, str],
 ) -> CoverageObserverRun:
     observer = resolved.observer
     handle: SandboxHandle | None = None
+    selected_platform: str | None = None
     stages: list[VerificationStage] = []
     environment: dict[str, str] = {}
     started_at = datetime.now(timezone.utc).isoformat()
@@ -286,6 +282,7 @@ def _run_isolated_observer_once(
             failure_reason = "candidate fingerprint changed before coverage observation"
             raise CoverageObserverError(failure_reason)
         handle = provider.create(sandbox_spec)
+        selected_platform = handle.platform
         plan = build_verification_plan(
             worktree,
             config,
@@ -355,7 +352,6 @@ def _run_isolated_observer_once(
         observer_id=observer.id,
         spec_id=spec_id,
         target_id=target_id,
-        strategy_id=strategy_id,
         build_id=build_id,
         candidate_commit=candidate_commit,
         candidate_fingerprint=candidate_fingerprint,
@@ -365,6 +361,7 @@ def _run_isolated_observer_once(
         started_at=started_at,
         attempt_sequence=attempt_sequence,
         retained_report=retained_report,
+        selected_platform=selected_platform,
     )
     if receipt is None:
         return CoverageObserverRun(
@@ -432,7 +429,6 @@ def _write_observer_receipt(
     observer_id: str,
     spec_id: str,
     target_id: str,
-    strategy_id: str,
     build_id: str,
     candidate_commit: str,
     candidate_fingerprint: str,
@@ -442,6 +438,7 @@ def _write_observer_receipt(
     started_at: str,
     attempt_sequence: int,
     retained_report: Path | None,
+    selected_platform: str | None,
 ) -> VerificationEvidenceRef | None:
     root = Path(evidence_dir) / "coverage-observers" / observer_id
     try:
@@ -449,7 +446,6 @@ def _write_observer_receipt(
             evidence_dir=root,
             spec_id=spec_id,
             target_id=target_id,
-            strategy_id=strategy_id,
             build_id=build_id,
             candidate_commit=candidate_commit,
             fingerprint_before=candidate_fingerprint,
@@ -459,6 +455,7 @@ def _write_observer_receipt(
             execution_context={
                 "mode": "sandbox",
                 "observer": observer_id,
+                **({"platform": selected_platform} if selected_platform is not None else {}),
                 "retained_report": (
                     retained_report.relative_to(root).as_posix()
                     if retained_report is not None

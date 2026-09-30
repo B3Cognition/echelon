@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from harness.task_progress import update_task_progress_markdown
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_controller_integration import _build, _controller, _reconstruct
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, _run, slice_project

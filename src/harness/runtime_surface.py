@@ -51,7 +51,6 @@ DELIVERY_TEMPLATE_FILES = frozenset(
 )
 
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
-    "build-",
     "verify-spec-",
 )
 
@@ -64,7 +63,6 @@ DELIVERY_WORKFLOW_DEFINITION_KEYS = frozenset(
         "evidence_hierarchy",
         "conflict_resolution",
         "phases",
-        "build",
         "escalation",
         "verify_spec",
         "reopen",

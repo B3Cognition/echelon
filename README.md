@@ -28,14 +28,12 @@ source ~/.zshrc   # or restart terminal
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
 This is enough to author specs and run the default delivery strategy.
-SOAR/codegen execution is disabled pending removal; `--with-codegen` is rejected.
 
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
 | `echelon spec` | Spec lifecycle subcommands — run, status, targets, verify, defer, plan, reopen |
-| `codegen` | Retired SOAR pipeline; execution disabled |
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
@@ -56,7 +54,7 @@ cd ~/work/my-project
 # Choose the provider you have installed.
 echelon workspace init --llm claude
 
-# Phase A: write a specification and plan. No SOAR/codegen installation needed.
+# Phase A: write a specification and plan.
 echelon spec run "Create a sample Hello World program in Python"
 ```
 
@@ -343,6 +341,14 @@ compatibility input and is never freshness or publication authority.
 
 ### Typical workflow
 
+Phase A run state is current-only and versioned. One sealed
+`pending_spec_step` record owns recovery for routing, terminal finalization,
+and human-input resolution. Journal, timing, quality, checkpoint, context,
+mining, retarget, and publication work execute as effects of that step;
+publication retains its hardened filesystem transaction but does not own a
+second lifecycle marker. Echelon does not migrate historical or unversioned
+Phase A runs—reset the old run and start a new one.
+
 ```bash
 # Optional — refresh published brownfield knowledge only when needed
 echelon re refresh
@@ -367,7 +373,6 @@ echelon spec plan 001 NFR-008
 
 # Phase B — build, verify in Docker, open PR
 echelon delivery run 001                    # echelon squad build (default)
-# SOAR/codegen is disabled; use the default strategy.
 
 # Polyrepo/workspace: declare implementation roots before Phase A dispatches
 echelon spec run "Build dashboards" --target sources/api --target sources/web
@@ -638,10 +643,10 @@ Echelon models every project as a workspace with zero or more source roots. See 
 
 Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provider Support](#ai-provider-support) below.
 
-Echelon has separate Phase A spec-authoring choices and Phase B build-strategy
-choices. Before enabling the derived Lexicon controlled-grammar gate or SOAR
-codegen, read [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the current
-compatibility contract.
+Echelon has separate Phase A spec-authoring choices and Phase B delivery.
+Before enabling the derived Lexicon controlled-grammar gate, read
+[Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the current compatibility
+contract.
 
 ### Other echelon commands
 
@@ -1028,25 +1033,16 @@ wiki:
 
 **Two-repo (advanced):** A dedicated control-plane repo manages one or more target repos. Useful when build infrastructure should be separate from product code, or when managing multiple products from one place.
 
-### Build Strategies
-
-`echelon delivery run` accepts `--strategy` to choose the build engine used in
-Phase 1:
-
-| Strategy | Build engine | When to use |
-| -------- | ------------ | ----------- |
-| `default` (omit) | `echelon.build` — multi-agent squad | General use |
-| `codegen` | Disabled pending removal | Not available |
+### Delivery Loop
 
 ```bash
-echelon delivery run 001                    # default — echelon squad build
-# SOAR/codegen is disabled; use the default strategy.
+echelon delivery run 001
+echelon delivery continue 001
+echelon delivery resume 001 "<answer>"
 ```
 
-The default strategy uses the build → verification → feedback → commit/PR loop.
-SOAR/codegen strategies, including resume, are disabled.
-See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
-spec-format/build-strategy combinations.
+Delivery uses one controlled slice → verification → feedback → commit/PR loop.
+See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported flow.
 
 ### Review Loop (Phase 3)
 
@@ -1062,15 +1058,22 @@ review_loop:
   max_fix_iterations: 3
 ```
 
-The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER → SENTINEL → SPEC GUARD per comment group), writes `review-fix-{n}.md` tasks to the branch, then re-enters Phase 1 with the review content injected into the build prompt.
+The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER → SENTINEL → SPEC GUARD per comment group), writes `review-fix-{n}.md` tasks to the branch, then re-enters Phase 1 with the review content injected into controller context.
 
 ### Harness Architecture
+
+`DeliveryController` owns one run: open/resume, persisted-phase dispatch,
+bounded review re-entry or verified publication, then one finalization.
+`RalphController` owns one implementation iteration: pending-slice recovery,
+worktree preparation, controlled-slice dispatch, progress checkpointing, and
+candidate verification. These are explicit controller boundaries, not a
+general workflow engine.
 
 ```
 +-------------------------------+       +---------------------------+
 |        HOST (LLM side)        |       |    DOCKER SANDBOX         |
 |                               |       |                           |
-|  StrategyCoordinator          |       |  deterministic execution  |
+|  DeliveryController           |       |  deterministic execution  |
 |    |                          |       |    - build (fallback)     |
 |    ├── Phase 1: RalphController|       |    - test                 |
 |    │     ├── ClaudeCliProvider |------>|    - verify               |
@@ -1087,7 +1090,7 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 
 | Step | Executor |
 | ---- | -------- |
-| Build (Phase 1) | `claude -p` on host (or `echelon build`/`echelon codegen`) |
+| Controlled delivery (Phase 1) | Configured AI provider on host via six assignment-bound delivery roles |
 | Verify | Docker sandbox — always |
 | Visual tests (Phase 2) | Docker sandbox — Playwright; disabled by default |
 | Review skill (Phase 3) | `claude -p` on host via `echelon.review` |
@@ -1259,11 +1262,11 @@ Commands use the Echelon terminal CLI; Prosaic supplies provider-neutral prose b
 
 ### Command architecture
 
-All major command files (`echelon.run.md`, `echelon.bugfix.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.codegenlight.md`) are **thin wrappers** (~35–75 lines). They set the role, load `agents/control/commander.md` (the shared behavioral framework for COMMANDER-driven commands), then delegate to `workflow/definition.yaml` and `workflow/phases/` for the full workflow logic.
+The major spec command files (`echelon.run.md` and `echelon.bugfix.md`) are **thin wrappers** (~35–75 lines). They set the role, load `agents/control/commander.md` (the shared behavioral framework for COMMANDER-driven commands), then delegate to `workflow/definition.yaml` and `workflow/phases/` for the full workflow logic. Phase B delivery is Python-controlled and does not load a build command wrapper.
 
 The workflow is split into two layers:
 
-- **`workflow/definition.yaml`** — phase graph with routing conditions, transitions, agent assignments, convergence thresholds, and the build task-loop state machine. COMMANDER reads this before every routing decision.
+- **`workflow/definition.yaml`** — phase graph with routing conditions, transitions, agent assignments, and convergence thresholds for command-driven workflows. COMMANDER reads this before every routing decision.
 - **`workflow/phases/*.md`** — per-phase spec files with context pack assembly, exact dispatch prompts, and expected outputs. Each phase node in `definition.yaml` points to its spec file via `spec_file:`.
 
 This keeps commands readable and makes individual phases independently editable without touching the command files.
@@ -1279,8 +1282,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
 | `echelon re deepen`, `continue`, `resume`, `synthesize`, `publish` | Advanced historical compatibility and recovery tools; not required by the normal run/refresh path |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
-| `echelon build <id>` | Build phase (agent-driven) |
-| `echelon codegen <id>` | Disabled SOAR compatibility command |
+| `echelon delivery run <id>` | Run the Python-controlled Phase B lifecycle: implementation, verification, recovery, review, and PR publication |
 | `echelon review <id> [--pr-url <url>]` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon spec verify <id> [--reconcile] [--dry-run]` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
@@ -1290,7 +1292,6 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | Prepare an isolated product-input amendment for an unbuilt spec |
 | `echelon spec retarget <id> --target <source-path>... [--confirm]` | Preview or confirm a destructive complete target-set replacement for an unimplemented spec; confirmation creates the mandatory recovery checkpoint and rebuilds Phase A on the same branch |
 | `echelon spec repair-traceability [--confirm]` | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
-| `echelon cicd` | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon spec publish <numeric-id>` | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
 | `echelon spec publish <canonical-branch>` | Publish one exact canonical local spec branch by full name without merging implementation history |
@@ -1376,11 +1377,10 @@ independently rather than allowing either one to hide the other.
 | -------- | ------- |
 | `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
-| `echelon delivery run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> --strategy codegen` | Disabled; use the default delivery strategy |
+| `echelon delivery run <id>` | Build → Docker verify → PR; validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
 | `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
-| `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery status [<id>]` | Show the active delivery state, iterations, cost, and PR context |
 | `echelon delivery verify-local <id> [--target <target-id>] [--engine auto\|docker\|podman]` | Explicit macOS-only local browser verification in a managed worktree; records separate local evidence and never changes landing authority |
 | `echelon delivery cleanup-local <local-run-id>` | Safely recover only resources and the candidate worktree recorded in one interrupted local-run journal |
 | `echelon delivery checkpoint list <id>` | List delivery checkpoints and recovery commits for a spec |
@@ -1399,12 +1399,11 @@ with `echelon stack select <id>...` (omit IDs to clear it). Use
 setting after local overrides, and implied stacks. Each mutation accepts
 `--dry-run` to validate the proposed selection without writing config.
 
-## Codegen Pipeline
+## Shared Memory Utilities
 
-SOAR-backed execution is disabled pending removal. Installation with
-`--with-codegen`, legacy codegen execution, and SOAR delivery strategies are rejected.
-Existing source and historical runs are retained; no re-enable flag is provided.
-Shared MemPalace and graph utilities remain supported by regular Echelon flows.
+The `codegen.memory` and `codegen.security` namespaces contain shared MemPalace,
+knowledge-base validation, and secret-scrubbing utilities used by regular
+Echelon workflows. They are utility packages, not an executable pipeline.
 
 ## PR Review Loop
 
@@ -1433,7 +1432,7 @@ echelon.review skill (claude -p)
         │
         ▼
 harness re-enters Phase 1
-  review-fix-{n}.md content injected into build prompt
+  review-fix-{n}.md content injected into controller context
   Claude addresses reviewer feedback
         │
         ▼
@@ -1689,7 +1688,7 @@ runtime/                    # Non-prose execution bundle
 └── stacks/                 # Stack configuration
 src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
-├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
+├── codegen/             # Shared MemPalace, KB-validation, and scrubbing utilities
 ├── understanding/       # Requirements quality metrics CLI (entry point: understanding)
 └── harness/             # Build harness library (invoked via: echelon delivery)
     ├── provider.py        SandboxProvider abstract interface
@@ -1697,19 +1696,19 @@ src/
     ├── llm_provider.py    ClaudeCliProvider — claude -p subprocess for LLM build
     ├── build_prompt.py    BuildPromptBuilder — self-contained prompt construction
     ├── gitops.py          GitOpsManager — mirror, worktrees, push, PR creation
-    ├── state.py           State store (per-strategy JSON, atomic writes)
+    ├── state.py           Run-scoped `delivery.json` state store (atomic writes)
     ├── config.py          Configuration (4-level cascade)
     ├── ralph.py           RalphController — Phase 1 outer/inner loop
     ├── visual_ralph.py    VisualRalphController — Phase 2 Playwright loop
     ├── review_loop.py     ReviewLoopController — Phase 3 PR review cycle
-    ├── coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
+    ├── delivery_controller.py DeliveryController — owns the single Phase 1→3 run
     └── skills/            CLI skill entry points
 network/
 ├── generate-squid-conf.sh   # Generate Squid proxy config for sandbox network policy
 └── squid.conf.template      # Squid config template with egress allowlist
 scripts/
-├── install.sh               # Downloads SOAR; installs CLIs and shared Node runtimes
-└── uninstall.sh             # Removes venv, SOAR, shared Node runtimes, memory, PATH entries
+├── install.sh               # Installs CLIs and shared Node runtimes
+└── uninstall.sh             # Removes venv, shared Node runtimes, memory, PATH entries
 docs/
 └── fallback-mode.md
 knowledge-base/

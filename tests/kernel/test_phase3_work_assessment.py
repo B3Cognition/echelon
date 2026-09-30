@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from harness.phase_graph import PhaseNode
+from harness.phase_execution import PhaseExecutionAccumulator
 from harness.squad_executors import StagedParallelExecutor, ExecutorBlockedResult
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
@@ -57,16 +58,44 @@ def test_missing_action_gets_one_durable_sage_assessment_not_answer_adoption(tmp
     executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, run)
     node = PhaseNode(id="phase3-consensus", type="staged_parallel", agents=[
         {"id": "echelon.sage", "mode": "WHY3", "stage": 1, "context_pack": []}])
-    result = executor._assess_phase3_work(node, store)
+    accumulator = PhaseExecutionAccumulator(node.id)
+    result = executor._assess_phase3_work(
+        node,
+        store,
+        accumulator,
+        store.load(),
+    )
     if malformed:
         assert isinstance(result, ExecutorBlockedResult)
         assert result.reason == "repair_action_unclassified"
+        assert result.execution is not None
     else:
-        pending = store.load()["phase3_pending_action"]
+        assert isinstance(result, dict)
+        pending = result["phase3_pending_action"]
         assert pending["assessment"]["kind"] == "investigate_or_design"
         assert store.load().get("selected_issue_resolution") is None
         assert store.load()["why3_verdict"] == "FAIL"
+        assert "phase3_pending_action" not in store.load()
+        execution = accumulator.freeze(
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "FAIL", "state_updates": result},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        )
+        assert execution.manifest[0].occurrence_id == "sage/work-assessment"
+        assert provider.exec_agent.call_args.kwargs["prompt_metadata"][
+            "tool_write_paths"
+        ] == []
     # Restart and report renumbering cannot grant another classification attempt.
     (spec / "issues.md").write_text(ISSUES.replace("ISS-002", "ISS-009"))
-    executor._assess_phase3_work(node, SquadStateStore(run))
+    restarted = PhaseExecutionAccumulator(node.id)
+    executor._assess_phase3_work(
+        node,
+        SquadStateStore(run),
+        restarted,
+        SquadStateStore(run).load(),
+    )
     assert len(prompts) == 1

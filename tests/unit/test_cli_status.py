@@ -11,7 +11,11 @@ from unittest.mock import patch
 
 import pytest
 
-from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
+from echelon.spec_service import (
+    _cmd_status,
+    _print_next_steps,
+)
+from echelon.cli import _find_converged_harness_build
 from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
@@ -59,7 +63,7 @@ def _write_build_state(
     }
     if extra:
         payload.update(extra)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(payload),
         encoding="utf-8",
     )
@@ -545,7 +549,7 @@ def test_status_roadmap_reads_the_deployed_runtime_workflow(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    with patch("echelon.cli._print_roadmap") as print_roadmap:
+    with patch("echelon.spec_service._print_roadmap") as print_roadmap:
         _cmd_status(tmp_path)
 
     assert print_roadmap.call_args.args[1] == (
@@ -689,7 +693,7 @@ def test_latest_polyrepo_target_build_is_ready_to_land(tmp_path: Path) -> None:
         / "state"
     )
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "007-animate-character-use-product",
@@ -1180,7 +1184,7 @@ def test_status_uses_controller_recovery_instruction_for_next_command(
     )
 
     with patch(
-        "echelon.cli._runtime_bundle_compatibility",
+        "echelon.spec_service._runtime_bundle_compatibility",
         return_value=compatibility,
     ):
         _cmd_status(tmp_path)

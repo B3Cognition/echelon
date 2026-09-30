@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import re
 from pathlib import Path
 
@@ -58,11 +57,9 @@ def test_spec_targets_prints_every_task_once_grouped_by_declared_target(
 """,
     )
     monkeypatch.chdir(tmp_path)
-    cli = importlib.import_module("echelon.cli")
-    handler = getattr(cli, "_cmd_spec_targets", None)
+    from echelon.spec_service import show_targets
 
-    assert callable(handler)
-    handler(["001"])
+    show_targets(tmp_path, spec_id="001")
 
     output = capsys.readouterr().out
     assert "Spec: 001-dashboard" in output
@@ -122,12 +119,10 @@ def test_spec_targets_prints_all_invalid_groups_before_nonzero_exit(
     tasks_before = (spec_dir / "tasks.md").read_bytes()
     targets_before = (spec_dir / "targets.yml").read_bytes()
     monkeypatch.chdir(tmp_path)
-    cli = importlib.import_module("echelon.cli")
-    handler = getattr(cli, "_cmd_spec_targets", None)
+    from echelon.spec_service import show_targets
 
-    assert callable(handler)
     with pytest.raises(SystemExit) as exc:
-        handler(["001"])
+        show_targets(tmp_path, spec_id="001")
 
     assert exc.value.code == 2
     output = capsys.readouterr().out
@@ -159,12 +154,10 @@ def test_spec_targets_rejects_missing_canonical_tasks_file(
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    cli = importlib.import_module("echelon.cli")
-    handler = getattr(cli, "_cmd_spec_targets", None)
+    from echelon.spec_service import show_targets
 
-    assert callable(handler)
     with pytest.raises(SystemExit) as exc:
-        handler(["001"])
+        show_targets(tmp_path, spec_id="001")
 
     assert exc.value.code == 1
     assert "canonical tasks file not found" in capsys.readouterr().err

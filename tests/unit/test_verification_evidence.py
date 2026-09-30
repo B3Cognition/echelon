@@ -29,7 +29,6 @@ def _write_fixture_receipt(
     return write_verification_receipt(
         evidence_dir=root,
         spec_id="003-demo",
-        strategy_id="default",
         build_id="build-1",
         candidate_commit="a" * 40,
         fingerprint_before=before,
@@ -52,6 +51,15 @@ def _write_fixture_receipt(
 
 
 @pytest.mark.unit
+def test_verification_receipt_has_no_strategy_identity(tmp_path: Path) -> None:
+    ref = _write_fixture_receipt(tmp_path)
+
+    payload = json.loads(ref.path.read_text(encoding="utf-8"))
+    assert "strategy_id" not in payload
+    assert payload["build_id"] == "build-1"
+
+
+@pytest.mark.unit
 def test_writes_immutable_redacted_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -61,7 +69,6 @@ def test_writes_immutable_redacted_receipt(
     ref = write_verification_receipt(
         evidence_dir=tmp_path,
         spec_id="003-demo",
-        strategy_id="default",
         build_id="build-1",
         candidate_commit="a" * 40,
         fingerprint_before="b" * 64,

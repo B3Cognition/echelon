@@ -26,6 +26,7 @@ SUBAGENT_POLICY = {
     "echelon.delivery-spec-guard.md": ("strong", "medium"),
     "echelon.delivery-code-reviewer.md": ("strong", "high"),
     "echelon.delivery-test-guardian.md": ("strong", "medium"),
+    "echelon.delivery-visual-validator.md": ("strong", "high"),
     "echelon.docs-verifier.md": ("balanced", "medium"),
     "echelon.engineering-manager.md": ("strong", "medium"),
     "echelon.gatekeeper.md": ("strong", "high"),
@@ -86,11 +87,8 @@ SUBAGENT_POLICY = {
 
 COMMAND_POLICY = {
     "echelon.bugfix.md": ("strong", "medium"),
-    "echelon.build.md": ("strong", "high"),
     "echelon.change.md": ("strong", "high"),
     "echelon.cicd.md": ("fast", "low"),
-    "echelon.codegen.md": ("strong", "high"),
-    "echelon.codegenlight.md": ("strong", "high"),
     "echelon.deploy.md": ("balanced", "medium"),
     "echelon.feedback.md": ("balanced", "medium"),
     "echelon.ground.md": ("fast", "low"),

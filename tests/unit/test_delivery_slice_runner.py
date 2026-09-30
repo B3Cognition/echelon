@@ -76,6 +76,258 @@ def _steps(executor):
     return [call[0]["step"] for call in executor.calls]
 
 
+def test_visual_validator_handoff_is_review_scoped_and_not_visual_approval(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Acceptance Criteria:**\n"
+        "  - [ ] Retain screenshots and obtain a VISUAL VALIDATOR receipt before merge\n"
+    )
+    executor = ScriptedExecutor()
+
+    result = _run(
+        (project, spec, evidence), executor,
+        semantic_visual_gate_required=True,
+    )
+
+    assert result.succeeded
+    assert _steps(executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert "Deferred semantic visual verdict" not in executor.calls[0][2]
+    for assignment, _, prompt in executor.calls[1:]:
+        assert "Deferred semantic visual verdict" in prompt
+        assert "Do not require a candidate-side validator invocation or receipt" in prompt
+        assert "Do not treat screenshots or numeric checks as semantic approval" in prompt
+        assert assignment["step"] in {"spec_guard", "code_reviewer", "test_guardian"}
+
+
+def test_visual_handoff_change_cannot_replay_old_review_receipts(slice_project):
+    first = ScriptedExecutor()
+    interrupted = _run(
+        slice_project, first, operation_id="visual-handoff-op",
+        stop_requested=lambda: bool(first.calls),
+    )
+    assert interrupted.reason == "delivery_slice_cancelled"
+    resumed = ScriptedExecutor()
+
+    result = _run(
+        slice_project, resumed, operation_id="visual-handoff-op",
+        journal_required=True, semantic_visual_gate_required=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_reconciliation_required: operation binding changed"
+    assert resumed.calls == []
+
+
+def _review_context_recheck_project(slice_project):
+    project, spec, evidence = slice_project
+    tests = project / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "bootstrap.test.ts").write_text("// declared bootstrap test\n")
+    (tests / "main-entry.test.ts").write_text("// verifies startup entry\n")
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n"
+        "  - `app.py` - Implementation.\n"
+        "  - `tests/integration/bootstrap.test.ts` - Startup test.\n"
+        "  **Acceptance Criteria:**\n  - [ ] Return hello\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "."], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=project, check=True,
+    )
+    return project, spec, evidence
+
+
+def test_review_context_recheck_corrects_false_absence_without_repair(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["tests/integration/main-entry.test.ts absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard",
+                                "code_reviewer", "test_guardian"]
+    assert "// verifies startup entry" in executor.calls[2][2]
+    assert '"prior_reviewed_test_paths": ["tests/integration/bootstrap.test.ts"]' in executor.calls[2][2]
+    assert '"audit_test_paths": ["tests/integration/bootstrap.test.ts", "tests/integration/main-entry.test.ts"]' in executor.calls[2][2]
+    assert result.token_usage == 35
+    journal = json.loads(next(fixture[2].rglob("journal.json")).read_text())
+    assert journal["records"][1]["review_evidence"]["incomplete"] is True
+    assert journal["records"][2]["review_evidence"]["incomplete"] is False
+    assert {record["repair_attempt"] for record in journal["records"]} == {0}
+
+
+def test_review_context_recheck_complete_real_failure_still_repairs(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts",
+                                               "tests/integration/main-entry.test.ts"]
+            if reviews == 1:
+                payload["reviewed_test_paths"].pop()
+            if reviews <= 2:
+                payload.update(verdict="FAIL", findings=["app.py:1 genuine missing assertion"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard",
+                                "code_reviewer", "test_guardian", "implementer",
+                                "spec_guard", "code_reviewer", "test_guardian"]
+    assert "genuine missing assertion" in executor.calls[5][2]
+
+
+def test_review_context_recheck_second_incomplete_pass_blocks(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry coverage absent"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_review_context_unresolved:spec_guard"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard"]
+    journal = json.loads(next(fixture[2].rglob("journal.json")).read_text())
+    assert journal["records"][2]["result"]["verdict"] == "PASS"
+    assert journal["records"][2]["review_evidence"]["incomplete"] is True
+
+
+def test_review_context_recheck_rejects_unknown_reviewed_path(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["missing coverage"],
+                           reviewed_test_paths=["tests/integration/does-not-exist.test.ts"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_review_unknown_test_path"
+    assert _steps(executor) == ["implementer", "spec_guard"]
+
+
+def test_review_allows_existing_nonstandard_candidate_test_as_extra_evidence(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    (fixture[0] / "tests/toolchain-contract.mjs").write_text(
+        "import test from 'node:test'; test('contract', () => {});\n"
+    )
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload["reviewed_test_paths"] = [
+                "tests/integration/bootstrap.test.ts",
+                "tests/integration/main-entry.test.ts",
+                "tests/toolchain-contract.mjs",
+            ]
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+
+
+def test_review_context_recheck_reviewer_mutation_blocks(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                (root / "app.py").write_text("reviewer wrote product code\n")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_reviewer_mutated_candidate"
+    assert _steps(executor) == ["implementer", "spec_guard", "spec_guard"]
+
+
+def test_review_context_recheck_budget_blocks_before_second_call(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+
+    def review(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["main-entry test absent"],
+                           reviewed_test_paths=["tests/integration/bootstrap.test.ts"])
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor, token_budget=14)
+    assert result.reason == "delivery_slice_budget_exhausted"
+    assert _steps(executor) == ["implementer", "spec_guard"]
+
+
+def test_review_context_recheck_large_test_uses_exact_paths(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    (fixture[0] / "tests/integration/main-entry.test.ts").write_text("x" * 128_001)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "spec_guard":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert '"omitted_test_sources": null' in executor.calls[2][2]
+    assert "tests/integration/main-entry.test.ts" in executor.calls[2][2]
+
+
+def test_review_context_recheck_test_guardian_uses_same_role(slice_project):
+    fixture = _review_context_recheck_project(slice_project)
+    reviews = 0
+
+    def review(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "test_guardian":
+            reviews += 1
+            payload["reviewed_test_paths"] = ["tests/integration/bootstrap.test.ts"]
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=["main-entry test absent"])
+            else:
+                payload["reviewed_test_paths"].append("tests/integration/main-entry.test.ts")
+
+    executor = ScriptedExecutor(review)
+    result = _run(fixture, executor)
+    assert result.reason == "delivery_gates_passed"
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer",
+                                "test_guardian", "test_guardian"]
+
+
 def test_only_three_sequential_approvals_accept_one_task(slice_project):
     executor = ScriptedExecutor()
     result = _run(slice_project, executor)
@@ -91,6 +343,1283 @@ def test_only_three_sequential_approvals_accept_one_task(slice_project):
     assert len(list(slice_project[2].rglob("result.json"))) == 4
 
 
+def test_browser_capture_request_is_durable_and_cannot_accept_task(slice_project):
+    def request_capture(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED",
+                summary="Pinned visual baselines need sandbox captures",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    first = ScriptedExecutor(request_capture)
+    result = _run(slice_project, first)
+
+    assert result.status == "blocked" and result.task_ids == []
+    assert result.reason == "delivery_browser_evidence_requested: baseline_capture"
+    assert _steps(first) == ["implementer"]
+    assert "BROWSER_EVIDENCE_REQUIRED" in first.calls[0][2]
+    assert "browser_evidence_request" in first.calls[0][2]
+    assert "Reserve NEEDS_CONTEXT for genuinely missing information" in first.calls[0][2]
+    journal_path = next(slice_project[2].rglob("journal.json"))
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["records"][0]["result"]["browser_evidence_request"] == {
+        "purpose": "baseline_capture"
+    }
+    replay = ScriptedExecutor()
+    resumed = _run(slice_project, replay)
+    assert resumed.reason == result.reason and resumed.task_ids == []
+    assert not replay.calls
+
+
+def test_browser_request_returns_scoped_capture_to_same_task_before_review(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    requested = False
+
+    def request_once(assignment, payload, root):
+        nonlocal requested
+        if assignment["step"] == "implementer" and not requested:
+            requested = True
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED",
+                summary="Pinned baseline needs sandbox capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    captures = []
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(request_once)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert captures == [str(slice_project[0].resolve())]
+    assert _steps(executor) == [
+        "implementer", "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert executor.calls[0][0]["task_id"] == executor.calls[1][0]["task_id"]
+    retained_root = next(slice_project[2].rglob("browser-baselines/*/*/artifacts"))
+    assert executor.calls[1][1]["tool_read_roots"] == [str(retained_root)]
+    assert "pitch-chromium.png" in executor.calls[1][2]
+    assert "return DONE" in executor.calls[1][2]
+    assert "Do not request capture again for an unchanged candidate" in executor.calls[1][2]
+    assert (retained_root / "0001.png").read_bytes() == b"proposal"
+    assert all("pitch-chromium.png" not in prompt for _, _, prompt in executor.calls[2:])
+
+
+def test_browser_capture_resumes_from_retained_evidence_without_recapturing(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    stop = False
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need browser capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        nonlocal stop
+        stop = True
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    first = ScriptedExecutor(request)
+    interrupted = _run(
+        slice_project, first, operation_id="capture-op",
+        browser_baseline_capture=capture, stop_requested=lambda: stop,
+    )
+    assert interrupted.status == "blocked" and interrupted.reason == "delivery_slice_cancelled"
+    assert _steps(first) == ["implementer"]
+
+    def forbidden_recapture(_worktree):
+        raise AssertionError("retained proposal must be replayed")
+
+    replay = ScriptedExecutor()
+    resumed = _run(
+        slice_project, replay, operation_id="capture-op", journal_required=True,
+        browser_baseline_capture=forbidden_recapture,
+    )
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(replay) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert "pitch-chromium.png" in replay.calls[0][2]
+
+
+def test_browser_capture_replay_rejects_altered_image_before_dispatch(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    stop = False
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need browser capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        nonlocal stop
+        stop = True
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    first = _run(
+        slice_project, ScriptedExecutor(request), operation_id="capture-op",
+        browser_baseline_capture=capture, stop_requested=lambda: stop,
+    )
+    assert first.reason == "delivery_slice_cancelled"
+    next(slice_project[2].rglob("artifacts/0001.png")).write_bytes(b"changed")
+
+    replay = ScriptedExecutor()
+    result = _run(
+        slice_project, replay, operation_id="capture-op", journal_required=True,
+        browser_baseline_capture=lambda _worktree: pytest.fail("must not recapture"),
+    )
+    assert result.status == "blocked" and "digest mismatch" in result.reason
+    assert replay.calls == []
+
+
+@pytest.mark.parametrize("owner_verdict", ["BLOCKED", "NEEDS_CONTEXT"])
+def test_browser_capture_never_overrides_followup_owner_block(slice_project, owner_verdict):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] == "implementer":
+            calls += 1
+            if calls == 1:
+                payload.update(
+                    verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                    browser_evidence_request={"purpose": "baseline_capture"},
+                )
+            else:
+                payload.update(verdict=owner_verdict, summary="Owner input still required")
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+    assert result.status == "blocked" and result.task_ids == []
+    assert result.reason == f"delivery_implementer_blocked: Owner input still required"
+    assert _steps(executor) == ["implementer", "implementer"]
+
+
+def test_browser_capture_request_cannot_loop_indefinitely(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Still need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(request)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+    assert result.status == "blocked" and result.reason == "delivery_browser_evidence_request_repeated"
+    assert result.task_ids == [] and _steps(executor) == ["implementer", "implementer"]
+
+
+def test_repeated_passing_browser_request_gets_one_corrective_reentry(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        (root / "app.py").write_text("def hello(): return 'stable'\n")
+        if calls <= 2:
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need fresh capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 1
+    assert _steps(executor) == ["implementer"] * 3 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert "already has passing browser evidence" in executor.calls[2][2]
+    assert "Do not request capture again" in executor.calls[2][2]
+
+
+def test_passing_browser_request_still_blocks_after_corrective_reentry(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    captures = []
+
+    def repeat(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need fresh capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(repeat)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_evidence_request_repeated"
+    assert len(captures) == 1
+    assert _steps(executor) == ["implementer"] * 3
+
+
+def test_corrective_reentry_works_after_four_real_captures(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        (root / "app.py").write_text(
+            f"def hello(): return 'candidate-{min(calls, 4)}'\n"
+        )
+        if calls <= 5:
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 4
+    assert _steps(executor) == ["implementer"] * 6 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_corrective_browser_reentry_replays_without_recapture(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    stop = False
+    calls = 0
+
+    def repeat_twice(assignment, payload, root):
+        nonlocal stop, calls
+        if assignment["step"] == "implementer":
+            calls += 1
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+            stop = calls == 2
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    first = _run(
+        slice_project, ScriptedExecutor(repeat_twice), operation_id="correction-op",
+        browser_baseline_capture=capture, stop_requested=lambda: stop,
+    )
+    assert first.reason == "delivery_slice_cancelled"
+
+    def finish(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / "app.py").write_text("def hello(): return 'stable'\n")
+
+    resumed_executor = ScriptedExecutor(finish)
+    resumed = _run(
+        slice_project, resumed_executor, operation_id="correction-op",
+        journal_required=True,
+        browser_baseline_capture=lambda _worktree: pytest.fail("must not recapture"),
+    )
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_corrective_reentry_cannot_accept_changed_candidate_without_recapture(
+    slice_project,
+):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    calls = 0
+
+    def decide(assignment, payload, root):
+        nonlocal calls
+        if assignment["step"] != "implementer":
+            return
+        calls += 1
+        if calls == 1:
+            (root / "app.py").write_text("def hello(): return 'initial'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+        elif calls == 2:
+            (root / "app.py").write_text("def hello(): return 'initial'\n")
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+        else:
+            (root / "app.py").write_text("def hello(): return 'changed'\n")
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_snapshot_recapture_required"
+    assert _steps(executor) == ["implementer"] * 3
+
+
+def test_no_image_browser_capture_returns_to_same_implementer_then_recaptures(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementation_calls = 0
+    captures = []
+
+    def implement(assignment, payload, root):
+        nonlocal implementation_calls
+        if assignment["step"] != "implementer":
+            return
+        implementation_calls += 1
+        if implementation_calls == 2:
+            assert "no snapshot image" in executor.calls[-1][2]
+            assert "snapshot assertion" in executor.calls[-1][2]
+            assert executor.calls[-1][1]["tool_read_roots"] == []
+            (root / "snapshot.spec.ts").write_text("expect(page).toHaveScreenshot()\n")
+        if implementation_calls <= 2:
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        root = Path(worktree)
+        has_test = (root / "snapshot.spec.ts").exists()
+        captures.append(has_test)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(root),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"image"}
+            if has_test else {},
+        )
+
+    executor = ScriptedExecutor(implement)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert captures == [False, True]
+    assert _steps(executor) == ["implementer"] * 3 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert "pitch-chromium.png" in executor.calls[2][2]
+    assert all("pitch-chromium.png" not in prompt for _, _, prompt in executor.calls[3:])
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len([record for record in journal["records"] if "browser_evidence" in record]) == 2
+
+
+def test_failed_no_image_browser_capture_returns_diagnostics_to_same_implementer(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementation_calls = 0
+
+    def implement(assignment, payload, root):
+        nonlocal implementation_calls
+        if assignment["step"] != "implementer":
+            return
+        implementation_calls += 1
+        if implementation_calls == 2:
+            assert "playwright_skipped::critical journey" in executor.calls[-1][2]
+            assert "Browser tests failed" in executor.calls[-1][2]
+            (root / "snapshot.spec.ts").write_text("expect(page).toHaveScreenshot()\n")
+        if implementation_calls <= 2:
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        root = Path(worktree)
+        has_fix = (root / "snapshot.spec.ts").exists()
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(root),
+            verification=VerifyResult(passed=has_fix),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"image"}
+            if has_fix else {},
+            diagnostic="" if has_fix else "playwright_skipped::critical journey",
+        )
+
+    executor = ScriptedExecutor(implement)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert implementation_calls == 3
+    assert _steps(executor) == ["implementer"] * 3 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_changed_candidate_can_recapture_after_reviewing_image_proposal(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementation_calls = 0
+    captures = 0
+
+    def implement(assignment, payload, root):
+        nonlocal implementation_calls
+        if assignment["step"] != "implementer":
+            return
+        implementation_calls += 1
+        if implementation_calls == 2:
+            (root / "snapshot.spec.ts").write_text("expect(page).toHaveScreenshot()\n")
+        if implementation_calls == 3:
+            assert "pitch-chromium.png" in executor.calls[-1][2]
+            (root / "snapshot.spec.ts").write_text("expect(page).toHaveScreenshot('fixed.png')\n")
+        if implementation_calls <= 3:
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        nonlocal captures
+        captures += 1
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"image"}
+            if captures > 1 else {},
+        )
+
+    executor = ScriptedExecutor(implement)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert captures == 3
+    assert _steps(executor) == ["implementer"] * 4 + [
+        "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_changed_candidate_browser_recaptures_remain_bounded(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    captures = 0
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        nonlocal captures
+        captures += 1
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"image"},
+        )
+
+    executor = ScriptedExecutor(request)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_evidence_request_repeated"
+    assert captures == 4
+    assert _steps(executor) == ["implementer"] * 5
+
+
+def test_review_guided_repair_gets_its_own_bounded_browser_captures(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementer_calls = 0
+    reviewer_calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal implementer_calls, reviewer_calls
+        if assignment["step"] == "implementer":
+            implementer_calls += 1
+            candidate = min(implementer_calls, 4) if implementer_calls <= 5 else 6
+            (root / "app.py").write_text(f"def hello(): return 'candidate-{candidate}'\n")
+            if implementer_calls in {1, 2, 3, 4, 6}:
+                payload.update(
+                    verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                    browser_evidence_request={"purpose": "baseline_capture"},
+                )
+        elif assignment["step"] == "code_reviewer":
+            reviewer_calls += 1
+            if reviewer_calls == 1:
+                payload.update(
+                    verdict="CHANGES_REQUESTED", summary="Repair visual test",
+                    findings=["Screenshot helper needs a redraw fix"],
+                )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    executor = ScriptedExecutor(decide)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert len(captures) == 5
+    assert reviewer_calls == 2
+
+
+def test_review_guided_browser_recaptures_remain_bounded(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    implementer_calls = 0
+    captures = []
+
+    def decide(assignment, payload, root):
+        nonlocal implementer_calls
+        if assignment["step"] == "implementer":
+            implementer_calls += 1
+            (root / "app.py").write_text(
+                f"def hello(): return 'candidate-{implementer_calls}'\n"
+            )
+            if implementer_calls > 1:
+                payload.update(
+                    verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                    browser_evidence_request={"purpose": "baseline_capture"},
+                )
+        elif assignment["step"] == "code_reviewer":
+            payload.update(
+                verdict="CHANGES_REQUESTED", summary="Repair visual test",
+                findings=["Screenshot helper needs a redraw fix"],
+            )
+
+    def capture(worktree):
+        captures.append(worktree)
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    result = _run(slice_project, ScriptedExecutor(decide), browser_baseline_capture=capture)
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_browser_evidence_request_repeated"
+    assert len(captures) == 2
+
+
+def test_no_image_browser_capture_cannot_become_approval_without_recapture(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    requested = False
+
+    def request_once(assignment, payload, root):
+        nonlocal requested
+        if assignment["step"] == "implementer" and not requested:
+            requested = True
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True), images={},
+        )
+
+    executor = ScriptedExecutor(request_once)
+    result = _run(slice_project, executor, browser_baseline_capture=capture)
+
+    assert result.status == "blocked" and result.task_ids == []
+    assert result.reason == "delivery_browser_snapshot_recapture_required"
+    assert _steps(executor) == ["implementer", "implementer"]
+
+
+def test_no_image_capture_replays_without_recapture_and_second_empty_capture_blocks(slice_project):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.verify_result import VerifyResult
+    from harness.visual_ralph import BrowserBaselineCapture
+
+    stop = False
+    captures = 0
+
+    def request(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need capture",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+
+    def capture(worktree):
+        nonlocal captures, stop
+        captures += 1
+        if captures == 1:
+            stop = True
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=True), images={},
+        )
+
+    first = _run(
+        slice_project, ScriptedExecutor(request), operation_id="empty-capture-op",
+        browser_baseline_capture=capture, stop_requested=lambda: stop,
+    )
+    assert first.reason == "delivery_slice_cancelled" and captures == 1
+
+    stop = False
+    replay = ScriptedExecutor(request)
+    result = _run(
+        slice_project, replay, operation_id="empty-capture-op", journal_required=True,
+        browser_baseline_capture=capture,
+    )
+    assert result.status == "blocked" and result.reason == "delivery_browser_capture_no_snapshots_after_retry"
+    assert captures == 2
+    assert _steps(replay) == ["implementer"]
+    assert "no snapshot image" in replay.calls[0][2]
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len([record for record in journal["records"] if "browser_evidence" in record]) == 2
+
+
+def test_polyrepo_slice_projects_workspace_paths_into_target_worktree(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n"
+        "\n"
+        "  **Acceptance Criteria:**\n"
+        "  - [ ] Return hello\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"canonical_prefix": "sources/demo/"' in prompt
+        and '"sources/demo/app.py": "app.py"' in prompt
+        and '"forbidden_nested_root": "sources/demo"' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_polyrepo_slice_preserves_repository_relative_task_paths(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `src/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"src/app.py": "src/app.py"' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_reviewers_receive_new_candidate_tests_outside_declared_task_files(slice_project):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n  - `app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "app.py"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=project, check=True,
+    )
+
+    def add_candidate_tests(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            tests = root / "tests/integration"
+            tests.mkdir(parents=True)
+            (tests / "main-entry.test.ts").write_text("// entry coverage\n")
+            (tests / "outcomes-style.test.ts").write_text("// outcome coverage\n")
+
+    executor = ScriptedExecutor(add_candidate_tests)
+    result = _run(slice_project, executor)
+
+    assert result.succeeded, result.reason
+    for _, _, prompt in executor.calls[1:]:
+        assert '"tests/integration/main-entry.test.ts"' in prompt
+        assert '"tests/integration/outcomes-style.test.ts"' in prompt
+        assert "not approval evidence or an expanded task scope" in prompt
+
+
+def test_reviewers_receive_committed_candidate_tests_outside_declared_task_files(slice_project):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n  - `app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    tests = project / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "main-entry.test.ts").write_text("// entry coverage\n")
+    (tests / "outcomes-style.test.ts").write_text("// outcome coverage\n")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "add", "app.py", "tests/integration"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "salvaged candidate"],
+        cwd=project, check=True,
+    )
+
+    executor = ScriptedExecutor()
+    result = _run(slice_project, executor)
+
+    assert result.succeeded, result.reason
+    for _, _, prompt in executor.calls[1:]:
+        assert '"tests/integration/main-entry.test.ts"' in prompt
+        assert '"tests/integration/outcomes-style.test.ts"' in prompt
+
+
+def test_candidate_inventory_bounds_large_changed_file_lists(tmp_path):
+    from harness.delivery_slice_runner import _candidate_file_inventory
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "baseline.txt").write_text("baseline\n")
+    subprocess.run(["git", "add", "baseline.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"],
+        cwd=tmp_path, check=True,
+    )
+    for index in range(205):
+        (tmp_path / f"file-{index:03}.txt").write_text("candidate\n")
+
+    inventory = _candidate_file_inventory(tmp_path)
+
+    assert inventory is not None
+    assert len(inventory["changed_paths"]) == 200
+    assert inventory["changed_paths_truncated"] is True
+
+
+def test_candidate_inventory_and_audit_include_off_task_coverage_not_fixtures(tmp_path):
+    from harness.delivery_slice_runner import _candidate_file_inventory, _candidate_test_audit_set
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.ts").write_text("export const startBrowserApplication = () => 1;\n")
+    for directory in ("tests/aa", "tests/integration", "tests/contract", "tests/fixtures"):
+        (tmp_path / directory).mkdir(parents=True)
+    for index in range(205):
+        (tmp_path / f"tests/aa/unrelated-{index:03}.test.ts").write_text("// unrelated\n")
+    (tmp_path / "tests/integration/bootstrap.test.ts").write_text("// declared\n")
+    (tmp_path / "tests/integration/main-entry.test.ts").write_text("// sibling\n")
+    (tmp_path / "tests/contract/runtime.test.ts").write_text(
+        "import { startBrowserApplication } from '../../src/main.js';\n"
+    )
+    (tmp_path / "tests/fixtures/browser.ts").write_text("// support file\n")
+    subprocess.run(["git", "add", "src", "tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=tmp_path, check=True,
+    )
+    (tmp_path / "tests/contract/changed.test.ts").write_text("// new test\n")
+    tasks_markdown = (
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Files:**\n"
+        "  - `src/main.ts` - Browser entry.\n"
+        "  - `tests/integration/bootstrap.test.ts` - Startup test.\n"
+    )
+    projection = {"selected_task_paths": {"src/main.ts": "src/main.ts",
+                                          "tests/integration/bootstrap.test.ts":
+                                          "tests/integration/bootstrap.test.ts"}}
+
+    inventory = _candidate_file_inventory(tmp_path)
+    assert inventory is not None
+    assert inventory["test_paths_truncated"] is True
+    assert "tests/fixtures/browser.ts" not in inventory["test_paths"]
+    assert _candidate_test_audit_set(tmp_path, tasks_markdown, "T-001", projection, inventory) == [
+        "tests/contract/changed.test.ts",
+        "tests/contract/runtime.test.ts",
+        "tests/integration/bootstrap.test.ts",
+        "tests/integration/main-entry.test.ts",
+    ]
+
+
+def test_candidate_test_audit_overflow_blocks_instead_of_truncating(tmp_path):
+    from harness.delivery_slice import DeliverySliceError
+    from harness.delivery_slice_runner import _candidate_file_inventory, _candidate_test_audit_set
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    tests = tmp_path / "tests/integration"
+    tests.mkdir(parents=True)
+    for index in range(205):
+        (tests / f"sibling-{index:03}.test.ts").write_text("// relevant sibling\n")
+    subprocess.run(["git", "add", "tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "-qm", "baseline"], cwd=tmp_path, check=True,
+    )
+    tasks_markdown = (
+        "- [ ] T-001 complexity=standard phase=integration req=FR-1 depends=none\n"
+        "  **Files:**\n  - `tests/integration/sibling-000.test.ts` - Test.\n"
+    )
+    inventory = _candidate_file_inventory(tmp_path)
+
+    with pytest.raises(DeliverySliceError, match="audit"):
+        _candidate_test_audit_set(tmp_path, tasks_markdown, "T-001", None, inventory)
+
+
+def test_candidate_test_audit_without_git_uses_bounded_full_scan(tmp_path):
+    from harness.delivery_slice import DeliverySliceError
+    from harness.delivery_slice_runner import _candidate_test_audit_set
+
+    tests = tmp_path / "tests/integration"
+    tests.mkdir(parents=True)
+    (tests / "bootstrap.test.ts").write_text("// declared\n")
+    (tests / "main-entry.test.ts").write_text("// sibling\n")
+    tasks = "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n  **Files:**\n  - `tests/integration/bootstrap.test.ts` - Test.\n"
+    assert _candidate_test_audit_set(tmp_path, tasks, "T-001", None, None) == [
+        "tests/integration/bootstrap.test.ts", "tests/integration/main-entry.test.ts",
+    ]
+    for index in range(201):
+        (tests / f"extra-{index:03}.test.ts").write_text("// sibling\n")
+    with pytest.raises(DeliverySliceError, match="audit_overflow"):
+        _candidate_test_audit_set(tmp_path, tasks, "T-001", None, None)
+
+
+def test_polyrepo_slice_rejects_selected_task_from_another_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/other",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 target sources/demo does not match "
+        "implementation target sources/other"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_unsafe_implementation_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=../other\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="../other",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid implementation target: ../other"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_selected_task_file_outside_target(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/other/app.py` - Wrong repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file sources/other/app.py is outside "
+        "implementation target sources/demo"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_file_owned_by_arbitrary_sibling_target(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=apps/api\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `apps/web/src/app.ts` - Wrong repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="apps/api",
+        declared_targets=["apps/api", "apps/web"],
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file apps/web/src/app.ts is outside "
+        "implementation target apps/api"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_uses_most_specific_overlapping_target_owner(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=apps\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `apps/web/src/app.ts` - Owned by the nested repository.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="apps",
+        declared_targets=["apps", "apps/web"],
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == (
+        "delivery task T-001 file apps/web/src/app.ts is outside "
+        "implementation target apps"
+    )
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_traversal_in_selected_task_file(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `../sources/demo/app.py` - Escapes the workspace root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_validates_labeled_file_bullets(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - **Modify:** `../sources/demo/app.py` - Escapes the workspace root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize("bullet", ["*", "+"])
+def test_polyrepo_slice_validates_standard_markdown_file_bullets(
+    slice_project, bullet,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        f"  {bullet} **Modify:** `../sources/demo/app.py` - Escapes the root.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 file path ../sources/demo/app.py"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_rejects_unparseable_file_bullet(slice_project):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - src/app.py - Missing canonical path delimiters.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "invalid delivery task T-001 Files entry"
+    assert executor.calls == []
+
+
+def test_polyrepo_slice_ignores_fenced_task_examples_when_projecting_paths(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "```md\n"
+        "- [ ] T-999 complexity=standard phase=example req=FR-X depends=none "
+        "target=sources/other\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/other/example.py` - Documentation example only.\n"
+        "```\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.succeeded, result.reason
+    assert all(
+        '"sources/demo/app.py": "app.py"' in prompt
+        and "sources/other/example.py" not in prompt.split(
+            "## Candidate path projection (controller authority)", 1
+        )[1].split("## Read-only specification inputs", 1)[0]
+        for _, _, prompt in executor.calls
+    )
+
+
+def test_polyrepo_slice_rejects_recreated_target_prefix_after_implementation(
+    slice_project,
+):
+    project, spec, evidence = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+
+    def recreate_prefix(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            nested = root / "sources" / "demo"
+            nested.mkdir(parents=True)
+            (nested / "app.py").write_text("wrong root\n", encoding="utf-8")
+
+    executor = ScriptedExecutor(recreate_prefix)
+
+    from harness.delivery_slice_runner import DeliverySliceRunner
+    result = DeliverySliceRunner(executor, project).run(
+        worktree=project,
+        spec_dir=spec,
+        evidence_root=evidence,
+        implementation_target="sources/demo",
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "delivery_nested_target_modified: sources/demo"
+    assert _steps(executor) == ["implementer"]
+
+
 @pytest.mark.parametrize("failed_step,negative", [("spec_guard", "FAIL"),
     ("code_reviewer", "CHANGES_REQUESTED"), ("test_guardian", "FAIL")])
 def test_repair_invalidates_every_prior_approval(slice_project, failed_step, negative):
@@ -103,21 +1632,179 @@ def test_repair_invalidates_every_prior_approval(slice_project, failed_step, neg
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain[:chain.index(failed_step)+1] + chain
-    assert result.succeeded and result.task_ids == ["T-001"]
-    assert "incorrect text" in executor.calls[chain.index(failed_step)+1][2]
+    assert _steps(executor) == chain * 2
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert "incorrect text" in executor.calls[len(chain)][2]
 
 
-def test_two_failed_repairs_block_without_degraded_progress(slice_project):
+def test_collects_all_required_review_failures_before_one_repair(slice_project):
+    failed_once: set[str] = set()
+    findings = {
+        "spec_guard": "spec.md:1 requirement mismatch",
+        "code_reviewer": "app.py:1 implementation defect",
+        "test_guardian": "tests/test_app.py:1 missing regression coverage",
+    }
+
+    def script(assignment, payload, root):
+        step = assignment["step"]
+        if step == "implementer" or step in failed_once:
+            return
+        failed_once.add(step)
+        payload.update(
+            verdict={
+                "spec_guard": "FAIL",
+                "code_reviewer": "CHANGES_REQUESTED",
+                "test_guardian": "FAIL",
+            }[step],
+            summary=f"{step} rejected the candidate",
+            findings=[findings[step]],
+        )
+
+    executor = ScriptedExecutor(script)
+
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert _steps(executor) == chain * 2
+    repair_prompt = executor.calls[len(chain)][2]
+    assert all(finding in repair_prompt for finding in findings.values())
+
+
+def test_host_binds_fingerprints_and_preserves_the_review_decision(slice_project):
+    finding = "app.py:1 still returns the wrong greeting"
+    rejected = False
+
+    def script(assignment, payload, root):
+        nonlocal rejected
+        if assignment["step"] != "code_reviewer" or rejected:
+            return
+        rejected = True
+        payload.update(
+            candidate_fingerprint=assignment["candidate_fingerprint"][:48],
+            input_fingerprint=assignment["input_fingerprint"][:50],
+            verdict="CHANGES_REQUESTED",
+            summary="The candidate still needs one repair",
+            findings=[finding],
+        )
+
+    executor = ScriptedExecutor(script)
+
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert _steps(executor) == chain * 2
+    assert finding in executor.calls[len(chain)][2]
+    journal_path = next(slice_project[2].rglob("journal.json"))
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    review = journal["records"][2]
+    raw = json.loads(review["raw_result"])
+    assert raw["input_fingerprint"] != review["assignment"]["input_fingerprint"]
+    assert review["result"]["input_fingerprint"] == review["assignment"]["input_fingerprint"]
+    assert review["result"]["verdict"] == "CHANGES_REQUESTED"
+    assert review["result"]["findings"] == [finding]
+
+
+def test_four_failed_repairs_block_without_degraded_progress(slice_project):
     def script(assignment, payload, root):
         if assignment["step"] == "spec_guard":
             payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
     executor = ScriptedExecutor(script)
     result = _run(slice_project, executor)
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 5
     assert result.status == "blocked" and not result.task_ids
     assert "repair_limit" in result.reason
-    assert result.token_usage == 42
+    assert result.token_usage == 140
+
+
+def test_third_repair_can_accept_after_three_rejected_review_rounds(slice_project):
+    rejected_rounds = 0
+
+    def script(assignment, payload, root):
+        nonlocal rejected_rounds
+        if assignment["step"] == "spec_guard" and rejected_rounds < 3:
+            rejected_rounds += 1
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    executor = ScriptedExecutor(script)
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert rejected_rounds == 3
+    assert _steps(executor) == chain * 4
+    assert result.token_usage == 112
+
+
+def test_fourth_repair_can_accept_after_four_rejected_review_rounds(slice_project):
+    rejected_rounds = 0
+
+    def reject_four_rounds(assignment, payload, root):
+        nonlocal rejected_rounds
+        if assignment["step"] == "spec_guard" and rejected_rounds < 4:
+            rejected_rounds += 1
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    executor = ScriptedExecutor(reject_four_rounds)
+    result = _run(slice_project, executor)
+
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert result.succeeded and result.task_ids == ["T-001"], result.reason
+    assert rejected_rounds == 4
+    assert _steps(executor) == chain * 5
+    assert result.token_usage == 140
+
+
+def test_four_rejected_rounds_replay_only_one_new_round(slice_project, monkeypatch):
+    def reject(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    first_executor = ScriptedExecutor(reject)
+    with monkeypatch.context() as old_cap:
+        old_cap.setattr("harness.delivery_slice_runner.MAX_GATE_ROUNDS", 4)
+        old_cap.setattr("harness.delivery_slice_journal.MAX_GATE_ROUNDS", 4)
+        first = _run(slice_project, first_executor)
+    assert first.status == "blocked" and not first.task_ids
+    assert len(first_executor.calls) == 16
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert resumed.token_usage == 140
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len(journal["records"]) == 20
+
+
+def test_exhausted_repair_journal_resumes_with_only_new_round_dispatches(slice_project):
+    def reject(assignment, payload, root):
+        if assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["app.py:1 wrong implementation"])
+
+    first_executor = ScriptedExecutor(reject)
+    first = _run(
+        slice_project, first_executor,
+        stop_requested=lambda: len(first_executor.calls) >= 12,
+    )
+    assert first.status == "blocked" and not first.task_ids
+    assert len(first_executor.calls) == 12
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+    assert resumed.token_usage == 112
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert len(journal["records"]) == 16
 
 
 @pytest.mark.parametrize("fault", ["degraded", "skip", "stale", "malformed", "exit", "timeout",
@@ -170,6 +1857,15 @@ def test_cancellation_between_steps_never_accepts_slice(slice_project):
     result = _run(slice_project, executor, stop_requested=lambda: bool(executor.calls))
     assert result.status == "blocked" and not result.task_ids
     assert _steps(executor) == ["implementer"]
+    journal = json.loads(next(slice_project[2].rglob("journal.json")).read_text())
+    assert journal["records"][0]["result"]["verdict"] == "DONE"
+    assert journal["records"][0]["candidate_after"]
+    assert journal["records"][0]["error"] is None
+
+    resumed_executor = ScriptedExecutor()
+    resumed = _run(slice_project, resumed_executor, journal_required=True)
+    assert resumed.succeeded and resumed.task_ids == ["T-001"], resumed.reason
+    assert _steps(resumed_executor) == ["spec_guard", "code_reviewer", "test_guardian"]
 
 
 def test_prior_marker_and_receipts_cannot_substitute_for_new_reviews(slice_project):
@@ -182,7 +1878,9 @@ def test_prior_marker_and_receipts_cannot_substitute_for_new_reviews(slice_proje
     assert {x[0]["dispatch_id"] for x in first.calls}.isdisjoint(x[0]["dispatch_id"] for x in second.calls)
 
 
-@pytest.mark.parametrize("path", ["specs/001-slice/user-clarifications.md", ".echelon/config.yml",
+@pytest.mark.parametrize("path", ["specs/001-slice/user-clarifications.md",
+                                  "specs/001-slice/harness-run-history.json",
+                                  ".echelon/config.yml",
                                   ".echelon/prosaic/subagents/echelon.delivery-spec-guard.md"])
 def test_implementation_cannot_modify_protected_inputs(slice_project, path):
     target = slice_project[0] / path

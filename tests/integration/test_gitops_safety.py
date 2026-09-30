@@ -48,7 +48,7 @@ class TestNeverPushDefault:
         """Push to default branch always rejected."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         with pytest.raises(GitOpsError, match="default branch"):
             mgr.push(worktree_path, "main")
@@ -62,7 +62,7 @@ class TestSecretScanGate:
     ):
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
         mgr.clone_mirror(str(bare_repo))
-        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+        worktree_path = mgr.create_worktree("012-payment", 1, build_id="build-test")
 
         subprocess.run(
             ["git", "-C", worktree_path, "config", "user.email", "test@test.com"],

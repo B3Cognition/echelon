@@ -36,8 +36,7 @@ def _receipt(tmp_path):
     return write_verification_receipt(
         evidence_dir=tmp_path / "evidence",
         spec_id="003-demo",
-        strategy_id="default",
-        build_id="build-1",
+                build_id="build-1",
         candidate_commit="a" * 40,
         fingerprint_before="product-a",
         fingerprint_after="product-a",
@@ -120,8 +119,7 @@ def test_reconciliation_aggregates_matching_successes_deterministically(tmp_path
     second = write_verification_receipt(
         evidence_dir=tmp_path / "evidence-second",
         spec_id="003-demo",
-        strategy_id="default",
-        build_id="build-2",
+                build_id="build-2",
         candidate_commit="b" * 40,
         fingerprint_before="product-a",
         fingerprint_after="product-a",

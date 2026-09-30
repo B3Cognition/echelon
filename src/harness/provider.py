@@ -64,6 +64,7 @@ class SandboxSpec:
     session_timeout_ms: int = 3_600_000  # 1 hour default
     labels: Dict[str, str] = field(default_factory=dict)
     ephemeral_volumes: List[str] = field(default_factory=list)
+    isolate_candidate: bool = False  # Copy a read-only candidate into a disposable volume.
 
 
 @dataclass
@@ -71,6 +72,7 @@ class SandboxHandle:
     """Handle to a created sandbox instance."""
     id: str
     session_id: str  # FR-SANDBOX-007c: unique per instance, non-null
+    platform: str | None = None  # Resolved image platform, when selected by provider.
 
 
 @dataclass

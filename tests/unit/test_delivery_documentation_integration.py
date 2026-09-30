@@ -10,7 +10,7 @@ from tests.unit.test_delivery_documentation import (
     documentation_project, IMPACT, review_report, ProcessLost,
 )
 from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 
 
 def _failure(*ids):
@@ -62,9 +62,6 @@ def test_controlled_no_impact_requires_independent_pass(documentation_project, t
     assert result.passed is (review is True)
     if review is None:
         assert result.failures[0].id == "docs-verification-report-missing"
-    controller._config.llm.features["delivery_gate_controller"] = False
-    if review is None:
-        assert controller._apply_documentation_gate(VerifyResult(True), str(root)).passed
 
 
 def test_docs_after_accepted_task_retains_source_repair_target_and_empty_id_exemption(documentation_project, tmp_path):
@@ -310,7 +307,7 @@ def test_documentation_downstream_feedback_respects_current_budget(documentation
     store.write(state)
     result = controller.run_downstream_feedback(
         handle=None, worktree_path=str(root), verify_result=_failure("docs-missing"),
-        build_command="echelon build", strategy_context="", build_prompt="build", phase="visual")
+        build_command="echelon build", delivery_context="", build_prompt="build", phase="visual")
     assert not result["passed"] and result["build_reason"] == "delivery_documentation_budget_exhausted", result
     assert len(executor.calls) == dispatches
     assert store.read()["tokens_used"] == used + dispatches * 7

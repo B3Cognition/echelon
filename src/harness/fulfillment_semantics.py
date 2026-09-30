@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import re
 import unicodedata
 
 from harness.canonical_requirements import REQ_ID_RE
+from harness.inspection_io import validate_inspection_read_request
 from harness.judgment_prepass import FULFILLMENT_STATUSES
 
 
@@ -30,6 +32,8 @@ _ENUMS = {
     "confidence": {"high", "medium", "low", "none"},
     "status": FULFILLMENT_STATUSES - {"DEFERRED_SCOPE"},
 }
+CORRECTABLE_ASSIGNED_DIGEST_ECHO = "fulfillment assigned-ID digest echo mismatch"
+CORRECTABLE_DISPATCH_ECHO = "fulfillment dispatch ID echo mismatch"
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,15 @@ class FulfillmentAssignment:
         return {"schema_version": 1, "run_id": self.run_id, "step": self.step,
                 "dispatch_id": self.dispatch_id, "input_fingerprint": self.input_fingerprint,
                 "assigned_ids": list(self.assigned_ids)}
+
+    def reply_identity(self) -> dict[str, object]:
+        """Compact reply binding; the host retains and validates the full ID list."""
+        identity = self.identity()
+        encoded_ids = json.dumps(identity["assigned_ids"], ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+        return {"schema_version": 2, "run_id": self.run_id, "step": self.step,
+                "dispatch_id": self.dispatch_id, "input_fingerprint": self.input_fingerprint,
+                "assigned_ids_sha256": hashlib.sha256(encoded_ids).hexdigest()}
 
 
 def _cell(value: object, *, required: bool = False) -> str:
@@ -87,12 +100,27 @@ def _validate_rows(rows: object, step: str) -> list[dict]:
 
 
 def validate_semantic_result(value: object, assignment: FulfillmentAssignment) -> dict:
-    identity = assignment.identity()
+    identity = assignment.reply_identity()
     if type(value) is not dict or type(value.get("schema_version")) is not int:
         raise ValueError("fulfillment reply must be a versioned object")
     if any(value.get(key) != expected for key, expected in identity.items()):
         raise ValueError("fulfillment assignment binding mismatch")
     action = value.get("action")
+    # Some providers flatten a single read object even when asked for the
+    # canonical nested shape. Normalize only the two exact, host-readable
+    # single-operation schemas. Batches and unknown fields remain invalid.
+    if action == "read" and "request" not in value and "requests" not in value:
+        operation = value.get("op")
+        operation_fields = {
+            "read_file": {"op", "root", "path", "start_line", "line_count"},
+            "list_directory": {"op", "root", "path"},
+        }.get(operation) if type(operation) is str else None
+        if operation_fields is not None and set(value) == set(identity) | {"action"} | operation_fields:
+            value = {
+                **identity,
+                "action": "read",
+                "request": {key: value[key] for key in operation_fields},
+            }
     extra = {"rows", "unmapped_candidates"} if action == "final" else (
         {"request"} if action == "read" else {"reason"} if action == "blocked" else None)
     if extra is None or set(value) != set(identity) | {"action"} | extra:
@@ -115,7 +143,7 @@ def validate_semantic_result(value: object, assignment: FulfillmentAssignment) -
     return json.loads(json.dumps(value, allow_nan=False))
 
 
-def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+def _parse_semantic_json(raw: str) -> object:
     def pairs(items):
         result = {}
         for key, value in items:
@@ -133,7 +161,77 @@ def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
         value = json.loads(raw, object_pairs_hook=pairs, parse_constant=nonfinite)
     except (RecursionError, UnicodeError) as exc:
         raise ValueError("invalid fulfillment JSON") from exc
-    return validate_semantic_result(value, assignment)
+    return value
+
+
+def parse_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+    """Strictly validate a reply whose complete binding is already authoritative."""
+    return validate_semantic_result(_parse_semantic_json(raw), assignment)
+
+
+def is_correctable_assigned_digest_echo(raw: str, assignment: FulfillmentAssignment) -> bool:
+    """Identify an unexecuted read with only its assigned-ID digest echo wrong."""
+    value = _correctable_read_echo(raw, assignment, "assigned_ids_sha256")
+    return value is not None and type(value["assigned_ids_sha256"]) is str and (
+        0 < len(value["assigned_ids_sha256"]) <= 128
+    )
+
+
+def is_correctable_dispatch_echo(raw: str, assignment: FulfillmentAssignment) -> bool:
+    """Identify a short contiguous omission from this read's dispatch ID."""
+    value = _correctable_read_echo(raw, assignment, "dispatch_id")
+    if value is None:
+        return False
+    actual = value["dispatch_id"]
+    expected = assignment.dispatch_id
+    if type(actual) is not str or re.fullmatch(r"[0-9a-f]{32}", expected) is None:
+        return False
+    omitted = len(expected) - len(actual)
+    return 1 <= omitted <= 3 and any(
+        expected[:index] + expected[index + omitted:] == actual
+        for index in range(len(expected) - omitted + 1)
+    )
+
+
+def _correctable_read_echo(raw: str, assignment: FulfillmentAssignment, wrong_field: str) -> dict | None:
+    try:
+        value = _parse_semantic_json(raw)
+        identity = assignment.reply_identity()
+        if type(value) is not dict or value.get("action") != "read":
+            return None
+        validate_inspection_read_request(value.get("request"), ("worktree", "spec", "evidence"))
+    except (ValueError, TypeError):
+        return None
+    if (
+        set(value) == set(identity) | {"action", "request"}
+        and all(value.get(key) == expected for key, expected in identity.items()
+                if key != wrong_field)
+        and value.get(wrong_field) != identity[wrong_field]
+    ):
+        return value
+    return None
+
+
+def bind_semantic_reply(raw: str, assignment: FulfillmentAssignment) -> dict:
+    """Retain a raw provider reply while binding its host-owned input digest.
+
+    The run, step, dispatch, schema, and exact assigned-ID digest remain strict
+    transport identity. The input fingerprint describes host-observed content;
+    a provider echo cannot become authoritative merely by repeating it.
+    """
+    value = _parse_semantic_json(raw)
+    identity = assignment.reply_identity()
+    if type(value) is not dict or type(value.get("schema_version")) is not int:
+        raise ValueError("fulfillment reply must be a versioned object")
+    for key in ("schema_version", "run_id", "step", "dispatch_id", "assigned_ids_sha256"):
+        if value.get(key) != identity[key]:
+            raise ValueError("fulfillment assignment binding mismatch")
+    echo = value.get("input_fingerprint")
+    if type(echo) is not str or not echo or len(echo) > 128:
+        raise ValueError("invalid fulfillment input fingerprint echo")
+    bound = dict(value)
+    bound["input_fingerprint"] = assignment.input_fingerprint
+    return validate_semantic_result(bound, assignment)
 
 
 def render_implementation_map(rows: list[dict]) -> str:

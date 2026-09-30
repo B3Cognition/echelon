@@ -3,25 +3,19 @@ secret_scrubber.py — Shared credential scrubbing utility.
 
 SEC-025 FIX-1: Secret scrubbing before any MemPalace/ChromaDB write.
 
-Reuses _CREDENTIAL_DENY_PATTERNS from smem_writer.py as the canonical
-deny-list so that only one list is maintained.
+Uses the security package's credential deny-list so persistent-memory
+scrubbing remains independent of any execution harness.
 
 FR-001: Apply deny-list to all document fields before ChromaDB writes.
 FR-002: Replace matched secret values with [REDACTED]; preserve surrounding text.
-FR-010: Use try/except dual-path import to avoid circular imports.
 """
 from __future__ import annotations
 
 import re
 
-# Dual-path import — avoids circular import when package is not installed
-try:
-    from codegen.soar.smem_writer import _CREDENTIAL_DENY_PATTERNS
-except ImportError:
-    from src.codegen.soar.smem_writer import _CREDENTIAL_DENY_PATTERNS  # type: ignore
+from codegen.security.credential_patterns import CREDENTIAL_DENY_PATTERNS
 
-# Additional patterns needed for MemPalace writes that smem_writer.py
-# does not cover (connection string passwords, bearer tokens, PEM keys).
+# Additional patterns for connection string passwords, bearer tokens, and PEM keys.
 _EXTRA_PATTERNS = [
     # URI credentials: scheme://user:password@host
     re.compile(r"(?<=[:/]{2})[^:@\s]+:[^@\s]+(?=@)"),
@@ -33,8 +27,8 @@ _EXTRA_PATTERNS = [
     re.compile(r"[A-Za-z0-9+/]{40,}={0,2}"),
 ]
 
-# All patterns in priority order: canonical deny-list first, then extras
-_ALL_PATTERNS = list(_CREDENTIAL_DENY_PATTERNS) + _EXTRA_PATTERNS
+# All patterns in priority order: shared deny-list first, then extras.
+_ALL_PATTERNS = list(CREDENTIAL_DENY_PATTERNS) + _EXTRA_PATTERNS
 
 _REDACTED = "[REDACTED]"
 

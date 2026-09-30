@@ -34,6 +34,7 @@ if str(EXT_ROOT) not in sys.path:
 from harness.controller_state_contracts import ControllerStateContractViolation
 import harness.squad as squad_module
 import harness.squad_completion as completion_module
+import harness.spec_step_effects as spec_step_effects_module
 import harness.git_first_restore as git_first_restore_module
 import harness.proportional_quality as proportional_quality_module
 import harness.proportional_quality_effects as quality_effects_module
@@ -46,6 +47,11 @@ from harness.human_input import (
 )
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_execution import FinalizedPhaseExecution, PhaseExecutionAccumulator
+from harness.provider_dispatch_finalizer import (
+    FinalizedProviderResult,
+    ProviderDispatchReceipt,
+)
 from harness.phase_checkpoints import PhaseCheckpointError, load_checkpoint_ledger
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
@@ -62,7 +68,7 @@ from harness.squad import (
     _phase_requires_constitution_provenance,
     project_authoring_verdict,
 )
-from harness.squad_executors import AgentExecutor
+from harness.squad_executors import AgentExecutor, ExecutorBlockedResult
 from harness.squad_provider import SquadAgentResult
 from harness.squad_publication import (
     PreparedSquadPublication,
@@ -71,10 +77,11 @@ from harness.squad_publication import (
 )
 from harness.squad_completion import (
     CompletionError,
-    load_prepared_controller_completion,
+    load_prepared_spec_step_effects,
     persist_completion_effect_receipt,
-    prepare_controller_completion,
+    prepare_spec_step_effects,
 )
+from harness.spec_step import load_prepared_spec_step, prepare_spec_step
 from harness.squad_state import (
     AdvanceReceipt,
     StateAdvanceError,
@@ -82,8 +89,9 @@ from harness.squad_state import (
     SquadStateStore,
 )
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
+    PENDING_SPEC_STEP_KEY,
 )
 from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.phase_timing import record_phase_start
@@ -95,8 +103,6 @@ PROPORTIONAL_HELLO_WORLD_FIXTURE = (
     EXT_ROOT
     / "tests/fixtures/understanding/proportional-hello-world-first-candidate.md"
 )
-
-
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
 
 
@@ -174,250 +180,8 @@ def test_only_finalizing_replacement_run_owns_retarget_completion_effect() -> No
     )
 
 
-@pytest.mark.parametrize(
-    "effect_error",
-    ["retarget", "os", "json"],
-)
-def test_retarget_finalization_error_is_persisted_as_bounded_completion_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    effect_error: str,
-) -> None:
-    import echelon.spec_retarget_finalization as finalization
-
-    ctrl, store = _controller(tmp_path)
-    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
-    prepared = prepare_controller_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        completion_id="e" * 32,
-        origin="routed",
-        publication={"kind": "none"},
-        route={
-            "kind": "routed",
-            "from_phase": "phase1-what",
-            "to_phase": "phase1-why1",
-            "manual_phase_run": False,
-            "record_completion": True,
-        },
-        effect_plan=("retarget",),
-        checkpoint_prestate={"kind": "none"},
-        context_reason="retarget failure boundary",
-        mine_phase_a=False,
-        judgment_payload_sha256=(),
-        judgments=(),
-    )
-    _install_prepared_routed_completion(store, prepared)
-    failure = {
-        "retarget": finalization.RetargetFinalizationError(
-            "retarget finalization receipt drifted"
-        ),
-        "os": OSError("retarget report read failed"),
-        "json": json.JSONDecodeError(
-            "retarget manifest parse failed", "{", 0
-        ),
-    }[effect_error]
-    monkeypatch.setattr(
-        finalization,
-        "apply_or_verify_retarget_finalization",
-        MagicMock(side_effect=failure),
-    )
-
-    outcome = ctrl._drain_pending_controller_completion()
-
-    failed = store.load()
-    assert outcome.recovered is False
-    assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "retarget"
-    assert failed["controller_completion_failure"]["code"] == "receipts_mismatch"
 
 
-def test_late_retarget_report_drift_keeps_durable_receipt_for_adoption_retry(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A live postimage failure after effects are durable is retryable, not fatal."""
-    import echelon.spec_retarget_finalization as finalization
-
-    ctrl, store = _controller(tmp_path)
-    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
-    prepared = prepare_controller_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        completion_id="e" * 32,
-        origin="routed",
-        publication={"kind": "none"},
-        route={
-            "kind": "routed",
-            "from_phase": "phase1-what",
-            "to_phase": "phase1-why1",
-            "manual_phase_run": False,
-            "record_completion": True,
-        },
-        effect_plan=("retarget",),
-        checkpoint_prestate={"kind": "none"},
-        context_reason="late retarget report drift",
-        mine_phase_a=False,
-        judgment_payload_sha256=(),
-        judgments=(),
-    )
-    _install_prepared_routed_completion(store, prepared)
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    state = store.load()
-    state.update(
-        spec_id="001-demo",
-        published_spec_dir="specs/001-demo",
-        retarget={
-            "status": "finalizing",
-            "revision_id": "retarget-1",
-            "checkpoint_commit": "a" * 40,
-            "replacement_targets": ["apps/web"],
-            "replacement_run_id": "replacement",
-            "baseline_run_id": "baseline",
-            "memory_excluded": True,
-            "graph_invalidation": {
-                "spec_id": "001-demo",
-                "spec_status": "invalidated",
-                "spec_graph_hash": None,
-                "workspace_status": "not_applicable_empty_workspace",
-                "workspace_graph_hash": None,
-                "workspace_finding_codes": [],
-            },
-        },
-    )
-    store.save(state)
-    drawer_ids = ["drawer-1"]
-    mine = {
-        "schema_version": 1,
-        "spec_id": "001-demo",
-        "spec_dir": "specs/001-demo",
-        "wing": "test",
-        "palace_path": "test",
-        "status": "complete",
-        "expected_count": 1,
-        "written_count": 1,
-        "adopted_count": 0,
-        "skipped_count": 0,
-        "failed_count": 0,
-        "drifted_count": 0,
-        "unavailable_count": 0,
-        "drawer_ids": drawer_ids,
-        "expected_drawer_ids": drawer_ids,
-        "errors": [],
-    }
-    for name, contents in {
-        "mempalace-audit.json": b'{"status":"pass"}\n',
-        "mempalace-audit.md": b"# audit\n",
-        "mempalace-mine.json": json.dumps(mine).encode(),
-    }.items():
-        (spec_dir / name).write_bytes(contents)
-    report_digest = finalization._current_memory_report_set_digest(spec_dir)
-    (spec_dir / "mempalace-refresh-manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "spec_id": "001-demo",
-                "files": finalization._current_memory_report_records(spec_dir),
-                "report_set_digest": report_digest,
-            }
-        ),
-        encoding="utf-8",
-    )
-    drawer_digest = "sha256:" + hashlib.sha256(
-        json.dumps(drawer_ids, separators=(",", ":")).encode()
-    ).hexdigest()
-    receipt = {
-        "revision_id": "retarget-1",
-        "completion_id": "e" * 32,
-        "checkpoint_commit": "a" * 40,
-        "replacement_targets": ["apps/web"],
-        "memory": {
-            "status": "pass",
-            "spec_id": "001-demo",
-            "deleted_count": 0,
-            "deleted_ids": [],
-            "drawer_set_digest": drawer_digest,
-            "mine_status": "complete",
-            "audit_status": "pass",
-            "adapter": "test",
-            "wing": "test",
-            "palace_path": "test",
-            "scanned_count": 0,
-            "delete_acknowledged_count": None,
-            "remaining_owned_ids": [],
-            "unrelated_missing_ids": [],
-            "unrelated_changed_ids": [],
-            "unexpected_added_ids": [],
-            "report_set_digest": report_digest,
-            "failure_code": None,
-        },
-        "graph": {
-            "spec_id": "001-demo",
-            "spec_status": "pass",
-            "spec_graph_hash": "sha256:" + "b" * 64,
-            "workspace_status": "pass",
-            "workspace_graph_hash": "sha256:" + "c" * 64,
-            "workspace_finding_codes": [],
-        },
-        "replacement_commit": "d" * 40,
-        "status": "complete",
-    }
-    persist_completion_effect_receipt(prepared, "retarget", receipt)
-    one_ahead = load_prepared_controller_completion(
-        tmp_path, ctrl._squad_dir, store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
-    )
-    store.advance_controller_completion(one_ahead)
-    monkeypatch.setattr(
-        finalization,
-        "_configured_mempalace_wing", lambda *_args: "test"
-    )
-    monkeypatch.setattr(
-        finalization,
-        "audit_spec_memory",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            spec_id="001-demo",
-            status="pass",
-            wing="test",
-            palace_path="test",
-            expected_count=1,
-            present_current_count=1,
-            missing=[], stale=[], wrong_wing=[], wrong_room=[], duplicate=[],
-            non_canonical=[], lifecycle_excluded=[], errors=[],
-        ),
-    )
-    (spec_dir / "mempalace-audit.md").unlink()
-    monkeypatch.setattr(ctrl, "_emit_pending_retarget_comparison", lambda: pytest.fail("emitted comparison"))
-
-    outcome = ctrl._drain_pending_controller_completion()
-
-    failed = store.load()
-    assert outcome.recovered is False
-    assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "complete"
-    assert failed["controller_completion_failure"]["code"] == "receipts_mismatch"
-    assert failed["retarget"]["status"] == "finalizing"
-    assert failed["retarget"]["memory_excluded"] is True
-    durable = load_prepared_controller_completion(
-        tmp_path, ctrl._squad_dir, failed[PENDING_CONTROLLER_COMPLETION_KEY]
-    )
-    assert durable.receipts["effects"]["retarget"] == receipt
-
-    (spec_dir / "mempalace-audit.md").write_bytes(b"# audit\n")
-    monkeypatch.setattr(
-        finalization, "verify_retarget_finalization_receipt", lambda *_args: receipt
-    )
-    monkeypatch.setattr(
-        ctrl, "_apply_controller_completion_effect", lambda *_args: pytest.fail("reran effect")
-    )
-    monkeypatch.setattr(ctrl, "_emit_pending_retarget_comparison", lambda: True)
-
-    retried = ctrl._drain_pending_controller_completion()
-
-    adopted = store.load()
-    assert retried.recovered is True
-    assert PENDING_CONTROLLER_COMPLETION_KEY not in adopted
-    assert adopted["retarget"]["status"] == "complete"
-    assert adopted["retarget"]["finalization_receipt"] == receipt
-    assert "memory_excluded" not in adopted["retarget"]
 
 
 def test_phase4_retarget_enters_finalizing_before_staging(tmp_path: Path) -> None:
@@ -799,6 +563,58 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
     return provider
 
 
+def _publish_mock_outputs(
+    result: SquadAgentResult,
+    kwargs: Mapping[str, object],
+    *,
+    content: str = "# Fixture output\n",
+) -> SquadAgentResult:
+    """Publish every path granted to one successful integration-test dispatch."""
+    metadata = kwargs.get("prompt_metadata")
+    write_paths = (
+        metadata.get("tool_write_paths", [])
+        if isinstance(metadata, Mapping)
+        else []
+    )
+    claims: list[str] = []
+    for raw_path in write_paths:
+        path = Path(str(raw_path))
+        if path.suffix:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            previous = path.read_text(encoding="utf-8") if path.is_file() else ""
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.fixture")
+            temporary.write_text(previous + content, encoding="utf-8")
+            temporary.replace(path)
+            claims.append(str(path))
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            member = path / f"fixture-{uuid.uuid4().hex}.md"
+            member.write_text(content, encoding="utf-8")
+            claims.append(str(member))
+    payload = result.echelon_result
+    assert isinstance(payload, dict)
+    payload["output_files"] = claims
+    return result
+
+
+def _mock_provider_publishing_outputs(
+    verdict: str = "DONE",
+) -> MagicMock:
+    provider = _mock_provider(verdict)
+    default_exec_agent = provider.exec_agent.side_effect
+
+    def execute(*args, **kwargs):
+        result = default_exec_agent(*args, **kwargs)
+        return _publish_mock_outputs(
+            result,
+            kwargs,
+            content="\n# Current provider publication\n\nReal rules.\n",
+        )
+
+    provider.exec_agent.side_effect = execute
+    return provider
+
+
 def _why2_pass_result() -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
@@ -819,11 +635,22 @@ def _mock_quality_first_flow_provider() -> MagicMock:
     """Return deterministic valid verdicts for the post-Understanding flow."""
     provider = _mock_provider()
     default_exec_agent = provider.exec_agent.side_effect
+    publication_serial = 0
 
     def phase_aware_exec_agent(*args, **kwargs):
+        nonlocal publication_serial
         prompt = str(args[1])
-        if "# Phase: phase1-tracker" in prompt:
-            return SquadAgentResult(
+        metadata = kwargs.get("prompt_metadata")
+        write_names = {
+            Path(str(path)).name
+            for path in (
+                metadata.get("tool_write_paths", [])
+                if isinstance(metadata, Mapping)
+                else []
+            )
+        }
+        if "user-intent.md" in write_names:
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "ALIGNED",
@@ -832,7 +659,7 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 raw_output="",
                 duration_ms=0,
                 timed_out=False,
-            )
+            ), kwargs)
         if "# COMMANDER DECISION RESOLUTION" in prompt:
             return SquadAgentResult(
                 exit_code=0,
@@ -851,11 +678,33 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 duration_ms=0,
                 timed_out=False,
             )
-        if "# Phase: phase1-why2" in prompt:
+        if "assumption-review.md" in write_names:
+            return _publish_mock_outputs(
+                default_exec_agent(*args, **kwargs),
+                kwargs,
+            )
+        if "constitution.draft.md" in write_names:
+            return _publish_mock_outputs(
+                default_exec_agent(*args, **kwargs),
+                kwargs,
+                content="\n# Current constitution publication\n\nReal rules.\n",
+            )
+        if {"issues.md", "quality-gates.md"} <= write_names:
+            publication_serial += 1
+            match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
+            assert match is not None
+            spec_dir = Path(match.group(1))
+            outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+            for output in outputs:
+                output.write_text(
+                    f"# {output.stem}\n\nfixture dispatch {publication_serial}\n",
+                    encoding="utf-8",
+                )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "PASS",
+                    "output_files": [str(output) for output in outputs],
                     "state_updates": {
                         "evidence_resolution_status": "not_required",
                         "finding_routes": {"findings": []},
@@ -865,8 +714,25 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 duration_ms=0,
                 timed_out=False,
             )
-        if "# Phase: phase2-decide" in prompt:
-            return SquadAgentResult(
+        if {"spec.md", "requirements-overview.md"} <= write_names:
+            publication_serial += 1
+            match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
+            assert match is not None
+            spec_dir = Path(match.group(1))
+            outputs = [spec_dir / "spec.md", spec_dir / "requirements-overview.md"]
+            for output in outputs:
+                output.write_text(
+                    output.read_text(encoding="utf-8")
+                    + f"\n<!-- fixture dispatch {publication_serial} -->\n",
+                    encoding="utf-8",
+                )
+            result = default_exec_agent(*args, **kwargs)
+            result.echelon_result["output_files"] = [
+                str(output) for output in outputs
+            ]
+            return result
+        if {"feasibility.md", "prioritization.md", "estimates.md", "mvp-scope.md"} <= write_names:
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "KILL",
@@ -875,7 +741,7 @@ def _mock_quality_first_flow_provider() -> MagicMock:
                 raw_output="",
                 duration_ms=0,
                 timed_out=False,
-            )
+            ), kwargs)
         return default_exec_agent(*args, **kwargs)
 
     provider.exec_agent.side_effect = phase_aware_exec_agent
@@ -1036,6 +902,106 @@ def test_success_then_regeneration_gets_a_fresh_output_repair_cycle(tmp_path):
     assert store.load()["phase_output_retry_counts"]["phase1-what"] == 1
 
 
+def test_finalized_child_effects_are_sealed_and_committed_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    node = PhaseNode(
+        id="phase-test",
+        type="agent",
+        allowed_state_updates=["accepted_marker"],
+        transitions=[{"to": "phase-next", "condition": "always"}],
+    )
+    child = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"accepted_marker": "sealed"},
+            "journal_entries": [
+                {
+                    "type": "provider_finalization_test",
+                    "agent": "echelon.test",
+                    "data": {"boundary": "provider-finalization"},
+                }
+            ],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+        token_usage=17,
+        cost_usd=1.25,
+    )
+    receipt = ProviderDispatchReceipt(
+        schema_version=2,
+        dispatch_id="1" * 32,
+        phase_id=node.id,
+        assignment_id="phase-test/provider",
+        occurrence_id="ordinary",
+        state_revision=store.load()["state_revision"],
+        contract_sha256="2" * 64,
+        prompt_sha256="3" * 64,
+        prompt_metadata_sha256="4" * 64,
+        outcome="published",
+        outputs=(),
+        semantic_validator_id=None,
+        semantic_result_sha256=None,
+        provider_attempts_sha256="5" * 64,
+        validated_result_sha256="6" * 64,
+    )
+    accumulator = PhaseExecutionAccumulator(node.id)
+    accumulator.record(FinalizedProviderResult(child, receipt))
+    execution = accumulator.freeze(child)
+    before = store.load()
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, execution, snapshot)
+    routing = ctrl._construct_routing_decision_or_block(
+        node,
+        prepared,
+        snapshot,
+        execution=execution,
+    )
+    assert routing is not None
+    assert len(routing.decision.judgment_payload_sha256) == 1
+    captured_provenance: dict[str, object] = {}
+    original_begin = store.begin_spec_step
+
+    def capture_step(step, *, snapshot):
+        captured_provenance.update(step.intent.provenance)
+        return original_begin(step, snapshot=snapshot)
+
+    monkeypatch.setattr(store, "begin_spec_step", capture_step)
+
+    assert store.load() == before
+    assert ctrl._advance_prepared_result_or_block(
+        node,
+        routing.decision,
+        execution=execution,
+    ) is not None
+
+    after = store.load()
+    assert after["accepted_marker"] == "sealed"
+    assert after["token_usage"] == before["token_usage"] + 17
+    assert after["cost_usd"] == before["cost_usd"] + 1.25
+    provider_execution = captured_provenance["provider_execution"]
+    assert provider_execution["manifest_sha256"] == execution.manifest_sha256
+    journal = [
+        json.loads(line)
+        for line in (
+            ctrl._squad_dir / "reasoning-journal.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [
+        row["data"]["boundary"]
+        for row in journal
+        if isinstance(row.get("data"), dict) and "boundary" in row["data"]
+    ] == [
+        "provider-finalization"
+    ]
+
+
 def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1043,6 +1009,7 @@ def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     ctrl, store = _controller(tmp_path)
     store.save(
         {
+            "phase_a_state_version": 1,
             "run_id": "prepared-run",
             "status": "preparing",
             "user_message": "Build carefully",
@@ -1069,6 +1036,33 @@ def _managed_identity_state_record():
         "context_id": "source", "spec_path": "squad/run-test/specs/demo",
         "source_registration_operation_id": "source-registration", "source_manifest_sha256": "a" * 64,
     }
+
+
+@pytest.mark.parametrize("entry_point", ["run", "run_single_phase"])
+def test_controller_rejects_unversioned_state_before_provider_dispatch(
+    tmp_path: Path,
+    entry_point: str,
+) -> None:
+    from harness.phase_a_state_version import UnsupportedPhaseAStateError
+
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    store.save(
+        {
+            "run_id": "historical-run",
+            "status": "running",
+            "phase": "phase1-what",
+            "user_message": "Build carefully",
+        }
+    )
+
+    with pytest.raises(UnsupportedPhaseAStateError):
+        if entry_point == "run":
+            ctrl.run("Build carefully", "semi")
+        else:
+            ctrl.run_single_phase("phase1-what", "Build carefully", "semi")
+
+    provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
@@ -1297,7 +1291,7 @@ def _install_publication_marker(
 ) -> dict[str, object]:
     marker = prepared.marker.to_dict()
     state = store.load()
-    state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
+    state[SPEC_STEP_PUBLICATION_PLAN_KEY] = marker
     store.save(state)
     return marker
 
@@ -1311,7 +1305,7 @@ def _install_empty_routed_completion(
     manual_phase_run: bool = False,
 ):
     completion_id = "c" * 32
-    prepared_completion = prepare_controller_completion(
+    prepared_completion = prepare_spec_step_effects(
         ctrl._project_root,
         ctrl._squad_dir,
         completion_id=completion_id,
@@ -1361,7 +1355,7 @@ def _install_empty_routed_completion(
         manual_phase_run=manual_phase_run,
         dispatch_id=completion_id,
         transaction_state_updates={
-            PENDING_CONTROLLER_COMPLETION_KEY: (
+            SPEC_STEP_EFFECT_PLAN_KEY: (
                 prepared_completion.marker.to_dict()
             ),
         },
@@ -1402,13 +1396,13 @@ def _install_prepared_routed_completion(
         expected_phase=from_phase
     )
     transaction_updates = {
-        PENDING_CONTROLLER_COMPLETION_KEY: (
+        SPEC_STEP_EFFECT_PLAN_KEY: (
             prepared_completion.marker.to_dict()
         ),
     }
     publication = prepared_completion.intent.publication
     if publication["kind"] == "external":
-        transaction_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
+        transaction_updates[SPEC_STEP_PUBLICATION_PLAN_KEY] = (
             publication["marker"]
         )
     decision = store.prepare_routing_decision(
@@ -1445,126 +1439,15 @@ def _as_previous_release_v1_completion(
         prepared.marker,
         intent_sha256=hashlib.sha256(content).hexdigest(),
     )
-    return load_prepared_controller_completion(
+    return load_prepared_spec_step_effects(
         project_root,
         squad_dir,
         marker,
     )
 
 
-def test_public_run_recovers_previous_release_routed_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ctrl, store = _controller(tmp_path)
-    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
-    prepared = prepare_controller_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        completion_id="d" * 32,
-        origin="routed",
-        publication={"kind": "none"},
-        route={
-            "kind": "routed",
-            "from_phase": "phase1-what",
-            "to_phase": "phase1-why1",
-            "manual_phase_run": False,
-            "record_completion": True,
-        },
-        effect_plan=(),
-        checkpoint_prestate={"kind": "none"},
-        context_reason="previous release routed recovery",
-        mine_phase_a=False,
-        judgment_payload_sha256=(),
-        judgments=(),
-    )
-    legacy = _as_previous_release_v1_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        prepared,
-    )
-    _install_prepared_routed_completion(store, legacy)
-    del ctrl
-    fresh, fresh_store = _controller(tmp_path)
-    after_recovery = MagicMock(
-        side_effect=lambda *_args, **_kwargs: SquadResult.from_state(
-            fresh_store.load()
-        )
-    )
-    monkeypatch.setattr(fresh, "_run_locked", after_recovery)
-
-    fresh.run("recover", "banzai")
-
-    recovered = fresh_store.load()
-    assert after_recovery.call_count == 1
-    assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-    assert recovered["last_dispatch"]["post_dispatch_complete"] is True
-    assert recovered["last_dispatch"]["completion_intent_sha256"] == (
-        legacy.marker.intent_sha256
-    )
 
 
-def test_public_run_recovers_previous_release_terminal_completion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ctrl, store = _controller(tmp_path)
-    store.initialize("r", "greenfield", "msg", 0, "DONE")
-    active = ctrl._squad_dir / "specs/001-demo"
-    published = tmp_path / "specs/001-demo"
-    active.mkdir(parents=True)
-    published.mkdir(parents=True)
-    content = b"# Previous-release terminal completion\n"
-    (active / "spec.md").write_bytes(content)
-    (published / "spec.md").write_bytes(content)
-    state = store.load()
-    state.update(
-        {
-            "status": "done",
-            "spec_id": "001-demo",
-            "spec_dir": str(active.relative_to(tmp_path)),
-            "published_spec_dir": str(published.relative_to(tmp_path)),
-        }
-    )
-    store.save(state)
-    prepared = prepare_controller_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        completion_id="e" * 32,
-        origin="terminal",
-        publication={"kind": "none"},
-        route={"kind": "terminal", "terminal_phase": "DONE"},
-        effect_plan=(),
-        checkpoint_prestate={"kind": "none"},
-        context_reason="previous release terminal recovery",
-        mine_phase_a=False,
-        judgment_payload_sha256=(),
-        judgments=(),
-    )
-    legacy = _as_previous_release_v1_completion(
-        tmp_path,
-        ctrl._squad_dir,
-        prepared,
-    )
-    snapshot = store.capture_routing_snapshot(expected_phase="DONE")
-    store.begin_terminal_controller_completion(legacy, snapshot=snapshot)
-    del ctrl
-    fresh, fresh_store = _controller(tmp_path)
-    after_recovery = MagicMock(
-        side_effect=lambda *_args, **_kwargs: SquadResult.from_state(
-            fresh_store.load()
-        )
-    )
-    monkeypatch.setattr(fresh, "_run_locked", after_recovery)
-
-    fresh.run("recover", "banzai")
-
-    recovered = fresh_store.load()
-    assert after_recovery.call_count == 1
-    assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-    assert recovered["last_terminal_completion"]["intent_sha256"] == (
-        legacy.marker.intent_sha256
-    )
 
 
 def _test_payload_sha256(payload: dict[str, object]) -> str:
@@ -1609,7 +1492,7 @@ def _install_single_effect_completion(
             }
         )
         store.save(state)
-        prepared = prepare_controller_completion(
+        prepared = prepare_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
             completion_id=completion_id,
@@ -1707,7 +1590,7 @@ def _install_single_effect_completion(
             },
         )
         judgment_digests = (_test_payload_sha256(payload),)
-    prepared = prepare_controller_completion(
+    prepared = prepare_spec_step_effects(
         tmp_path,
         ctrl._squad_dir,
         completion_id=completion_id,
@@ -1790,7 +1673,7 @@ def _prepare_checkpoint_boundary(
     snapshot = store.capture_routing_snapshot(
         expected_phase="phase1-what",
     )
-    ctrl._prepare_controller_completion(
+    ctrl._prepare_spec_step_effects(
         from_phase="phase1-what",
         to_phase="phase1-why1",
         snapshot=snapshot,
@@ -1814,7 +1697,7 @@ def _assert_checkpoint_preparation_unchanged(
     assert (ctrl._project_root / "artifact.txt").read_bytes() == (
         artifact_bytes
     )
-    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+    assert not (ctrl._squad_dir / ".spec-step-effects").exists()
     assert not (ctrl._squad_dir / ".publication-outbox").exists()
 
 
@@ -1944,7 +1827,7 @@ def test_inactive_checkpoint_does_not_resolve_git_prestate(
         "harness.squad.subprocess.run",
         side_effect=AssertionError("checkpoint prestate was resolved"),
     ):
-        prepared = ctrl._prepare_controller_completion(
+        prepared = ctrl._prepare_spec_step_effects(
             from_phase="phase1-what",
             to_phase="phase1-why1",
             snapshot=snapshot,
@@ -1985,7 +1868,7 @@ def test_versioned_completion_effect_plan_follows_phase_policy(
     })
     store.save(state)
 
-    prepared = ctrl._prepare_controller_completion(
+    prepared = ctrl._prepare_spec_step_effects(
         from_phase=phase,
         to_phase="phase1-discover",
         snapshot=store.capture_routing_snapshot(expected_phase=phase),
@@ -2008,7 +1891,7 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     capsys,
 ) -> None:
     from echelon.checkpoint_cli import run_checkpoint_command
-    from echelon.cli import _cmd_rewind
+    from echelon.spec_service import _cmd_rewind
 
     provider = _mock_provider()
     default_dispatch = provider.exec_agent.side_effect
@@ -2042,40 +1925,52 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     store.save(state)
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     last_executed_completion = ""
+    active_phase = ""
 
     def dispatch_with_artifacts(*args, **kwargs):
         nonlocal last_executed_completion
-        prompt = str(args[1])
-        match = re.search(r"^# Phase: ([^\n]+)$", prompt, re.MULTILINE)
-        assert match is not None
-        phase = match.group(1)
+        phase = active_phase
         if last_executed_completion:
             assert any(
                 row.completion_id == last_executed_completion
                 for row in load_checkpoint_ledger(spec_dir).checkpoints
             )
-        if phase == "phase1-discover":
-            (spec_dir / "glossary.md").write_text("discover\n", encoding="utf-8")
-        elif phase == "phase1-synthesizer":
-            (spec_dir / "glossary.md").write_text("synthesized\n", encoding="utf-8")
-        elif phase == "phase1-tracker":
-            (spec_dir / "user-intent.md").write_text("simple notes\n", encoding="utf-8")
-        elif phase == "phase1-constitution":
-            constitution = tmp_path / ".echelon" / "constitution.md"
-            constitution.write_text("# Constitution\n", encoding="utf-8")
-        elif phase == "phase1-what":
-            (spec_dir / "spec.md").write_text("# Notes\n", encoding="utf-8")
-            (spec_dir / "requirements-overview.md").write_text(
-                "# Requirements\n",
+        outputs_by_phase = {
+            "phase1-discover": (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+            ),
+            "phase1-synthesizer": (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+                "contradictions-and-gaps.md",
+                "risks.md",
+            ),
+            "phase1-tracker": ("user-intent.md",),
+            "phase1-why1": ("assumption-review.md",),
+            "phase1-what": ("spec.md", "requirements-overview.md"),
+        }
+        assert phase in outputs_by_phase or phase == "phase1-constitution", phase
+        output_paths = [spec_dir / name for name in outputs_by_phase.get(phase, ())]
+        if phase == "phase1-constitution":
+            output_paths = [run_dir / "constitution.draft.md"]
+        for output in output_paths:
+            output.write_text(
+                f"# {output.stem}\n\n{phase} current output.\n",
                 encoding="utf-8",
             )
         result = default_dispatch(*args, **kwargs)
         if phase == "phase1-tracker":
             result.echelon_result["verdict"] = "ALIGNED"
-        if phase == "phase1-constitution":
-            result.echelon_result["state_updates"] = {
-                "constitution_status": "exists"
-            }
+        result.echelon_result["output_files"] = [
+            str(output) for output in output_paths
+        ]
         return result
 
     provider.exec_agent.side_effect = dispatch_with_artifacts
@@ -2088,10 +1983,30 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
         "phase1-what",
     ]
     expected_paths = {
-        "phase1-discover": {"runs/spec-run-1/specs/001-demo/glossary.md"},
-        "phase1-synthesizer": {"runs/spec-run-1/specs/001-demo/glossary.md"},
+        "phase1-discover": {
+            f"runs/spec-run-1/specs/001-demo/{name}"
+            for name in (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+            )
+        },
+        "phase1-synthesizer": {
+            f"runs/spec-run-1/specs/001-demo/{name}"
+            for name in (
+                "glossary.md",
+                "mental-model.md",
+                "boundaries.md",
+                "assumptions.md",
+                "unknowns.md",
+                "contradictions-and-gaps.md",
+                "risks.md",
+            )
+        },
         "phase1-tracker": {"runs/spec-run-1/specs/001-demo/user-intent.md"},
-        "phase1-why1": set(),
+        "phase1-why1": {"runs/spec-run-1/specs/001-demo/assumption-review.md"},
         "phase1-constitution": {".echelon/constitution.md"},
         "phase1-what": {
             "runs/spec-run-1/specs/001-demo/spec.md",
@@ -2100,12 +2015,14 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     }
 
     for phase in executed[:2]:
+        active_phase = phase
         node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
         parent = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
         ).stdout.strip()
         result = ctrl._executors[node.type].execute(node, store)
+        assert not isinstance(result, ExecutorBlockedResult), result.result.raw_output
         _coordinate_prepared_result(ctrl, node, result)
         row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
         last_executed_completion = row.completion_id
@@ -2145,12 +2062,14 @@ def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
     )
 
     for phase in executed[2:]:
+        active_phase = phase
         node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
         parent = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
         ).stdout.strip()
         result = ctrl._executors[node.type].execute(node, store)
+        assert not isinstance(result, ExecutorBlockedResult), result.result.raw_output
         _coordinate_prepared_result(ctrl, node, result)
         row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
         last_executed_completion = row.completion_id
@@ -2226,7 +2145,7 @@ def test_versioned_required_checkpoint_rejects_missing_spec_target(
     before = store.load()
 
     with pytest.raises(StateAdvanceError) as raised:
-        ctrl._prepare_controller_completion(
+        ctrl._prepare_spec_step_effects(
             from_phase="phase1-discover",
             to_phase="phase1-synthesizer",
             snapshot=store.capture_routing_snapshot(
@@ -2241,7 +2160,7 @@ def test_versioned_required_checkpoint_rejects_missing_spec_target(
     assert raised.value.validator == "checkpoint_target"
     assert "phase_checkpoint_target_missing: phase1-discover" in str(raised.value)
     assert store.load() == before
-    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+    assert not (ctrl._squad_dir / ".spec-step-effects").exists()
 
 
 def test_human_input_spec_root_fallback_is_legacy_only(tmp_path: Path) -> None:
@@ -2327,7 +2246,7 @@ def test_routed_checkpoint_prestate_failure_records_only_deferred_tokens(
             prepared,
             snapshot,
             additional_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: (
+                SPEC_STEP_PUBLICATION_PLAN_KEY: (
                     publication.marker.to_dict()
                 ),
             },
@@ -2342,7 +2261,7 @@ def test_routed_checkpoint_prestate_failure_records_only_deferred_tokens(
         token_delta=17,
     )
     assert not publication_root.exists()
-    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+    assert not (ctrl._squad_dir / ".spec-step-effects").exists()
 
 
 def _evaluate_prepared_result(
@@ -2366,18 +2285,49 @@ def _evaluate_prepared_result(
 def _coordinate_prepared_result(
     ctrl: SquadController,
     node: PhaseNode,
-    result: SquadAgentResult,
+    result: SquadAgentResult | FinalizedPhaseExecution,
 ) -> str:
+    execution = result if isinstance(result, FinalizedPhaseExecution) else None
     snapshot = ctrl._state_store.capture_routing_snapshot(
         expected_phase=node.id
     )
     routed_human_input = []
+    routed_execution = []
+    constitution_publication_request = None
+    additional_state_updates = None
+    if node.id == "phase1-constitution":
+        assert execution is not None
+        from echelon.constitution import canonical_constitution_path
+        from harness.constitution_publication import (
+            prepare_constitution_publication,
+        )
+
+        receipt = next(
+            receipt
+            for receipt in execution.receipts
+            if receipt["phase_id"] == node.id
+        )
+        constitution_publication_request = prepare_constitution_publication(
+            ctrl._squad_dir / "constitution.draft.md",
+            canonical_constitution_path(ctrl._project_root),
+            receipt,
+        )
+        additional_state_updates = {"constitution_status": "exists"}
     decision = ctrl._coordinate_transition_routing(
         node,
         ctrl._prepare_phase_result(node, result, snapshot),
         snapshot,
+        additional_state_updates=additional_state_updates,
+        projected_state_updates=(
+            dict(execution.result.state_updates)
+            if execution is not None and node.id == "phase3-consensus"
+            else None
+        ),
         human_input_collector=routed_human_input,
+        execution_collector=routed_execution,
+        execution=execution,
     )
+    execution = routed_execution[0] if routed_execution else execution
     if routed_human_input:
         ctrl.handle_human_input(
             routed_human_input[0],
@@ -2385,10 +2335,16 @@ def _coordinate_prepared_result(
                 from_phase=decision.from_phase,
                 to_phase=decision.to_phase,
                 decision=decision,
+                execution=execution,
             ),
         )
     else:
-        assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+        assert ctrl._advance_prepared_result_or_block(
+            node,
+            decision,
+            execution=execution,
+            constitution_publication_request=constitution_publication_request,
+        ) is not None
     return decision.to_phase
 
 
@@ -2689,9 +2645,22 @@ class TestConsensusCannotBeSkipped:
 
         def consensus_result(_project_root: str, prompt: str, **_kwargs):
             if "Operate in **WHY3** mode" in prompt:
+                (spec_dir / "issues.md").write_text(
+                    "# Issues\n", encoding="utf-8"
+                )
+                (spec_dir / "quality-gates.md").write_text(
+                    "# Quality Gates\n", encoding="utf-8"
+                )
                 return SquadAgentResult(
                     0,
-                    {"verdict": "PASS", "state_updates": {}},
+                    {
+                        "verdict": "PASS",
+                        "state_updates": {},
+                        "output_files": [
+                            str(spec_dir / "issues.md"),
+                            str(spec_dir / "quality-gates.md"),
+                        ],
+                    },
                     "",
                     1,
                     False,
@@ -2705,6 +2674,9 @@ class TestConsensusCannotBeSkipped:
                     0,
                     {
                         "verdict": "BLOCKED",
+                        "output_files": [
+                            str(spec_dir / "implementability-report.md")
+                        ],
                         "state_updates": {
                             "gate_decision": "REJECTED",
                             "phase_recommendation": "phase3-how",
@@ -2733,9 +2705,12 @@ class TestConsensusCannotBeSkipped:
 
         assert result.verdict == "FAIL"
         persisted = store.load()
-        assert persisted["assess2_verdict"] == "REJECTED"
-        assert persisted["gate_decision"] == "REJECTED"
-        assert persisted["phase_recommendation"] == "phase3-how"
+        assert "assess2_verdict" not in persisted
+        assert "gate_decision" not in persisted
+        assert "phase_recommendation" not in persisted
+        assert result.state_updates["assess2_verdict"] == "REJECTED"
+        assert result.state_updates["gate_decision"] == "REJECTED"
+        assert result.state_updates["phase_recommendation"] == "phase3-how"
         assert not any(
             "Operate in **PLAN2** mode" in call.args[1]
             for call in provider.exec_agent.call_args_list
@@ -2761,7 +2736,23 @@ class TestConsensusCannotBeSkipped:
                 [
                     "# Issues — WHY3",
                     "",
+                    "## Summary",
+                    "- **CRITICAL:** 0",
+                    "- **HIGH:** 1",
+                    "- **MEDIUM:** 0",
+                    "- **LOW:** 0",
+                    "- **Verdict:** FAIL",
+                    "",
+                    "## Issues",
+                    "",
                     "### ISS-001: Architecture contradicts the accepted boundary",
+                    "- **Severity:** HIGH",
+                    "- **Type:** contradiction",
+                    "- **Description:** The contract adds an extra invariant.",
+                    "- **Affected artifact:** contracts/api.md",
+                    "- **Affected section:** Runtime boundary",
+                    "- **Evidence:** FR-001 constrains only the accepted boundary.",
+                    "- **Recommendation:** Remove the extra invariant.",
                     "- **Responsible agent:** HOW",
                     "- **Action Required:** Remove the extra architecture invariant.",
                     "",
@@ -2769,7 +2760,9 @@ class TestConsensusCannotBeSkipped:
                     "- **Decision required:** No user decision — agent repair",
                     "- **Suggested option:** Remove the extra invariant.",
                     "- **Evidence basis:** FR-001 constrains only the accepted boundary.",
+                    "- **Values not inferable:** None",
                     "- **Banzai eligible:** yes",
+                    "- **Banzai rationale:** The accepted requirement determines the correction.",
                     "",
                 ]
             ),
@@ -3059,7 +3052,7 @@ class TestAgentResultIntegrity:
         manual_phase_run: bool,
     ) -> None:
         provider = _mock_provider()
-        provider.exec_agent.return_value = SquadAgentResult(
+        agent_result = SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "DONE",
@@ -3086,7 +3079,27 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("# Demo\n", encoding="utf-8")
+        publications = 0
+
+        def publish_only_spec(*_args, **_kwargs):
+            nonlocal publications
+            publications += 1
+            active_spec_dir = Path(str(store.load()["spec_dir"]))
+            if not active_spec_dir.is_absolute():
+                active_spec_dir = tmp_path / active_spec_dir
+            active_spec_path = active_spec_dir / "spec.md"
+            active_spec_path.write_text(
+                f"# Demo {publications}\n",
+                encoding="utf-8",
+            )
+            agent_result.echelon_result["output_files"] = [
+                str(active_spec_path)
+            ]
+            return agent_result
+
+        provider.exec_agent.side_effect = publish_only_spec
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "specs/001-demo"
@@ -3119,10 +3132,7 @@ class TestAgentResultIntegrity:
         assert state["phase_output_recovery"] == {
             "phase": "phase1-what",
             "missing_outputs": ["requirements-overview.md"],
-            "prior_state_updates": {
-                "spec_status": "planned",
-                "evidence_resolution_status": "not_required",
-            },
+            "prior_state_updates": {},
         }
         assert "controller_contract_error" not in state
         assert state["recovery_instruction"] == {
@@ -3710,7 +3720,7 @@ class TestAgentResultIntegrity:
             )
 
         assert self._visible_tree_bytes(published) == before
-        assert "pending_external_publication" not in store.load()
+        assert "_spec_step_publication_plan" not in store.load()
 
     def test_phase_a_publication_staging_rejects_symlinked_constitution_source(
         self,
@@ -3737,7 +3747,7 @@ class TestAgentResultIntegrity:
             )
 
         assert self._visible_tree_bytes(published) == before
-        assert "pending_external_publication" not in store.load()
+        assert "_spec_step_publication_plan" not in store.load()
 
     def test_phase_a_publication_staging_rejects_absolute_run_id_kb_source(
         self,
@@ -3767,7 +3777,7 @@ class TestAgentResultIntegrity:
             )
 
         assert self._visible_tree_bytes(published) == before
-        assert "pending_external_publication" not in store.load()
+        assert "_spec_step_publication_plan" not in store.load()
 
     @pytest.mark.parametrize("source_kind", ["regular", "symlink"])
     def test_phase_a_publication_staging_rejects_kb_source_created_by_helper(
@@ -3812,7 +3822,7 @@ class TestAgentResultIntegrity:
             )
 
         assert self._visible_tree_bytes(published) == before
-        assert "pending_external_publication" not in store.load()
+        assert "_spec_step_publication_plan" not in store.load()
 
     def test_phase_a_publication_staging_manifest_is_exact_and_preserves_note(
         self,
@@ -4089,16 +4099,18 @@ class TestAgentResultIntegrity:
         elif retry_tamper == "mode":
             (inputs / "manifest.json").chmod(0o600)
 
-        recovery = ctrl._drain_pending_controller_completion()
+        recovery = ctrl._drain_pending_spec_step()
 
         if retry_tamper is None:
-            assert recovery.recovered
+            assert recovery.recovered and not recovery.blocked
             assert immutable_product_input_tree_digest(published / "inputs") == expected_hash
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            assert PENDING_SPEC_STEP_KEY not in store.load()
+            assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
         else:
-            assert not recovery.recovered
+            assert recovery.recovered and recovery.blocked
             assert self._visible_tree_bytes(published) == before
-            assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
+            assert PENDING_SPEC_STEP_KEY in store.load()
+            assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
 
     def test_terminal_reconciliation_commits_marker_before_visible_write(
         self,
@@ -4117,10 +4129,11 @@ class TestAgentResultIntegrity:
         calls: list[str] = []
 
         def marker_guard(publication):
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == publication.marker.to_dict()
-            )
+            pending = store.load()
+            assert pending[PENDING_SPEC_STEP_KEY]["origin"] == "terminal"
+            assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
+            assert SPEC_STEP_PUBLICATION_PLAN_KEY not in pending
+            assert SPEC_STEP_EFFECT_PLAN_KEY not in pending
             assert self._visible_tree_bytes(published) == before
             calls.append("publish")
             return publish(publication)
@@ -4136,7 +4149,7 @@ class TestAgentResultIntegrity:
         assert readiness is not None
         assert readiness.ready is True
         assert calls == ["publish"]
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
         assert (published / "spec.md").read_text(encoding="utf-8").startswith(
             "# active spec.md"
         )
@@ -4269,156 +4282,13 @@ class TestAgentResultIntegrity:
         assert result.status == "done"
         completed = store.load()
         assert completed["status"] == "done"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in completed
         assert (published / "spec.md").read_text(encoding="utf-8").startswith(
             "# active spec.md"
         )
 
-    def test_terminal_marker_post_save_exception_continues_publication(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store, _, _, published = (
-            self._phase_a_publication_staging_fixture(tmp_path)
-        )
-        state = store.load()
-        state["phase"] = "DONE"
-        state["status"] = "done"
-        store.save(state)
-        save = store._save_unlocked
-        injected = False
 
-        def save_marker_then_raise(next_state):
-            nonlocal injected
-            saved = save(next_state)
-            if (
-                not injected
-                and PENDING_EXTERNAL_PUBLICATION_KEY in next_state
-            ):
-                injected = True
-                raise OSError("injected post-save marker exception")
-            return saved
 
-        monkeypatch.setattr(
-            store,
-            "_save_unlocked",
-            save_marker_then_raise,
-        )
-
-        result = ctrl.run("msg", "banzai")
-
-        assert injected is True
-        assert result.status == "done"
-        completed = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert "external_publication_failure" not in completed
-        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
-            "# active spec.md"
-        )
-
-    def test_terminal_reconciliation_interruption_recovers_without_diagnostic_overwrite(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store, _, _, published = (
-            self._phase_a_publication_staging_fixture(tmp_path)
-        )
-        state = store.load()
-        state["phase"] = "DONE"
-        state["status"] = "done"
-        store.save(state)
-        publish = PreparedSquadPublication.publish
-
-        def interrupt(publication):
-            def fault(position: int) -> None:
-                if position == 1:
-                    raise RuntimeError("terminal publication interruption")
-
-            return publish(publication, fault_hook=fault)
-
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            interrupt,
-        )
-        checkpoint = MagicMock(
-            side_effect=AssertionError(
-                "terminal reconciliation replayed routed success work"
-            )
-        )
-        monkeypatch.setattr(
-            ctrl,
-            "_checkpoint_successful_phase",
-            checkpoint,
-        )
-
-        first = ctrl.run("msg", "banzai")
-
-        failed = store.load()
-        assert first.status == "blocked"
-        assert failed["phase"] == "DONE"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"]["code"] == "publish_io"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in failed
-        assert "phase_a_readiness_failed" not in json.dumps(failed)
-
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
-        recovered = ctrl.run("msg", "banzai")
-
-        assert recovered.status == "done"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-        assert "external_publication_failure" not in store.load()
-        assert checkpoint.call_count == 0
-        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
-            "# active spec.md"
-        )
-
-    def test_terminal_post_handoff_failure_preserves_completion_authority(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store, _, _, published = (
-            self._phase_a_publication_staging_fixture(tmp_path)
-        )
-        state = store.load()
-        state["phase"] = "DONE"
-        state["status"] = "done"
-        store.save(state)
-        monkeypatch.setattr(
-            ctrl,
-            "_apply_controller_completion_effect",
-            MagicMock(side_effect=CompletionError("stage_io")),
-        )
-
-        first = ctrl.run("msg", "banzai")
-
-        failed = store.load()
-        assert first.status == "blocked"
-        assert failed["phase"] == "DONE"
-        assert failed["blocked_reason"] == "controller_completion_pending"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in failed
-        assert PENDING_CONTROLLER_COMPLETION_KEY in failed
-        assert failed["controller_completion_failure"]["code"] == "stage_io"
-        assert "phase_a_readiness_failed" not in json.dumps(failed)
-
-        fresh, _ = _controller(tmp_path)
-        recovered = fresh.run("msg", "banzai")
-
-        assert recovered.status == "done"
-        assert recovered.phase == "DONE"
-        completed = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert "controller_completion_failure" not in completed
-        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
-            "# active spec.md"
-        )
 
     def test_terminal_inventory_failure_retains_complete_marker(
         self,
@@ -4453,10 +4323,8 @@ class TestAgentResultIntegrity:
         failed = store.load()
         assert first.status == "blocked"
         assert failed["phase"] == "DONE"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-            "complete"
-        )
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "mining"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert "last_terminal_completion" not in failed
@@ -4466,7 +4334,7 @@ class TestAgentResultIntegrity:
 
         assert recovered.status == "done"
         completed = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in completed
         assert len(
             completed["last_terminal_completion"][
                 "phase_a_active_source_sha256"
@@ -4477,6 +4345,83 @@ class TestAgentResultIntegrity:
                 "phase_a_published_postimage_sha256"
             ]
         ) == 64
+
+    def test_terminal_spec_step_commit_failure_retries_only_commit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, _ = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        publish = PreparedSquadPublication.publish
+        published: list[str] = []
+
+        def observe_publication(publication):
+            published.append(publication.marker.transaction_id)
+            return publish(publication)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            observe_publication,
+        )
+        apply_effect = ctrl._apply_controller_completion_effect
+        applied: list[str] = []
+
+        def observe_effect(prepared, current_state):
+            applied.append(prepared.marker.step)
+            return apply_effect(prepared, current_state)
+
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_controller_completion_effect",
+            observe_effect,
+        )
+        complete = store.complete_spec_step
+        commit_attempts = 0
+
+        def fail_first_commit(prepared):
+            nonlocal commit_attempts
+            commit_attempts += 1
+            if commit_attempts == 1:
+                raise StateAdvanceError(
+                    "injected terminal commit failure",
+                    json_path="$.state",
+                    validator="state_finalize",
+                )
+            return complete(prepared)
+
+        monkeypatch.setattr(
+            store,
+            "complete_spec_step",
+            fail_first_commit,
+        )
+
+        first = ctrl.run("msg", "banzai")
+
+        pending = store.load()
+        assert first.status == "blocked"
+        assert pending[PENDING_SPEC_STEP_KEY]["origin"] == "terminal"
+        assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "commit"
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in pending
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in pending
+        completed_effects = tuple(applied)
+        completed_publications = tuple(published)
+
+        recovered = ctrl.run("msg", "banzai")
+
+        assert recovered.status == "done"
+        assert commit_attempts == 2
+        assert tuple(applied) == completed_effects
+        assert tuple(published) == completed_publications
+        completed = store.load()
+        assert PENDING_SPEC_STEP_KEY not in completed
+        assert completed["last_terminal_completion"]["completion_id"]
 
     def test_phase_a_publication_staging_uses_staged_product_evidence(
         self,
@@ -4632,676 +4577,18 @@ class TestAgentResultIntegrity:
         )
         materialize.assert_not_called()
 
-    @pytest.mark.parametrize("fault_position", [0, 1, 2, 3])
-    def test_external_publication_fault_boundary_recovers_idempotently(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        fault_position: int,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        original_publish = PreparedSquadPublication.publish
 
-        def faulted_publish(publication):
-            def fault(position: int) -> None:
-                if position == fault_position:
-                    raise RuntimeError("injected publication boundary")
 
-            return original_publish(publication, fault_hook=fault)
 
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            faulted_publish,
-        )
 
-        assert ctrl._publish_and_finalize(prepared, marker) is False
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["status"] == "blocked"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"]["code"] == "publish_io"
-        transaction_root = (
-            ctrl._squad_dir
-            / ".publication-outbox"
-            / prepared.marker.transaction_id
-        )
-        assert transaction_root.is_dir()
 
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            original_publish,
-        )
-        del ctrl
-        fresh, _ = _controller(tmp_path)
-        assert fresh._recover_pending_external_publication() is True
 
-        recovered = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
-        assert "external_publication_failure" not in recovered
-        assert recovered["status"] == "running"
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
-        assert targets["create"].read_text(encoding="utf-8") == "new create\n"
-        assert not targets["delete"].exists()
-        assert not transaction_root.exists()
 
-    def test_external_publication_retry_rejects_drifted_completed_postimage(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        publish = PreparedSquadPublication.publish
 
-        def stop_after_first(publication):
-            def fault(position: int) -> None:
-                if position == 1:
-                    raise RuntimeError("injected retry boundary")
 
-            return publish(publication, fault_hook=fault)
 
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            stop_after_first,
-        )
-        assert ctrl._publish_and_finalize(prepared, marker) is False
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
-        targets["replace"].write_text(
-            "drifted after partial publication\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
 
-        del ctrl
-        fresh, _ = _controller(tmp_path)
-        assert fresh._recover_pending_external_publication() is False
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["external_publication_failure"]["code"] == (
-            "target_drift"
-        )
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "drifted after partial publication\n"
-        )
 
-    def test_external_publication_finalize_save_failure_recovers_after_postimages(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        complete = store.complete_external_publication
-        attempts = 0
-
-        def fail_first_clear(value):
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                raise OSError("injected marker-clear save failure")
-            return complete(value)
-
-        monkeypatch.setattr(
-            store,
-            "complete_external_publication",
-            fail_first_clear,
-        )
-
-        assert ctrl._publish_and_finalize(prepared, marker) is False
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["external_publication_failure"]["code"] == (
-            "state_finalize"
-        )
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
-        assert targets["create"].read_text(encoding="utf-8") == "new create\n"
-        assert not targets["delete"].exists()
-
-        assert ctrl._recover_pending_external_publication() is True
-        assert attempts == 2
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-
-    def test_external_publication_never_publishes_without_exact_state_marker(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-
-        assert ctrl._publish_and_finalize(
-            prepared,
-            prepared.marker.to_dict(),
-        ) is False
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "old replace\n"
-        )
-        assert not targets["create"].exists()
-        assert targets["delete"].read_text(encoding="utf-8") == (
-            "old delete\n"
-        )
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-
-    def test_external_publication_rejects_a_stage_not_named_by_the_marker(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        authorized, _ = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, authorized)
-        unauthorized, _ = _sealed_publication_fixture(ctrl)
-        publish = MagicMock()
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
-
-        assert ctrl._publish_and_finalize(unauthorized, marker) is False
-        publish.assert_not_called()
-        assert store.load()[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-
-    def test_external_publication_finalize_exception_after_clear_accepts_completion(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        complete = store.complete_external_publication
-
-        def clear_then_raise(value):
-            complete(value)
-            raise OSError("simulated post-save exception")
-
-        monkeypatch.setattr(
-            store,
-            "complete_external_publication",
-            clear_then_raise,
-        )
-
-        assert ctrl._publish_and_finalize(prepared, marker) is True
-        completed = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert "external_publication_failure" not in completed
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
-        assert not (
-            ctrl._squad_dir
-            / ".publication-outbox"
-            / prepared.marker.transaction_id
-        ).exists()
-
-    @pytest.mark.parametrize(
-        ("damage", "expected_code"),
-        [
-            ("target_drift", "target_drift"),
-            ("stage_missing", "stage_missing"),
-            ("stage_corrupt", "stage_corrupt"),
-            ("manifest_mismatch", "manifest_mismatch"),
-            ("manifest_invalid", "manifest_invalid"),
-        ],
-    )
-    def test_external_publication_recovery_failures_are_bounded(
-        self,
-        tmp_path: Path,
-        damage: str,
-        expected_code: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        transaction_root = (
-            ctrl._squad_dir
-            / ".publication-outbox"
-            / prepared.marker.transaction_id
-        )
-        manifest = transaction_root / "manifest.json"
-        if damage == "target_drift":
-            targets["replace"].write_text("unexpected\n", encoding="utf-8")
-        elif damage == "stage_missing":
-            prepared.discard()
-        elif damage == "stage_corrupt":
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            staged_ref = next(
-                operation["staged"]
-                for operation in payload["operations"]
-                if operation["action"] == "write"
-            )
-            (transaction_root / staged_ref).write_text(
-                "corrupt staged bytes\n",
-                encoding="utf-8",
-            )
-        elif damage == "manifest_mismatch":
-            manifest.write_bytes(manifest.read_bytes() + b" ")
-        else:
-            corrupt = b"{not-json"
-            manifest.write_bytes(corrupt)
-            marker = {
-                **marker,
-                "manifest_sha256": hashlib.sha256(corrupt).hexdigest(),
-            }
-            state = store.load()
-            state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
-            store.save(state)
-
-        assert ctrl._recover_pending_external_publication() is False
-
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["status"] == "blocked"
-        assert failed["blocked_reason"] == "external_publication_pending"
-        assert failed["external_publication_failure"] == {
-            "schema_version": 1,
-            "code": expected_code,
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-        assert expected_code in json.dumps(failed)
-        assert str(transaction_root) not in json.dumps(failed)
-
-    @pytest.mark.parametrize(
-        "marker",
-        [
-            None,
-            {
-                "schema_version": 1,
-                "transaction_id": "bad",
-                "manifest_sha256": "b" * 64,
-            },
-        ],
-    )
-    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
-    def test_malformed_publication_marker_blocks_with_bounded_diagnostic(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        marker: object,
-        entrypoint: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
-        store.save(state)
-        callback = MagicMock(
-            side_effect=AssertionError(
-                "entrypoint ran with a malformed publication marker"
-            )
-        )
-        if entrypoint == "normal":
-            monkeypatch.setattr(ctrl, "_run_locked", callback)
-            result = ctrl.run("msg", "banzai")
-        else:
-            monkeypatch.setattr(
-                ctrl,
-                "_run_single_phase_locked",
-                callback,
-            )
-            result = ctrl.run_single_phase(
-                "phase1-what",
-                "msg",
-                "banzai",
-            )
-
-        failed = store.load()
-        assert result.status == "blocked"
-        assert callback.call_count == 0
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["blocked_reason"] == (
-            "controller_completion_pending"
-        )
-        assert failed["controller_completion_failure"] == {
-            "schema_version": 1,
-            "code": "completion_missing",
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-        assert "external_publication_failure" not in failed
-
-    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
-    def test_pending_external_publication_recovers_before_entrypoint_status_logic(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        entrypoint: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
-        publication, targets = _sealed_publication_fixture(ctrl)
-        node = ctrl._graph.get("phase3-tasks-lexicon")
-        agent_result = ctrl._executors[
-            "deterministic_lexicon"
-        ].execute(node, store)
-        snapshot = store.capture_routing_snapshot(
-            expected_phase=node.id,
-        )
-        prepared_result = ctrl._prepare_phase_result(
-            node,
-            agent_result,
-            snapshot,
-        )
-        decision = ctrl._coordinate_transition_routing(
-            node,
-            prepared_result,
-            snapshot,
-            additional_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: (
-                    publication.marker.to_dict()
-                ),
-            },
-        )
-        store.advance(node.id, decision.to_phase, decision)
-        calls: list[str] = []
-
-        def after_recovery(*_args, **_kwargs):
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-            assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
-            assert store.load()["last_dispatch"][
-                "post_dispatch_complete"
-            ] is True
-            assert targets["create"].read_text(encoding="utf-8") == (
-                "new create\n"
-            )
-            calls.append(entrypoint)
-            return SquadResult.from_state(store.load())
-
-        if entrypoint == "normal":
-            monkeypatch.setattr(ctrl, "_run_locked", after_recovery)
-            ctrl.run("msg", "banzai")
-        else:
-            monkeypatch.setattr(
-                ctrl,
-                "_run_single_phase_locked",
-                after_recovery,
-            )
-            ctrl.run_single_phase("phase1-what", "msg", "banzai")
-
-        assert calls == [entrypoint]
-
-    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
-    def test_publication_without_completion_blocks_before_entrypoint_logic(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        entrypoint: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        prepared, _ = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        callback = MagicMock(
-            side_effect=AssertionError("entrypoint ran before recovery")
-        )
-        publish = MagicMock(
-            side_effect=AssertionError(
-                "publication ran without completion authority"
-            )
-        )
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
-        if entrypoint == "normal":
-            monkeypatch.setattr(ctrl, "_run_locked", callback)
-            result = ctrl.run("msg", "banzai")
-        else:
-            monkeypatch.setattr(
-                ctrl,
-                "_run_single_phase_locked",
-                callback,
-            )
-            result = ctrl.run_single_phase(
-                "phase1-what",
-                "msg",
-                "banzai",
-            )
-
-        assert callback.call_count == 0
-        assert result.status == "blocked"
-        assert result.phase == "phase1-what"
-        assert publish.call_count == 0
-        failed = store.load()
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["controller_completion_failure"]["code"] == (
-            "completion_missing"
-        )
-        assert "external_publication_failure" not in failed
-
-    def test_explicit_null_completion_retains_publication_and_blocks(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-what")
-        publication, _ = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, publication)
-        state = store.load()
-        state[PENDING_CONTROLLER_COMPLETION_KEY] = None
-        store.save(state)
-        publish = MagicMock(
-            side_effect=AssertionError(
-                "malformed completion authorized publication"
-            )
-        )
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "entrypoint ran with malformed completion"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", runner)
-
-        result = ctrl.run("msg", "banzai")
-
-        failed = store.load()
-        assert result.status == "blocked"
-        assert runner.call_count == 0
-        assert publish.call_count == 0
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY] is None
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
-        assert failed["controller_completion_failure"]["code"] == (
-            "intent_invalid"
-        )
-
-    def test_missing_completion_stage_retains_both_authorities(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
-        publication, _ = _sealed_publication_fixture(ctrl)
-        node = ctrl._graph.get("phase3-tasks-lexicon")
-        result = ctrl._executors["deterministic_lexicon"].execute(
-            node,
-            store,
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase=node.id,
-        )
-        prepared_result = ctrl._prepare_phase_result(
-            node,
-            result,
-            snapshot,
-        )
-        decision = ctrl._coordinate_transition_routing(
-            node,
-            prepared_result,
-            snapshot,
-            additional_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: (
-                    publication.marker.to_dict()
-                ),
-            },
-        )
-        store.advance(node.id, decision.to_phase, decision)
-        authorized = store.load()
-        completion_marker = authorized[
-            PENDING_CONTROLLER_COMPLETION_KEY
-        ]
-        staged_completion = load_prepared_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_marker,
-        )
-        staged_completion.discard()
-        publish = MagicMock(
-            side_effect=AssertionError(
-                "missing completion stage authorized publication"
-            )
-        )
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            publish,
-        )
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "entrypoint ran with missing completion stage"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", runner)
-
-        result = ctrl.run("msg", "banzai")
-
-        failed = store.load()
-        assert result.status == "blocked"
-        assert runner.call_count == 0
-        assert publish.call_count == 0
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY] == (
-            completion_marker
-        )
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == (
-            publication.marker.to_dict()
-        )
-        assert failed["controller_completion_failure"]["code"] == (
-            "stage_missing"
-        )
-
-    def test_routed_publication_orders_marker_before_publish_and_success_work(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        calls: list[str] = []
-        route = ctrl._coordinate_transition_routing
-        advance = store.advance
-        publish = PreparedSquadPublication.publish
-        handoff = store.handoff_external_publication
-
-        def stage(*_args, **_kwargs):
-            calls.append("stage")
-            return prepared
-
-        def record_route(*args, **kwargs):
-            calls.append("route")
-            return route(*args, **kwargs)
-
-        def record_advance(*args, **kwargs):
-            receipt = advance(*args, **kwargs)
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == prepared.marker.to_dict()
-            )
-            assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-            calls.append("advance")
-            return receipt
-
-        def record_publish(publication):
-            assert (
-                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
-                == prepared.marker.to_dict()
-            )
-            assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY][
-                "step"
-            ] == "awaiting_publication"
-            calls.append("publish")
-            return publish(publication)
-
-        def record_handoff(marker, completion):
-            result = handoff(marker, completion)
-            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-            assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY][
-                "step"
-            ] != "awaiting_publication"
-            calls.append("handoff")
-            return result
-
-        monkeypatch.setattr(ctrl, "_prepare_external_phase_effects", stage)
-        monkeypatch.setattr(
-            ctrl,
-            "_coordinate_transition_routing",
-            record_route,
-        )
-        monkeypatch.setattr(store, "advance", record_advance)
-        monkeypatch.setattr(
-            PreparedSquadPublication,
-            "publish",
-            record_publish,
-        )
-        monkeypatch.setattr(
-            store,
-            "handoff_external_publication",
-            record_handoff,
-        )
-
-        ctrl.run_single_phase(
-            "phase3-tasks-lexicon",
-            "msg",
-            "banzai",
-        )
-
-        assert calls == [
-            "stage",
-            "route",
-            "advance",
-            "publish",
-            "handoff",
-        ]
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
-        assert store.load()["last_dispatch"][
-            "post_dispatch_complete"
-        ] is True
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
 
     @pytest.mark.parametrize("failure", ["stale", "save"])
     def test_routed_precommit_failure_discards_unreferenced_stage_without_publish(
@@ -5358,7 +4645,7 @@ class TestAgentResultIntegrity:
                 nonlocal injected
                 if (
                     not injected
-                    and PENDING_EXTERNAL_PUBLICATION_KEY in state
+                    and PENDING_SPEC_STEP_KEY in state
                 ):
                     injected = True
                     raise OSError("injected routing save failure")
@@ -5372,7 +4659,7 @@ class TestAgentResultIntegrity:
 
         ctrl.run("msg", "banzai")
 
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
         assert not transaction_root.exists()
         assert targets["replace"].read_text(encoding="utf-8") == (
             "old replace\n"
@@ -5425,11 +4712,10 @@ class TestAgentResultIntegrity:
             )
 
         assert first.status == "blocked"
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-        completion_id = store.load()[
-            PENDING_CONTROLLER_COMPLETION_KEY
-        ]["completion_id"]
+        assert PENDING_SPEC_STEP_KEY in store.load()
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in store.load()
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in store.load()
+        completion_id = store.load()[PENDING_SPEC_STEP_KEY]["step_id"]
 
         monkeypatch.setattr(
             PreparedSquadPublication,
@@ -5461,8 +4747,9 @@ class TestAgentResultIntegrity:
             assert locked_runner.call_count == 0
 
         recovered = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
+        assert PENDING_SPEC_STEP_KEY not in recovered
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in recovered
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in recovered
         assert recovered["last_dispatch"]["dispatch_id"] == completion_id
         assert recovered["last_dispatch"][
             "post_dispatch_complete"
@@ -5555,6 +4842,7 @@ class TestSquadControllerBasics:
             "status": "checkpointed",
         }
         prepared = {
+            "phase_a_state_version": 1,
             "run_id": "run-test",
             "status": "preparing",
             "phase": "phase0-constitution",
@@ -5664,6 +4952,10 @@ class TestSquadControllerBasics:
 
     def test_generation_change_does_not_block_manual_spec_phase(self, tmp_path):
         provider = _mock_provider("ALIGNED")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
@@ -5992,12 +5284,37 @@ class TestSquadControllerBasics:
 
         def consensus_result(project_root: str, prompt: str, *args, **kwargs):
             if "Operate in **PLAN2** mode" in prompt:
-                return SquadAgentResult(
+                return _publish_mock_outputs(SquadAgentResult(
                     exit_code=0,
                     echelon_result={"verdict": "COMPLETE", "state_updates": {}},
                     raw_output="",
                     duration_ms=100,
                     timed_out=False,
+                ), kwargs)
+            if "Operate in **WHY3** mode" in prompt:
+                for output in (
+                    spec_dir / "issues.md",
+                    spec_dir / "quality-gates.md",
+                ):
+                    replacement = output.with_name(
+                        f".{output.name}.fixture-current"
+                    )
+                    replacement.write_bytes(output.read_bytes())
+                    replacement.replace(output)
+            if "Operate in **ASSESS2** mode" in prompt:
+                report = spec_dir / "implementability-report.md"
+                replacement = report.with_name(f".{report.name}.fixture-current")
+                replacement.write_bytes(report.read_bytes())
+                replacement.replace(report)
+                return SquadAgentResult(
+                    exit_code=default_result.exit_code,
+                    echelon_result={
+                        **default_result.echelon_result,
+                        "output_files": [str(report)],
+                    },
+                    raw_output=default_result.raw_output,
+                    duration_ms=default_result.duration_ms,
+                    timed_out=default_result.timed_out,
                 )
             return default_result
 
@@ -6015,6 +5332,10 @@ class TestSquadControllerBasics:
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "issues.md").write_text("# Issues\n", encoding="utf-8")
+        (spec_dir / "quality-gates.md").write_text(
+            "# Quality Gates\n", encoding="utf-8"
+        )
         (spec_dir / "implementability-report.md").write_text(
             "# implementability-report.md\n",
             encoding="utf-8",
@@ -6023,6 +5344,10 @@ class TestSquadControllerBasics:
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
+        default_result.echelon_result["output_files"] = [
+            str(spec_dir / "issues.md"),
+            str(spec_dir / "quality-gates.md"),
+        ]
         _install_passing_understanding(monkeypatch)
 
         result = ctrl.run("msg", "semi")
@@ -6058,6 +5383,10 @@ class TestSquadControllerBasics:
                 "state_updates": {"quality_scores": [{"pass": False}]},
             },
             raw_output="", duration_ms=0, timed_out=False,
+        )
+        configured = provider.exec_agent.return_value
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(copy.deepcopy(configured), kwargs)
         )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
@@ -6288,6 +5617,10 @@ class TestSquadControllerBasics:
                 "state_updates": {"quality_scores": [{"pass": True}]},
             },
             raw_output="", duration_ms=0, timed_out=False,
+        )
+        configured = provider.exec_agent.return_value
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(copy.deepcopy(configured), kwargs)
         )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
@@ -7089,7 +6422,7 @@ class TestSquadControllerBasics:
         assert remediation["qualitative_findings"] == qualitative_findings
 
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
-        from echelon.cli import _classify_run_recovery
+        from echelon.spec_service import _classify_run_recovery
 
         ctrl, store = _controller(tmp_path)
         store.initialize(
@@ -7347,6 +6680,109 @@ class TestSquadControllerBasics:
         assert state["blocked_decision"]["resolved_by"] is None
         provider.exec_agent.assert_not_called()
 
+    def test_banzai_commander_resolution_is_sealed_as_result_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": "approve",
+                    "answer_text": None,
+                    "rationale": "The sealed checkpoint evidence is current.",
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+            token_usage=9,
+            cost_usd=0.4,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            100,
+            "phase3-how",
+            autonomy_mode="banzai",
+        )
+        policy = HumanInputPolicy(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            reason_code="test_approval_required",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="gate_outcome",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase3-how"}),
+            allowed_target_phases=frozenset(
+                {"phase3-how", "terminal-blocked"}
+            ),
+            context_state_keys=("phase",),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="approve",
+                    label="Approve",
+                    description="Continue.",
+                    recommended=True,
+                    risk_level="low",
+                    next_phase="phase3-how",
+                    outcome="approved",
+                ),
+                HumanInputOption(
+                    id="reject",
+                    label="Reject",
+                    description="Stop.",
+                    recommended=False,
+                    risk_level="medium",
+                    next_phase="terminal-blocked",
+                    outcome="rejected",
+                ),
+            ),
+            recommendation_mode="static",
+        )
+        ctrl._human_input_registry = HumanInputPolicyRegistry((policy,))
+        request = ctrl._human_input_registry.prepare(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            phase_id="phase3-how",
+            reason_code="test_approval_required",
+            question="Continue?",
+            source_state_revision=store.load()["state_revision"],
+        )
+        captured: list[dict[str, object]] = []
+        real_prepare = squad_module.prepare_spec_step
+
+        def capture_step(*args, **kwargs):
+            prepared = real_prepare(*args, **kwargs)
+            captured.append(prepared.intent.provenance)
+            return prepared
+
+        monkeypatch.setattr(squad_module, "prepare_spec_step", capture_step)
+
+        assert ctrl.handle_human_input(request) is True
+
+        assert captured[-1]["provider_execution"]["receipts"][0][
+            "assignment_id"
+        ] == "commander/human-resolution"
+        assert captured[-1]["provider_execution"]["receipts"][0][
+            "outputs"
+        ] == []
+        assert store.load()["token_usage"] == 9
+        assert store.load()["cost_usd"] == 0.4
+        metadata = provider.exec_agent.call_args.kwargs["prompt_metadata"]
+        assert metadata["tool_write_paths"] == []
+        assert metadata["tool_write_scope_exclusive"] is True
+
     def test_semi_escalation_stops_run(self, tmp_path):
         """Semi mode: blocked+escalation_question → run stops with status=blocked."""
         ctrl, store = _controller(tmp_path)
@@ -7526,6 +6962,19 @@ def _proportional_assessment_fixture(
     }, why2_result
 
 
+def _publish_current_sage_reports(
+    spec_dir: Path,
+    result: SquadAgentResult,
+) -> SquadAgentResult:
+    outputs = [spec_dir / "issues.md", spec_dir / "quality-gates.md"]
+    for output in outputs:
+        replacement = output.with_name(f".{output.name}.fixture-current")
+        replacement.write_bytes(output.read_bytes())
+        replacement.replace(output)
+    result.echelon_result["output_files"] = [str(output) for output in outputs]
+    return result
+
+
 def _make_proportional_assessment_numerically_passing(
     updates: dict[str, object],
 ) -> None:
@@ -7684,7 +7133,7 @@ def _run_proportional_quality_loop(
                 ) from exc
         if "# Phase: phase1-why2" in prompt:
             calls["why2"] += 1
-            return SquadAgentResult(
+            result = SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "FAIL",
@@ -7705,6 +7154,10 @@ def _run_proportional_quality_loop(
                 duration_ms=0,
                 timed_out=False,
             )
+            return _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                result,
+            )
         if "# Phase: phase1-what" in prompt:
             calls["what"] += 1
             spec_dir = tmp_path / "runs/run-test/specs/001-demo"
@@ -7714,6 +7167,15 @@ def _run_proportional_quality_loop(
                     f"- FR-001: The system shall render repair {calls['what']}.\n",
                     encoding="utf-8",
                 )
+            else:
+                spec_path = spec_dir / "spec.md"
+                replacement = spec_dir / ".spec.md.fixture-current"
+                replacement.write_bytes(spec_path.read_bytes())
+                replacement.replace(spec_path)
+            overview = spec_dir / "requirements-overview.md"
+            replacement = spec_dir / ".requirements-overview.md.fixture-current"
+            replacement.write_bytes(overview.read_bytes())
+            replacement.replace(overview)
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
@@ -7809,8 +7271,10 @@ def _older_best_proportional_quality_loop(
     state = store.load()
     state.update(current_updates)
     store.save(state)
-    ctrl._provider.exec_agent.side_effect = None
-    ctrl._provider.exec_agent.return_value = current_result
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+        _publish_current_sage_reports(spec_dir, current_result)
+    )
     return ctrl, store, current_text
 
 
@@ -7856,7 +7320,7 @@ def _proportional_history_then_unchanged_what(
     store.save(state)
     spec_dir = tmp_path / "runs/run-test/specs/001-demo"
     ctrl._provider.exec_agent.side_effect = None
-    ctrl._provider.exec_agent.return_value = SquadAgentResult(
+    result = SquadAgentResult(
         exit_code=0,
         echelon_result={
             "verdict": "DONE",
@@ -7870,6 +7334,18 @@ def _proportional_history_then_unchanged_what(
         duration_ms=0,
         timed_out=False,
     )
+
+    def publish_unchanged_what(*_args, **_kwargs):
+        for output in (
+            spec_dir / "spec.md",
+            spec_dir / "requirements-overview.md",
+        ):
+            replacement = output.with_name(f".{output.name}.fixture-current")
+            replacement.write_bytes(output.read_bytes())
+            replacement.replace(output)
+        return result
+
+    ctrl._provider.exec_agent.side_effect = publish_unchanged_what
     return ctrl, store
 
 
@@ -7933,6 +7409,37 @@ class TestProportionalQualityController:
 
         assert ctrl._prepare_banzai_quality_issue_resolution(snapshot, assessment) is None
         assert store.load() == snapshot.state
+
+    def test_banzai_candidates_ignore_selected_issue_validation_receipt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Audit receipts outside Issues cannot become repair candidates."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        content = (
+            issues_path.read_text(encoding="utf-8")
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        issues_path.write_text(
+            content
+            + """
+
+## Selected Issue Validation
+
+### ISS-001: Residual quality debt
+- **Outcome:** resolved
+- **Evidence:** spec.md now contains the required correction.
+- **Rationale:** The selected repair matches the controller decision.
+""",
+            encoding="utf-8",
+        )
+
+        candidates = ctrl._banzai_issue_resolution_candidates(store.load())
+
+        assert [candidate["issue_id"] for candidate in candidates] == ["ISS-001"]
 
     @pytest.mark.parametrize("legacy_option", [False, True])
     def test_issue_options_bind_current_artifact_evidence_and_read_legacy_seals(
@@ -8011,6 +7518,84 @@ class TestProportionalQualityController:
         selected = persisted["issue_resolution_ledger"]["ISS-001"]
         assert selected["status"] == "selected"
         assert selected["issue_fingerprint"] != previous.get("issue_fingerprint")
+        assert selected["previous_resolutions"] == [previous]
+        ctrl._provider.exec_agent.assert_not_called()
+
+    def test_banzai_reused_issue_id_replaces_active_repaired_finding(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A changed fingerprint stays targeted while repair budget remains."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        base = (
+            issues_path.read_text(encoding="utf-8")
+            .replace("ISS-QUALITY-0", "ISS-002")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        old = base.replace(
+            "Residual quality debt",
+            "Compound criteria reduce atomicity and traceability",
+        )
+        issues_path.write_text(old, encoding="utf-8")
+        state = store.load()
+        old_candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        old_selection = ctrl._validate_banzai_issue_resolution_selection(
+            {
+                "issue_id": "ISS-002",
+                "decision": old_candidate["suggested_option"],
+                "rationale": old_candidate["evidence_basis"],
+                "confidence": "high",
+                "evidence_backed": True,
+            },
+            [old_candidate],
+        )
+        old_resolution = ctrl._issue_resolution_state_updates(
+            state,
+            old_selection,
+            source_phase="phase1-why2",
+        )
+        previous = old_resolution["issue_resolution_ledger"]["ISS-002"]
+        previous["status"] = "repaired"
+        state.update(updates)
+        state.update(old_resolution)
+        state["autonomy_mode"] = "banzai"
+        store.save(state)
+
+        current = (
+            base.replace(
+                "Residual quality debt",
+                "Data-collection negative check does not verify the prohibited behavior",
+            )
+            .replace("**Affected section:** Requirements", "**Affected section:** AC-000018")
+            .replace(
+                "Amend the specification.",
+                "Amend only AC-000018 to exclude collection and data flows.",
+            )
+        )
+        issues_path.write_text(current, encoding="utf-8")
+        current_candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        why2.echelon_result["state_updates"]["finding_routes"]["findings"][0][
+            "issue_id"
+        ] = "ISS-002"
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "terminal-blocked"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["status"] == "running"
+        assert "quality_gate_remediation" not in persisted
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+        assert persisted["selected_issue_resolution"] == "ISS-002"
+        selected = persisted["issue_resolution_ledger"]["ISS-002"]
+        assert selected["status"] == "selected"
+        assert selected["issue_fingerprint"] == current_candidate["issue_fingerprint"]
         assert selected["previous_resolutions"] == [previous]
         ctrl._provider.exec_agent.assert_not_called()
 
@@ -8254,6 +7839,14 @@ class TestProportionalQualityController:
 ## Issues
 
 No issue remains for the selected repair. The certified aggregate gates still fail.
+
+## Selected Issue Validation
+
+### ISS-001: Residual quality debt
+- **Outcome:** resolved
+- **Affected artifact:** spec.md
+- **Evidence:** The selected correction is present in the current specification.
+- **Rationale:** The repaired artifact implements the controller-bound decision.
 """,
             encoding="utf-8",
         )
@@ -8685,7 +8278,9 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(updates)
         store.save(state)
         ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = result
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, result)
+        )
 
         run = ctrl.run("msg", "semi")
 
@@ -8715,7 +8310,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(updates)
         store.save(state)
         ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = result
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                result,
+            )
+        )
 
         run = ctrl.run("msg", "semi")
 
@@ -8965,7 +8565,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ctrl.run("msg", "semi")
 
         interrupted = store.load()
-        assert interrupted[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
+        assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == (
             "quality"
         )
         assert crashed is True
@@ -8995,7 +8595,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
+        assert PENDING_SPEC_STEP_KEY not in recovered
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in recovered
         assert recovered["blocked_reason"] == (
             "proportional_quality_budget_exhausted"
         )
@@ -9070,8 +8671,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert injected is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert subprocess.run(
@@ -9140,8 +8741,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         failed = fresh_store.load()
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert index_path.is_symlink()
@@ -9191,8 +8792,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert injected is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert target.read_bytes() == drift
@@ -9306,8 +8907,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         with pytest.raises(KeyboardInterrupt, match="process death"):
             ctrl.run("prepare a recoverable restore", "semi")
 
-        marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
-        prepared = load_prepared_controller_completion(
+        step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            store.load()[PENDING_SPEC_STEP_KEY],
+        )
+        marker = ctrl._completion_marker_from_spec_step(step)
+        prepared = load_prepared_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
             marker,
@@ -9432,7 +9037,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
                 effect,
                 completion_id=prepared.intent.completion_id,
                 project_root=tmp_path,
-                state=store.load(),
+                state=step.intent.final_state,
                 route=prepared.intent.route,
                 preceding_checkpoint_receipt=(
                     prepared.receipts["effects"].get("checkpoint")
@@ -9473,8 +9078,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
-        assert recovered[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert recovered["controller_completion_failure"]["code"] == (
+        assert recovered[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert recovered[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert journal.read_bytes() == journal_before
@@ -9539,8 +9144,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             real_materialize,
         )
 
-        marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
-        prepared = load_prepared_controller_completion(
+        step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            store.load()[PENDING_SPEC_STEP_KEY],
+        )
+        marker = ctrl._completion_marker_from_spec_step(step)
+        prepared = load_prepared_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
             marker,
@@ -9671,7 +9280,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
                 effect,
                 completion_id=prepared.intent.completion_id,
                 project_root=tmp_path,
-                state=store.load(),
+                state=step.intent.final_state,
                 route=prepared.intent.route,
                 preceding_checkpoint_receipt=(
                     prepared.receipts["effects"].get("checkpoint")
@@ -9712,7 +9321,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             tmp_path,
             change_what=False,
         )
-        real_effect = squad_module.apply_or_verify_proportional_quality_effect
+        real_effect = spec_step_effects_module.apply_or_verify_proportional_quality_effect
         spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
         source_before = spec_path.read_bytes()
         replaced = False
@@ -9733,7 +9342,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             return real_effect(effect, **kwargs)
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             replace_manifest_then_apply,
         )
@@ -9743,8 +9352,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         failed = store.load()
         assert replaced is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert spec_path.read_bytes() == source_before
@@ -9802,8 +9411,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
         assert replaced is True
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert failed["proportional_quality_candidate_evidence"][
@@ -9851,7 +9460,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         ctrl, store, current_text = _older_best_proportional_quality_loop(
             tmp_path
         )
-        apply_effect = squad_module.apply_or_verify_proportional_quality_effect
+        apply_effect = spec_step_effects_module.apply_or_verify_proportional_quality_effect
         replaced = False
         before_effect: dict[str, object] | None = None
         spec_dir = tmp_path / "runs/run-test/specs/001-demo"
@@ -9909,7 +9518,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             return apply_effect(effect, **kwargs)
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             replace_manifest_then_apply,
         )
@@ -9921,8 +9530,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert replaced is True
         assert before_effect is not None
         assert result.status == "blocked"
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        assert failed["controller_completion_failure"]["code"] == (
+        assert failed[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        assert failed[PENDING_SPEC_STEP_KEY]["failure"]["code"] == (
             "receipts_mismatch"
         )
         assert spec_path.read_text(encoding="utf-8") == current_text
@@ -9981,7 +9590,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         state.update(updates)
         store.save(state)
-        provider.exec_agent.return_value = SquadAgentResult(
+        passing_result = SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "PASS",
@@ -9993,6 +9602,12 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             raw_output="",
             duration_ms=0,
             timed_out=False,
+        )
+        provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(
+                tmp_path / "runs/run-test/specs/001-demo",
+                passing_result,
+            )
         )
 
         ctrl.run("msg", "semi")
@@ -10122,7 +9737,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             assert state["blocked_reason"] == (
                 "proportional_quality_debt_declined"
             )
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in state
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in state
         assert calls == {"why2": 1, "what": 0, "understanding": 0}
 
     def test_banzai_controller_applies_sealed_quality_choice_without_commander(
@@ -10245,7 +9860,8 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from echelon.cli import _cmd_phase, _cmd_status
+        from echelon.spec_service import _cmd_status
+        from echelon.phase_service import run_phase
 
         invalid = SquadAgentResult(
             exit_code=0,
@@ -10346,10 +9962,9 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             "harness.squad_provider.SquadCliProvider",
             lambda _config: ctrl._provider,
         )
-        _cmd_phase(
-            displayed_argv[2:],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
+        run_phase(
+            tmp_path,
+            displayed_argv[3],
         )
 
         state = store.load()
@@ -10478,23 +10093,23 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         ctrl, store, _calls = _run_proportional_quality_loop(tmp_path)
-        real_advance = store.advance_controller_completion
+        real_advance = store.advance_spec_step
         failed = False
 
-        def fail_after_quality_effect(prepared: object) -> None:
+        def fail_after_quality_effect(current: object, advanced: object) -> None:
             nonlocal failed
-            marker = getattr(prepared, "marker", None)
-            if not failed and getattr(marker, "step", None) == "quality":
+            marker = getattr(current, "cursor", None)
+            if not failed and marker == "quality":
                 failed = True
                 raise StateAdvanceError(
                     "injected quality receipt state finalization failure",
                     validator="stale_state",
                 )
-            real_advance(prepared)
+            real_advance(current, advanced)
 
         monkeypatch.setattr(
             store,
-            "advance_controller_completion",
+            "advance_spec_step",
             fail_after_quality_effect,
         )
 
@@ -10503,11 +10118,15 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         assert failed is True
         assert first.status == "blocked"
-        assert state[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        completion_id = state[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
+        assert state[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        completion_id = state[PENDING_SPEC_STEP_KEY][
+            "step_id"
         ]
-        assert state["phase1_quality_repair"]["candidate_ids"] == [
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            state[PENDING_SPEC_STEP_KEY],
+        )
+        assert sealed_step.intent.final_state["phase1_quality_repair"]["candidate_ids"] == [
             "quality-candidate-0"
         ]
         assert (
@@ -10594,8 +10213,10 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state.update(current_updates)
         store.save(state)
         provider = ctrl._provider
-        provider.exec_agent.side_effect = None
-        provider.exec_agent.return_value = _result
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, _result)
+        )
         real_advance = store.advance
         failed = False
 
@@ -10678,25 +10299,27 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         state = store.load()
         state.update(current_updates)
         store.save(state)
-        ctrl._provider.exec_agent.side_effect = None
-        ctrl._provider.exec_agent.return_value = current
-        real_advance = store.advance_controller_completion
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        ctrl._provider.exec_agent.side_effect = lambda *_args, **_kwargs: (
+            _publish_current_sage_reports(spec_dir, current)
+        )
+        real_advance = store.advance_spec_step
         injected = False
 
-        def fail_after_restore_effect(prepared: object) -> None:
+        def fail_after_restore_effect(current: object, advanced: object) -> None:
             nonlocal injected
-            marker = getattr(prepared, "marker", None)
-            if not injected and getattr(marker, "step", None) == "quality":
+            marker = getattr(current, "cursor", None)
+            if not injected and marker == "quality":
                 injected = True
                 raise StateAdvanceError(
                     "injected restored receipt finalization failure",
                     validator="stale_state",
                 )
-            real_advance(prepared)
+            real_advance(current, advanced)
 
         monkeypatch.setattr(
             store,
-            "advance_controller_completion",
+            "advance_spec_step",
             fail_after_restore_effect,
         )
 
@@ -10706,14 +10329,14 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         pending = store.load()
         assert injected is True
         assert first.status == "blocked"
-        assert pending[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
-        completion_id = pending[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
+        assert pending[PENDING_SPEC_STEP_KEY]["cursor"] == "quality"
+        completion_id = pending[PENDING_SPEC_STEP_KEY][
+            "step_id"
         ]
         outbox_receipts = json.loads(
             (
                 ctrl._squad_dir
-                / ".completion-outbox"
+                / ".spec-step-effects"
                 / completion_id
                 / "receipts.json"
             ).read_text(encoding="utf-8")
@@ -10727,7 +10350,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert re.fullmatch(r"[0-9a-f]{64}", restore_receipt["plan_sha256"])
         assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
         calls = ctrl._provider.exec_agent.call_count
-        decision = pending["blocked_decision"]
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        decision = sealed_step.intent.final_state["blocked_decision"]
         with pytest.raises(HumanInputPolicyError, match="completion.*pending"):
             ctrl.apply_human_input_resolution(
                 decision["id"],
@@ -10740,16 +10367,17 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             )
         after_rejected = store.load()
         assert after_rejected == pending
-        assert after_rejected["phase1_quality_repair"][
+        assert sealed_step.intent.final_state["phase1_quality_repair"][
             "extension_authorized"
         ] == 0
-        assert after_rejected["blocked_decision"]["status"] == "awaiting_human"
+        assert decision["status"] == "awaiting_human"
 
         reconciled = ctrl.run("reconcile the pending restore", "semi")
 
         after_reconcile = store.load()
         assert reconciled.status == "blocked"
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in after_reconcile
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in after_reconcile
+        assert PENDING_SPEC_STEP_KEY not in after_reconcile
         assert after_reconcile["phase1_quality_repair"][
             "extension_authorized"
         ] == 0
@@ -10760,7 +10388,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
 
         assert ctrl._provider.exec_agent.call_count == calls
         resolved = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in resolved
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in resolved
         assert resolved["phase"] == "phase1-what"
         assert resolved["phase1_quality_repair"]["extension_authorized"] == 1
         assert resolved["blocked_decision"]["status"] == "resolved"
@@ -10938,7 +10566,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         store.save(state)
         _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
         real_effect = getattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             None,
         )
@@ -10950,34 +10578,49 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             raise CompletionError("stage_io")
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             fail_effect,
             raising=False,
         )
         provider_calls = ctrl._provider.exec_agent.call_count
+        decision_id = str(store.load()["blocked_decision"]["id"])
 
         assert ctrl.resume_with_human_input("continue_with_debt") is False
 
         debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
         pending = store.load()
         assert not debt_path.exists()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
-        assert pending["blocked_reason"] == "controller_completion_pending"
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in pending
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
+        sealed = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        assert sealed.intent.origin == "resolution"
+        assert sealed.intent.route["decision_id"] == decision_id
+        effect_intent = sealed.intent.provenance["effect_intent"]
+        assert effect_intent["completion_id"] == sealed.marker.step_id
+        assert effect_intent["origin"] == "resolution"
+        assert effect_intent["route"] == sealed.intent.route
+        assert effect_intent["effect_plan"] == ["quality"]
         ctrl.run("must reconcile before downstream", "semi")
         assert ctrl._provider.exec_agent.call_count == provider_calls
         assert effect_calls >= 2
 
         assert real_effect is not None
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
         assert recovered.recovered is True
         assert debt_path.is_file()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        completed = store.load()
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in completed
+        assert PENDING_SPEC_STEP_KEY not in completed
 
     def test_stop_removes_stale_debt_artifact_through_recoverable_effect(
         self,
@@ -11001,7 +10644,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         assert stopped["blocked_reason"] == "proportional_quality_debt_declined"
         assert not debt_path.exists()
         assert "spec_quality_debt_authorization" not in stopped
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in stopped
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in stopped
 
 
     @pytest.mark.parametrize(
@@ -11016,11 +10659,11 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             ("invalid_mandatory_artifact", "missing_phase_outputs"),
             (
                 "state_contract",
-                "controller_state_contract_validation_failed",
+                "invalid_phase_outputs",
             ),
             (
                 "debt_state_contract",
-                "controller_state_contract_validation_failed",
+                "invalid_phase_outputs",
             ),
         ],
     )
@@ -11136,7 +10779,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
         interrupted = False
         if restoration_hooks:
             import harness.squad as squad_module
-            native_effect = squad_module.apply_or_verify_proportional_quality_effect
+            native_effect = spec_step_effects_module.apply_or_verify_proportional_quality_effect
             def coordinated_effect(effect, **kwargs):
                 if effect.get("restore_candidate_id") is not None:
                     root = kwargs["project_root"]
@@ -11165,7 +10808,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
                 except KeyboardInterrupt:
                     assert interrupted
                     return native_effect(effect, **kwargs)
-            monkeypatch.setattr(squad_module, "apply_or_verify_proportional_quality_effect", coordinated_effect)
+            monkeypatch.setattr(spec_step_effects_module, "apply_or_verify_proportional_quality_effect", coordinated_effect)
         ctrl, store = _start_proportional_quality_loop(tmp_path)
         retained_candidate = PROPORTIONAL_HELLO_WORLD_FIXTURE.read_text(
             encoding="utf-8"
@@ -11871,6 +11514,10 @@ def test_run_single_phase_rejects_provider_and_safeguard_question_overlap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = _mock_provider("ALIGNED")
+    default_dispatch = provider.exec_agent.side_effect
+    provider.exec_agent.side_effect = lambda *args, **kwargs: (
+        _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+    )
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize(
         "r",
@@ -11913,6 +11560,7 @@ def test_run_single_phase_rejects_provider_and_safeguard_question_overlap(
         return_value=SimpleNamespace(
             decision=decision,
             human_input=safeguard_request,
+            execution=None,
         )
     )
     ctrl._prepare_provider_human_input = MagicMock(
@@ -11937,6 +11585,10 @@ class TestConvergenceRoutingGuard:
         _disable_governance_gate(tmp_path)
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
         state = store.load()
@@ -11962,6 +11614,10 @@ class TestConvergenceRoutingGuard:
         _disable_governance_gate(tmp_path)
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
+        default_dispatch = provider.exec_agent.side_effect
+        provider.exec_agent.side_effect = lambda *args, **kwargs: (
+            _publish_mock_outputs(default_dispatch(*args, **kwargs), kwargs)
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
         state = store.load()
@@ -12052,306 +11708,29 @@ class TestConsensusAcceptWithRiskRouting:
         assert _evaluate_prepared_result(ctrl, gate, gate_result) == "checkpoint-plan"
 
 
-class TestBuildPhaseRouting:
-    """Regression: 12 build-phase transition conditions used lowercase 'and'
-    (e.g. 'verdict = FAIL and fix_cycle < 2'). The evaluator splits only on
-    uppercase AND/OR, so every compound was treated as a single field=value
-    match that always returned False — fix-cycle routing was silently broken.
-
-    Each test starts SquadController at the relevant build phase, injects the
-    appropriate initial state (fix_cycle, etc.), and asserts the first
-    (from, to) transition recorded by patching store.advance.
-    """
-
-    def _sequenced(self, responses: list) -> MagicMock:
-        """Provider whose exec_agent returns responses in order, then DONE."""
-        idx = {"n": 0}
-        provider = _mock_provider()
-
-        def _side_effect(*args, **kwargs):
-            if "COMMANDER JUDGMENT REQUEST" in str(args[1]):
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "JUDGMENT_RESOLVED",
-                        "state_updates": {},
-                    },
-                    raw_output="",
-                    duration_ms=0,
-                    timed_out=False,
-                )
-            i = idx["n"]
-            idx["n"] += 1
-            verdict, updates = responses[i] if i < len(responses) else ("DONE", {})
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": verdict, "state_updates": updates},
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            )
-
-        provider.exec_agent.side_effect = _side_effect
-        return provider
-
-    def _run_and_capture(
-        self,
-        tmp_path: Path,
-        start_phase: str,
-        initial_state: dict,
-        provider: MagicMock,
-    ) -> list:
-        """Run from start_phase and return list of (from_phase, to_phase) transitions."""
-        ctrl, store = _controller(tmp_path, provider)
-        store.initialize("r", "banzai", "msg", 0, start_phase)
-        state = store.load()
-        state.update(initial_state)
-        store.save(state)
-        _mark_constitution_complete(tmp_path, store)
-
-        with patch.object(store, "advance", wraps=store.advance) as spy:
-            ctrl.run("msg", "banzai")
-
-        return [(c.args[0], c.args[1]) for c in spy.call_args_list]
-
-    # Shared terminal tail: once a gate passes, drive to build-done quickly.
-    # Sequence after the gate under test: implement→spec-guard→code-review→
-    # test-guard→progress(all_done)→build-8-finalize(no-op)→build-done.
-    _TAIL_FROM_IMPLEMENT = [
-        ("DONE", {}),                # implement → spec-guard
-        ("PASS", {}),                # spec-guard → code-review
-        ("APPROVED", {}),            # code-review → test-guard
-        ("PASS", {}),                # test-guard → progress
-        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
-    ]
-    _TAIL_FROM_SPEC_GUARD = [
-        ("PASS", {}),                # spec-guard → code-review
-        ("APPROVED", {}),            # code-review → test-guard
-        ("PASS", {}),                # test-guard → progress
-        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
-    ]
-    _TAIL_FROM_CODE_REVIEW = [
-        ("APPROVED", {}),            # code-review → test-guard
-        ("PASS", {}),                # test-guard → progress
-        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
-    ]
-    _TAIL_FROM_TEST_GUARD = [
-        ("PASS", {}),                # test-guard → progress
-        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
-    ]
-    _TAIL_FROM_PROGRESS = [
-        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
-    ]
-
-    # ── build-3-spec-guard ──────────────────────────────────────────────────
-
-    def test_spec_guard_fail_early_routes_to_implement(self, tmp_path):
-        """FAIL AND fix_cycle < 2 → implement (fix cycle)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-3-spec-guard",
-            initial_state={"fix_cycle": 0},
-            provider=self._sequenced(
-                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-3-spec-guard", "build-2-implement")
-
-    def test_spec_guard_fail_late_routes_to_code_review(self, tmp_path):
-        """FAIL AND fix_cycle >= 2 → code-review (DEGRADED, skip back-route)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-3-spec-guard",
-            initial_state={"fix_cycle": 2},
-            provider=self._sequenced(
-                [("FAIL", {})] + self._TAIL_FROM_CODE_REVIEW
-            ),
-        )
-        assert transitions[0] == ("build-3-spec-guard", "build-4-code-review")
-
-    # ── build-4-code-review ─────────────────────────────────────────────────
-
-    def test_code_review_changes_early_routes_to_implement(self, tmp_path):
-        """CHANGES_REQUESTED AND fix_cycle < 2 → implement."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-4-code-review",
-            initial_state={"fix_cycle": 0},
-            provider=self._sequenced(
-                [("CHANGES_REQUESTED", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-4-code-review", "build-2-implement")
-
-    def test_code_review_changes_late_routes_to_test_guard(self, tmp_path):
-        """CHANGES_REQUESTED AND fix_cycle >= 2 → test-guard (DEGRADED)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-4-code-review",
-            initial_state={"fix_cycle": 2},
-            provider=self._sequenced(
-                [("CHANGES_REQUESTED", {})] + self._TAIL_FROM_TEST_GUARD
-            ),
-        )
-        assert transitions[0] == ("build-4-code-review", "build-5-test-guard")
-
-    # ── build-5-test-guard ──────────────────────────────────────────────────
-
-    def test_test_guard_fail_early_routes_to_implement(self, tmp_path):
-        """FAIL AND fix_cycle < 2 → implement."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-5-test-guard",
-            initial_state={"fix_cycle": 0},
-            provider=self._sequenced(
-                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-5-test-guard", "build-2-implement")
-
-    def test_test_guard_fail_late_routes_to_progress(self, tmp_path):
-        """FAIL AND fix_cycle >= 2 → progress (DEGRADED)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-5-test-guard",
-            initial_state={"fix_cycle": 2},
-            provider=self._sequenced(
-                [("FAIL", {})] + self._TAIL_FROM_PROGRESS
-            ),
-        )
-        assert transitions[0] == ("build-5-test-guard", "build-6-progress")
-
-    # ── build-6-progress ────────────────────────────────────────────────────
-
-    def test_progress_all_done_routes_to_documentation(self, tmp_path):
-        """all_tasks_complete AND no_more_phase_checkpoints → build-8-documentation."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-6-progress",
-            initial_state={},
-            provider=self._sequenced(
-                [("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True})]
-            ),
-        )
-        assert transitions[0] == ("build-6-progress", "build-8-documentation")
-
-    def test_progress_more_tasks_routes_to_implement(self, tmp_path):
-        """more_tasks_in_phase_group → build-2-implement (next task)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-6-progress",
-            initial_state={"more_tasks_in_phase_group": True},
-            provider=self._sequenced(
-                [("DONE", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-6-progress", "build-2-implement")
-
-    # ── build-7-integration ─────────────────────────────────────────────────
-
-    def test_integration_fail_early_routes_to_implement(self, tmp_path):
-        """FAIL AND fix_cycle < 2 → implement."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-7-integration",
-            initial_state={"fix_cycle": 0},
-            provider=self._sequenced(
-                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-7-integration", "build-2-implement")
-
-    def test_integration_fail_late_routes_to_documentation(self, tmp_path):
-        """FAIL AND fix_cycle >= 2 → build-8-documentation (DEGRADED)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-7-integration",
-            initial_state={"fix_cycle": 2},
-            provider=self._sequenced([("FAIL", {})]),
-        )
-        assert transitions[0] == ("build-7-integration", "build-8-documentation")
-
-    def test_integration_pass_more_groups_routes_to_implement(self, tmp_path):
-        """PASS AND more_phase_groups → implement (next phase group)."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-7-integration",
-            initial_state={"more_phase_groups": True},
-            provider=self._sequenced(
-                [("PASS", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-7-integration", "build-2-implement")
-
-    def test_integration_pass_all_done_routes_to_documentation(self, tmp_path):
-        """PASS AND all_phase_groups_complete → build-8-documentation."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-7-integration",
-            initial_state={"all_phase_groups_complete": True},
-            provider=self._sequenced([("PASS", {})]),
-        )
-        assert transitions[0] == ("build-7-integration", "build-8-documentation")
-
-    def test_documentation_routes_to_docs_verifier(self, tmp_path):
-        """TECH WRITER output is verified before build finalization."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-8-documentation",
-            initial_state={},
-            provider=self._sequenced([("DONE", {})]),
-        )
-        assert transitions[0] == ("build-8-documentation", "build-8-verify-docs")
-
-    def test_docs_verifier_pass_routes_to_finalize(self, tmp_path):
-        """Docs verifier PASS → build-8-finalize."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-8-verify-docs",
-            initial_state={},
-            provider=self._sequenced([("PASS", {})]),
-        )
-        assert transitions[0] == ("build-8-verify-docs", "build-8-finalize")
-
-    def test_docs_verifier_fail_routes_to_documentation_repair(self, tmp_path):
-        """Docs verifier FAIL → TECH WRITER repair loop."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-8-verify-docs",
-            initial_state={},
-            provider=self._sequenced([("FAIL", {})]),
-        )
-        assert transitions[0] == ("build-8-verify-docs", "build-8-documentation")
-
-    # ── build-2-implement (self-loop on NEEDS_CONTEXT) ──────────────────────
-
-    def test_implement_needs_context_early_retries(self, tmp_path):
-        """NEEDS_CONTEXT AND retry_count < 2 → self-loop back to implement."""
-        transitions = self._run_and_capture(
-            tmp_path,
-            start_phase="build-2-implement",
-            initial_state={"retry_count": 0},
-            provider=self._sequenced(
-                [("NEEDS_CONTEXT", {})] + self._TAIL_FROM_IMPLEMENT
-            ),
-        )
-        assert transitions[0] == ("build-2-implement", "build-2-implement")
 
 
 def test_journal_written_to_squad_dir_not_specify(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
-    ctrl, store = _controller(tmp_path, squad_dir=squad_dir)
-    store.initialize("r", "banzai", "msg", 0, "init")
-    from harness.squad_provider import SquadAgentResult
-    ctrl._provider.exec_agent.return_value = SquadAgentResult(
+    provider = _mock_provider()
+    configured = SquadAgentResult(
         exit_code=0,
         echelon_result={"verdict": "DONE", "state_updates": {},
                         "journal_entries": [{"type": "insight"}]},
         raw_output="", duration_ms=0, timed_out=False,
     )
-    ctrl.run("msg", "banzai")
+    provider.exec_agent.side_effect = lambda *args, **kwargs: (
+        _publish_mock_outputs(copy.deepcopy(configured), kwargs)
+    )
+    ctrl, store = _controller(
+        tmp_path,
+        provider=provider,
+        squad_dir=squad_dir,
+    )
+    store.initialize("r", "banzai", "msg", 0, "init")
+    ctrl.run_single_phase("phase1-discover", "msg", "banzai")
     assert (squad_dir / "reasoning-journal.jsonl").exists()
     assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
 
@@ -12426,7 +11805,7 @@ class TestConstitutionPhase:
         assert _phase_requires_constitution_provenance("phase1-what") is True
 
     def test_run_dispatches_chief_before_phase1_what_without_provenance(self, tmp_path):
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what")
         (ctrl._squad_dir / "constitution.draft.md").write_text(
@@ -12530,7 +11909,7 @@ Modified principles:
         assert state["last_dispatch"]["post_dispatch_complete"] is True
         assert "phase1-modeler" in state["completed_phases"]
         assert checkpoint_dispatches == []
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in state
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in state
         provider.exec_agent.assert_not_called()
 
     def test_completed_constitution_with_missing_artifact_blocks(self, tmp_path):
@@ -12547,7 +11926,7 @@ Modified principles:
 
     def test_chief_dispatched_in_controller(self, tmp_path):
         """SquadController dispatches an agent (not no-op) for phase1-constitution."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         ctrl.run("msg", "banzai")
@@ -12562,7 +11941,7 @@ Modified principles:
         tmp_path: Path,
     ) -> None:
         """CHIEF never needs write authority over the protected .echelon root."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         draft = ctrl._squad_dir / "constitution.draft.md"
@@ -12582,12 +11961,109 @@ Modified principles:
         assert store.load()["constitution_status"] == "exists"
         assert "phase1-constitution" in store.load()["completed_phases"]
 
+    def test_manual_chief_replay_promotes_sealed_draft_before_advancing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider_publishing_outputs()
+        ctrl, store = _controller(tmp_path, provider)
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            result = ctrl.run_single_phase(
+                "phase1-constitution",
+                "repair the constitution",
+                "banzai",
+            )
+
+        draft = ctrl._squad_dir / "constitution.draft.md"
+        canonical = tmp_path / ".echelon" / "constitution.md"
+        assert result.status == "running"
+        assert canonical.read_bytes() == draft.read_bytes()
+        assert store.load()["constitution_status"] == "exists"
+        assert "phase1-constitution" in store.load()["completed_phases"]
+
+    @pytest.mark.parametrize("crash_point", ["before", "after"])
+    def test_constitution_publication_crash_recovers_without_redispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        crash_point: str,
+    ) -> None:
+        from harness import constitution_publication
+
+        provider = _mock_provider_publishing_outputs()
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
+        canonical = tmp_path / ".echelon" / "constitution.md"
+
+        if crash_point == "before":
+            original_apply = ctrl._apply_spec_step_publication
+
+            def crash_before(*_args, **_kwargs):
+                raise KeyboardInterrupt("before constitution publication")
+
+            monkeypatch.setattr(
+                ctrl,
+                "_apply_spec_step_publication",
+                crash_before,
+            )
+        else:
+            original_publish = (
+                constitution_publication.apply_or_verify_constitution_publication
+            )
+
+            def crash_after(*args, **kwargs):
+                original_publish(*args, **kwargs)
+                raise KeyboardInterrupt("after constitution publication")
+
+            monkeypatch.setattr(
+                constitution_publication,
+                "apply_or_verify_constitution_publication",
+                crash_after,
+            )
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            with pytest.raises(KeyboardInterrupt):
+                ctrl.run("msg", "banzai")
+
+        crashed_state = store.load()
+        assert crashed_state[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
+        assert "constitution_status" not in crashed_state
+        assert "phase1-constitution" not in crashed_state["completed_phases"]
+        assert canonical.exists() is (crash_point == "after")
+        provider_calls = provider.exec_agent.call_count
+
+        if crash_point == "before":
+            monkeypatch.setattr(
+                ctrl,
+                "_apply_spec_step_publication",
+                original_apply,
+            )
+        else:
+            monkeypatch.setattr(
+                constitution_publication,
+                "apply_or_verify_constitution_publication",
+                original_publish,
+            )
+
+        recovery = ctrl._drain_pending_spec_step()
+
+        recovered_state = store.load()
+        assert recovery.recovered and not recovery.blocked
+        assert PENDING_SPEC_STEP_KEY not in recovered_state
+        assert recovered_state["constitution_status"] == "exists"
+        assert "phase1-constitution" in recovered_state["completed_phases"]
+        assert canonical.read_bytes() == (
+            ctrl._squad_dir / "constitution.draft.md"
+        ).read_bytes()
+        assert provider.exec_agent.call_count == provider_calls
+
     def test_controller_refuses_incomplete_chief_draft_without_advancing(
         self,
         tmp_path: Path,
     ) -> None:
         """An incomplete draft cannot create constitution provenance."""
-        provider = _mock_provider()
+        provider = _mock_provider_publishing_outputs()
         ctrl, store = _controller(tmp_path, provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
         (ctrl._squad_dir / "constitution.draft.md").write_text(
@@ -12687,6 +12163,114 @@ class TestCommanderJudgmentStateUpdates:
         entries = [json.loads(line) for line in journal.read_text().splitlines()]
         assert entries[0]["type"] == "state_contract_warning"
         assert entries[0]["data"]["dropped_keys"] == ["unauthorized_key"]
+
+    def test_routing_judgment_is_sealed_as_result_only_execution(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {"next_phase": "phase1-why1"},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+            token_usage=7,
+            cost_usd=0.25,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize("r", "greenfield", "msg", 100, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
+
+        routing = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert routing is not None
+        assert routing.execution is not None
+        assert routing.execution.manifest[-1].assignment_id == (
+            "commander/routing-judgment"
+        )
+        assert routing.execution.receipts[-1]["outputs"] == []
+        assert routing.decision.token_usage_delta == 7
+        assert routing.decision.cost_usd_delta == 0.25
+        metadata = provider.exec_agent.call_args.kwargs["prompt_metadata"]
+        assert metadata == {
+            "tool_read_roots": [],
+            "tool_write_paths": [],
+            "tool_write_scope_exclusive": True,
+        }
+
+    def test_multiple_routing_judgments_have_unique_occurrence_ids(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.side_effect = [
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {"next_phase": "phase1-why1"},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        ]
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = PhaseNode(
+            id="phase1-discover",
+            type="agent",
+            transitions=[
+                {"to": "phase1-tracker", "condition": "unknown.first"},
+                {"to": "phase1-why1", "condition": "unknown.second"},
+            ],
+        )
+        store.initialize("r", "greenfield", "msg", 100, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
+
+        routing = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert routing is not None
+        assert routing.decision.to_phase == "phase1-why1"
+        assert routing.execution is not None
+        assert [
+            item.occurrence_id for item in routing.execution.manifest
+        ] == [
+            "commander/routing-judgment/transition-0",
+            "commander/routing-judgment/transition-1",
+        ]
 
     def test_judgment_cannot_own_store_iteration(self, tmp_path):
         provider = _mock_provider()
@@ -15389,97 +14973,6 @@ class TestLexiconGateGuardDeterminism:
             == "phase1-lexicon-derive"
         )
 
-    @pytest.mark.parametrize("tamper", ["source", "evidence", "decision", "debt"])
-    def test_sealed_debt_publication_reauthenticates_before_apply_and_recovery(
-        self,
-        tmp_path: Path,
-        tamper: str,
-    ) -> None:
-        ctrl, store = _start_proportional_quality_loop(
-            tmp_path,
-            automatic_consumed=3,
-        )
-        active = tmp_path / "runs/run-test/specs/001-demo"
-        active.mkdir(parents=True, exist_ok=True)
-        _write_phase_a_build_inputs(active, prefix="accepted ", include_fr=True)
-        spec_text = (active / "spec.md").read_text(encoding="utf-8")
-        updates, why2 = _proportional_assessment_fixture(
-            ctrl,
-            store,
-            0,
-            spec_text=spec_text,
-        )
-        state = store.load()
-        state.update(updates)
-        store.save(state)
-        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
-        assert ctrl.resume_with_human_input("continue_with_debt")
-
-        _mark_constitution_complete(tmp_path, store)
-        published = tmp_path / "specs/001-demo"
-        published.mkdir(parents=True)
-        state = store.load()
-        state.update(
-            {
-                "phase": "phase4-document",
-                "status": "running",
-                "published_spec_dir": "specs/001-demo",
-            }
-        )
-        store.save(state)
-        kb_report = tmp_path / "runs" / "r" / "kb-apply-report.yaml"
-        kb_report.parent.mkdir(parents=True, exist_ok=True)
-        kb_report.write_text("status: degraded\n", encoding="utf-8")
-        result = SquadAgentResult(
-            exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": {}},
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
-        prepared = ctrl._prepare_external_phase_effects(
-            result,
-            "phase4-document",
-            store.load(),
-            manual_phase_run=False,
-        )
-        assert prepared is not None
-        marker = _install_publication_marker(store, prepared)
-
-        current = store.load()
-        authorization = current["spec_quality_debt_authorization"]
-        if tamper == "source":
-            (active / "spec.md").write_text(
-                spec_text + "\nchanged after sealing\n",
-                encoding="utf-8",
-            )
-        elif tamper == "evidence":
-            evidence = Path(authorization["understanding_evidence"])
-            if not evidence.is_absolute():
-                evidence = tmp_path / evidence
-            evidence.write_bytes(evidence.read_bytes() + b"\n")
-        elif tamper == "decision":
-            mutated_authorization = dict(authorization)
-            decision = dict(mutated_authorization["resolved_decision"])
-            decision["question"] = "Mutated after publication sealing."
-            mutated_authorization["resolved_decision"] = decision
-            current["spec_quality_debt_authorization"] = mutated_authorization
-            store.save(current)
-        else:
-            debt = Path(authorization["debt_artifact"])
-            if not debt.is_absolute():
-                debt = tmp_path / debt
-            debt.write_bytes(debt.read_bytes() + b"\n")
-
-        assert ctrl._publish_and_finalize(prepared, marker) is False
-        assert not (published / "quality-debt.json").exists()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
-
-        del ctrl
-        fresh, _ = _controller(tmp_path)
-        assert fresh._recover_pending_external_publication() is False
-        assert not (published / "quality-debt.json").exists()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
 
     def test_phase3_specialists_receive_pinned_debt_without_graph_path_mutation(
         self,
@@ -15606,7 +15099,7 @@ class TestLexiconGateGuardDeterminism:
         assert not debt_path.exists()
         assert "spec_quality_debt_authorization" not in amended
         assert "spec_quality_certificate" not in amended
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in amended
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in amended
 
     def test_what_debt_removal_failure_recovers_before_downstream_dispatch(
         self,
@@ -15630,13 +15123,13 @@ class TestLexiconGateGuardDeterminism:
         state["phase"] = "phase1-what"
         store.save(state)
         spec_path.write_text("# Amended specification\n", encoding="utf-8")
-        real_effect = squad_module.apply_or_verify_proportional_quality_effect
+        real_effect = spec_step_effects_module.apply_or_verify_proportional_quality_effect
 
         def fail_removal(*args: object, **kwargs: object) -> object:
             raise CompletionError("stage_io")
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             fail_removal,
         )
@@ -15666,19 +15159,30 @@ class TestLexiconGateGuardDeterminism:
 
         pending = store.load()
         assert debt_path.exists()
-        assert "spec_quality_debt_authorization" not in pending
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
-        assert pending["blocked_reason"] == "controller_completion_pending"
+        assert "spec_quality_debt_authorization" in pending
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
+        sealed_step = load_prepared_spec_step(
+            ctrl._squad_dir,
+            pending[PENDING_SPEC_STEP_KEY],
+        )
+        assert (
+            "spec_quality_debt_authorization"
+            not in sealed_step.intent.final_state
+        )
+        assert pending["blocked_reason"] == "spec_step_pending"
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
         assert recovered.recovered is True
         assert not debt_path.exists()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in store.load()
+        assert PENDING_SPEC_STEP_KEY not in store.load()
+        assert "spec_quality_debt_authorization" not in store.load()
 
     def test_what_debt_removal_unlinks_owned_symlink_without_following_target(
         self,
@@ -15731,7 +15235,7 @@ class TestLexiconGateGuardDeterminism:
         assert not debt_path.is_symlink()
         assert target.read_bytes() == b"important bytes\n"
         assert "spec_quality_debt_authorization" not in store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in store.load()
 
     def test_guard_then_fresh_debt_resolution_replaces_exact_stale_artifact(
         self,
@@ -15778,7 +15282,7 @@ class TestLexiconGateGuardDeterminism:
             == "terminal-blocked"
         )
 
-        real_effect = squad_module.apply_or_verify_proportional_quality_effect
+        real_effect = spec_step_effects_module.apply_or_verify_proportional_quality_effect
         failed_after_write = False
 
         def write_then_fail_once(*args: object, **kwargs: object) -> object:
@@ -15790,26 +15294,28 @@ class TestLexiconGateGuardDeterminism:
             return receipt
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             write_then_fail_once,
         )
 
         assert ctrl.resume_with_human_input("continue_with_debt") is False
         pending = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in pending
+        assert PENDING_SPEC_STEP_KEY in pending
         assert debt_path.read_bytes() != stale
 
         monkeypatch.setattr(
-            squad_module,
+            spec_step_effects_module,
             "apply_or_verify_proportional_quality_effect",
             real_effect,
         )
-        recovered = ctrl._drain_pending_controller_completion()
+        recovered = ctrl._drain_pending_spec_step()
 
         assert recovered.recovered is True
         accepted = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in accepted
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in accepted
+        assert PENDING_SPEC_STEP_KEY not in accepted
         assert accepted["spec_quality_debt_authorization"][
             "debt_artifact_sha256"
         ] == hashlib.sha256(debt_path.read_bytes()).hexdigest()
@@ -16409,6 +15915,7 @@ THEN: The dashboard is visible
         state = store.load()
         state.update(
             {
+                "phase_a_state_version": 1,
                 "phase": node.id,
                 "iteration": 0,
                 "max_iterations": 3,
@@ -16512,7 +16019,10 @@ THEN: The dashboard is visible
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state.update({
+            "phase_a_state_version": 1,
             "phase": node.id,
+            "run_id": "run-test",
+            "spec_id": "001-demo",
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
             "implementation_targets": ["sources/app"],
             "quality_scores": [{"pass": True, "source": "harness:understanding"}],
@@ -17075,1064 +16585,25 @@ class TestControllerCompletionOrchestration:
             self.verify_calls += 1
             return self.verify_ok and self.write_count == 1
 
-    def test_fresh_completion_authority_requires_durable_state(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        state_path = ctrl._squad_dir / "state.json"
-        before = state_path.read_bytes()
-        stage = prepared._transaction_root
-        confirm = MagicMock(
-            side_effect=StateDurabilityError(
-                "injected confirmation failure",
-                stage="confirm",
-            )
-        )
-        monkeypatch.setattr(
-            store,
-            "confirm_durable_state",
-            confirm,
-        )
 
-        first = ctrl._drain_pending_controller_completion()
-        second = ctrl._drain_pending_controller_completion()
 
-        assert first.recovered is False
-        assert second.recovered is False
-        assert confirm.call_count == 2
-        assert state_path.read_bytes() == before
-        assert stage.is_dir()
 
-    def test_fresh_publication_authority_requires_durable_state(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        _install_publication_marker(store, prepared)
-        state_path = ctrl._squad_dir / "state.json"
-        before = state_path.read_bytes()
-        stage = (
-            ctrl._squad_dir
-            / ".publication-outbox"
-            / prepared.marker.transaction_id
-        )
-        confirm = MagicMock(
-            side_effect=StateDurabilityError(
-                "injected confirmation failure",
-                stage="confirm",
-            )
-        )
-        monkeypatch.setattr(
-            store,
-            "confirm_durable_state",
-            confirm,
-        )
 
-        assert ctrl._recover_pending_external_publication() is False
-        assert ctrl._recover_pending_external_publication() is False
 
-        assert confirm.call_count == 2
-        assert state_path.read_bytes() == before
-        assert stage.is_dir()
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "old replace\n"
-        )
-        assert not targets["create"].exists()
-        assert targets["delete"].read_text(encoding="utf-8") == (
-            "old delete\n"
-        )
 
-    def test_publication_final_clear_retains_stage_when_confirmation_fails(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared, targets = _sealed_publication_fixture(ctrl)
-        marker = _install_publication_marker(store, prepared)
-        transaction_root = (
-            ctrl._squad_dir
-            / ".publication-outbox"
-            / prepared.marker.transaction_id
-        )
-        monkeypatch.setattr(
-            store,
-            "confirm_durable_state",
-            MagicMock(
-                side_effect=StateDurabilityError(
-                    "injected clear confirmation failure",
-                    stage="confirm",
-                )
-            ),
-        )
 
-        assert ctrl._publish_and_finalize(prepared, marker) is False
 
-        cleared = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in cleared
-        assert "external_publication_failure" not in cleared
-        assert transaction_root.is_dir()
-        assert targets["replace"].read_text(encoding="utf-8") == (
-            "new replace\n"
-        )
-        assert targets["create"].read_text(encoding="utf-8") == (
-            "new create\n"
-        )
-        assert not targets["delete"].exists()
 
-    def test_final_clear_retains_stage_without_durable_confirmation(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        store.complete_controller_completion(prepared)
-        cleared = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in cleared
-        assert prepared._transaction_root.is_dir()
-        monkeypatch.setattr(
-            store,
-            "confirm_durable_state",
-            MagicMock(
-                side_effect=StateDurabilityError(
-                    "injected confirmation failure",
-                    stage="confirm",
-                )
-            ),
-        )
 
-        ctrl._discard_completed_controller_stage(prepared)
-
-        assert prepared._transaction_root.is_dir()
-
-    def test_orphan_cleanup_requires_durable_state(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        orphan = prepare_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_id=uuid.uuid4().hex,
-            origin="routed",
-            publication={"kind": "none"},
-            route={
-                "kind": "routed",
-                "from_phase": "phase1-what",
-                "to_phase": "phase1-why1",
-                "manual_phase_run": False,
-                "record_completion": True,
-            },
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="power-loss old-state orphan",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        before = (ctrl._squad_dir / "state.json").read_bytes()
-        monkeypatch.setattr(
-            store,
-            "confirm_durable_state",
-            MagicMock(
-                side_effect=StateDurabilityError(
-                    "injected confirmation failure",
-                    stage="confirm",
-                )
-            ),
-        )
-
-        assert ctrl._cleanup_controller_completion_orphans() is False
-        assert (ctrl._squad_dir / "state.json").read_bytes() == before
-        assert orphan._transaction_root.is_dir()
-
-    def test_power_loss_old_state_has_no_effect_and_safe_orphan(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        orphan = prepare_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_id=uuid.uuid4().hex,
-            origin="routed",
-            publication={"kind": "none"},
-            route={
-                "kind": "routed",
-                "from_phase": "phase1-what",
-                "to_phase": "phase1-why1",
-                "manual_phase_run": False,
-                "record_completion": True,
-            },
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="old state survives marker replacement",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        effect = MagicMock(
-            side_effect=AssertionError(
-                "old state without marker authorized an effect"
-            )
-        )
-        monkeypatch.setattr(
-            ctrl,
-            "_apply_controller_completion_effect",
-            effect,
-        )
-
-        outcome = ctrl._drain_pending_controller_completion()
-
-        assert outcome.recovered is False
-        effect.assert_not_called()
-        assert orphan._transaction_root.is_dir()
-        assert ctrl._cleanup_controller_completion_orphans() is True
-        assert not orphan._transaction_root.exists()
-
-    def test_power_loss_new_state_keeps_stage_and_recovers(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        assert prepared._transaction_root.is_dir()
-        assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-
-        outcome = fresh._drain_pending_controller_completion()
-
-        assert outcome.recovered is True
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in fresh_store.load()
-        assert not prepared._transaction_root.exists()
 
     @pytest.mark.parametrize("with_publication", [False, True])
-    def test_fresh_controller_starts_from_exact_route_cas(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        with_publication: bool,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        publication = None
-        targets: dict[str, Path] = {}
-        if with_publication:
-            publication, targets = _sealed_publication_fixture(ctrl)
-        prepared = prepare_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_id=uuid.uuid4().hex,
-            origin="routed",
-            publication=(
-                {
-                    "kind": "external",
-                    "marker": publication.marker.to_dict(),
-                }
-                if publication is not None
-                else {"kind": "none"}
-            ),
-            route={
-                "kind": "routed",
-                "from_phase": "phase1-what",
-                "to_phase": "phase1-why1",
-                "manual_phase_run": False,
-                "record_completion": True,
-            },
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="fresh route CAS matrix",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        _install_prepared_routed_completion(
-            store,
-            prepared,
-            token_usage_delta=23,
-        )
-        committed = store.load()
-        assert committed["token_usage"] == 23
-        assert committed[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
-        ] == prepared.marker.completion_id
-        assert (
-            PENDING_EXTERNAL_PUBLICATION_KEY in committed
-        ) is with_publication
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert runner.call_count == 1
-        assert completed["token_usage"] == 23
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert completed["last_dispatch"]["dispatch_id"] == (
-            prepared.marker.completion_id
-        )
-        assert completed["last_dispatch"][
-            "post_dispatch_complete"
-        ] is True
-        if with_publication:
-            assert targets["replace"].read_text(encoding="utf-8") == (
-                "new replace\n"
-            )
-            assert targets["create"].read_text(encoding="utf-8") == (
-                "new create\n"
-            )
-            assert not targets["delete"].exists()
-
-    @pytest.mark.parametrize(
-        ("effect", "boundary"),
-        [
-            (effect, boundary)
-            for effect in (
-                "journal",
-                "timing",
-                "checkpoint",
-                "context",
-                "mining",
-            )
-            for boundary in ("before_receipt", "before_step_cas")
-        ],
-    )
-    def test_fresh_controller_recovers_every_effect_boundary_once(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        effect: str,
-        boundary: str,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            effect,
-        )
-        completion_id = prepared.marker.completion_id
-        crashed = False
-        context_generations = 0
-        miner = self._MiningProbe()
-
-        if effect == "context":
-            prepare_context = (
-                completion_module.prepare_or_load_completion_context
-            )
-
-            def generate_context(
-                _project_root,
-                _squad_dir,
-                *,
-                user_request,
-                drawers,
-                output_dir,
-            ):
-                nonlocal context_generations
-                context_generations += 1
-                output_dir.mkdir(parents=True, exist_ok=True)
-                for name in completion_module._CONTEXT_OUTPUT_NAMES:
-                    (output_dir / name).write_text(
-                        f"{name}|{user_request}|{tuple(drawers)}\n",
-                        encoding="utf-8",
-                    )
-                return SimpleNamespace(context_dir=output_dir)
-
-            def context_wrapper(current, **kwargs):
-                def fault(stage: str) -> None:
-                    nonlocal crashed
-                    if (
-                        boundary == "before_receipt"
-                        and stage == "after_generation"
-                        and not crashed
-                    ):
-                        crashed = True
-                        raise KeyboardInterrupt(
-                            "crash before context receipt"
-                        )
-
-                return prepare_context(
-                    current,
-                    **kwargs,
-                    generator=generate_context,
-                    fault_hook=fault,
-                )
-
-            monkeypatch.setattr(
-                squad_module,
-                "prepare_or_load_completion_context",
-                context_wrapper,
-            )
-
-        if effect == "mining":
-            apply_mining = (
-                completion_module.apply_or_verify_completion_mining
-            )
-            monkeypatch.setattr(
-                completion_module,
-                "_completion_local_mining_plan",
-                lambda **_kwargs: (miner.drawer_id,),
-            )
-
-            def mining_wrapper(current, **kwargs):
-                def fault(stage: str) -> None:
-                    nonlocal crashed
-                    if (
-                        boundary == "before_receipt"
-                        and stage == "after_mining"
-                        and not crashed
-                    ):
-                        crashed = True
-                        raise KeyboardInterrupt(
-                            "crash before mining receipt"
-                        )
-
-                return apply_mining(
-                    current,
-                    **kwargs,
-                    miner_factory=lambda: miner,
-                    fault_hook=fault,
-                )
-
-            monkeypatch.setattr(
-                squad_module,
-                "apply_or_verify_completion_mining",
-                mining_wrapper,
-            )
-
-        if (
-            boundary == "before_receipt"
-            and effect in {"journal", "timing", "checkpoint"}
-        ):
-            persist = squad_module.persist_completion_effect_receipt
-
-            def crash_before_receipt(current, current_effect, receipt):
-                nonlocal crashed
-                if current_effect == effect and not crashed:
-                    crashed = True
-                    raise KeyboardInterrupt(
-                        f"crash before {effect} receipt"
-                    )
-                return persist(current, current_effect, receipt)
-
-            monkeypatch.setattr(
-                squad_module,
-                "persist_completion_effect_receipt",
-                crash_before_receipt,
-            )
-
-        if boundary == "before_step_cas":
-            advance_step = store.advance_controller_completion
-
-            def crash_before_step(current):
-                nonlocal crashed
-                if current.marker.step == effect and not crashed:
-                    crashed = True
-                    raise KeyboardInterrupt(
-                        f"crash before {effect} step CAS"
-                    )
-                return advance_step(current)
-
-            monkeypatch.setattr(
-                store,
-                "advance_controller_completion",
-                crash_before_step,
-            )
-
-        before_runner = MagicMock(
-            side_effect=AssertionError(
-                "phase runner executed before completion recovery"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", before_runner)
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-        assert crashed is True
-        assert before_runner.call_count == 0
-        interrupted = store.load()
-        assert interrupted[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
-        ] == completion_id
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        after_runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", after_runner)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert after_runner.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert "controller_completion_failure" not in completed
-        if effect == "mining":
-            terminal = completed["last_terminal_completion"]
-            assert terminal["completion_id"] == completion_id
-            assert len(terminal["phase_a_active_source_sha256"]) == 64
-            assert (
-                len(
-                    terminal[
-                        "phase_a_published_postimage_sha256"
-                    ]
-                )
-                == 64
-            )
-            assert miner.write_count == 1
-            assert miner.mine_calls == (
-                2 if boundary == "before_receipt" else 1
-            )
-        else:
-            assert completed["token_usage"] == 17
-            dispatch = completed["last_dispatch"]
-            assert dispatch["dispatch_id"] == completion_id
-            assert dispatch["post_dispatch_complete"] is True
-
-        if effect == "journal":
-            rows = [
-                json.loads(line)
-                for line in (
-                    fresh._squad_dir / "reasoning-journal.jsonl"
-                ).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            owned = [
-                row
-                for row in rows
-                if row.get("controller_completion", {}).get(
-                    "completion_id"
-                )
-                == completion_id
-            ]
-            assert len(owned) == 1
-        elif effect == "timing":
-            events, diagnostics = (
-                fresh._telemetry_store.read_phase_timings()
-            )
-            owned = [
-                event
-                for event in events
-                if event.completion_id == completion_id
-            ]
-            assert diagnostics == ()
-            assert len(owned) == 2
-            assert len({event.effect_id for event in owned}) == 2
-        elif effect == "checkpoint":
-            messages = subprocess.run(
-                ["git", "log", "--format=%B"],
-                cwd=tmp_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-            assert messages.count(completion_id) == 1
-            ledger = json.loads(
-                (
-                    fresh._squad_dir
-                    / "specs"
-                    / "001-demo"
-                    / ".echelon"
-                    / "checkpoints.json"
-                ).read_text(encoding="utf-8")
-            )
-            assert [
-                row["completion_id"]
-                for row in ledger["checkpoints"]
-            ].count(completion_id) == 1
-        elif effect == "context":
-            visible = fresh._squad_dir / "context"
-            assert {
-                path.name for path in visible.iterdir()
-            } == set(completion_module._CONTEXT_OUTPUT_NAMES)
-            assert context_generations == (
-                2 if boundary == "before_receipt" else 1
-            )
-
-    @pytest.mark.parametrize(
-        "effect",
-        ["journal", "timing", "checkpoint", "context", "mining"],
-    )
-    def test_fresh_controller_recovers_each_effect_step_saved_then_raised(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        effect: str,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            effect,
-        )
-        completion_id = prepared.marker.completion_id
-        context_generations = 0
-        miner = self._MiningProbe()
-
-        if effect == "context":
-            prepare_context = (
-                completion_module.prepare_or_load_completion_context
-            )
-
-            def generate_context(
-                _project_root,
-                _squad_dir,
-                *,
-                user_request,
-                drawers,
-                output_dir,
-            ):
-                nonlocal context_generations
-                context_generations += 1
-                output_dir.mkdir(parents=True, exist_ok=True)
-                for name in completion_module._CONTEXT_OUTPUT_NAMES:
-                    (output_dir / name).write_text(
-                        f"{name}|{user_request}|{tuple(drawers)}\n",
-                        encoding="utf-8",
-                    )
-                return SimpleNamespace(context_dir=output_dir)
-
-            def context_wrapper(current, **kwargs):
-                return prepare_context(
-                    current,
-                    **kwargs,
-                    generator=generate_context,
-                )
-
-            monkeypatch.setattr(
-                squad_module,
-                "prepare_or_load_completion_context",
-                context_wrapper,
-            )
-
-        if effect == "mining":
-            apply_mining = (
-                completion_module.apply_or_verify_completion_mining
-            )
-            monkeypatch.setattr(
-                completion_module,
-                "_completion_local_mining_plan",
-                lambda **_kwargs: (miner.drawer_id,),
-            )
-
-            def mining_wrapper(current, **kwargs):
-                return apply_mining(
-                    current,
-                    **kwargs,
-                    miner_factory=lambda: miner,
-                )
-
-            monkeypatch.setattr(
-                squad_module,
-                "apply_or_verify_completion_mining",
-                mining_wrapper,
-            )
-
-        original_save = store._save_unlocked
-        injected = False
-
-        def save_step_then_crash(candidate):
-            nonlocal injected
-            pending = candidate.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
-            )
-            if (
-                not injected
-                and isinstance(pending, dict)
-                and pending.get("completion_id") == completion_id
-                and pending.get("step") == "complete"
-            ):
-                injected = True
-                original_save(candidate)
-                raise KeyboardInterrupt(
-                    f"crash after {effect} step save"
-                )
-            return original_save(candidate)
-
-        monkeypatch.setattr(
-            store,
-            "_save_unlocked",
-            save_step_then_crash,
-        )
-        runner_before = MagicMock(
-            side_effect=AssertionError(
-                "phase work ran before effect-step recovery"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", runner_before)
-
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-
-        assert injected is True
-        assert runner_before.call_count == 0
-        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY][
-            "step"
-        ] == "complete"
-        del ctrl
-
-        fresh, fresh_store = _controller(tmp_path)
-        runner_after = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner_after)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert runner_after.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert "controller_completion_failure" not in completed
-        if effect == "mining":
-            assert completed["last_terminal_completion"][
-                "completion_id"
-            ] == completion_id
-            assert miner.mine_calls == 1
-            assert miner.write_count == 1
-        else:
-            assert completed["token_usage"] == 17
-            assert completed["last_dispatch"]["dispatch_id"] == (
-                completion_id
-            )
-            assert completed["last_dispatch"][
-                "post_dispatch_complete"
-            ] is True
-
-        if effect == "journal":
-            rows = [
-                json.loads(line)
-                for line in (
-                    fresh._squad_dir / "reasoning-journal.jsonl"
-                ).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            assert sum(
-                row.get("controller_completion", {}).get(
-                    "completion_id"
-                )
-                == completion_id
-                for row in rows
-            ) == 1
-        elif effect == "timing":
-            events, diagnostics = (
-                fresh._telemetry_store.read_phase_timings()
-            )
-            owned = [
-                event
-                for event in events
-                if event.completion_id == completion_id
-            ]
-            assert diagnostics == ()
-            assert len(owned) == 2
-            assert len({event.effect_id for event in owned}) == 2
-        elif effect == "checkpoint":
-            messages = subprocess.run(
-                ["git", "log", "--format=%B"],
-                cwd=tmp_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-            assert messages.count(completion_id) == 1
-            ledger = json.loads(
-                (
-                    fresh._squad_dir
-                    / "specs"
-                    / "001-demo"
-                    / ".echelon"
-                    / "checkpoints.json"
-                ).read_text(encoding="utf-8")
-            )
-            assert [
-                row["completion_id"]
-                for row in ledger["checkpoints"]
-            ].count(completion_id) == 1
-        elif effect == "context":
-            visible = fresh._squad_dir / "context"
-            assert {
-                path.name for path in visible.iterdir()
-            } == set(completion_module._CONTEXT_OUTPUT_NAMES)
-            assert context_generations == 1
-
-    @pytest.mark.parametrize(
-        "transition",
-        ["handoff", "advance", "record_failure", "complete"],
-    )
-    @pytest.mark.parametrize("save_then_raise", [False, True])
-    def test_fresh_controller_recovers_each_completion_state_save_boundary(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        transition: str,
-        save_then_raise: bool,
-    ) -> None:
-        publication_targets: dict[str, Path] = {}
-        if transition == "handoff":
-            ctrl, store = _controller(tmp_path)
-            store.initialize(
-                "r",
-                "greenfield",
-                "msg",
-                0,
-                "phase1-what",
-            )
-            publication, publication_targets = (
-                _sealed_publication_fixture(ctrl)
-            )
-            prepared = prepare_controller_completion(
-                tmp_path,
-                ctrl._squad_dir,
-                completion_id=uuid.uuid4().hex,
-                origin="routed",
-                publication={
-                    "kind": "external",
-                    "marker": publication.marker.to_dict(),
-                },
-                route={
-                    "kind": "routed",
-                    "from_phase": "phase1-what",
-                    "to_phase": "phase1-why1",
-                    "manual_phase_run": False,
-                    "record_completion": True,
-                },
-                effect_plan=(),
-                checkpoint_prestate={"kind": "none"},
-                context_reason="state save boundary handoff",
-                mine_phase_a=False,
-                judgment_payload_sha256=(),
-                judgments=(),
-            )
-            _install_prepared_routed_completion(
-                store,
-                prepared,
-                token_usage_delta=17,
-            )
-        else:
-            ctrl, store, prepared = (
-                _install_single_effect_completion(
-                    tmp_path,
-                    "journal",
-                )
-            )
-
-        completion_id = prepared.marker.completion_id
-        transaction_root = prepared._transaction_root
-        if transition == "complete":
-            current_raw = store.load()[
-                PENDING_CONTROLLER_COMPLETION_KEY
-            ]
-            ctrl._apply_controller_completion_effect(
-                prepared,
-                store.load(),
-            )
-            one_ahead = load_prepared_controller_completion(
-                tmp_path,
-                ctrl._squad_dir,
-                current_raw,
-            )
-            store.advance_controller_completion(one_ahead)
-        elif transition == "record_failure":
-            monkeypatch.setattr(
-                ctrl,
-                "_apply_controller_completion_effect",
-                MagicMock(
-                    side_effect=CompletionError("stage_io")
-                ),
-            )
-
-        original_save = store._save_unlocked
-        injected = False
-
-        def is_target_save(candidate: dict[str, object]) -> bool:
-            pending = candidate.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
-            )
-            if transition == "handoff":
-                return (
-                    PENDING_EXTERNAL_PUBLICATION_KEY
-                    not in candidate
-                    and isinstance(pending, dict)
-                    and pending.get("step") == "complete"
-                )
-            if transition == "advance":
-                return (
-                    isinstance(pending, dict)
-                    and pending.get("step") == "complete"
-                )
-            if transition == "record_failure":
-                failure = candidate.get(
-                    "controller_completion_failure"
-                )
-                return (
-                    isinstance(failure, dict)
-                    and failure.get("code") == "stage_io"
-                )
-            dispatch = candidate.get("last_dispatch")
-            return (
-                PENDING_CONTROLLER_COMPLETION_KEY not in candidate
-                and isinstance(dispatch, dict)
-                and dispatch.get("post_dispatch_complete") is True
-            )
-
-        def crash_at_target_save(candidate):
-            nonlocal injected
-            if not injected and is_target_save(candidate):
-                injected = True
-                if save_then_raise:
-                    original_save(candidate)
-                raise KeyboardInterrupt(
-                    f"crash at {transition} state save"
-                )
-            return original_save(candidate)
-
-        monkeypatch.setattr(
-            store,
-            "_save_unlocked",
-            crash_at_target_save,
-        )
-        before_runner = MagicMock(
-            side_effect=AssertionError(
-                "phase work ran before state recovery"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", before_runner)
-
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-
-        assert injected is True
-        assert before_runner.call_count == 0
-        del ctrl
-
-        fresh, fresh_store = _controller(tmp_path)
-        after_runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", after_runner)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert after_runner.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert "controller_completion_failure" not in completed
-        assert completed["token_usage"] == 17
-        assert completed["last_dispatch"]["dispatch_id"] == (
-            completion_id
-        )
-        assert completed["last_dispatch"][
-            "post_dispatch_complete"
-        ] is True
-        assert not transaction_root.exists()
-
-        if transition == "handoff":
-            assert publication_targets["replace"].read_text(
-                encoding="utf-8"
-            ) == "new replace\n"
-            assert publication_targets["create"].read_text(
-                encoding="utf-8"
-            ) == "new create\n"
-            assert not publication_targets["delete"].exists()
-        else:
-            rows = [
-                json.loads(line)
-                for line in (
-                    fresh._squad_dir / "reasoning-journal.jsonl"
-                ).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            assert sum(
-                row.get("controller_completion", {}).get(
-                    "completion_id"
-                )
-                == completion_id
-                for row in rows
-            ) == 1
-
-    @pytest.mark.parametrize("with_publication", [False, True])
-    @pytest.mark.parametrize("save_then_raise", [False, True])
     def test_fresh_controller_resolves_route_cas_save_boundary(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        save_then_raise: bool,
         with_publication: bool,
     ) -> None:
+        save_then_raise = True
         ctrl, store = _controller(tmp_path)
         _configure_tasks_lexicon_route(
             ctrl,
@@ -18156,15 +16627,10 @@ class TestControllerCompletionOrchestration:
 
         def crash_at_route_save(candidate):
             nonlocal injected
-            pending = candidate.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
-            )
-            dispatch = candidate.get("last_dispatch")
+            pending = candidate.get(PENDING_SPEC_STEP_KEY)
             if (
                 not injected
                 and isinstance(pending, dict)
-                and isinstance(dispatch, dict)
-                and dispatch.get("post_dispatch_complete") is False
             ):
                 injected = True
                 if save_then_raise:
@@ -18186,7 +16652,7 @@ class TestControllerCompletionOrchestration:
             )
 
         assert injected is True
-        outbox = ctrl._squad_dir / ".completion-outbox"
+        outbox = ctrl._squad_dir / ".spec-step-effects"
         staged = [
             path
             for path in outbox.iterdir()
@@ -18194,13 +16660,18 @@ class TestControllerCompletionOrchestration:
         ]
         assert len(staged) == 1
         completion_id = staged[0].name
+        spec_step_root = (
+            ctrl._squad_dir
+            / ".spec-step-outbox"
+            / completion_id
+        )
+        assert spec_step_root.is_dir()
         interrupted = store.load()
         assert (
-            PENDING_CONTROLLER_COMPLETION_KEY in interrupted
+            PENDING_SPEC_STEP_KEY in interrupted
         ) is save_then_raise
-        assert (
-            PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
-        ) is (save_then_raise and with_publication)
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in interrupted
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
         del ctrl
 
         fresh, fresh_store = _controller(tmp_path)
@@ -18215,10 +16686,12 @@ class TestControllerCompletionOrchestration:
 
         completed = fresh_store.load()
         assert runner.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert PENDING_SPEC_STEP_KEY not in completed
+        assert SPEC_STEP_EFFECT_PLAN_KEY not in completed
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in completed
         assert completed["token_usage"] == 0
         assert not staged[0].exists()
+        assert not spec_step_root.exists()
         if publication_root is not None:
             assert not publication_root.exists()
         if save_then_raise:
@@ -18248,588 +16721,60 @@ class TestControllerCompletionOrchestration:
                     encoding="utf-8"
                 ) == "old delete\n"
 
-    @pytest.mark.parametrize("with_publication", [False, True])
-    @pytest.mark.parametrize("save_then_raise", [False, True])
-    def test_fresh_controller_resolves_terminal_begin_save_boundary(
+
+
+
+
+
+
+
+    def test_manual_spec_step_replay_recovers_and_stops_without_redispatch(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        save_then_raise: bool,
-        with_publication: bool,
     ) -> None:
         ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "DONE",
-        )
-        active = ctrl._squad_dir / "specs" / "001-demo"
-        published = tmp_path / "specs" / "001-demo"
-        active.mkdir(parents=True)
-        published.mkdir(parents=True)
-        spec_bytes = b"# Terminal state-save boundary\n"
-        (active / "spec.md").write_bytes(spec_bytes)
-        (published / "spec.md").write_bytes(spec_bytes)
-        state = store.load()
-        state.update(
-            {
-                "status": "done",
-                "spec_id": "001-demo",
-                "spec_dir": str(active.relative_to(tmp_path)),
-                "published_spec_dir": str(
-                    published.relative_to(tmp_path)
-                ),
-            }
-        )
-        store.save(state)
-        publication = None
-        publication_targets: dict[str, Path] = {}
-        publication_root: Path | None = None
-        if with_publication:
-            publication, publication_targets = (
-                _sealed_publication_fixture(ctrl)
-            )
-            publication_root = publication._transaction_root
-        prepared = prepare_controller_completion(
-            tmp_path,
+        store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+        snapshot = store.capture_routing_snapshot(expected_phase="phase1-what")
+        step_id = "d" * 32
+        final_state = snapshot.state
+        final_state["phase"] = "phase1-why1"
+        final_state["last_dispatch"] = {
+            "dispatch_id": step_id,
+            "completed_at": "2026-09-24T00:00:00+00:00",
+            "manual_phase_run": True,
+            "post_dispatch_complete": True,
+        }
+        prepared = prepare_spec_step(
             ctrl._squad_dir,
-            completion_id=uuid.uuid4().hex,
-            origin="terminal",
-            publication=(
-                {
-                    "kind": "external",
-                    "marker": publication.marker.to_dict(),
-                }
-                if publication is not None
-                else {"kind": "none"}
-            ),
+            step_id=step_id,
+            origin="routed",
+            expected_state_revision=snapshot.state_revision,
+            expected_previous_dispatch_sha256=snapshot.previous_dispatch_sha256,
             route={
-                "kind": "terminal",
-                "terminal_phase": "DONE",
+                "kind": "routed",
+                "from_phase": "phase1-what",
+                "to_phase": "phase1-why1",
+                "manual_phase_run": True,
             },
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="terminal state save boundary",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
+            effects=(),
+            publication=None,
+            final_state=final_state,
+            provenance={"routing_decision_sha256": "e" * 64},
         )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase="DONE",
-        )
-        original_save = store._save_unlocked
-        injected = False
-
-        def crash_at_terminal_begin(candidate):
-            nonlocal injected
-            pending = candidate.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
-            )
-            if not injected and isinstance(pending, dict):
-                injected = True
-                if save_then_raise:
-                    original_save(candidate)
-                raise KeyboardInterrupt(
-                    "crash at terminal completion begin"
-                )
-            return original_save(candidate)
-
-        monkeypatch.setattr(
-            store,
-            "_save_unlocked",
-            crash_at_terminal_begin,
-        )
-
-        with pytest.raises(KeyboardInterrupt):
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-            )
-
-        assert injected is True
-        assert (
-            PENDING_CONTROLLER_COMPLETION_KEY in store.load()
-        ) is save_then_raise
-        assert (
-            PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
-        ) is (save_then_raise and with_publication)
-        transaction_root = prepared._transaction_root
-        del ctrl
-
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert runner.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
-        assert not transaction_root.exists()
-        if publication_root is not None:
-            assert not publication_root.exists()
-        if save_then_raise:
-            terminal = completed["last_terminal_completion"]
-            assert terminal["completion_id"] == (
-                prepared.marker.completion_id
-            )
-            assert len(
-                terminal["phase_a_active_source_sha256"]
-            ) == 64
-            assert len(
-                terminal[
-                    "phase_a_published_postimage_sha256"
-                ]
-            ) == 64
-            if with_publication:
-                assert publication_targets["replace"].read_text(
-                    encoding="utf-8"
-                ) == "new replace\n"
-                assert publication_targets["create"].read_text(
-                    encoding="utf-8"
-                ) == "new create\n"
-                assert not publication_targets["delete"].exists()
-        else:
-            assert "last_terminal_completion" not in completed
-            if with_publication:
-                assert publication_targets["replace"].read_text(
-                    encoding="utf-8"
-                ) == "old replace\n"
-                assert not publication_targets["create"].exists()
-                assert publication_targets["delete"].read_text(
-                    encoding="utf-8"
-                ) == "old delete\n"
-
-    @pytest.mark.parametrize("drift", ["spec", "drawer"])
-    def test_fresh_mining_recovery_rejects_bound_postimage_drift(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        drift: str,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            "mining",
-        )
-        miner = self._MiningProbe()
-        apply_mining = (
-            completion_module.apply_or_verify_completion_mining
-        )
-        monkeypatch.setattr(
-            completion_module,
-            "_completion_local_mining_plan",
-            lambda **_kwargs: (miner.drawer_id,),
-        )
-
-        def mining_wrapper(current, **kwargs):
-            return apply_mining(
-                current,
-                **kwargs,
-                miner_factory=lambda: miner,
-            )
-
-        monkeypatch.setattr(
-            squad_module,
-            "apply_or_verify_completion_mining",
-            mining_wrapper,
-        )
-        advance_step = store.advance_controller_completion
-        crashed = False
-
-        def crash_before_step(current):
-            nonlocal crashed
-            if current.marker.step == "mining" and not crashed:
-                crashed = True
-                raise KeyboardInterrupt(
-                    "crash before mining step CAS"
-                )
-            return advance_step(current)
-
-        monkeypatch.setattr(
-            store,
-            "advance_controller_completion",
-            crash_before_step,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-        assert crashed is True
-        assert miner.mine_calls == 1
-        assert miner.write_count == 1
-
-        if drift == "spec":
-            state = store.load()
-            published = tmp_path / str(state["published_spec_dir"])
-            (published / "spec.md").write_text(
-                "# Drifted canonical specification\n",
-                encoding="utf-8",
-            )
-        else:
-            miner.verify_ok = False
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "drifted mining receipt reached phase work"
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        failed = fresh_store.load()
-        assert runner.call_count == 0
-        assert failed[PENDING_CONTROLLER_COMPLETION_KEY][
-            "completion_id"
-        ] == prepared.marker.completion_id
-        assert failed["controller_completion_failure"]["code"] == (
-            "receipts_mismatch"
-        )
-        assert miner.mine_calls == 1
-        assert miner.write_count == 1
-
-    @pytest.mark.parametrize(
-        "timing_boundary",
-        ["after_close", "after_open"],
-    )
-    def test_fresh_controller_adopts_each_tagged_timing_boundary(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        timing_boundary: str,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            "timing",
-        )
-        completion_id = prepared.marker.completion_id
-        apply_timing = (
-            completion_module.apply_or_verify_completion_timing
-        )
-        crashed = False
-
-        def timing_wrapper(intent, telemetry, **kwargs):
-            def fault(stage: str) -> None:
-                nonlocal crashed
-                if stage == timing_boundary and not crashed:
-                    crashed = True
-                    raise KeyboardInterrupt(
-                        f"crash at timing {timing_boundary}"
-                    )
-
-            return apply_timing(
-                intent,
-                telemetry,
-                **kwargs,
-                fault_hook=fault,
-            )
-
-        monkeypatch.setattr(
-            squad_module,
-            "apply_or_verify_completion_timing",
-            timing_wrapper,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-        assert crashed is True
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        events, diagnostics = fresh._telemetry_store.read_phase_timings()
-        owned = [
-            event
-            for event in events
-            if event.completion_id == completion_id
-        ]
-        assert diagnostics == ()
-        assert len(owned) == 2
-        assert len({event.effect_id for event in owned}) == 2
-        assert fresh_store.load()["token_usage"] == 17
-
-    @pytest.mark.parametrize(
-        "checkpoint_boundary",
-        ["after_commit", "after_ledger"],
-    )
-    def test_fresh_controller_adopts_each_checkpoint_boundary(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        checkpoint_boundary: str,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            "checkpoint",
-        )
-        completion_id = prepared.marker.completion_id
-        apply_checkpoint = (
-            completion_module.create_or_recover_completion_checkpoint
-        )
-        crashed = False
-
-        def checkpoint_wrapper(intent, **kwargs):
-            def fault(stage: str) -> None:
-                nonlocal crashed
-                if stage == checkpoint_boundary and not crashed:
-                    crashed = True
-                    raise KeyboardInterrupt(
-                        f"crash at checkpoint {checkpoint_boundary}"
-                    )
-
-            return apply_checkpoint(
-                intent,
-                **kwargs,
-                fault_hook=fault,
-            )
-
-        monkeypatch.setattr(
-            squad_module,
-            "create_or_recover_completion_checkpoint",
-            checkpoint_wrapper,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-        assert crashed is True
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        messages = subprocess.run(
-            ["git", "log", "--format=%B"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        assert messages.count(completion_id) == 1
-        ledger = json.loads(
-            (
-                fresh._squad_dir
-                / "specs"
-                / "001-demo"
-                / ".echelon"
-                / "checkpoints.json"
-            ).read_text(encoding="utf-8")
-        )
-        assert [
-            row["completion_id"]
-            for row in ledger["checkpoints"]
-        ].count(completion_id) == 1
-        assert fresh_store.load()["token_usage"] == 17
-
-    @pytest.mark.parametrize(
-        "context_name",
-        list(completion_module._CONTEXT_OUTPUT_NAMES),
-    )
-    def test_fresh_controller_recovers_each_context_install_boundary(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        context_name: str,
-    ) -> None:
-        ctrl, store, _ = _install_single_effect_completion(
-            tmp_path,
-            "context",
-        )
-        prepare_context = (
-            completion_module.prepare_or_load_completion_context
-        )
-        install_context = (
-            completion_module.install_or_verify_completion_context
-        )
-        generations = 0
-        crashed = False
-
-        def generate(
-            _project_root,
-            _squad_dir,
-            *,
-            user_request,
-            drawers,
-            output_dir,
-        ):
-            nonlocal generations
-            generations += 1
-            output_dir.mkdir(parents=True, exist_ok=True)
-            for name in completion_module._CONTEXT_OUTPUT_NAMES:
-                (output_dir / name).write_text(
-                    f"{name}|{user_request}|{tuple(drawers)}\n",
-                    encoding="utf-8",
-                )
-            return SimpleNamespace(context_dir=output_dir)
-
-        def prepare_wrapper(current, **kwargs):
-            return prepare_context(
-                current,
-                **kwargs,
-                generator=generate,
-            )
-
-        def install_wrapper(current, **kwargs):
-            def fault(stage: str) -> None:
-                nonlocal crashed
-                if (
-                    stage == f"after_install:{context_name}"
-                    and not crashed
-                ):
-                    crashed = True
-                    raise KeyboardInterrupt(
-                        f"crash after context install {context_name}"
-                    )
-
-            return install_context(
-                current,
-                **kwargs,
-                fault_hook=fault,
-            )
-
-        monkeypatch.setattr(
-            squad_module,
-            "prepare_or_load_completion_context",
-            prepare_wrapper,
-        )
-        monkeypatch.setattr(
-            squad_module,
-            "install_or_verify_completion_context",
-            install_wrapper,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-        assert crashed is True
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        visible = fresh._squad_dir / "context"
-        assert {
-            path.name for path in visible.iterdir()
-        } == set(completion_module._CONTEXT_OUTPUT_NAMES)
-        assert generations == 1
-        assert fresh_store.load()["token_usage"] == 17
-
-    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
-    def test_completion_recovery_precedes_entrypoint_logic(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        entrypoint: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        calls: list[str] = []
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-
-        def after_recovery(*_args, **_kwargs):
-            recovered = fresh_store.load()
-            assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-            assert recovered["last_dispatch"][
-                "post_dispatch_complete"
-            ] is True
-            calls.append(entrypoint)
-            return SquadResult.from_state(recovered)
-
-        if entrypoint == "normal":
-            monkeypatch.setattr(fresh, "_run_locked", after_recovery)
-            fresh.run("msg", "banzai")
-        else:
-            monkeypatch.setattr(
-                fresh,
-                "_run_single_phase_locked",
-                after_recovery,
-            )
-            fresh.run_single_phase(
-                prepared.intent.route["to_phase"],
-                "msg",
-                "banzai",
-            )
-
-        assert calls == [entrypoint]
-
-    def test_recovered_manual_completion_stops_without_redispatch(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        _install_empty_routed_completion(
-            ctrl,
-            store,
-            manual_phase_run=True,
-        )
+        store.begin_spec_step(prepared, snapshot=snapshot)
         del ctrl
         fresh, fresh_store = _controller(tmp_path)
         callback = MagicMock(
-            side_effect=AssertionError(
-                "manual recovery redispatched the completed phase"
-            )
+            side_effect=AssertionError("manual recovery redispatched provider work")
         )
-        monkeypatch.setattr(
-            fresh,
-            "_run_single_phase_locked",
-            callback,
-        )
+        monkeypatch.setattr(fresh, "_run_single_phase_locked", callback)
 
-        result = fresh.run_single_phase(
-            "phase1-why1",
-            "msg",
-            "banzai",
-        )
+        result = fresh.run_single_phase("phase1-what", "msg", "banzai")
 
-        assert callback.call_count == 0
         assert result.phase == "phase1-why1"
-        assert (
-            PENDING_CONTROLLER_COMPLETION_KEY
-            not in fresh_store.load()
-        )
+        assert callback.call_count == 0
+        assert PENDING_SPEC_STEP_KEY not in fresh_store.load()
 
     def test_routing_seals_completion_and_publication_in_one_decision(
         self,
@@ -18862,7 +16807,7 @@ class TestControllerCompletionOrchestration:
             prepared_result,
             snapshot,
             additional_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: (
+                SPEC_STEP_PUBLICATION_PLAN_KEY: (
                     publication.marker.to_dict()
                 ),
             },
@@ -18870,13 +16815,13 @@ class TestControllerCompletionOrchestration:
         )
 
         updates = dict(decision.transaction_state_updates)
-        marker = updates[PENDING_CONTROLLER_COMPLETION_KEY]
-        assert updates[PENDING_EXTERNAL_PUBLICATION_KEY] == (
+        marker = updates[SPEC_STEP_EFFECT_PLAN_KEY]
+        assert updates[SPEC_STEP_PUBLICATION_PLAN_KEY] == (
             publication.marker.to_dict()
         )
         assert decision.dispatch_id == marker["completion_id"]
         assert marker["step"] == "awaiting_publication"
-        loaded = load_prepared_controller_completion(
+        loaded = load_prepared_spec_step_effects(
             tmp_path,
             ctrl._squad_dir,
             marker,
@@ -18892,741 +16837,3 @@ class TestControllerCompletionOrchestration:
             "kind": "external",
             "marker": publication.marker.to_dict(),
         }
-
-    def test_fresh_controller_resumes_completion_after_publication_handoff(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        _configure_tasks_lexicon_route(
-            ctrl,
-            store,
-            monkeypatch,
-        )
-        publication, _ = _sealed_publication_fixture(ctrl)
-        monkeypatch.setattr(
-            ctrl,
-            "_prepare_external_phase_effects",
-            lambda *_args, **_kwargs: publication,
-        )
-        handoff = store.handoff_external_publication
-
-        def crash_after_handoff(marker, completion):
-            handoff(marker, completion)
-            raise KeyboardInterrupt("simulated post-handoff crash")
-
-        monkeypatch.setattr(
-            store,
-            "handoff_external_publication",
-            crash_after_handoff,
-        )
-
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run_single_phase(
-                "phase3-tasks-lexicon",
-                "msg",
-                "banzai",
-            )
-
-        handed = store.load()
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in handed
-        assert handed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] != (
-            "awaiting_publication"
-        )
-
-        fresh, _ = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        recovered = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-        assert "controller_completion_failure" not in recovered
-        assert recovered["last_dispatch"][
-            "post_dispatch_complete"
-        ] is True
-
-    def test_fresh_controller_after_final_clear_does_not_repeat_effect(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store, prepared = _install_single_effect_completion(
-            tmp_path,
-            "journal",
-        )
-        completion_id = prepared.marker.completion_id
-        transaction_root = prepared._transaction_root
-        complete = store.complete_controller_completion
-
-        def crash_after_clear(current, **kwargs):
-            complete(current, **kwargs)
-            raise KeyboardInterrupt("crash after final clear")
-
-        monkeypatch.setattr(
-            store,
-            "complete_controller_completion",
-            crash_after_clear,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-
-        cleared = store.load()
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in cleared
-        assert cleared["last_dispatch"][
-            "post_dispatch_complete"
-        ] is True
-        assert transaction_root.exists()
-
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        assert not transaction_root.exists()
-        rows = [
-            json.loads(line)
-            for line in (
-                fresh._squad_dir / "reasoning-journal.jsonl"
-            ).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        assert sum(
-            row.get("controller_completion", {}).get(
-                "completion_id"
-            )
-            == completion_id
-            for row in rows
-        ) == 1
-        assert fresh_store.load()["token_usage"] == 17
-
-    @pytest.mark.parametrize("save_then_raise", [False, True])
-    @pytest.mark.parametrize("variant", ["terminal", "phase4"])
-    def test_fresh_controller_after_terminal_or_phase4_final_clear(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        variant: str,
-        save_then_raise: bool,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        from_phase = (
-            "DONE" if variant == "terminal" else "phase4-document"
-        )
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            from_phase,
-        )
-        active = ctrl._squad_dir / "specs" / "001-demo"
-        published = tmp_path / "specs" / "001-demo"
-        active.mkdir(parents=True)
-        published.mkdir(parents=True)
-        spec_bytes = (
-            b"# Durable terminal provenance\n\n"
-            b"- FR-001: Recovery SHALL remain exact.\n"
-        )
-        (active / "spec.md").write_bytes(spec_bytes)
-        (published / "spec.md").write_bytes(spec_bytes)
-        for name in REQUIRED_PHASE_A_BUILD_INPUTS:
-            if name == "spec.md":
-                continue
-            content = (
-                "# Durable constitution\n\n"
-                "- Recovery effects are replay-safe.\n"
-                if name == "constitution.md"
-                else (
-                    '{\n'
-                    '  "status": "pass",\n'
-                    '  "findings": [],\n'
-                    '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
-                    '}\n'
-                    if name == "plan-conformance.json"
-                    else (
-                        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
-                        "|---|---|---|---|---|---|---|\n"
-                        "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
-                        if name == "coverage-map.md"
-                        else f"# Durable {name}\n\nFR-001\n"
-                    )
-                )
-            )
-            (active / name).write_text(content, encoding="utf-8")
-            (published / name).write_text(content, encoding="utf-8")
-        state = store.load()
-        state.update(
-            {
-                "status": (
-                    "done"
-                    if variant == "terminal"
-                    else "running"
-                ),
-                "spec_id": "001-demo",
-                "spec_dir": str(active.relative_to(tmp_path)),
-                "published_spec_dir": str(
-                    published.relative_to(tmp_path)
-                ),
-            }
-        )
-        store.save(state)
-        completion_id = uuid.uuid4().hex
-        prepared = prepare_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_id=completion_id,
-            origin=(
-                "terminal"
-                if variant == "terminal"
-                else "routed"
-            ),
-            publication={"kind": "none"},
-            route=(
-                {
-                    "kind": "terminal",
-                    "terminal_phase": "DONE",
-                }
-                if variant == "terminal"
-                else {
-                    "kind": "routed",
-                    "from_phase": "phase4-document",
-                    "to_phase": "DONE",
-                    "manual_phase_run": False,
-                    "record_completion": True,
-                }
-            ),
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason=f"{variant} final clear",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        if variant == "terminal":
-            snapshot = store.capture_routing_snapshot(
-                expected_phase="DONE",
-            )
-            store.begin_terminal_controller_completion(
-                prepared,
-                snapshot=snapshot,
-            )
-        else:
-            _install_prepared_routed_completion(
-                store,
-                prepared,
-                token_usage_delta=17,
-            )
-
-        transaction_root = prepared._transaction_root
-        complete = store.complete_controller_completion
-
-        def crash_at_clear(current, **kwargs):
-            if save_then_raise:
-                complete(current, **kwargs)
-            raise KeyboardInterrupt(
-                f"crash at {variant} final clear"
-            )
-
-        monkeypatch.setattr(
-            store,
-            "complete_controller_completion",
-            crash_at_clear,
-        )
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-
-        interrupted = store.load()
-        assert (
-            PENDING_CONTROLLER_COMPLETION_KEY in interrupted
-        ) is (not save_then_raise)
-        assert transaction_root.exists()
-        if save_then_raise:
-            if variant == "terminal":
-                provenance = interrupted[
-                    "last_terminal_completion"
-                ]
-                assert provenance["completion_id"] == completion_id
-                assert len(
-                    provenance["phase_a_active_source_sha256"]
-                ) == 64
-                assert len(
-                    provenance[
-                        "phase_a_published_postimage_sha256"
-                    ]
-                ) == 64
-            else:
-                assert interrupted["last_dispatch"][
-                    "dispatch_id"
-                ] == completion_id
-                assert interrupted["last_dispatch"][
-                    "post_dispatch_complete"
-                ] is True
-                assert len(
-                    interrupted["phase_a_active_source_sha256"]
-                ) == 64
-                assert len(
-                    interrupted[
-                        "phase_a_published_postimage_sha256"
-                    ]
-                ) == 64
-        elif variant == "terminal":
-            assert "last_terminal_completion" not in interrupted
-        else:
-            assert interrupted["last_dispatch"][
-                "post_dispatch_complete"
-            ] is False
-            assert "phase_a_active_source_sha256" not in interrupted
-            assert (
-                "phase_a_published_postimage_sha256"
-                not in interrupted
-            )
-        del ctrl
-
-        fresh, fresh_store = _controller(tmp_path)
-        runner = None
-        restage = None
-        if variant == "phase4":
-            restage = MagicMock(
-                side_effect=AssertionError(
-                    "durable Phase 4 inventory was restaged"
-                )
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_prepare_external_phase_effects",
-                restage,
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_guard_spec_lexicon_evidence",
-                lambda phase: phase,
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_guard_understanding_evidence",
-                lambda phase: phase,
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_apply_phase_recommendation_guard",
-                lambda phase: phase,
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_guard_constitution_provenance",
-                lambda phase: phase,
-            )
-            monkeypatch.setattr(
-                fresh,
-                "_ensure_telemetry_manifest",
-                lambda: None,
-            )
-            result = fresh.run("msg", "banzai")
-            assert result.status == "done"
-            assert restage.call_count == 0
-        else:
-            runner = MagicMock(
-                side_effect=lambda *_args, **_kwargs: (
-                    SquadResult.from_state(fresh_store.load())
-                )
-            )
-            monkeypatch.setattr(fresh, "_run_locked", runner)
-            fresh.run("msg", "banzai")
-
-        recovered = fresh_store.load()
-        if runner is not None:
-            assert runner.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-        assert not transaction_root.exists()
-        if variant == "terminal":
-            provenance = recovered["last_terminal_completion"]
-            assert provenance["completion_id"] == completion_id
-            assert len(
-                provenance["phase_a_active_source_sha256"]
-            ) == 64
-            assert len(
-                provenance[
-                    "phase_a_published_postimage_sha256"
-                ]
-            ) == 64
-            if save_then_raise:
-                assert provenance == interrupted[
-                    "last_terminal_completion"
-                ]
-        else:
-            assert recovered["last_dispatch"]["dispatch_id"] == (
-                completion_id
-            )
-            assert recovered["last_dispatch"][
-                "post_dispatch_complete"
-            ] is True
-            assert len(
-                recovered["phase_a_active_source_sha256"]
-            ) == 64
-            assert len(
-                recovered[
-                    "phase_a_published_postimage_sha256"
-                ]
-            ) == 64
-            if save_then_raise:
-                assert recovered["last_dispatch"] == (
-                    interrupted["last_dispatch"]
-                )
-            assert recovered["token_usage"] == 17
-
-    @pytest.mark.parametrize("save_then_raise", [False, True])
-    def test_fresh_controller_after_manual_origin_final_clear(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        save_then_raise: bool,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(
-            ctrl,
-            store,
-            manual_phase_run=True,
-        )
-        completion_id = prepared.marker.completion_id
-        transaction_root = prepared._transaction_root
-        complete = store.complete_controller_completion
-
-        def crash_at_clear(current, **kwargs):
-            if save_then_raise:
-                complete(current, **kwargs)
-            raise KeyboardInterrupt(
-                "crash at manual-origin final clear"
-            )
-
-        monkeypatch.setattr(
-            store,
-            "complete_controller_completion",
-            crash_at_clear,
-        )
-        runner_before = MagicMock(
-            side_effect=AssertionError(
-                "manual-origin phase work ran before recovery"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", runner_before)
-
-        with pytest.raises(KeyboardInterrupt):
-            ctrl.run("msg", "banzai")
-
-        assert runner_before.call_count == 0
-        interrupted = store.load()
-        assert (
-            PENDING_CONTROLLER_COMPLETION_KEY in interrupted
-        ) is (not save_then_raise)
-        assert transaction_root.exists()
-        del ctrl
-
-        fresh, fresh_store = _controller(tmp_path)
-        runner_after = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner_after)
-
-        fresh.run("msg", "banzai")
-
-        completed = fresh_store.load()
-        assert runner_after.call_count == 1
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in completed
-        assert not transaction_root.exists()
-        dispatch = completed["last_dispatch"]
-        assert dispatch["dispatch_id"] == completion_id
-        assert dispatch["manual_phase_run"] is True
-        assert dispatch["post_dispatch_complete"] is True
-        assert completed["token_usage"] == 0
-        assert not (
-            fresh._squad_dir / "reasoning-journal.jsonl"
-        ).exists()
-
-    @pytest.mark.parametrize(
-        ("damage", "expected_code"),
-        [
-            ("intent_missing", "stage_missing"),
-            ("intent_corrupt", "intent_mismatch"),
-            ("receipts_missing", "stage_missing"),
-            ("receipts_corrupt", "receipts_mismatch"),
-        ],
-    )
-    def test_fresh_controller_retains_corrupt_completion_stage(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        damage: str,
-        expected_code: str,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        filename = (
-            "intent.json"
-            if damage.startswith("intent")
-            else "receipts.json"
-        )
-        damaged = prepared._transaction_root / filename
-        if damage.endswith("missing"):
-            damaged.unlink()
-        else:
-            damaged.write_bytes(b"{not canonical json}\n")
-        state = store.load()
-        state["controller_completion_failure"] = {
-            "unbounded": "corrupt prior diagnostic"
-        }
-        store.save(state)
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "corrupt completion reached phase work"
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        failed = fresh_store.load()
-        assert runner.call_count == 0
-        assert PENDING_CONTROLLER_COMPLETION_KEY in failed
-        assert failed["controller_completion_failure"] == {
-            "schema_version": 1,
-            "code": expected_code,
-            "resume_status": "running",
-            "resume_blocked_reason": None,
-        }
-        assert damaged.exists() is (not damage.endswith("missing"))
-
-    def test_null_publication_authority_cannot_outlive_none_binding(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        _install_empty_routed_completion(ctrl, store)
-        state = store.load()
-        state[PENDING_EXTERNAL_PUBLICATION_KEY] = None
-        store.save(state)
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "mismatched authorities reached phase work"
-            )
-        )
-        monkeypatch.setattr(ctrl, "_run_locked", runner)
-
-        ctrl.run("msg", "banzai")
-
-        failed = store.load()
-        assert runner.call_count == 0
-        assert PENDING_CONTROLLER_COMPLETION_KEY in failed
-        assert PENDING_EXTERNAL_PUBLICATION_KEY in failed
-        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] is None
-        assert failed["controller_completion_failure"]["code"] == (
-            "intent_mismatch"
-        )
-
-    def test_fresh_controller_removes_only_unreferenced_completion_orphan(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        orphan = prepare_controller_completion(
-            tmp_path,
-            ctrl._squad_dir,
-            completion_id=uuid.uuid4().hex,
-            origin="routed",
-            publication={"kind": "none"},
-            route={
-                "kind": "routed",
-                "from_phase": "phase1-what",
-                "to_phase": "phase1-why1",
-                "manual_phase_run": False,
-                "record_completion": True,
-            },
-            effect_plan=(),
-            checkpoint_prestate={"kind": "none"},
-            context_reason="unreferenced test orphan",
-            mine_phase_a=False,
-            judgment_payload_sha256=(),
-            judgments=(),
-        )
-        transaction_root = orphan._transaction_root
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(fresh_store.load())
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 1
-        assert not transaction_root.exists()
-
-    def test_fresh_controller_retains_orphan_for_incomplete_bound_dispatch(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        store.initialize(
-            "r",
-            "greenfield",
-            "msg",
-            0,
-            "phase1-what",
-        )
-        prepared = _install_empty_routed_completion(ctrl, store)
-        transaction_root = prepared._transaction_root
-        state = store.load()
-        state.pop(PENDING_CONTROLLER_COMPLETION_KEY)
-        store.save(state)
-        del ctrl
-        fresh, fresh_store = _controller(tmp_path)
-        runner = MagicMock(
-            side_effect=AssertionError(
-                "incomplete dispatch was treated as an orphan"
-            )
-        )
-        monkeypatch.setattr(fresh, "_run_locked", runner)
-
-        fresh.run("msg", "banzai")
-
-        assert runner.call_count == 0
-        assert transaction_root.exists()
-
-        completed = store.load()
-        completed["last_dispatch"]["post_dispatch_complete"] = True
-        completed["last_dispatch"][
-            "completion_receipts_sha256"
-        ] = prepared.marker.receipts_sha256
-        store.save(completed)
-        del fresh
-        resumed_controller, resumed_store = _controller(tmp_path)
-        resumed = MagicMock(
-            side_effect=lambda *_args, **_kwargs: (
-                SquadResult.from_state(resumed_store.load())
-            )
-        )
-        monkeypatch.setattr(
-            resumed_controller,
-            "_run_locked",
-            resumed,
-        )
-
-        resumed_controller.run("msg", "banzai")
-
-        assert resumed.call_count == 1
-        assert not transaction_root.exists()
-
-    def test_route_saved_then_raised_drains_once_without_token_duplication(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        ctrl, store = _controller(tmp_path)
-        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
-        node = ctrl._graph.get("phase3-tasks-lexicon")
-        result = ctrl._executors["deterministic_lexicon"].execute(
-            node,
-            store,
-        )
-        snapshot = store.capture_routing_snapshot(
-            expected_phase=node.id,
-        )
-        prepared_result = ctrl._prepare_phase_result(
-            node,
-            result,
-            snapshot,
-        )
-        with ctrl._defer_routing_provider_usage() as usage:
-            usage["tokens"] = 19
-            decision = ctrl._coordinate_transition_routing(
-                node,
-                prepared_result,
-                snapshot,
-            )
-        original_save = store._save_unlocked
-        injected = False
-
-        def save_route_then_raise(state):
-            nonlocal injected
-            saved = original_save(state)
-            if (
-                not injected
-                and PENDING_CONTROLLER_COMPLETION_KEY in state
-                and isinstance(state.get("last_dispatch"), dict)
-            ):
-                injected = True
-                raise OSError("injected route save ambiguity")
-            return saved
-
-        monkeypatch.setattr(
-            store,
-            "_save_unlocked",
-            save_route_then_raise,
-        )
-        advance = MagicMock(wraps=store.advance)
-        monkeypatch.setattr(store, "advance", advance)
-
-        receipt = ctrl._advance_prepared_result_or_block(
-            node,
-            decision,
-        )
-
-        state = store.load()
-        assert injected is True
-        assert receipt is not None
-        assert advance.call_count == 1
-        assert state["token_usage"] == 19
-        assert state["last_dispatch"]["post_dispatch_complete"] is True
-        assert "controller_contract_error" not in state
-        assert "controller_completion_failure" not in state

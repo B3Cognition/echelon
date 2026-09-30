@@ -55,7 +55,7 @@ def continue_exhausted_gate_faults(case, executor):
                     else:
                         drain(ctrl)
             state = store.load()
-            marker = state.get("pending_controller_completion")
+            marker = state.get("_spec_step_effect_plan")
             current = marker["completion_id"] if marker else state["last_dispatch"]["dispatch_id"]
             if completion_id is None:
                 completion_id = current
@@ -76,8 +76,8 @@ def continue_exhausted_gate_faults(case, executor):
     # release, not a new gate evaluation or a replacement publication.
     controller(case, executor).run(managed_discovery=selected)
     state = store.load()
-    assert "pending_controller_completion" not in state
-    assert "pending_external_publication" not in state
+    assert "_spec_step_effect_plan" not in state
+    assert "_spec_step_publication_plan" not in state
     assert state["last_dispatch"]["dispatch_id"] == completion_id
     assert state["last_dispatch"]["post_dispatch_complete"] is True
     assert state["phase"] == "terminal-blocked" and state["lexicon_attempts"] == 1

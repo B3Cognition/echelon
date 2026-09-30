@@ -86,7 +86,6 @@ def test_runtime_workspace_helpers_anchor_on_echelon_paths() -> None:
         ROOT / "runtime" / "scripts" / "bash" / "detect-project.sh",
         ROOT / "runtime" / "scripts" / "bash" / "cicd-fingerprint.sh",
         ROOT / "runtime" / "scripts" / "bash" / "re" / "discover-repos.sh",
-        ROOT / "runtime" / "workflow" / "phases" / "codegen-A-preamble.md",
     )
 
     stale = [

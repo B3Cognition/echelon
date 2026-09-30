@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from echelon.cli import (
+from echelon.spec_service import (
     _ROADMAP_PHASES,
     _cmd_repair_traceability,
     _cmd_rewind,
@@ -297,7 +297,7 @@ def test_coverage_map_delivery_block_authorizes_exact_sentinel_rewind(
         / "runs"
         / "build-20260618-073106-635192"
         / "state"
-        / "default.json"
+        / "delivery.json"
     )
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
@@ -1077,11 +1077,11 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
         lambda *_args: frozenset(),
     )
     monkeypatch.setattr(
-        "echelon.cli._cleanup_rewind_outputs",
+        "echelon.spec_service._cleanup_rewind_outputs",
         lambda *_args: pytest.fail("generic rewind cleanup must not run"),
     )
     monkeypatch.setattr(
-        "echelon.cli._reset_rewind_state",
+        "echelon.spec_service._reset_rewind_state",
         lambda *_args, **_kwargs: pytest.fail("generic state reset must not run"),
     )
 
@@ -1239,7 +1239,7 @@ def test_traceability_repair_resumes_finalization_without_replanning(
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(run_dir / "inputs")
     )
-    assert "pending_external_publication" not in state
+    assert "_spec_step_publication_plan" not in state
     assert "product_input_mutation" not in state
     assert "TRACEABILITY REPAIRED" in capsys.readouterr().out
 
@@ -1335,7 +1335,7 @@ def test_traceability_repair_recovers_transaction_crash_prefixes(
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(run_dir / "inputs")
     )
-    assert "pending_external_publication" not in state
+    assert "_spec_step_publication_plan" not in state
     assert "product_input_mutation" not in state
 
 
@@ -1367,5 +1367,5 @@ def test_traceability_repair_authenticates_staged_package_before_copy(
 
     assert traceability.read_bytes() == before
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert "pending_external_publication" in state
+    assert "_spec_step_publication_plan" in state
     assert "product_input_mutation" in state

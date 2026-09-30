@@ -182,7 +182,7 @@ def test_why1_stop_restart_preserves_decision_ids_and_usage(checkpoint_case, mon
     ctrl = controller(checkpoint_case, executor)
     request = {**selection(checkpoint_case), "through_phase": "phase1-why1"}
     target, method = {
-        "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_controller_completion"),
+        "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_spec_step_effects"),
         "routed": (store, "advance"), "promoted": (IdentityStore, "apply_identity_publication"),
         "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_controller_completion"),
         "released": (IdentityStore, "release_identity_publication"),
@@ -229,7 +229,7 @@ def test_why1_clarification_restart_is_exact(checkpoint_case, monkeypatch, point
     history = identity.identity_history(spec_id="game")
     answer = AppliedHumanInputResolution(None, "Single player", "user")
     target, method = {
-        "staged": (ctrl, "_prepare_controller_completion"), "resolved": (store, "apply_human_input_state_resolution"),
+        "staged": (ctrl, "_prepare_spec_step_effects"), "resolved": (store, "apply_human_input_state_resolution"),
         "promoted": (IdentityStore, "apply_identity_publication"), "context": (ctrl, "_apply_controller_completion_effect"),
         "completed": (store, "complete_controller_completion"), "released": (IdentityStore, "release_identity_publication"),
     }[point]

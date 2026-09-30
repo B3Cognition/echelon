@@ -106,7 +106,7 @@ def test_gate_preparation_refuses_invalid_state_before_source_access(damage):
     if damage == "counter": state["feasibility_structural_attempts"] = -1
     elif damage == "cancelled": state["cancel_requested"] = True
     elif damage == "phase": state["phase"] = "phase2-decide"
-    else: state["pending_controller_completion"] = {}
+    else: state["_spec_step_effect_plan"] = {}
     store = SimpleNamespace(squad_dir=Path("/absent/runs/first"), load=lambda: state)
     with pytest.raises(ValueError):
         prepare_feasibility_gate_publication(Path("/absent"), store, completion_id="a" * 32, max_iterations=5)

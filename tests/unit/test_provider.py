@@ -115,11 +115,11 @@ class TestDataclasses:
             post_create_command="npm install",
             forward_ports=[3000],
             session_timeout_ms=3_600_000,
-            labels={"strategy_id": "default", "spec_id": "001", "run_id": "r-1"},
+            labels={"spec_id": "001", "run_id": "r-1"},
         )
         assert spec.image == "node:20"
         assert spec.session_timeout_ms == 3_600_000
-        assert "strategy_id" in spec.labels
+        assert "spec_id" in spec.labels
 
 
 @pytest.mark.unit

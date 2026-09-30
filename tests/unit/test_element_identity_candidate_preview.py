@@ -651,7 +651,7 @@ def test_preview_is_query_only_with_no_source_planner_provider_or_writer_access(
     def forbidden(*args, **kwargs):
         pytest.fail("preview acquired a source, provider, graph, memory or write owner")
     def guarded_import(name, *args, **kwargs):
-        if name.startswith(("harness.llm_provider", "harness.coordinator", "harness.ralph", "harness.state", "mempalace")):
+        if name.startswith(("harness.llm_provider", "harness.delivery_controller", "harness.ralph", "harness.state", "mempalace")):
             forbidden()
         return original_import(name, *args, **kwargs)
     @contextmanager

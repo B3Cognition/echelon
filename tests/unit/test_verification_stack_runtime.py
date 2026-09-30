@@ -72,8 +72,7 @@ def test_build_verification_sandbox_spec_preserves_delivery_isolation(
         config,
         worktree=tmp_path,
         spec_id="001-demo",
-        strategy_id="standalone",
-        run_id="verify-1",
+                run_id="verify-1",
     )
 
     assert spec.worktree_mount == str(tmp_path)

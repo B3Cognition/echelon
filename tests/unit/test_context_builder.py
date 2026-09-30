@@ -108,7 +108,7 @@ def test_build_run_context_can_write_frozen_context_to_explicit_output_dir(
     run_dir.mkdir(parents=True)
     output_dir = (
         run_dir
-        / ".completion-outbox"
+        / ".spec-step-effects"
         / ("a" * 32)
         / "context"
         / "files"

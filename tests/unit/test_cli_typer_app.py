@@ -20,22 +20,29 @@ def invoke_help(*args: str):
 @pytest.mark.unit
 def test_re_publish_routes_explicit_flags(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import RePublishRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_publish", lambda args: calls.append(args))
+    calls: list[RePublishRequest] = []
+    monkeypatch.setattr("echelon.re_service.publish_re", calls.append)
 
     run(["re", "publish", "spec-123", "--allow-partial", "--commit"])
 
-    assert calls == [["spec-123", "--allow-partial", "--commit"]]
+    assert calls == [
+        RePublishRequest(run_id="spec-123", allow_partial=True, commit=True)
+    ]
 
 
 @pytest.mark.unit
 def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     from echelon.cli_app import app, run
+    from echelon.re_service import ReRunRequest
 
     help_result = invoke_help("re", "run")
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+    calls: list[ReRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.run_re",
+        lambda request: calls.append(request),
+    )
 
     run(["re", "run", "--engine", "v2", "--shadow"])
     invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
@@ -43,25 +50,24 @@ def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     assert help_result.exit_code == 0
     assert "--engine" not in help_result.output
     assert "--shadow" not in help_result.output
-    assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
+    assert calls == [ReRunRequest(engine="v2", shadow=True)]
     assert invalid.exit_code == 2
 
 
 @pytest.mark.unit
 def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch):
     from echelon.cli_app import app, run
+    from echelon.re_service import ReRefreshRequest, ReRunRequest
 
-    run_calls: list[list[str]] = []
-    refresh_calls: list[list[str]] = []
+    run_calls: list[ReRunRequest] = []
+    refresh_calls: list[ReRefreshRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_run",
-        lambda args: run_calls.append(args),
-        raising=False,
+        "echelon.re_service.run_re",
+        lambda request: run_calls.append(request),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_refresh",
-        lambda args: refresh_calls.append(args),
-        raising=False,
+        "echelon.re_service.refresh_re",
+        lambda request: refresh_calls.append(request),
     )
 
     run_help = CliRunner().invoke(app, ["re", "run", "--help"])
@@ -90,9 +96,12 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     assert "--depth" in refresh_help.output
     assert "--re-token-limit" in run_help.output
     assert "--re-token-limit" in refresh_help.output
-    assert run_calls == [["--depth", "deep"], ["--reset", "--depth", "standard"]]
+    assert run_calls == [
+        ReRunRequest(depth="deep"),
+        ReRunRequest(depth="standard", reset=True),
+    ]
     assert refresh_calls == [
-        ["--source", "api", "--source", "worker", "--depth", "quick"]
+        ReRefreshRequest(sources=("api", "worker"), depth="quick")
     ]
 
 
@@ -101,14 +110,12 @@ def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch)
     from echelon.cli_app import app
 
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_run",
-        lambda _args: pytest.fail("invalid depth dispatched"),
-        raising=False,
+        "echelon.re_service.run_re",
+        lambda _request: pytest.fail("invalid depth dispatched"),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_refresh",
-        lambda _args: pytest.fail("invalid depth dispatched"),
-        raising=False,
+        "echelon.re_service.refresh_re",
+        lambda _request: pytest.fail("invalid depth dispatched"),
     )
     runner = CliRunner()
 
@@ -123,22 +130,27 @@ def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch)
 @pytest.mark.unit
 def test_re_status_json_option_routes_without_changing_default(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReStatusRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_status", lambda args: calls.append(args))
+    calls: list[ReStatusRequest] = []
+    monkeypatch.setattr(
+        "echelon.re_service.show_re_status",
+        lambda request: calls.append(request),
+    )
 
     run(["re", "status"])
     run(["re", "status", "--json"])
 
-    assert calls == [[], ["--json"]]
+    assert calls == [ReStatusRequest(), ReStatusRequest(as_json=True)]
 
 
 @pytest.mark.unit
 def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
     from echelon.cli_app import app
+    from echelon.re_service import ReResumeRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_resume", lambda args: calls.append(args))
+    calls: list[ReResumeRequest] = []
+    monkeypatch.setattr("echelon.re_service.resume_re", calls.append)
     runner = CliRunner()
 
     custom = runner.invoke(app, ["re", "resume", "Use accepted timeout evidence."])
@@ -158,16 +170,48 @@ def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
 
     assert custom.exit_code == recommended.exit_code == banzai.exit_code == 0
     assert calls == [
-        ["Use accepted timeout evidence."],
-        ["--recommended"],
-        [
-            "--banzai",
-            "--re-semantic-token-limit",
-            "9000000",
-            "--re-semantic-time-limit-minutes",
-            "720",
-        ],
+        ReResumeRequest(answer="Use accepted timeout evidence."),
+        ReResumeRequest(recommended=True),
+        ReResumeRequest(
+            banzai=True,
+            re_semantic_token_limit=9000000,
+            re_semantic_time_limit_minutes=720,
+        ),
     ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    (
+        ["re", "resume"],
+        ["re", "resume", "Use option 1", "--recommended"],
+        ["re", "resume", "Use option 1", "--banzai"],
+        ["re", "resume", "--recommended", "--banzai"],
+    ),
+)
+def test_re_resume_preserves_kernel_error_for_malformed_modes(args):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, args, env={"COLUMNS": "200"})
+
+    assert result.exit_code == 2
+    assert result.output == (
+        "\n"
+        "╭─ ✈ echelon · RE v2 · ERROR ──────────────────────────────────────────────────╮\n"
+        "│  ✗ COMMAND FAILED                                                            │\n"
+        "╰──────────────────────────────────────────────────────────────────────────────╯\n"
+        "\n"
+        "  command\n"
+        "  ───────\n"
+        "  echelon re resume\n"
+        "\n"
+        "  error\n"
+        "  ─────\n"
+        '  exactly one resume mode is required: "<guidance>", '
+        "--recommended, or --banzai\n"
+        "\n"
+    )
 
 
 @pytest.mark.unit
@@ -199,15 +243,15 @@ def test_quiet_is_accepted_after_a_nested_command_and_scoped_to_that_invocation(
     from echelon.cli_app import run
     from harness.verbosity import is_verbose
 
-    observed: list[tuple[list[str], bool]] = []
+    observed: list[tuple[str | None, bool]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_spec_run",
-        lambda args: observed.append((args, is_verbose())),
+        "echelon.spec_service.run_spec",
+        lambda _root, request: observed.append((request.description, is_verbose())),
     )
 
     run(["spec", "run", "Describe the feature", "--quiet"])
 
-    assert observed == [(["Describe the feature"], False)]
+    assert observed == [("Describe the feature", False)]
     assert is_verbose() is False
 
 
@@ -219,7 +263,8 @@ def test_provider_diagnostics_are_enabled_by_default(monkeypatch):
 
     observed: list[bool] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_status", lambda args: observed.append(is_verbose())
+        "echelon.re_service.show_re_status",
+        lambda _request: observed.append(is_verbose()),
     )
 
     run(["re", "status"])
@@ -240,28 +285,28 @@ def test_root_help_documents_common_quiet_option() -> None:
 @pytest.mark.unit
 def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReFinalizeRequest
 
-    calls: list[list[str]] = []
+    calls: list[ReFinalizeRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_finalize",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.re_service.finalize_re",
+        calls.append,
     )
 
     run(["re", "finalize", "re-123", "--allow-partial"])
 
-    assert calls == [["re-123", "--allow-partial"]]
+    assert calls == [ReFinalizeRequest(run_id="re-123", allow_partial=True)]
 
 
 @pytest.mark.unit
 def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
     from echelon.cli_app import run
+    from echelon.re_service import ReSynthesizeRequest
 
-    calls: list[list[str]] = []
+    calls: list[ReSynthesizeRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_synthesize",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.re_service.synthesize_re",
+        calls.append,
     )
 
     run(
@@ -276,7 +321,11 @@ def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
     )
 
     assert calls == [
-        ["re-123", "--allow-partial", "--re-token-limit", "1325000000"]
+        ReSynthesizeRequest(
+            run_id="re-123",
+            allow_partial=True,
+            re_token_limit=1325000000,
+        )
     ]
 
 
@@ -284,12 +333,15 @@ def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
 def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_execute_run", lambda args: calls.append(args))
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "echelon.re_service.execute_re_run",
+        lambda **kwargs: calls.append(kwargs),
+    )
 
     run(["re", "execute-run", "spec-123"])
 
-    assert calls == [["spec-123"]]
+    assert calls == [{"run_id": "spec-123"}]
 
 
 @pytest.mark.unit
@@ -304,12 +356,21 @@ def test_cli_does_not_expose_extension_backed_prosaic_export() -> None:
 def test_re_check_domain_routes_to_deterministic_gate(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_check_domain", lambda args: calls.append(args))
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "echelon.re_service.check_re_domain",
+        lambda **kwargs: calls.append(kwargs),
+    )
 
     run(["re", "check-domain", "spec-123", "api", "001-re-api"])
 
-    assert calls == [["spec-123", "api", "001-re-api"]]
+    assert calls == [
+        {
+            "run_id": "spec-123",
+            "source_id": "api",
+            "domain_id": "001-re-api",
+        }
+    ]
 
 
 @pytest.mark.unit
@@ -349,7 +410,7 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
 
     calls: list[list[str]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_rewind",
+        "echelon.spec_service._cmd_rewind",
         lambda args, project_root: calls.append(args),
     )
 
@@ -373,12 +434,12 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
 @pytest.mark.unit
 def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
     from echelon.cli_app import run
+    from echelon.spec_service import SpecRetargetRequest
 
-    calls: list[list[str]] = []
+    calls: list[SpecRetargetRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_spec_retarget",
-        lambda args: calls.append(args),
-        raising=False,
+        "echelon.spec_service.retarget_spec",
+        lambda _root, request: calls.append(request),
     )
 
     run([
@@ -392,14 +453,11 @@ def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
         "--confirm",
     ])
 
-    assert calls == [[
-        "001-demo",
-        "--target",
-        "apps/web",
-        "--target",
-        "services/api",
-        "--confirm",
-    ]]
+    assert calls == [SpecRetargetRequest(
+        spec_id="001-demo",
+        targets=("apps/web", "services/api"),
+        confirm_count=1,
+    )]
 
     from echelon.cli import USAGE
 
@@ -419,7 +477,8 @@ def test_spec_retarget_typer_help_declares_destructive_arguments():
 
 @pytest.mark.unit
 def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_path):
-    from echelon import cli
+    from echelon import spec_service as cli
+    from echelon.spec_service import SpecRetargetRequest
     from echelon.spec_retarget import RetargetCommandResult
 
     result = RetargetCommandResult(
@@ -451,8 +510,11 @@ def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_p
         lambda args, project_root, ext_dir: calls.append((args, project_root, ext_dir)),
     )
 
-    cli._cmd_spec_retarget(
-        ["001-demo", "--target", "apps/web", "--confirm"]
+    cli.retarget_spec(
+        tmp_path,
+        SpecRetargetRequest(
+            spec_id="001-demo", targets=("apps/web",), confirm_count=1
+        ),
     )
 
     assert calls == [
@@ -510,8 +572,11 @@ def test_spec_retarget_typer_invalid_shapes_exit_2(args):
 def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.prepare_amendment",
+        lambda project_root, **values: calls.append((project_root, values)),
+    )
 
     run([
         "spec",
@@ -525,23 +590,29 @@ def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
         "--dry-run",
     ])
 
-    assert calls == [[
-        "004-demo",
-        "Add requirement evidence",
-        "--input",
-        "requirement:sources/PBS-E-73.pdf",
-        "--input",
-        "reference:sources/PBS-E-73-figma-design.pdf",
-        "--dry-run",
-    ]]
+    assert calls == [(Path.cwd(), {
+        "spec_id": "004-demo",
+        "description": "Add requirement evidence",
+        "input_values": (
+            "requirement:sources/PBS-E-73.pdf",
+            "reference:sources/PBS-E-73-figma-design.pdf",
+        ),
+        "dry_run": True,
+        "extra_args": (),
+    })]
 
 
 @pytest.mark.unit
 def test_spec_add_input_routes_product_inputs(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_add_input", lambda args: calls.append(args))
+    calls: list[tuple[Path, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.add_input",
+        lambda project_root, *, input_values: calls.append(
+            (project_root, tuple(input_values))
+        ),
+    )
 
     run([
         "spec",
@@ -552,12 +623,10 @@ def test_spec_add_input_routes_product_inputs(monkeypatch):
         "reference:sources/DE-RESOLVER-BENCHMARK",
     ])
 
-    assert calls == [[
-        "--input",
+    assert calls == [(Path.cwd(), (
         "reference:sources/DE-OPTA-SCHEMA-MAPPING",
-        "--input",
         "reference:sources/DE-RESOLVER-BENCHMARK",
-    ]]
+    ))]
 
 
 @pytest.mark.unit
@@ -583,12 +652,21 @@ def test_spec_amend_help_declares_input_and_dry_run_options():
 def test_spec_amend_status_routes_to_the_amendment_lifecycle(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.prepare_amendment",
+        lambda project_root, **values: calls.append((project_root, values)),
+    )
 
     run(["spec", "amend", "status", "004-demo/001"])
 
-    assert calls == [["status", "004-demo/001"]]
+    assert calls == [(Path.cwd(), {
+        "spec_id": "status",
+        "description": "004-demo/001",
+        "input_values": (),
+        "dry_run": False,
+        "extra_args": (),
+    })]
 
 
 @pytest.mark.unit
@@ -623,11 +701,12 @@ def test_spec_amend_preparation_does_not_advertise_an_unimplemented_approval_act
 @pytest.mark.unit
 def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
     run([
@@ -636,8 +715,6 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "001",
         "--mode",
         "banzai",
-        "--strategy",
-        "codegen",
         "--max-outer",
         "3",
         "--max-inner",
@@ -645,59 +722,78 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "--token-budget",
         "1000",
         "--no-auto-merge",
-        "--kill-losers",
         "--reset",
     ])
 
-    assert calls == [[
-        "001",
-        "mode=banzai",
-        "strategy=codegen",
-        "max_outer=3",
-        "max_inner=2",
-        "token_budget=1000",
-        "auto_merge=false",
-        "kill_losers=true",
-        "--reset",
-    ]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            mode="banzai",
+            max_outer=3,
+            max_inner=2,
+            token_budget=1000,
+            auto_merge=False,
+            reset=True,
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_run_legacy_key_value_args_still_route(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
-    run(["delivery", "run", "001", "mode=banzai", "strategy=codegen", "max_outer=3"])
+    run(["delivery", "run", "001", "mode=banzai", "strategy=alternate", "max_outer=3"])
 
-    assert calls == [["001", "mode=banzai", "strategy=codegen", "max_outer=3"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            extra_args=("mode=banzai", "strategy=alternate", "max_outer=3"),
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_run_canonical_flags_take_precedence_over_legacy_args(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRunRequest
 
-    calls: list[list[str]] = []
+    calls = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_harness_run",
-        lambda args, **_kwargs: calls.append(args),
+        "echelon.delivery_service.run_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
     )
 
     run(["delivery", "run", "001", "mode=semi", "--mode", "banzai"])
 
-    assert calls == [["001", "mode=semi", "mode=banzai"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRunRequest(
+            spec_id="001",
+            extra_args=("mode=semi",),
+            mode="banzai",
+        ),
+    )]
 
 
 @pytest.mark.unit
 def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_resume", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.resume_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
     run([
         "delivery",
@@ -706,11 +802,16 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
         "Use the direct mapping",
         "--mode",
         "banzai",
-        "--strategy",
-        "codegen",
     ])
 
-    assert calls == [["001", "Use the direct mapping", "mode=banzai", "strategy=codegen"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001",
+            answer="Use the direct mapping",
+            mode="banzai",
+        ),
+    )]
 
 
 @pytest.mark.unit
@@ -721,19 +822,29 @@ def test_delivery_resume_help_declares_answer_argument():
     assert "SPEC_ID" in result.output
     assert "ANSWER" in result.output
     assert "--mode" in result.output
-    assert "--strategy" in result.output
+    assert "--strategy" not in result.output
 
 
 @pytest.mark.unit
 def test_delivery_continue_canonical_flags_route_to_harness_continue(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryRecoveryRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_continue", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.continue_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
-    run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "codegen"])
+    run(["delivery", "continue", "001", "--mode", "banzai"])
 
-    assert calls == [["001", "mode=banzai", "strategy=codegen"]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id="001",
+            mode="banzai",
+        ),
+    )]
 
 
 @pytest.mark.unit
@@ -756,9 +867,30 @@ def test_delivery_run_declares_canonical_flags():
         for opt in getattr(param, "opts", [])
     }
     assert "--mode" in declared_options
-    assert "--strategy" in declared_options
+    assert "--strategy" not in declared_options
+    assert "--kill-losers" not in declared_options
     assert "--max-outer" in declared_options
     assert "--target" not in declared_options
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["delivery", "run", "001", "--strategy", "alternate"],
+        ["delivery", "run", "001", "--kill-losers"],
+        ["delivery", "resume", "001", "--strategy", "alternate"],
+        ["delivery", "continue", "001", "--strategy", "alternate"],
+        ["delivery", "checkpoint", "list", "001", "--strategy", "alternate"],
+    ],
+)
+def test_delivery_execution_strategy_options_are_rejected(argv):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, argv)
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 @pytest.mark.unit
@@ -795,9 +927,13 @@ def test_delivery_land_declares_canonical_flags():
 @pytest.mark.unit
 def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
     from echelon.cli_app import run
+    from echelon.delivery_service import DeliveryLandRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_land", lambda args: calls.append(args))
+    calls = []
+    monkeypatch.setattr(
+        "echelon.delivery_service.land_delivery",
+        lambda project_root, request: calls.append((project_root, request)),
+    )
 
     run([
         "delivery",
@@ -811,15 +947,17 @@ def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
         "rebase",
     ])
 
-    assert calls == [[
-        "001",
-        "--continue",
-        "--prepare-only",
-        "--no-autoresolve",
-        "--allow-fulfillment-gaps",
-        "--strategy",
-        "rebase",
-    ]]
+    assert calls == [(
+        Path.cwd(),
+        DeliveryLandRequest(
+            spec_id="001",
+            continue_existing=True,
+            prepare_only=True,
+            autoresolve=False,
+            allow_fulfillment_gaps=True,
+            strategy="rebase",
+        ),
+    )]
 
 
 @pytest.mark.unit
@@ -833,10 +971,7 @@ def test_typer_front_door_declares_all_top_level_commands():
         "artifacts",
         "benchmark",
         "bugfix",
-        "build",
         "change",
-        "cicd",
-        "codegen",
         "continue",
         "delivery",
         "harness",
@@ -857,6 +992,8 @@ def test_typer_front_door_declares_all_top_level_commands():
         "wiki",
         "workspace",
     }.issubset(command.commands)
+    assert "build" not in command.commands
+    assert "cicd" not in command.commands
 
 
 @pytest.mark.unit
@@ -931,38 +1068,182 @@ def test_root_help_hides_compatibility_aliases():
         "rewind",
         "resume",
         "run",
-        "build",
         "review",
-        "codegen",
         "verify-spec",
         "reopen",
         "bugfix",
         "change",
-        "cicd",
     ):
         assert command.commands[alias].hidden
+    assert "build" not in command.commands
+    assert "cicd" not in command.commands
 
 
 @pytest.mark.unit
-def test_hidden_top_level_alias_still_routes(monkeypatch):
-    from echelon.cli_app import run
+@pytest.mark.parametrize(
+    ("argv", "target", "expected_args", "expected_kwargs"),
+    (
+        (
+            ["harness", "run", "001", "--mode", "banzai"],
+            "delivery_run",
+            ("001",),
+            {
+                "mode": "banzai",
+                "max_outer": None,
+                "max_inner": None,
+                "token_budget": None,
+                "auto_merge": None,
+                "reset": False,
+            },
+        ),
+        (
+            ["harness", "land", "001", "--continue"],
+            "delivery_land",
+            ("001",),
+            {
+                "continue_": True,
+                "prepare_only": False,
+                "no_autoresolve": False,
+                "allow_fulfillment_gaps": False,
+                "strategy": None,
+            },
+        ),
+        (
+            ["harness", "continue", "001"],
+            "delivery_continue",
+            ("001",),
+            {"mode": None},
+        ),
+        (
+            ["harness", "resume", "001", "go"],
+            "delivery_resume",
+            ("001",),
+            {"answer": "go", "mode": None},
+        ),
+    ),
+)
+def test_harness_aliases_route_through_canonical_delivery_commands(
+    monkeypatch, argv, target, expected_args, expected_kwargs
+):
+    from echelon import cli_app
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args, **_kwargs: calls.append(args))
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
-    run(["harness", "run", "001", "--mode", "banzai"])
+    def canonical(_ctx, *args, **kwargs):
+        calls.append((args, kwargs))
 
-    assert calls == [["001", "mode=banzai"]]
+    monkeypatch.setattr(cli_app, target, canonical)
+    result = CliRunner().invoke(cli_app.app, argv)
+
+    assert result.exit_code == 0
+    assert calls == [(expected_args, expected_kwargs)]
+
+
+@pytest.mark.parametrize("command", ("build", "cicd"))
+def test_retired_top_level_routes_are_absent(command):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, [command])
+
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+@pytest.mark.parametrize(
+    ("argv", "target", "expected_args", "expected_kwargs"),
+    (
+        (["artifacts", "001"], "spec_artifacts", ("001",), {}),
+        (["status"], "spec_status", (), {}),
+        (
+            ["land", "001", "--continue", "--strategy", "merge"],
+            "delivery_land",
+            ("001",),
+            {
+                "continue_": True,
+                "prepare_only": False,
+                "no_autoresolve": False,
+                "allow_fulfillment_gaps": False,
+                "strategy": "merge",
+            },
+        ),
+        (["continue", "--mode", "banzai"], "spec_continue", (), {"mode": "banzai"}),
+        (
+            ["rewind", "phase-2", "--commit", "abc", "--next-phase", "phase-3", "--confirm"],
+            "spec_rewind",
+            ("phase-2",),
+            {"checkpoint_commit": "abc", "checkpoint_next_phase": "phase-3", "confirm": True},
+        ),
+        (["resume", "approved"], "spec_resume", (), {"answer": "approved"}),
+        (
+            ["run", "Write it", "--mode", "semi"],
+            "spec_run",
+            (),
+            {
+                "description": "Write it",
+                "mode": "semi",
+                "reset": False,
+                "perfectionist": False,
+                "init": False,
+                "message": None,
+                "next_phase": None,
+                "target": None,
+                "input_values": None,
+                "ignore_re": False,
+                "stash": False,
+                "discard": False,
+                "confirm": False,
+            },
+        ),
+        (
+            ["verify-spec", "001", "--reconcile", "--dry-run"],
+            "spec_verify",
+            ("001",),
+            {"reconcile": True, "dry_run": True},
+        ),
+        (["reopen", "001", "from=report.json"], "spec_reopen", ("001",), {"report": "from=report.json"}),
+        (["bugfix", "001", "Broken"], "spec_bugfix", ("001", "Broken"), {}),
+        (["change", "001", "Different"], "spec_change", ("001", "Different"), {}),
+    ),
+)
+def test_root_aliases_route_through_canonical_commands(
+    monkeypatch, argv, target, expected_args, expected_kwargs
+):
+    from echelon import cli_app
+    from typer._click.core import Context
+
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def canonical(*args, **kwargs):
+        if args and isinstance(args[0], Context):
+            args = args[1:]
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(cli_app, target, canonical)
+    result = CliRunner().invoke(cli_app.app, argv)
+
+    assert result.exit_code == 0
+    assert calls == [(expected_args, expected_kwargs)]
 
 
 @pytest.mark.unit
 def test_typer_run_prints_version_without_subcommand(capsys):
-    from echelon.cli import CLI_VERSION
+    from echelon.version import CLI_VERSION
     from echelon.cli_app import run
 
     run(["--version"])
 
     assert capsys.readouterr().out.strip() == f"echelon {CLI_VERSION}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("args", (["--version"], ["version"]))
+def test_version_commands_bypass_legacy_cli(capsys, args):
+    from echelon import cli_app
+
+    assert not hasattr(cli_app, "_legacy_cli")
+    cli_app.run(args)
+
+    assert capsys.readouterr().out.strip() == "echelon 4.1.1"
 
 
 @pytest.mark.unit
@@ -1021,12 +1302,15 @@ def test_spec_targets_declares_argument_and_routes(monkeypatch):
     assert "SPEC_ID" in result.output
     assert "Display every task grouped by delivery target" in result.output
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_targets", lambda args: calls.append(args))
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.show_targets",
+        lambda project_root, *, spec_id: calls.append((project_root, spec_id)),
+    )
 
     run(["spec", "targets", "001"])
 
-    assert calls == [["001"]]
+    assert calls == [(Path.cwd(), "001")]
 
 
 @pytest.mark.unit
@@ -1039,7 +1323,7 @@ def test_delivery_help_uses_phase_b_common_forms():
     assert "Usage: root delivery [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase B/delivery commands" in result.output
     assert "Common forms:" in result.output
-    assert "status [<spec_id>] [--strategy <s>]" in result.output
+    assert "status [<spec_id>]" in result.output
     assert "run <spec_id> [--target <source-id-or-path>] [--mode <m>]" in result.output
     assert "land <spec_id> [--continue] [--prepare-only]" in result.output
 
@@ -1052,7 +1336,7 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
 
     assert help_result.exit_code == 0
     assert "SPEC_ID" in help_result.output
-    assert "--strategy" in help_result.output
+    assert "--strategy" not in help_result.output
     assert "--json" in help_result.output
 
     calls: list[dict[str, object]] = []
@@ -1060,25 +1344,22 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
     def record_status_command(
         *,
         spec_id: str = "",
-        strategy: str = "",
         json_output: bool = False,
     ) -> None:
         calls.append(
             {
                 "spec_id": spec_id,
-                "strategy": strategy,
                 "json_output": json_output,
             }
         )
 
     monkeypatch.setattr("echelon.delivery_status.command", record_status_command)
 
-    run(["delivery", "status", "001", "--strategy", "codegen", "--json"])
+    run(["delivery", "status", "001", "--json"])
 
     assert calls == [
         {
             "spec_id": "001",
-            "strategy": "codegen",
             "json_output": True,
         }
     ]
@@ -1117,11 +1398,15 @@ def test_spec_help_offers_only_guarded_unused_target_removal():
 
 
 @pytest.mark.unit
-def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
+def test_spec_run_typed_options_route_to_spec_service(monkeypatch):
     from echelon.cli_app import run
+    from echelon.spec_service import SpecRunRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_run", lambda args: calls.append(args))
+    calls: list[SpecRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.run_spec",
+        lambda _root, request: calls.append(request),
+    )
 
     run([
         "spec",
@@ -1148,28 +1433,22 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--stash",
     ])
 
-    assert calls == [[
-        "Add archive export",
-        "--mode",
-        "banzai",
-        "--reset",
-        "--perfectionist",
-        "--init",
-        "--message",
-        "include migration notes",
-        "--next-phase",
-        "phase2-model",
-        "--target",
-        "api",
-        "--target",
-        "web",
-        "--input",
-        "requirement:sources/PBS-E-45",
-        "--input",
-        "reference:sources/provision",
-        "--ignore-re",
-        "--stash",
-    ]]
+    assert calls == [SpecRunRequest(
+        description="Add archive export",
+        mode="banzai",
+        reset=True,
+        perfectionist=True,
+        init=True,
+        message="include migration notes",
+        next_phase="phase2-model",
+        targets=("api", "web"),
+        input_values=(
+            "requirement:sources/PBS-E-45",
+            "reference:sources/provision",
+        ),
+        ignore_re=True,
+        stash=True,
+    )]
 
 
 @pytest.mark.unit
@@ -1211,100 +1490,18 @@ def test_workspace_init_help_declares_workspace_options():
 
 
 @pytest.mark.unit
-def test_workspace_init_typed_options_route_to_legacy_workspace(monkeypatch):
+def test_spec_target_routes_to_service_rejection(monkeypatch):
     from echelon.cli_app import run
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
-
-    run([
-        "workspace",
-        "init",
-        "--llm",
-        "codex",
-        "--allow-unsafe-host-execution",
-    ])
-
-    assert calls == [["init", "--llm", "codex", "--allow-unsafe-host-execution"]]
-
-
-@pytest.mark.unit
-def test_workspace_init_typed_legacy_escape_hatch_routes_to_legacy_workspace(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
-
-    run(["workspace", "init", "--legacy-spec-kit"])
-
-    assert calls == [["init", "--legacy-spec-kit"]]
-
-
-@pytest.mark.unit
-def test_workspace_init_typed_openai_options_route_to_legacy_workspace(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
-
-    run(
-        [
-            "workspace",
-            "init",
-            "--llm",
-            "openai-compatible",
-            "--openai-base-url",
-            "http://127.0.0.1:8000/v1",
-            "--openai-model",
-            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
-            "--openai-api-key-file",
-            "~/.omlx_token",
-            "--openai-api-key-env",
-            "OMLX_API_KEY",
-            "--no-unsafe-host-execution",
-        ]
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.reject_target_mutation",
+        lambda: calls.append(True),
     )
-
-    assert calls == [
-        [
-            "init",
-            "--llm",
-            "openai-compatible",
-            "--openai-base-url",
-            "http://127.0.0.1:8000/v1",
-            "--openai-model",
-            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
-            "--openai-api-key-file",
-            "~/.omlx_token",
-            "--openai-api-key-env",
-            "OMLX_API_KEY",
-            "--no-unsafe-host-execution",
-        ]
-    ]
-
-
-@pytest.mark.unit
-def test_workspace_sources_sync_typed_options_route_to_legacy_workspace(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
-
-    run(["workspace", "sources", "sync", "--write"])
-
-    assert calls == [["sources", "sync", "--write"]]
-
-
-@pytest.mark.unit
-def test_spec_target_typed_args_route_to_legacy_spec_target(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_target", lambda args: calls.append(args))
 
     run(["spec", "target", "001", "sources/api", "sources/web", "--init"])
 
-    assert calls == [["001", "sources/api", "sources/web", "--init"]]
+    assert calls == [True]
 
 
 @pytest.mark.unit
@@ -1354,44 +1551,6 @@ def test_stack_help_declares_detection_and_preflight_options():
     assert "--from-detect" in preflight_help.output
     assert "--probe-tools" in preflight_help.output
     assert "--json" in preflight_help.output
-
-
-@pytest.mark.unit
-def test_stack_detect_repeated_artifacts_route_to_legacy_stack(monkeypatch):
-    from echelon.cli_app import run
-
-    calls: list[list[str]] = []
-    monkeypatch.setattr(
-        "echelon.cli._cmd_stack",
-        lambda args, **_kwargs: calls.append(args),
-    )
-
-    run([
-        "stack",
-        "detect",
-        "--target",
-        "sources/api",
-        "--artifacts",
-        "specs/001",
-        "--artifacts",
-        "runs/re",
-        "--write",
-        "--format",
-        "yaml",
-    ])
-
-    assert calls == [[
-        "detect",
-        "--target",
-        "sources/api",
-        "--artifacts",
-        "specs/001",
-        "--artifacts",
-        "runs/re",
-        "--write",
-        "--format",
-        "yaml",
-    ]]
 
 
 @pytest.mark.unit
@@ -1537,24 +1696,15 @@ def test_spec_verify_rejects_dry_run_without_reconcile(
 
 @pytest.mark.unit
 def test_top_level_skill_aliases_declare_common_arguments():
-    build_help = invoke_help("build")
     review_help = invoke_help("review")
-    codegen_help = invoke_help("codegen")
     verify_help = invoke_help("verify-spec")
     reopen_help = invoke_help("reopen")
     bugfix_help = invoke_help("bugfix")
     change_help = invoke_help("change")
 
-    assert build_help.exit_code == 0
-    assert "SPEC_ID" in build_help.output
-    assert "--fix" in build_help.output
-    assert "--failures" in build_help.output
-    assert "--context" in build_help.output
     assert review_help.exit_code == 0
     assert "SPEC_ID" in review_help.output
     assert "--pr-url" in review_help.output
-    assert codegen_help.exit_code == 0
-    assert "SPEC_ID" in codegen_help.output
     assert verify_help.exit_code == 0
     assert "SPEC_ID" in verify_help.output
     assert "--reconcile" in verify_help.output
@@ -1570,11 +1720,21 @@ def test_top_level_skill_aliases_declare_common_arguments():
 
 
 @pytest.mark.unit
+def test_retired_codegen_command_is_absent() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["codegen", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
+
+
+@pytest.mark.unit
 def test_spec_status_routes_to_legacy_status(monkeypatch):
     from echelon.cli_app import run
 
     calls = []
-    monkeypatch.setattr("echelon.cli._cmd_status", lambda project_root: calls.append(project_root))
+    monkeypatch.setattr("echelon.spec_service._cmd_status", lambda project_root: calls.append(project_root))
 
     run(["spec", "status"])
 

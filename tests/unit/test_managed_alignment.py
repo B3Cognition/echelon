@@ -51,7 +51,7 @@ def assert_alignment_parent(case, *, admitted=True):
             elif damage == "typed_iteration": changed["iteration"] = float(before["iteration"])
             elif damage == "cap": changed["max_iterations"] += 1
             elif damage == "override": changed["governance"] = {"enabled": False}
-            elif damage == "pending": changed["pending_controller_completion"] = {}
+            elif damage == "pending": changed["_spec_step_effect_plan"] = {}
             else: changed["feasibility_verdict"] = "DEFER"
             with pytest.raises((ValueError, CompletionError)): parent(case, changed, source)
     assert store.load() == before and identity.identity_history(spec_id="game") == history

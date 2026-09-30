@@ -29,7 +29,7 @@ from echelon.spec_retarget_history import (
     load_retarget_history,
 )
 from harness.phase_checkpoints import _commit_spec_changes
-from harness.squad_completion import PreparedControllerCompletion
+from harness.squad_completion import PreparedSpecStepEffects
 
 
 _RECEIPT_KEYS = frozenset(
@@ -401,7 +401,7 @@ def validate_finalization_receipt(value: object) -> dict[str, object]:
 
 
 def load_retarget_effect_progress(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
 ) -> dict[str, dict[str, object] | None]:
     """Load effect progress only when it is sealed to this completion attempt."""
     path = prepared._transaction_root / _PROGRESS_NAME
@@ -437,7 +437,7 @@ def load_retarget_effect_progress(
 
 
 def persist_retarget_effect_progress(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     step: str,
     receipt: Mapping[str, object],
 ) -> None:
@@ -777,7 +777,7 @@ def verify_retarget_finalization_receipt(
 
 
 def apply_or_verify_retarget_finalization(
-    prepared: PreparedControllerCompletion,
+    prepared: PreparedSpecStepEffects,
     *,
     project_root: Path,
     state: Mapping[str, object],

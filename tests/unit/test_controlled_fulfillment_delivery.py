@@ -13,9 +13,8 @@ from tests.unit.test_controlled_fulfillment_runner import (
 from tests.unit.test_delivery_controller_integration import _controller, _reconstruct
 
 
-def setup_delivery(context, tmp_path, executor, mode="semi", *, enabled=True):
+def setup_delivery(context, tmp_path, executor, mode="semi"):
     controller, store = _controller((context.project_root, context.spec_dir, None), tmp_path, executor, mode)
-    controller._config.llm.features["delivery_gate_controller"] = enabled
     controller._config.fulfillment.refresh_policy = "every_slice"
     state = store.read()
     state.update(workspace_root=str(context.workspace_root), source_id=context.source_id,
@@ -45,14 +44,14 @@ def test_existing_opt_in_runs_full_fulfillment_and_accounts_once(runner_context,
     assert executor.dispatch_count == 1
 
 
-def test_feature_off_keeps_legacy_runner(runner_context, tmp_path):
+def test_retired_feature_value_cannot_restore_legacy_runner(runner_context, tmp_path):
     from harness.fulfillment_runner import FulfillmentRunner
     controller, _ = setup_delivery(runner_context, tmp_path, SemanticExecutor())
     controller._config.llm.features["delivery_gate_controller"] = False
     # Constructor selection, not a mid-run mode switch.
     controller = _reconstruct(controller, controller._state_store, controller._llm_provider)
     assert isinstance(controller._fulfillment_runner, FulfillmentRunner)
-    assert controller._fulfillment_runner._controlled is False
+    assert controller._fulfillment_runner._controlled is True
 
 
 @pytest.mark.parametrize("point", ["before_accounting", "after_accounting"])
@@ -213,7 +212,7 @@ def test_scoped_target_refresh_preserves_target_policy_and_charges(runner_contex
 
 
 def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner_context, tmp_path):
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult
     from harness.fulfillment_runner import _current_git_commit
     from harness.verification_evidence import write_verification_receipt, VerificationStage
@@ -224,7 +223,7 @@ def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner
     controller, store = setup_delivery(context, tmp_path, executor)
     fingerprint = product_evidence_fingerprint(context.project_root)
     ref = write_verification_receipt(evidence_dir=tmp_path / "receipts", spec_id=context.spec_id,
-        strategy_id="default", build_id="test-run", candidate_commit=_current_git_commit(context.project_root),
+        build_id="test-run", candidate_commit=_current_git_commit(context.project_root),
         fingerprint_before=fingerprint, fingerprint_after=fingerprint, verifier_source="configured",
         stages=[VerificationStage(name="verify", command=("python", "-m", "pytest"), exit_code=0,
             duration_ms=1, stdout=b"passed", stderr=b"")], attempt_sequence=1, sensitive_environment={})
@@ -232,7 +231,7 @@ def test_verified_checkpoint_does_not_relabel_controlled_ledger_as_legacy(runner
                                                   str(context.project_root))
     assert result.passed, result.failures
     implementation = ImplementationResult("verified", "converged", 1, 0, None, 7, result)
-    coordinator = StrategyCoordinator(provider=controller._provider, gitops=controller._gitops,
+    coordinator = DeliveryController(provider=controller._provider, gitops=controller._gitops,
         config=controller._config, base_dir=str(context.workspace_root), orchestration_root=context.workspace_root)
     updates = coordinator._verified_evidence_updates(spec_id=context.spec_id, implementation=implementation,
         worktree_path=context.project_root, verified_commit=_current_git_commit(context.project_root))
@@ -247,7 +246,7 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
 ):
     from dataclasses import replace
     import yaml
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.review_loop import ReviewLoopController
     from harness.review_artifacts import ReviewArtifactPublisher
     from tests.unit.test_review_artifacts import _stage_one_group
@@ -268,11 +267,11 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     executor = ReviewedExecutor(inspect_source=True)
     controller, store = setup_delivery(context, tmp_path, executor, mode)
     controller._config.verify_command = "python -m pytest"
-    review = ReviewLoopController(controller._gitops, controller._config, "001", "default",
+    review = ReviewLoopController(controller._gitops, controller._config, "001",
         base_dir=str(context.workspace_root), build_id="review-acceptance", spec_dir=context.spec_dir)
     tasks = context.spec_dir / "tasks.md"
     tasks.write_text(tasks.read_text().replace("- [ ]", "- [x]"))
-    with ReviewArtifactPublisher(context.spec_dir, review._state_file.parent, "default") as publisher:
+    with ReviewArtifactPublisher(context.spec_dir, review._state_file.parent) as publisher:
         allocation = _stage_one_group(publisher)
         append = allocation.attempt_dir / "tasks-append.md"
         append.write_text(append.read_text().replace("req=UNMAPPED", "req=FR-000001"))
@@ -309,15 +308,15 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     assert result.passed is passing, result.failures
     assert executor.dispatch_count == 3
     if passing:
-        StrategyCoordinator._mark_review_reentry_phase_verified(store, pending)
+        DeliveryController._mark_review_reentry_phase_verified(store, pending)
         pending = store.read()["pending_review_reentry"]
-    completed = StrategyCoordinator._complete_verified_review_reentry(store, review,
+    completed = DeliveryController._complete_verified_review_reentry(store, review,
         pr_url="https://github.com/example/game/pull/1", pending_reentry=pending)
     assert completed is passing
     assert effects == (["resolve", "request"] if passing else [])
     if passing:
         assert store.read()["pending_review_reentry"] is None
-        assert StrategyCoordinator._complete_verified_review_reentry(store, review,
+        assert DeliveryController._complete_verified_review_reentry(store, review,
             pr_url="https://github.com/example/game/pull/1", pending_reentry=pending)
         assert effects == ["resolve", "request"]
     else:
@@ -340,7 +339,7 @@ rows = [{"id": item, "verified_implementation_evidence": "", "verified_test_evid
          "codegraph_candidates": "", "candidate_disposition": "none", "evidence_kind": "missing",
          "evidence_strength": "none", "runtime_threshold": False, "confidence": "none", "notes": "No evidence"}
         for item in data["assignment"]["assigned_ids"]]
-answer = json.dumps({**data["assignment"], "action": "final", "rows": rows, "unmapped_candidates": []})
+answer = json.dumps({**data["reply_contract"]["binding"], "action": "final", "rows": rows, "unmapped_candidates": []})
 '''
     script += f"sys.stdout.write({wire!r}.replace(json.dumps('__RESULT__'), json.dumps(answer)))\n"
     real_popen, commands = subprocess.Popen, []

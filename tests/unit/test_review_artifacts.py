@@ -73,7 +73,7 @@ def test_allocate_uses_numeric_max_and_three_task_ids_per_possible_group(tmp_pat
     (spec_dir / "review-fix-7.md").write_text("old", encoding="utf-8")
     (spec_dir / "review-fix-nope.md").write_text("ignored", encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1", "c2"))
 
     assert allocation.artifact_names == ("review-fix-8.md", "review-fix-9.md")
@@ -94,7 +94,7 @@ def test_fresh_allocation_uses_six_digit_minimum(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
 
     assert allocation.task_ids == ("T-000001", "T-000002", "T-000003")
@@ -114,7 +114,7 @@ def test_wide_allocation_publishes_and_round_trips_without_a_numeric_cap(
         encoding="utf-8",
     )
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
         assert allocation.task_ids == ("T-1000000", "T-1000001", "T-1000002")
         (allocation.attempt_dir / "review-fix-1.md").write_text(
@@ -167,7 +167,7 @@ def test_no_blocking_manifest_requires_no_staged_output(tmp_path: Path) -> None:
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
         allocation.status_file.write_text(
             json.dumps(
@@ -191,7 +191,7 @@ def test_manifest_rejects_unallocated_or_escaping_artifact_paths(tmp_path: Path,
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
         _write_manifest(
             allocation,
@@ -213,7 +213,7 @@ def test_manifest_rejects_duplicate_ids_and_missing_staged_files(tmp_path: Path)
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
         _write_manifest(
             allocation,
@@ -244,11 +244,11 @@ def test_lock_contention_blocks_live_pid_and_reclaims_stale_lock(tmp_path: Path)
     lock.write_text(f"pid={os.getpid()}\ncreated_at=now\nstrategy=default\n", encoding="utf-8")
 
     with pytest.raises(ReviewArtifactError, match="lock"):
-        with ReviewArtifactPublisher(spec_dir, state_dir, "default"):
+        with ReviewArtifactPublisher(spec_dir, state_dir):
             pass
 
     lock.write_text("pid=999999999\ncreated_at=then\nstrategy=default\n", encoding="utf-8")
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         assert publisher.allocate(()).artifact_names == ()
 
 
@@ -259,13 +259,13 @@ def test_recovery_completes_partial_publication_without_duplicate_tasks(tmp_path
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda boundary: (_ for _ in ()).throw(RuntimeError("crash")) if boundary == "artifact-write:review-fix-1.md" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         result = publisher.recover_publication(set())
 
     assert result is not None
@@ -281,7 +281,7 @@ def test_publication_rejects_canonical_tasks_changed_after_allocation(tmp_path: 
     tasks_path = spec_dir / "tasks.md"
     tasks_path.write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         tasks_path.write_text(_task("T-1") + _task("T-99"), encoding="utf-8")
 
@@ -298,7 +298,7 @@ def test_manifest_rejects_task_numbers_assigned_to_the_wrong_artifact(tmp_path: 
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-1"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1", "c2"))
         first, second, third, fourth, fifth, sixth = allocation.task_ids
         for artifact in allocation.artifact_names:
@@ -333,7 +333,7 @@ def test_allocation_and_append_round_trip_through_canonical_task_parser(tmp_path
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-009"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
 
     assert allocation.task_ids == ("T-000010", "T-000011", "T-000012")
@@ -344,7 +344,7 @@ def test_lock_release_preserves_a_replacement_lock(tmp_path: Path) -> None:
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir)
     publisher.__enter__()
     replacement = spec_dir / "replacement"
     replacement.write_text("pid=999999999\ncreated_at=now\nstrategy=other\n", encoding="utf-8")
@@ -362,7 +362,7 @@ def test_failed_lock_metadata_write_cleans_up_its_new_lock(tmp_path: Path) -> No
     spec_dir.mkdir()
     with patch("harness.review_artifacts.os.fsync", side_effect=OSError("disk failure")):
         with pytest.raises(ReviewArtifactError):
-            ReviewArtifactPublisher(spec_dir, state_dir, "default").__enter__()
+            ReviewArtifactPublisher(spec_dir, state_dir).__enter__()
 
     assert not (spec_dir / ".echelon-review.lock").exists()
 
@@ -372,11 +372,11 @@ def test_live_os_lock_contender_cannot_acquire_during_metadata_install(tmp_path:
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    first = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    first = ReviewArtifactPublisher(spec_dir, state_dir)
     first.__enter__()
     try:
         with pytest.raises(ReviewArtifactError, match="lock"):
-            ReviewArtifactPublisher(spec_dir, state_dir, "default").__enter__()
+            ReviewArtifactPublisher(spec_dir, state_dir).__enter__()
     finally:
         first.__exit__(None, None, None)
 
@@ -388,7 +388,7 @@ def test_manifest_append_requires_canonical_rows_and_review_title_details(tmp_pa
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-001"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = publisher.allocate(("c1",))
         first, second, third = allocation.task_ids
         (allocation.attempt_dir / "review-fix-1.md").write_text("# Fix\n", encoding="utf-8")
@@ -420,17 +420,17 @@ def test_recovery_rejects_corrupt_journal_before_canonical_mutation(tmp_path: Pa
     original = _task("T-001")
     (spec_dir / "tasks.md").write_text(original, encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda boundary: (_ for _ in ()).throw(RuntimeError("crash")) if boundary == "journal-created" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
 
-    journal_path = state_dir / "default-review-publication.json"
+    journal_path = state_dir / "review-publication.json"
     journal = json.loads(journal_path.read_text(encoding="utf-8"))
     journal["artifacts"][0]["digest"] = "0" * 64
     journal_path.write_text(json.dumps(journal), encoding="utf-8")
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         with pytest.raises(ReviewArtifactError, match="digest"):
             publisher.recover_publication(set())
 
@@ -449,13 +449,13 @@ def test_recovery_is_idempotent_after_each_publication_write_boundary(tmp_path: 
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-001"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda actual: (_ for _ in ()).throw(RuntimeError("crash")) if actual == boundary else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         first = publisher.recover_publication(set())
         second = publisher.recover_publication(set())
 
@@ -476,14 +476,14 @@ def test_completed_publication_recovers_after_host_batch_progress(tmp_path: Path
     spec_dir.mkdir()
     tasks = spec_dir / "tasks.md"
     tasks.write_text(_task("T-001"))
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         batch = publisher.accept_manifest(allocation.status_file)
     updated = tasks.read_text()
     for task_id in batch.task_ids[:completed_count]:
         updated = update_task_progress_markdown(updated, task_id, "DONE")
     tasks.write_text(updated)
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         assert publisher.recover_publication(set()) == batch
         assert publisher.recover_publication(set()) == batch
     assert tasks.read_text() == updated
@@ -496,7 +496,7 @@ def test_completed_publication_still_rejects_non_host_batch_changes(tmp_path: Pa
     spec_dir.mkdir()
     tasks = spec_dir / "tasks.md"
     tasks.write_text(_task("T-001"))
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         batch = publisher.accept_manifest(allocation.status_file)
     updated = update_task_progress_markdown(tasks.read_text(), batch.task_ids[0], "DONE")
@@ -513,7 +513,7 @@ def test_completed_publication_still_rejects_non_host_batch_changes(tmp_path: Pa
     else:
         updated = updated.replace("  **Status:** DONE\n", "  **Status:** DONE\n  **Status:** DONE\n")
     tasks.write_text(updated)
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         with pytest.raises(ReviewArtifactError, match="tasks.md does not match"):
             publisher.recover_publication(set())
     assert tasks.read_text() == updated
@@ -527,7 +527,7 @@ def test_recovery_preserves_conflicting_artifact_after_crash(tmp_path: Path) -> 
     original = _task("T-001")
     (spec_dir / "tasks.md").write_text(original, encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda actual: (_ for _ in ()).throw(RuntimeError("crash")) if actual == "artifact-write:review-fix-1.md" else None
         with pytest.raises(RuntimeError, match="crash"):
@@ -535,7 +535,7 @@ def test_recovery_preserves_conflicting_artifact_after_crash(tmp_path: Path) -> 
 
     artifact = spec_dir / "review-fix-1.md"
     artifact.write_text("user conflict", encoding="utf-8")
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         with pytest.raises(ReviewArtifactError, match="conflicts"):
             publisher.recover_publication(set())
 
@@ -552,13 +552,13 @@ def test_recovery_validates_each_journal_contract_before_replaying(tmp_path: Pat
     original = _task("T-001")
     (spec_dir / "tasks.md").write_text(original, encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         publisher._after_publication_boundary = lambda actual: (_ for _ in ()).throw(RuntimeError("crash")) if actual == "journal-created" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.accept_manifest(allocation.status_file)
 
-    journal_path = state_dir / "default-review-publication.json"
+    journal_path = state_dir / "review-publication.json"
     journal = json.loads(journal_path.read_text(encoding="utf-8"))
     if mutation == "version":
         journal["version"] = 2
@@ -572,7 +572,7 @@ def test_recovery_validates_each_journal_contract_before_replaying(tmp_path: Pat
         journal["tasks_append"]["content"] = "eA=="
     journal_path.write_text(json.dumps(journal), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         with pytest.raises(ReviewArtifactError):
             publisher.recover_publication(set())
 
@@ -587,17 +587,17 @@ def test_consumed_journal_removal_boundary_never_replays_published_work(tmp_path
     spec_dir.mkdir()
     (spec_dir / "tasks.md").write_text(_task("T-001"), encoding="utf-8")
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         allocation = _stage_one_group(publisher)
         result = publisher.accept_manifest(allocation.status_file)
         publisher.mark_consumed(result.attempt_id)
 
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default") as publisher:
+    with ReviewArtifactPublisher(spec_dir, state_dir) as publisher:
         publisher._after_publication_boundary = lambda actual: (_ for _ in ()).throw(RuntimeError("crash")) if actual == "journal-removed" else None
         with pytest.raises(RuntimeError, match="crash"):
             publisher.allocate(())
 
-    assert not (state_dir / "default-review-publication.json").exists()
+    assert not (state_dir / "review-publication.json").exists()
     assert [
         row.task_id
         for row in parse_task_rows((spec_dir / "tasks.md").read_text(encoding="utf-8"))
@@ -609,10 +609,10 @@ def test_repeated_lock_contention_resets_contender_ownership_state(tmp_path: Pat
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    owner = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    owner = ReviewArtifactPublisher(spec_dir, state_dir)
     owner.__enter__()
     try:
-        contender = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+        contender = ReviewArtifactPublisher(spec_dir, state_dir)
         original_close = os.close
         closed: list[int] = []
 
@@ -641,7 +641,7 @@ def test_release_metadata_failure_fails_closed_without_unlocking_live_metadata(
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir)
     publisher.__enter__()
 
     if failure == "write":
@@ -662,7 +662,7 @@ def test_release_metadata_failure_fails_closed_without_unlocking_live_metadata(
 
     assert publisher._lock_fd is not None
     assert publisher._locked is True
-    contender = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    contender = ReviewArtifactPublisher(spec_dir, state_dir)
     with pytest.raises(ReviewArtifactError, match="lock"):
         contender.__enter__()
 
@@ -679,7 +679,7 @@ def test_release_failure_never_deletes_replacement_installed_during_failure(tmp_
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir)
     publisher.__enter__()
     replacement = spec_dir / "replacement"
     replacement_payload = "pid=999999999\ncreated_at=replacement\nstrategy=other\n"
@@ -710,7 +710,7 @@ def test_normal_release_does_not_depend_on_directory_fsync_for_path_removal(tmp_
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
-    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir)
     publisher.__enter__()
 
     with patch("harness.review_artifacts._fsync_directory", side_effect=OSError("directory fsync failed")) as sync:
@@ -718,5 +718,5 @@ def test_normal_release_does_not_depend_on_directory_fsync_for_path_removal(tmp_
 
     sync.assert_not_called()
     assert "released=true" in (spec_dir / ".echelon-review.lock").read_text(encoding="utf-8")
-    with ReviewArtifactPublisher(spec_dir, state_dir, "default"):
+    with ReviewArtifactPublisher(spec_dir, state_dir):
         pass

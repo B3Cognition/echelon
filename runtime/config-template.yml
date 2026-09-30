@@ -1259,6 +1259,10 @@ harness:
   # sandbox is authoritative and default. host is an explicit fallback only.
   verification:
     execution: sandbox
+    # Deadline for the authoritative verify command and its browser retry.
+    # Bootstrap keeps its separate 10-minute deadline. Raise this only when a
+    # required suite needs longer; accepted range is 60000-3600000 ms.
+    command_timeout_ms: 600000
 
   # --- LLM Provider ---
 
@@ -1293,7 +1297,6 @@ harness:
   #   #   non_secret_headers: []
   #   #   fixed_framing_byte_upper_bound: 4096
   #   # features:
-  #   #   delivery_gate_controller: false # opt-in trial; requires enforced read-only reviews
   #   #   streaming: true
   #   #   stream_preview: true
   #   #   stream_preview_max_chars: 1200

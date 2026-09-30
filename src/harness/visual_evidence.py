@@ -65,7 +65,6 @@ def write_visual_receipt(
     *,
     evidence_dir: Path,
     spec_id: str,
-    strategy_id: str,
     build_id: str,
     candidate_commit: str,
     candidate_fingerprint: str,
@@ -124,7 +123,6 @@ def write_visual_receipt(
         "schema_version": SCHEMA_VERSION,
         "authority": AUTHORITY,
         "spec_id": spec_id,
-        "strategy_id": strategy_id,
         "build_id": build_id,
         "candidate_commit": candidate_commit,
         "candidate_fingerprint": candidate_fingerprint,
@@ -227,6 +225,136 @@ def validate_visual_receipt(
     return VisualEvidenceValidation(valid=True)
 
 
+def write_semantic_visual_receipt(
+    *,
+    visual_ref: VisualEvidenceRef,
+    candidate_fingerprint: str,
+    spec_digest: str,
+    verdict: str,
+    summary: str,
+    findings: Sequence[str],
+    reviewed_artifacts: Sequence[str],
+    token_usage: int,
+) -> dict[str, object]:
+    """Seal one independent verdict against the selected browser receipt."""
+    if not validate_visual_receipt(
+        visual_ref, candidate_fingerprint=candidate_fingerprint,
+    ).valid:
+        raise ValueError("browser receipt is not valid for semantic review")
+    if not re.fullmatch(r"[0-9a-f]{64}", spec_digest):
+        raise ValueError("invalid semantic visual spec digest")
+    if verdict not in {"PASS", "FAIL"}:
+        raise ValueError("invalid semantic visual verdict")
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 8000:
+        raise ValueError("invalid semantic visual summary")
+    if (
+        not isinstance(findings, (list, tuple))
+        or len(findings) > 50
+        or any(not isinstance(item, str) or not item.strip() or len(item) > 8000 for item in findings)
+        or (verdict == "PASS" and findings)
+        or (verdict == "FAIL" and not findings)
+    ):
+        raise ValueError("invalid semantic visual findings")
+    if type(token_usage) is not int or token_usage < 0:
+        raise ValueError("invalid semantic visual token usage")
+    visual_payload = json.loads(visual_ref.path.read_text(encoding="utf-8"))
+    artifacts = [item["path"] for item in visual_payload["artifacts"]]
+    if (
+        not isinstance(reviewed_artifacts, (list, tuple))
+        or any(not isinstance(item, str) for item in reviewed_artifacts)
+        or len(set(reviewed_artifacts)) != len(reviewed_artifacts)
+        or not set(reviewed_artifacts).issubset(artifacts)
+        or (verdict == "PASS" and set(reviewed_artifacts) != set(artifacts))
+    ):
+        raise ValueError("semantic visual review did not cover retained artifacts")
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "authority": "semantic-visual-validator",
+        "candidate_fingerprint": candidate_fingerprint,
+        "visual_receipt_sha256": visual_ref.receipt_sha256,
+        "spec_digest": spec_digest,
+        "verdict": verdict,
+        "summary": summary,
+        "findings": list(findings),
+        "reviewed_artifacts": list(reviewed_artifacts),
+        "token_usage": token_usage,
+    }
+    digest = _sha256_json(payload)
+    payload["receipt_sha256"] = digest
+    path = visual_ref.path.parent / f"semantic-{visual_ref.path.stem}.json"
+    _write_json_exclusive(path, payload)
+    return {
+        "path": str(path),
+        "receipt_sha256": digest,
+        "candidate_fingerprint": candidate_fingerprint,
+        "visual_receipt_sha256": visual_ref.receipt_sha256,
+        "spec_digest": spec_digest,
+        "verdict": verdict,
+    }
+
+
+def validate_semantic_visual_receipt(
+    ref: Mapping[str, object],
+    *,
+    visual_ref: VisualEvidenceRef,
+    candidate_fingerprint: str,
+    spec_digest: str,
+) -> VisualEvidenceValidation:
+    """Require the exact passing verdict, browser images, spec, and candidate."""
+    browser = validate_visual_receipt(
+        visual_ref, candidate_fingerprint=candidate_fingerprint,
+    )
+    if not browser.valid:
+        return _invalid(f"browser receipt invalid: {browser.reason}")
+    try:
+        path = Path(str(ref.get("path") or ""))
+        if (
+            not path.is_absolute()
+            or path.is_symlink()
+            or path != visual_ref.path.parent / f"semantic-{visual_ref.path.stem}.json"
+            or not path.is_file()
+        ):
+            return _invalid("semantic visual receipt path mismatch")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return _invalid("semantic visual receipt is malformed")
+        embedded = str(payload.get("receipt_sha256") or "")
+        digest_payload = dict(payload)
+        digest_payload.pop("receipt_sha256", None)
+        observed = _sha256_json(digest_payload)
+        if not (
+            hmac.compare_digest(observed, embedded)
+            and hmac.compare_digest(observed, str(ref.get("receipt_sha256") or ""))
+        ):
+            return _invalid("semantic visual receipt digest mismatch")
+        if (
+            payload.get("authority") != "semantic-visual-validator"
+            or payload.get("schema_version") != 1
+            or payload.get("verdict") != "PASS"
+            or ref.get("verdict") != "PASS"
+            or payload.get("findings") != []
+            or payload.get("candidate_fingerprint") != candidate_fingerprint
+            or ref.get("candidate_fingerprint") != candidate_fingerprint
+            or payload.get("visual_receipt_sha256") != visual_ref.receipt_sha256
+            or ref.get("visual_receipt_sha256") != visual_ref.receipt_sha256
+            or payload.get("spec_digest") != spec_digest
+            or ref.get("spec_digest") != spec_digest
+        ):
+            return _invalid("semantic visual receipt input or verdict mismatch")
+        visual_payload = json.loads(visual_ref.path.read_text(encoding="utf-8"))
+        artifacts = [item["path"] for item in visual_payload["artifacts"]]
+        reviewed = payload.get("reviewed_artifacts")
+        if (
+            not isinstance(reviewed, list)
+            or len(reviewed) != len(artifacts)
+            or set(reviewed) != set(artifacts)
+        ):
+            return _invalid("semantic visual receipt did not cover all artifacts")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, TypeError, ValueError):
+        return _invalid("semantic visual receipt is unavailable or malformed")
+    return VisualEvidenceValidation(valid=True)
+
+
 def _integer(value: object) -> int:
     try:
         return int(value or 0)
@@ -238,7 +366,7 @@ def _stable_evidence_sha256(payload: Mapping[str, object]) -> str:
     stable = {
         key: payload.get(key)
         for key in (
-            "authority", "spec_id", "strategy_id", "build_id",
+            "authority", "spec_id", "build_id",
             "candidate_fingerprint", "screenshot_dir", "required_artifacts",
             "playwright", "artifacts", "status", "failure_id",
         )

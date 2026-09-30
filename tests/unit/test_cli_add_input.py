@@ -157,7 +157,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     from harness.squad_publication import PreparedSquadPublication
     from harness.squad_state import SquadStateStore
     from harness.state_transaction_namespace import (
-        PENDING_EXTERNAL_PUBLICATION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
     )
 
@@ -236,11 +236,11 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
 
     interrupted = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     if fault_boundary == "before_intent":
-        assert PENDING_EXTERNAL_PUBLICATION_KEY not in interrupted
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
         assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
         assert immutable_product_input_tree_digest(resolution.inputs_dir) == old_hash
     else:
-        assert interrupted[PENDING_EXTERNAL_PUBLICATION_KEY]["transaction_id"]
+        assert interrupted[SPEC_STEP_PUBLICATION_PLAN_KEY]["transaction_id"]
         assert interrupted[PRODUCT_INPUT_MUTATION_KEY]["kind"] == "add_input"
 
     recovered = add_input_to_active_run(
@@ -251,7 +251,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     final = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert recovered.added_count == 1
     assert recovered.attachment_id == "001"
-    assert PENDING_EXTERNAL_PUBLICATION_KEY not in final
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in final
     assert PRODUCT_INPUT_MUTATION_KEY not in final
     assert final["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(resolution.inputs_dir)
@@ -641,8 +641,8 @@ def test_spec_add_input_preserves_existing_mixed_package_modes(
     assert stat.S_IMODE(executable.stat().st_mode) == 0o751
 
 
-def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> None:
-    from echelon import cli
+def test_spec_service_add_input_accepts_repeatable_inputs(monkeypatch, capsys) -> None:
+    from echelon.spec_service import add_input
     from echelon.spec_add_input import SpecAddInputResult
 
     calls: list[list[str]] = []
@@ -660,11 +660,13 @@ def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> Non
 
     monkeypatch.setattr("echelon.spec_add_input.add_input_to_active_run", fake_add_input)
 
-    cli._cmd_spec_add_input([
-        "--input",
-        "reference:sources/new",
-        "--input=reference:sources/bench",
-    ])
+    add_input(
+        Path.cwd(),
+        input_values=(
+            "reference:sources/new",
+            "reference:sources/bench",
+        ),
+    )
 
     assert calls == [["reference:sources/new", "reference:sources/bench"]]
     output = capsys.readouterr().out

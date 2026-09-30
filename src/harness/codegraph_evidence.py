@@ -9,6 +9,7 @@ import shutil
 import subprocess
 
 from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
+from echelon.topology_model import canonical_occurrence_groups_valid
 
 from .node_runtime import NodeRuntimeResolutionError, resolve_codegraph_bridge
 
@@ -181,6 +182,8 @@ def _analysis_is_usable(
         return False
     if not all(_has_canonical_symbol_locator(symbol) for symbol in symbols):
         return False
+    if not canonical_occurrence_groups_valid(symbols):
+        return False
     symbol_keys = {symbol["symbol_key"] for symbol in symbols}
     if len(symbol_keys) != len(symbols):
         return False
@@ -242,15 +245,23 @@ def _has_canonical_symbol_locator(symbol: object) -> bool:
     qualified_name = symbol.get("qualified_name")
     kind = symbol.get("kind")
     signature = symbol.get("signature")
+    occurrence = symbol.get("locator_occurrence")
     if not (
         _is_normalized_source_path(file_path)
         and isinstance(qualified_name, str)
         and isinstance(kind, str)
         and (signature is None or isinstance(signature, str))
+        and (
+            occurrence is None
+            or (isinstance(occurrence, int) and not isinstance(occurrence, bool) and occurrence > 0)
+        )
     ):
         return False
+    locator_parts = [file_path, qualified_name, kind, signature or ""]
+    if occurrence is not None:
+        locator_parts.append(occurrence)
     locator = json.dumps(
-        [file_path, qualified_name, kind, signature or ""],
+        locator_parts,
         ensure_ascii=False,
         separators=(",", ":"),
     )

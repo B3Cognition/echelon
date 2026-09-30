@@ -56,6 +56,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("scripts") / "node" / "context7",
     Path("scripts") / "node" / "codegraph" / "vendor",
     Path("scripts") / "node" / "perlgraph" / "dist",
+    Path("scripts") / "node" / "perlgraph" / "tests",
     Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (
@@ -77,6 +78,7 @@ PROSAIC_RUNTIME_EXCLUDES = (
     ".echelon/prosaic/",
     ".echelon/runtime/",
 )
+PRODUCT_GITIGNORE_MARKER = "# Echelon-managed generated-file rules"
 CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
 CODEGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
 PERLGRAPH_RUNTIME_REL = Path("scripts") / "node" / "perlgraph"
@@ -449,7 +451,11 @@ class GitOpsManager:
     def fetch_mirror(self) -> None:
         """Fetch all updates in the mirror.
 
-        git -C mirror.git fetch --all --prune
+        git -C mirror.git fetch --all --no-prune
+
+        A mirror fetch maps origin refs into the same namespace as local
+        delivery candidate branches. Pruning would erase candidate refs that
+        do not exist in origin, including branches checked out in worktrees.
 
         Raises:
             GitOpsError: On failure (network, auth).
@@ -463,7 +469,7 @@ class GitOpsManager:
             )
         try:
             _run_git(
-                ["fetch", "--all", "--prune"],
+                ["fetch", "--all", "--no-prune"],
                 cwd=str(self._mirror_path),
             )
         except GitOpsError as e:
@@ -580,10 +586,10 @@ class GitOpsManager:
     def create_worktree(
         self,
         spec_id: str,
-        strategy_id: str,
         outer_iter: int,
+        *,
+        build_id: str,
         base_branch: Optional[str] = None,
-        build_id: str = "",
         prepare_codegraph: bool = False,
         fresh_branch: bool = False,
         fresh_branch_base: Optional[str] = None,
@@ -597,13 +603,13 @@ class GitOpsManager:
         it is merged to main.
 
         When base_branch is None (legacy / no-echelon mode): a new branch named
-        'harness/{spec_id}/{strategy_id}/iter-{outer_iter}' is created from the
+        'harness/{spec_id}/{build_id}/iter-{outer_iter}' is created from the
         prior iteration branch when available, otherwise from the default branch
         HEAD. A fresh delivery resets iteration zero to the target's current
         default branch instead of reusing an identically named branch from an
-        older run.  ``fresh_branch_base`` is an explicit, checkpointed candidate
-        from a prior interrupted delivery; when supplied it is the only exception
-        to that reset rule.
+        older run. ``fresh_branch_base`` is an explicit retained candidate from
+        a prior stopped delivery; when supplied it is the only exception to
+        that reset rule.
 
         Returns:
             Absolute path to the worktree directory.
@@ -619,7 +625,7 @@ class GitOpsManager:
         # Worktree directory — same path regardless of branching mode.
         worktree_dir = (
             _build_dir_fn(self._base_dir, build_id) / "worktrees"
-            / strategy_id / f"iter-{outer_iter}"
+            / f"iter-{outer_iter}"
         )
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
@@ -710,6 +716,7 @@ class GitOpsManager:
                             Path(existing_path),
                             prepare_codegraph=prepare_codegraph,
                         )
+                        self._initialize_product_gitignore(Path(existing_path))
                         return existing_path
                 else:
                     raise
@@ -717,7 +724,7 @@ class GitOpsManager:
             # Legacy mode: create a new harness/* branch, continuing from the
             # prior iteration branch when one exists.
             default_branch = self.get_default_branch()
-            branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
+            branch_name = f"harness/{spec_id}/{build_id}/iter-{outer_iter}"
             if fresh_branch_base and outer_iter == 0:
                 branch_base = fresh_branch_base
             elif fresh_branch and outer_iter == 0:
@@ -728,7 +735,7 @@ class GitOpsManager:
             else:
                 branch_base = self._legacy_iteration_base(
                     spec_id=spec_id,
-                    strategy_id=strategy_id,
+                    build_id=build_id,
                     outer_iter=outer_iter,
                     default_branch=default_branch,
                 )
@@ -844,6 +851,7 @@ class GitOpsManager:
             worktree_dir,
             prepare_codegraph=prepare_codegraph,
         )
+        self._initialize_product_gitignore(worktree_dir)
         return str(worktree_dir)
 
     def _is_harness_runs_worktree(self, worktree_path: str) -> bool:
@@ -927,7 +935,7 @@ class GitOpsManager:
         self,
         *,
         spec_id: str,
-        strategy_id: str,
+        build_id: str,
         outer_iter: int,
         default_branch: str,
     ) -> str:
@@ -936,7 +944,7 @@ class GitOpsManager:
 
         for previous_iter in range(outer_iter - 1, -1, -1):
             previous_branch = (
-                f"harness/{spec_id}/{strategy_id}/iter-{previous_iter}"
+                f"harness/{spec_id}/{build_id}/iter-{previous_iter}"
             )
             result = _run_git(
                 ["rev-parse", "--verify", f"refs/heads/{previous_branch}"],
@@ -997,12 +1005,57 @@ class GitOpsManager:
 
     @staticmethod
     def _append_unique_line(path: Path, line: str) -> None:
-        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-        if line in existing.splitlines():
+        existing = path.read_bytes() if path.exists() else b""
+        encoded = line.encode("utf-8")
+        if encoded in existing.splitlines():
             return
-        suffix = "" if not existing or existing.endswith("\n") else "\n"
+        suffix = b"" if not existing or existing.endswith(b"\n") else b"\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{existing}{suffix}{line}\n", encoding="utf-8")
+        path.write_bytes(existing + suffix + encoded + b"\n")
+
+    def _initialize_product_gitignore(self, worktree: Path) -> None:
+        """Persist generated-dependency exclusions in the product branch.
+
+        Delivery can start from an empty target with no selected stack. Node
+        dependencies therefore need a safe baseline before the implementer can
+        install them. Additional rules follow files already present in the
+        target; build output such as dist remains deliverable by default.
+        """
+        gitignore = worktree / ".gitignore"
+        if gitignore.is_symlink() or (gitignore.exists() and not gitignore.is_file()):
+            raise GitOpsError(f"Cannot initialize product .gitignore at {gitignore}")
+        self._append_unique_line(gitignore, PRODUCT_GITIGNORE_MARKER)
+        for rule in self._product_gitignore_rules(worktree):
+            self._append_unique_line(gitignore, rule)
+
+    @staticmethod
+    def _has_product_gitignore_marker(worktree: Path) -> bool:
+        gitignore = worktree / ".gitignore"
+        return (
+            gitignore.is_file()
+            and not gitignore.is_symlink()
+            and PRODUCT_GITIGNORE_MARKER.encode("utf-8") in gitignore.read_bytes().splitlines()
+        )
+
+    def _product_gitignore_rules(self, worktree: Path) -> tuple[str, ...]:
+        """Return the narrow generated-file policy for this target's stack."""
+        rules = ["node_modules/"]
+        resolved = getattr(self._config, "resolved_stacks", None)
+        capabilities = getattr(resolved, "capabilities", {}) or {}
+        framework = getattr(capabilities.get("web_app.framework"), "value", None)
+        service_framework = getattr(capabilities.get("service.framework"), "value", None)
+        service_runtime = getattr(capabilities.get("service.runtime"), "value", None)
+        if framework == "nextjs":
+            rules.append(".next/")
+        if framework == "swiftui":
+            rules.extend(("DerivedData/", ".build/"))
+        if (
+            service_framework == "fastapi"
+            or service_runtime == "uv-python"
+            or any((worktree / name).is_file() for name in ("pyproject.toml", "requirements.txt", "setup.py"))
+        ):
+            rules.extend((".venv/", "__pycache__/", "*.py[cod]"))
+        return tuple(rules)
 
     @staticmethod
     def _git_exclude_path(worktree: Path) -> Path:
@@ -1077,6 +1130,9 @@ class GitOpsManager:
         FR-CI-001
         """
         self._guard_default_branch_delivery_commit(worktree_path, message)
+        if self._has_product_gitignore_marker(Path(worktree_path)):
+            self._initialize_product_gitignore(Path(worktree_path))
+        self._guard_tracked_generated_dependencies(worktree_path)
 
         # Stage all changes except caller-owned generated output. Verification
         # traces must remain available locally without entering product commits.
@@ -1090,6 +1146,10 @@ class GitOpsManager:
             _run_git(["reset", "--", *exclusions], cwd=worktree_path, check=False)
         else:
             _run_git(["add", "-A"], cwd=worktree_path)
+        # A target without Echelon's marker is deliberately not migrated. If
+        # its existing ignore policy missed generated files, fail before the
+        # checkpoint instead of silently publishing newly staged dependencies.
+        self._guard_tracked_generated_dependencies(worktree_path)
         secret_scan = scan_git_staged(worktree_path)
         if not secret_scan.ok:
             raise GitOpsError(
@@ -1121,6 +1181,35 @@ class GitOpsManager:
         logger.info("Committed in %s: %s", worktree_path, sha[:12])
         return sha
 
+    def _guard_tracked_generated_dependencies(self, worktree_path: str) -> None:
+        tracked = _run_git(["ls-files", "-z", "--cached"], cwd=worktree_path).stdout
+        rules = self._product_gitignore_rules(Path(worktree_path))
+        generated_parts = {rule[:-1] for rule in rules if rule.endswith("/")}
+        python_bytecode = "*.py[cod]" in rules
+        example = next(
+            (
+                (
+                    path,
+                    next(
+                        (part for part in Path(path).parts if part in generated_parts),
+                        "Python bytecode",
+                    ),
+                )
+                for path in tracked.split("\0")
+                if generated_parts.intersection(Path(path).parts)
+                or (python_bytecode and Path(path).suffix in {".pyc", ".pyo", ".pyd"})
+            ),
+            None,
+        )
+        if example is not None:
+            path, generated_dir = example
+            raise GitOpsError(
+                f"Cannot commit with tracked {generated_dir} dependencies "
+                f"(example: {path}). Remove them explicitly from the target branch "
+                "or start a fresh greenfield run; .gitignore cannot untrack files.",
+                command="git ls-files",
+            )
+
     def _guard_default_branch_delivery_commit(
         self,
         worktree_path: str,
@@ -1139,11 +1228,11 @@ class GitOpsManager:
         if _commit_trailer(message, "Echelon-Origin") != "delivery":
             return
         spec_id = _commit_trailer(message, "Echelon-Spec")
-        strategy = _commit_trailer(message, "Echelon-Strategy")
-        if not spec_id or not strategy:
+        build_id = _commit_trailer(message, "Echelon-Run")
+        if not spec_id or not build_id:
             return
 
-        pattern = f"refs/heads/harness/{spec_id}/{strategy}/iter-*"
+        pattern = f"refs/heads/harness/{spec_id}/{build_id}/iter-*"
         branches = _run_git(
             ["for-each-ref", "--format=%(refname:short)", pattern],
             cwd=worktree_path,
@@ -1324,7 +1413,6 @@ class GitOpsManager:
         self,
         branch: str,
         spec_id: str,
-        strategy_id: str,
         spec_name: str = "",
     ) -> str:
         """Create draft PR on target repo, or return the URL of an existing one.
@@ -1350,12 +1438,11 @@ class GitOpsManager:
             logger.info("PR already exists for branch %s: %s", branch, existing)
             return existing
 
-        title_suffix = f" — {spec_name}" if spec_name else f"/{strategy_id}"
+        title_suffix = f" — {spec_name}" if spec_name else ""
         title = f"harness: {spec_id}{title_suffix}"
         body = (
             f"Automated build via Echelon delivery.\n\n"
-            f"Spec: {spec_id}{(' — ' + spec_name) if spec_name else ''}\n"
-            f"Strategy: {strategy_id}"
+            f"Spec: {spec_id}{(' — ' + spec_name) if spec_name else ''}"
         )
 
         try:
@@ -1544,36 +1631,46 @@ class GitOpsManager:
 
     # === Query Operations ===
 
-    def get_latest_worktree(
-        self, spec_id: str, strategy_id: str, build_id: str = ""
-    ) -> Optional[str]:
-        """Return path to the most recently created worktree for this spec/strategy.
-
-        When build_id is provided, looks in that specific build's worktrees.
-        When build_id is empty, scans all builds under runs/ and returns the
-        highest-mtime iter directory across all of them.
-
-        Worktrees are created at:
-            runs/{build_id}/worktrees/{strategy_id}/iter-{N}
-        """
-        rd = _runs_dir_fn(self._base_dir)
-        if build_id:
-            search_dirs = [_build_dir_fn(self._base_dir, build_id) / "worktrees" / strategy_id]
-        else:
-            search_dirs = [
-                d / "worktrees" / strategy_id
-                for d in sorted(rd.glob("build-*/"))
-                if d.is_dir()
-            ] if rd.exists() else []
-
-        candidates = []
-        for target in search_dirs:
-            if target.exists():
-                candidates.extend(p for p in target.iterdir() if p.is_dir())
+    def get_latest_worktree(self, spec_id: str, *, build_id: str) -> Optional[str]:
+        """Return the latest iteration checkout from one delivery build."""
+        root = _build_dir_fn(self._base_dir, build_id) / "worktrees"
+        candidates = [path for path in root.glob("iter-*") if path.is_dir()]
 
         if not candidates:
             return None
         return str(max(candidates, key=lambda p: p.stat().st_mtime))
+
+    def get_clean_worktree_head(
+        self,
+        spec_id: str,
+        *,
+        build_id: str,
+    ) -> Optional[str]:
+        """Return the committed HEAD of a clean preserved delivery worktree.
+
+        This is candidate recovery, not checkpoint acceptance.  Callers must
+        separately prove that the commit descends from their trusted delivery
+        lineage before retaining it.
+        """
+        worktree = self.get_latest_worktree(spec_id, build_id=build_id)
+        if not worktree:
+            return None
+        status = _run_git(
+            ["status", "--porcelain", "--untracked-files=all"],
+            cwd=worktree,
+            check=False,
+        )
+        if status.returncode != 0 or status.stdout.strip():
+            return None
+        head = _run_git(
+            ["rev-parse", "HEAD"],
+            cwd=worktree,
+            check=False,
+        )
+        commit = head.stdout.strip() if head.returncode == 0 else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            return None
+        return commit
 
     def detect_language(self, worktree_path: str) -> Dict:
         """Fingerprint target repo: detect language, package manager, Playwright.
@@ -1952,14 +2049,13 @@ class GitOpsManager:
 
     def _branch_from_worktree_path(self, worktree_path: str) -> Optional[str]:
         """Extract branch name from worktree path convention."""
-        # Path: runs/{spec_id}/strategies/{strategy_id}/worktrees/iter-{N}
+        # Path: runs/{build_id}/worktrees/iter-{N}
         parts = Path(worktree_path).parts
         try:
             wt_idx = parts.index("worktrees")
-            spec_id = parts[wt_idx + 1]
-            strategy_id = parts[wt_idx + 2]
-            iter_part = parts[wt_idx + 3]
-            return f"harness/{spec_id}-{strategy_id}-{iter_part}"
+            build_id = parts[wt_idx - 1]
+            iter_part = parts[wt_idx + 1]
+            return f"harness/{build_id}/{iter_part}"
         except (ValueError, IndexError):
             return None
 

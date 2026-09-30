@@ -451,7 +451,6 @@ def init_harness(
     try:
         worktree_path = mgr.create_worktree(
             "init",
-            "fingerprint",
             0,
             build_id="init",
             prepare_codegraph=False,

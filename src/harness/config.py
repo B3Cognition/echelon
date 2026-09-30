@@ -221,6 +221,7 @@ class VerificationConfig:
     """Where authoritative delivery verification is allowed to execute."""
 
     execution: str = "sandbox"
+    command_timeout_ms: int = 600_000
 
 
 @dataclass
@@ -686,11 +687,6 @@ def _parse_llm_features(raw: Dict[str, Any]) -> Dict[str, object]:
         return {}
     parsed: Dict[str, object] = {}
     for key, value in features.items():
-        if key == "delivery_gate_controller" and type(value) is not bool:
-            raise ValidationError(
-                "delivery_gate_controller must be a boolean",
-                field_path="llm.features.delivery_gate_controller",
-            )
         if isinstance(value, (bool, int, float, str)) or value is None:
             parsed[str(key)] = value
         else:
@@ -801,7 +797,19 @@ def _parse_verification(data: Dict[str, Any]) -> VerificationConfig:
             f"{sorted(VALID_VERIFICATION_EXECUTIONS)}",
             field_path="verification.execution",
         )
-    return VerificationConfig(execution=execution)
+    command_timeout_ms = raw.get("command_timeout_ms", 600_000)
+    if (
+        type(command_timeout_ms) is not int
+        or not 60_000 <= command_timeout_ms <= 3_600_000
+    ):
+        raise ValidationError(
+            "verification command timeout must be an integer from 60000 to 3600000 ms",
+            field_path="verification.command_timeout_ms",
+        )
+    return VerificationConfig(
+        execution=execution,
+        command_timeout_ms=command_timeout_ms,
+    )
 
 
 # ---------------------------------------------------------------------------

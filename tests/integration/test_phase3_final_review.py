@@ -50,11 +50,16 @@ def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", re
                         outcome=final_outcome if final else "resolved", rationale="Checked current requirements", evidence_refs=[reference])
             (spec / "issues.md").write_text("No issues" if payload["verdict"] == "PASS" else "New concrete failure")
             (spec / "quality-gates.md").write_text(f"Review revision {len(calls)}")
+            payload["output_files"] = [
+                str(spec / "issues.md"),
+                str(spec / "quality-gates.md"),
+            ]
             if final and after_review:
                 after_review(spec)
         elif "Operate in **ASSESS2**" in prompt:
             calls.append(("ASSESS2", final))
             (spec / "implementability-report.md").write_text(f"All tasks ready; review revision {len(calls)}")
+            payload["output_files"] = [str(spec / "implementability-report.md")]
             payload["state_updates"] = dict(gate_decision="PASS", phase_recommendation="proceed-to-build",
                                               implementability_metrics={})
         else:
@@ -136,7 +141,22 @@ def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(t
             return consensus_dispatch(cwd, prompt, **kwargs)
         if phase == "phase3-plan":
             calls.append(("PLAN", False))
-            return SquadAgentResult(exit_code=0, echelon_result=dict(verdict="COMPLETE", state_updates={}, journal_entries=[]),
+            plan_outputs = [
+                spec / name
+                for name in (
+                    "tasks.md",
+                    "critical-path.md",
+                    "risk-matrix.md",
+                    "dependencies.md",
+                )
+            ]
+            for output in plan_outputs:
+                replacement = output.with_name(f".{output.name}.current")
+                replacement.write_bytes(output.read_bytes())
+                replacement.replace(output)
+            return SquadAgentResult(exit_code=0, echelon_result=dict(
+                                        verdict="COMPLETE", state_updates={}, journal_entries=[],
+                                        output_files=[str(output) for output in plan_outputs]),
                                     raw_output="Tasks ready", duration_ms=0, timed_out=False)
         # Stop at the downstream boundary, not by replacing routing, guards or
         # checkpoint executors. No additional product work belongs to this test.
@@ -194,14 +214,35 @@ def test_normal_controller_routes_rejected_feasibility_with_its_evidence(tmp_pat
         payload = dict(verdict="COMPLETE", state_updates={}, journal_entries=[])
         if phase == "phase3-plan":
             calls.append(("PLAN", False))
+            plan_outputs = [
+                spec / name
+                for name in (
+                    "tasks.md",
+                    "critical-path.md",
+                    "risk-matrix.md",
+                    "dependencies.md",
+                )
+            ]
+            for output in plan_outputs:
+                replacement = output.with_name(f".{output.name}.current")
+                replacement.write_bytes(output.read_bytes())
+                replacement.replace(output)
+            payload["output_files"] = [str(output) for output in plan_outputs]
         elif phase == "phase3-how":
             owners.append(prompt)
             return SquadAgentResult(1, None, "Owner observation boundary", 0, True)
         elif "Operate in **ASSESS2**" in prompt:
             calls.append(("ASSESS2", False))
             (spec / "implementability-report.md").write_text(evidence)
-            payload.update(verdict=gate_verdict, state_updates=dict(gate_decision="REJECTED",
-                phase_recommendation="phase3-how", implementability_metrics={}))
+            payload.update(
+                verdict=gate_verdict,
+                output_files=[str(spec / "implementability-report.md")],
+                state_updates=dict(
+                    gate_decision="REJECTED",
+                    phase_recommendation="phase3-how",
+                    implementability_metrics={},
+                ),
+            )
         elif "Operate in **WHY3**" in prompt:
             return normal_review(cwd, prompt, **kwargs)
         elif "Operate in **PLAN2**" in prompt:
@@ -323,6 +364,101 @@ def test_failed_final_gate_does_not_claim_success_or_replan_in_same_dispatch(tmp
     assert result.verdict == "FAIL"
     assert not store.load().get("phase3_final_review")
     assert calls.count(("PLAN2", False)) == 1
+
+
+def test_banzai_final_gate_admits_reused_issue_id_and_routes_its_owner(tmp_path):
+    """A fresh final-review finding must not inherit an old display-ID slot."""
+    def write_fresh_issue(spec):
+        (spec / "issues.md").write_text(
+            """# Issues — WHY3
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 1
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** FAIL
+
+## Issues
+
+### ISS-001: Architecture contract contradicts the accepted boundary
+- **Severity:** HIGH
+- **Type:** contradiction
+- **Description:** The contract adds an invariant absent from the accepted requirement.
+- **Affected artifact:** contracts/api.md
+- **Affected section:** Runtime boundary
+- **Evidence:** FR-001 constrains only the accepted boundary.
+- **Recommendation:** Remove the extra architecture invariant.
+- **Responsible agent:** HOW
+- **Action Required:** Amend the architecture contract.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Remove the extra invariant from contracts/api.md.
+- **Evidence basis:** FR-001 and the current architecture contract.
+- **Values not inferable:** None
+- **Banzai eligible:** yes
+- **Banzai rationale:** The accepted requirement determines the correction.
+""",
+            encoding="utf-8",
+        )
+
+    ctrl, store, executor, node, _, _ = final_fixture(
+        tmp_path,
+        "banzai",
+        after_review=write_fresh_issue,
+        final_verdict="FAIL",
+    )
+    historical = {
+        "issue_id": "ISS-001",
+        "title": "Historical specification ambiguity",
+        "severity": "ISSUE",
+        "guidance": "Clarify the former specification ambiguity.",
+        "status": "validated",
+        "decision": "Clarify the former ambiguity.",
+        "repair_phase": "phase1-what",
+        "rationale": "The old specification required clarification.",
+        "confidence": "high",
+        "evidence_backed": "true",
+        "issue_fingerprint": "a" * 64,
+    }
+    state = store.load()
+    state["issue_resolution_ledger"] = {"ISS-001": historical}
+    store.save(state)
+
+    assert advance(ctrl, store, executor.execute(node, store)) == "phase3-consensus"
+    result = executor.execute(node, store)
+    assert result.verdict == "FAIL"
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+    routing = ctrl._construct_routing_decision_or_block(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert routing is not None
+    assert routing.human_input is not None
+    assert routing.decision.to_phase == "terminal-blocked"
+    assert ctrl._handle_prepared_human_input_or_block(
+        node,
+        prepared,
+        snapshot,
+        routing,
+        None,
+    )
+
+    persisted = store.load()
+    assert persisted["status"] == "running"
+    assert persisted["phase"] == "phase3-how"
+    assert persisted["selected_issue_resolution"] == "ISS-001"
+    selected = persisted["issue_resolution_ledger"]["ISS-001"]
+    assert selected["status"] == "selected"
+    assert selected["repair_phase"] == "phase3-how"
+    assert selected["issue_fingerprint"] != historical["issue_fingerprint"]
+    assert selected["previous_resolutions"] == [historical]
+    assert persisted["blocked_decision"]["status"] == "resolved"
+    assert persisted["blocked_decision"]["resolved_by"] == "controller"
 
 
 @pytest.mark.parametrize("outcome", ["unresolved", "unverifiable"])

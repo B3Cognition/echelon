@@ -26,7 +26,7 @@ from harness.squad_source_manifest import snapshot_source_manifest
 from harness.squad_source_projection import project_publication_source_images
 from harness.squad_source_snapshot import PublicationSourcesSnapshot
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY, PENDING_EXTERNAL_PUBLICATION_KEY, PRODUCT_INPUT_MUTATION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY, SPEC_STEP_PUBLICATION_PLAN_KEY, PRODUCT_INPUT_MUTATION_KEY,
 )
 
 
@@ -48,8 +48,8 @@ def _selected(root, state_store, store, producer="discovery", *, repair_unit=Non
             or state.get("phase") != producer_phase(producer) or state.get("status") != "running"
             or str(root) != selected["selection"]["project_root"]
             or str(state_store.squad_dir) != selected["selection"]["run_dir"]
-            or any(key in state for key in (PENDING_CONTROLLER_COMPLETION_KEY,
-                PENDING_EXTERNAL_PUBLICATION_KEY, PRODUCT_INPUT_MUTATION_KEY))
+            or any(key in state for key in (SPEC_STEP_EFFECT_PLAN_KEY,
+                SPEC_STEP_PUBLICATION_PLAN_KEY, PRODUCT_INPUT_MUTATION_KEY))
             or store.pending_identity_publication(spec_id=operation["binding"]["spec_id"]) is not None):
         raise ValueError("accepted unbound discovery required")
     return state, selected, operation
@@ -85,8 +85,12 @@ def _inspect(publication, original, writes, modes):
     return sources
 
 
-def _seal(root, run, writes, modes):
-    transaction = SquadPublicationTransaction.begin(root, run, uuid.uuid4().hex)
+def _seal(root, run, writes, modes, *, transaction_id=None):
+    transaction = SquadPublicationTransaction.begin(
+        root,
+        run,
+        uuid.uuid4().hex if transaction_id is None else transaction_id,
+    )
     owned = {Path(path) for path in writes}
     for index, (target, content) in enumerate(sorted(writes.items())):
         staged = transaction.build_path(f"artifact-{index}")
@@ -150,7 +154,13 @@ def _prepare(project_root, state_store, executor, completion_id, producer="disco
     source_only = _inspect(provisional, original, writes, modes)
     graph = _graph(source_only, candidate.history, selection)
     writes[selection["spec_path"] + "/spec-artifact-graph.json"] = graph
-    publication = _seal(root, state_store.squad_dir, writes, modes)
+    publication = _seal(
+        root,
+        state_store.squad_dir,
+        writes,
+        modes,
+        transaction_id=completion_id,
+    )
     sources = _inspect(publication, original, writes, modes)
     if _graph(sources, candidate.history, selection) != graph:
         raise ValueError("final projected graph changed")

@@ -9,19 +9,19 @@ import yaml
 
 
 def test_derive_wing_from_git_remote(tmp_path):
-    with patch("echelon.cli.subprocess") as mock_subprocess:
+    with patch("echelon.workspace_service.subprocess") as mock_subprocess:
         mock_subprocess.run.return_value = MagicMock(
             returncode=0, stdout="https://github.com/org/my-app.git\n"
         )
-        from echelon.cli import _derive_wing_suggestion
+        from echelon.workspace_service import _derive_wing_suggestion
         result = _derive_wing_suggestion(tmp_path)
     assert result == "my-app"
 
 
 def test_derive_wing_fallback_when_no_remote(tmp_path):
-    with patch("echelon.cli.subprocess") as mock_subprocess:
+    with patch("echelon.workspace_service.subprocess") as mock_subprocess:
         mock_subprocess.run.return_value = MagicMock(returncode=1, stdout="")
-        from echelon.cli import _derive_wing_suggestion
+        from echelon.workspace_service import _derive_wing_suggestion
         result = _derive_wing_suggestion(tmp_path)
     # Fallback: dirname + hash
     assert result.startswith(tmp_path.name)
@@ -35,7 +35,7 @@ def test_provision_wing_idempotent_when_already_set(tmp_path):
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
 
-    from echelon.cli import _provision_wing
+    from echelon.workspace_service import _provision_wing
     with patch("builtins.print") as mock_print:
         result = _provision_wing(tmp_path, echelon_yml)
 
@@ -50,10 +50,10 @@ def test_provision_wing_writes_to_echelon_yml(tmp_path):
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
 
-    with patch("echelon.cli._derive_wing_suggestion", return_value="my-app"):
-        with patch("echelon.cli.check_wing_collision", return_value=[]):
+    with patch("echelon.workspace_service._derive_wing_suggestion", return_value="my-app"):
+        with patch("echelon.workspace_service.check_wing_collision", return_value=[]):
             with patch("builtins.input", return_value=""):
-                from echelon.cli import _provision_wing
+                from echelon.workspace_service import _provision_wing
                 result = _provision_wing(tmp_path, echelon_yml)
 
     assert result == "my-app"
@@ -67,9 +67,12 @@ def test_provision_wing_uses_suggestion_without_a_tty(tmp_path, monkeypatch):
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http"}}))
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-    with patch("echelon.cli._derive_wing_suggestion", return_value="automation-wing"):
-        with patch("echelon.cli.check_wing_collision", return_value=[]):
-            from echelon.cli import _provision_wing
+    with patch(
+        "echelon.workspace_service._derive_wing_suggestion",
+        return_value="automation-wing",
+    ):
+        with patch("echelon.workspace_service.check_wing_collision", return_value=[]):
+            from echelon.workspace_service import _provision_wing
 
             result = _provision_wing(tmp_path, echelon_yml)
 
@@ -85,13 +88,16 @@ def test_provision_wing_collision_reprompts(tmp_path, monkeypatch):
     inputs = iter(["colliding-wing", "colliding-wing"])
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
-    with patch("echelon.cli._derive_wing_suggestion", return_value="colliding-wing"):
-        with patch("echelon.cli.check_wing_collision", side_effect=[
+    with patch(
+        "echelon.workspace_service._derive_wing_suggestion",
+        return_value="colliding-wing",
+    ):
+        with patch("echelon.workspace_service.check_wing_collision", side_effect=[
             ["/other/spec.md"],  # first: collision
             ["/other/spec.md"],  # second same name: force-accept
         ]):
             with patch("builtins.input", side_effect=inputs):
-                from echelon.cli import _provision_wing
+                from echelon.workspace_service import _provision_wing
                 result = _provision_wing(tmp_path, echelon_yml)
 
     assert result == "colliding-wing"

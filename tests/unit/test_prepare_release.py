@@ -38,7 +38,7 @@ def write_project(root: Path, version: str) -> None:
         f"# Echelon\n\n**Version {version}** - release notes\n",
         encoding="utf-8",
     )
-    (root / "src" / "echelon" / "cli.py").write_text(
+    (root / "src" / "echelon" / "version.py").write_text(
         f'CLI_VERSION = "{version}"\n',
         encoding="utf-8",
     )
@@ -128,7 +128,7 @@ def test_prepare_release_updates_all_metadata(tmp_path: Path) -> None:
     assert '**Version 3.1.0**' in (tmp_path / "README.md").read_text(encoding="utf-8")
     assert 'version = "3.1.0"' in (tmp_path / "uv.lock").read_text(encoding="utf-8")
     assert 'CLI_VERSION = "3.1.0"' in (
-        tmp_path / "src" / "echelon" / "cli.py"
+        tmp_path / "src" / "echelon" / "version.py"
     ).read_text(encoding="utf-8")
 
     assert Path("extension/extension.yml") not in result.changed_files

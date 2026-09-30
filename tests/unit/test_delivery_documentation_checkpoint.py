@@ -11,7 +11,7 @@ from tests.unit.test_delivery_documentation_integration import _setup, _feedback
 from tests.unit.test_delivery_controller_integration import _reconstruct, _build
 from tests.unit.test_delivery_documentation import documentation_project, review_report, ProcessLost
 from tests.unit.test_delivery_slice_runner import slice_project
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_documentation_gate import FIRST_RUN_README
 from tests.unit.test_runnability_contract import BROWSER_CONTRACT
 from tests.unit.test_runnability_runner import RecordingProvider, _resolved

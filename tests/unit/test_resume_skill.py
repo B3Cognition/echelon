@@ -17,7 +17,6 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
 
     spec_id = "001"
     build_id = "build-existing"
-    strategy_id = "default"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     marker = current_build_marker(tmp_path, spec_id)
@@ -29,11 +28,10 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     escalation_file.write_text("# Escalation\n", encoding="utf-8")
     state_dir = bdir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{strategy_id}.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": spec_id,
-                "strategy_id": strategy_id,
                 "status": "blocked",
                 "mode": "semi",
                 "termination_reason": "blocker_escalation",
@@ -46,7 +44,7 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     with patch("harness.config.load_config", return_value=MagicMock()), \
          patch("harness.skills.run_skill.run") as mock_run:
         resume(
-            "resume spec 001 strategy default answer: use option A",
+            "resume spec 001 answer: use option A",
             provider=MagicMock(),
             gitops=MagicMock(),
             base_dir=str(tmp_path),
@@ -59,3 +57,4 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     assert mock_run.call_args.kwargs["orchestration_root"] == workspace
     assert "spec 001" in mock_run.call_args.args[0]
     assert "resume" in mock_run.call_args.args[0]
+    assert "strategy" not in mock_run.call_args.args[0]

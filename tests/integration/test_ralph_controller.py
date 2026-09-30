@@ -81,7 +81,8 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
         target_default_branch="main",
         provider="docker",
     )
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    config.verify_command = "pytest"
+    state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
     provider = _ConvergeProvider()
@@ -94,8 +95,21 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id="spec-001",
-        strategy_id="default",
         config=config,
+    )
+    controller._exec_controlled_slice = MagicMock(
+        return_value={
+            "exit_code": 0,
+            "passed": True,
+            "build_status": "done",
+            "completion_marker_explicit": True,
+            "build_reason": "controlled slice completed",
+            "duration_s": 0,
+            "tokens": 0,
+            "task_ids": [],
+            "stdout": "",
+            "stderr": "",
+        }
     )
     return controller, state_store
 
@@ -104,14 +118,14 @@ def _make_controller(tmp_path: Path, mode: str = "semi") -> tuple:
 
 
 class TestStaleCancelRequestedClearedOnResume:
-    """Regression: stale cancel_requested from a previous Ctrl+C/coordinator cancel
+    """Regression: stale cancel_requested from a previous interrupted run
     must not block the next run from proceeding.
 
     Mirrors test_stale_cancel_requested_cleared_on_resume from the squad harness
     (tests/integration/test_squad_controller.py).
 
-    Scenario: the coordinator wrote cancel_requested=True to this strategy's state
-    (kill_losers), the strategy's process ended, and on re-invocation the state file
+    Scenario: an earlier process wrote cancel_requested=True, then ended, and on
+    re-invocation the state file
     still has cancel_requested=True from the previous run.  The new invocation calls
     initialize() which resets to status=initialized but a race or other codepath could
     leave cancel_requested stale.  The fix in _run_loop_inner clears it immediately
@@ -124,11 +138,10 @@ class TestStaleCancelRequestedClearedOnResume:
         controller, state_store = _make_controller(tmp_path)
 
         # Simulate: fresh initialize(), then a stale cancel_requested is present
-        # (e.g. written by coordinator kill_losers on the previous run, before
-        # initialize() flushed it, or by any other pre-existing path).
+        # (e.g. written during interruption before initialize() flushed it).
         state_store.initialize("run-fresh", "semi")
         # Inject cancel_requested=True directly into the initialized state,
-        # mirroring what the coordinator's kill_losers path does.
+        # mirroring an interrupted cancellation write.
         state = state_store.read()
         state["cancel_requested"] = True
         state_store.write(state)
@@ -142,10 +155,11 @@ class TestStaleCancelRequestedClearedOnResume:
         # immediately exiting with status=cancelled.
         result = controller.run_loop(max_outer=3, max_inner=1)
 
-        assert result.status in ("verified", "failed", "interrupted"), (
+        assert result.status != "cancelled", (
             f"Expected run to proceed past stale cancel_requested. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
+        assert state_store.read()["cancel_requested"] is False
 
     def test_fresh_init_not_affected(self, tmp_path: Path) -> None:
         """Fresh initialization already starts with cancel_requested=False;
@@ -157,7 +171,8 @@ class TestStaleCancelRequestedClearedOnResume:
         assert on_disk["cancel_requested"] is False
 
         result = controller.run_loop(max_outer=3, max_inner=1)
-        assert result.status in ("verified", "failed", "interrupted")
+        assert result.status != "cancelled"
+        assert state_store.read()["cancel_requested"] is False
 
 
 class TestBudgetBumpAutoResume:
@@ -193,7 +208,7 @@ class TestBudgetBumpAutoResume:
         # Re-invoke with a higher budget — should resume, not stay blocked
         result = controller.run_loop(max_outer=3, max_inner=1, token_budget=10000)
 
-        assert result.status != "blocked", (
+        assert result.termination_reason != "budget_exhausted", (
             f"Expected run to resume after budget bump. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -255,7 +270,7 @@ class TestBudgetBumpAutoResume:
         # Re-invoke with unlimited budget — should resume, not stay blocked
         result = controller.run_loop(max_outer=3, max_inner=1, token_budget=None)
 
-        assert result.status != "blocked", (
+        assert result.termination_reason != "budget_exhausted", (
             f"Expected run to resume with unlimited budget. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -393,7 +408,8 @@ def _make_controller_with_provider(
         target_default_branch="main",
         provider="docker",
     )
-    state_store = StateStore(tmp_path, "spec-001", "default")
+    config.verify_command = "pytest"
+    state_store = StateStore(tmp_path, "spec-001")
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_path / "harness"))
     gitops = _make_gitops()
@@ -405,8 +421,21 @@ def _make_controller_with_provider(
         mode_controller=mode_controller,
         escalation_handler=escalation_handler,
         spec_id="spec-001",
-        strategy_id="default",
         config=config,
+    )
+    controller._exec_controlled_slice = MagicMock(
+        return_value={
+            "exit_code": 0,
+            "passed": True,
+            "build_status": "done",
+            "completion_marker_explicit": True,
+            "build_reason": "controlled slice completed",
+            "duration_s": 0,
+            "tokens": 0,
+            "task_ids": [],
+            "stdout": "",
+            "stderr": "",
+        }
     )
     return controller, state_store
 

@@ -12,6 +12,16 @@ capabilities, silently replace the agreed design, install, migrate, or run live
 providers. This record implements convergence phase 1's keep/defer checkpoint;
 the later authorization permits continuation without another dependency approval.
 
+## Current delivery boundary (2026-09-21)
+
+S2 supersedes the historical delivery limitations recorded below. `echelon
+delivery run <id>` is now the sole supported Phase B entry point. The feature
+switch, feature-off execution, raw build command, legacy prompt/runner modules,
+and command-driven `build-*` graph have been removed. The persisted `echelon
+build` strategy value remains only as a validated internal identifier and must
+never be executed. Older dated sections remain as audit history, not current
+operating guidance.
+
 ## Result: narrow activation, not an unproven file deletion
 
 Retain the existing implementation on the isolated branch and finish the required

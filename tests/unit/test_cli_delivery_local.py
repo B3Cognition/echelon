@@ -14,8 +14,8 @@ def test_delivery_verify_local_decline_never_starts_runner(
     tmp_path: Path,
 ) -> None:
     """Host lifecycle execution requires a fresh explicit confirmation."""
-    from echelon.cli import LocalActionPlan
     from echelon.cli_app import app
+    from echelon.delivery_service import LocalActionPlan
 
     action_plan = LocalActionPlan(
         spec_id="001-demo",
@@ -27,9 +27,12 @@ def test_delivery_verify_local_decline_never_starts_runner(
     )
     calls: list[object] = []
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli._build_local_action_plan", lambda *_args, **_kwargs: action_plan)
     monkeypatch.setattr(
-        "echelon.cli._run_local_delivery_verification",
+        "echelon.delivery_service._build_local_action_plan",
+        lambda *_args, **_kwargs: action_plan,
+    )
+    monkeypatch.setattr(
+        "echelon.delivery_service._run_local_delivery_verification",
         lambda *_args, **_kwargs: calls.append("ran"),
     )
 

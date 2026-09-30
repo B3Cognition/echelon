@@ -139,6 +139,219 @@ def load_checkpoint_ledger(spec_dir: Path) -> CheckpointLedger:
     )
 
 
+def accepted_checkpoint_outputs(
+    project_root: Path,
+    spec_dir: Path,
+    state: Mapping[str, object],
+    phase: str,
+    artifacts: tuple[tuple[str, str, str], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    """Return checkpoint-proven artifact digests for a phase revisit.
+
+    The completion outcome, ledger row and commit trailers must all identify the
+    same checkpoint. A later completed phase can supersede a phase's own bytes
+    only with its completion-time output proof. An optional artifact needs a
+    receipt proof from whichever completed phase owns the retained bytes; mere
+    presence in a checkpoint has no authority. Invalid checkpoints fail closed.
+    """
+    outcomes = state.get("phase_completion_outcomes")
+    if type(outcomes) is not list:
+        return ()
+    completed = [
+        row for row in outcomes
+        if isinstance(row, Mapping)
+        and row.get("phase") == phase
+        and row.get("outcome") == "executed"
+        and row.get("checkpoint") == "required"
+    ]
+    if not completed:
+        return ()
+    first_completion_index = next(
+        index for index, row in enumerate(outcomes)
+        if isinstance(row, Mapping)
+        and row.get("phase") == phase
+        and row.get("outcome") == "executed"
+        and row.get("checkpoint") == "required"
+    )
+    run_id = state.get("run_id")
+    spec_id = state.get("spec_id")
+    if not all(type(value) is str and value for value in (run_id, spec_id)):
+        raise PhaseCheckpointError("prior phase completion identity is invalid")
+    root = project_root.resolve()
+    ledger, _present = _load_completion_checkpoint_ledger(spec_dir)
+    if ledger.spec_id != spec_id:
+        raise PhaseCheckpointError("prior phase checkpoint spec identity drift")
+    try:
+        relative_spec = spec_dir.resolve().relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError("prior spec directory escapes project root") from exc
+
+    def completed_checkpoint(outcome: Mapping[str, object]) -> PhaseCheckpoint | None:
+        # A completed no-change phase has no new checkpoint row. Continue to
+        # the last committed completion whose contract owned this artifact.
+        completion_id = outcome.get("completion_id")
+        next_phase = outcome.get("next_phase")
+        outcome_phase = outcome.get("phase")
+        if not all(type(value) is str and value for value in (
+            completion_id, next_phase, outcome_phase,
+        )):
+            raise PhaseCheckpointError("prior phase completion identity is invalid")
+        matches = [
+            row for row in ledger.checkpoints
+            if row.completion_id == completion_id
+        ]
+        if len(matches) > 1:
+            raise PhaseCheckpointError("prior phase checkpoint is ambiguous")
+        if matches:
+            checkpoint = matches[0]
+        else:
+            committed = run_git_hardened(
+                root, "log", "HEAD", "--fixed-strings",
+                "--grep", f"Echelon-Completion: {completion_id}",
+                "--format=%H", "--max-count=1",
+            ).stdout.strip()
+            if committed:
+                raise PhaseCheckpointError("prior committed checkpoint row is missing")
+            return None
+        if (
+            checkpoint.phase != outcome_phase
+            or checkpoint.next_phase != next_phase
+            or checkpoint.run_id != run_id
+            or checkpoint.spec_id != spec_id
+            or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint.commit) is None
+        ):
+            raise PhaseCheckpointError("prior phase checkpoint identity drift")
+        record = _show_completion_commit(root, checkpoint.commit, hardened=True)
+        identity = _completion_commit_identity(
+            completion_id=completion_id,
+            run_id=run_id,
+            spec_id=spec_id,
+            phase=outcome_phase,
+            next_phase=next_phase,
+            source=checkpoint.source,
+        )
+        if (
+            len(record["parents"].split()) != 1
+            or _GIT_OBJECT_ID_PATTERN.fullmatch(record["parents"]) is None
+            or not _record_has_exact_identity(record, identity, record["parents"])
+        ):
+            raise PhaseCheckpointError("prior phase commit identity drift")
+        ancestry = run_git_hardened(
+            root, "merge-base", "--is-ancestor", checkpoint.commit, "HEAD", check=False,
+        )
+        if ancestry.returncode != 0:
+            raise PhaseCheckpointError("prior phase commit is not in current history")
+        return checkpoint
+
+    def artifact_digest(checkpoint: PhaseCheckpoint, path: str, kind: str) -> str | None:
+        relative = (relative_spec / path).as_posix()
+        tree = run_git_hardened(
+            root, "ls-tree", "-rz", "--full-tree", checkpoint.commit,
+            "--", relative, text=False,
+        ).stdout
+        members: list[tuple[str, str]] = []
+        for item in tree.split(b"\0"):
+            if not item:
+                continue
+            header, raw_path = item.split(b"\t", 1)
+            mode, entry_kind, oid = header.split(b" ")
+            entry_path = raw_path.decode("utf-8")
+            if mode not in {b"100644", b"100755"} or entry_kind != b"blob":
+                raise PhaseCheckpointError("prior checkpoint artifact kind is unsafe")
+            if kind == "file" and entry_path != relative:
+                continue
+            if kind == "directory" and not entry_path.startswith(relative + "/"):
+                continue
+            blob = run_git_hardened(root, "cat-file", "blob", oid.decode("ascii"), text=False).stdout
+            member_path = entry_path[len(relative) + 1:] if kind == "directory" else path
+            members.append((member_path, hashlib.sha256(blob).hexdigest()))
+        if kind == "file" and len(members) == 1:
+            return members[0][1]
+        if kind == "directory" and members:
+            members.sort()
+            payload = json.dumps(members, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
+        return None
+
+    def provider_output_proof(
+        outcome: Mapping[str, object], path: str, kind: str, requirement: str,
+    ) -> str | None:
+        field = (
+            "required_provider_outputs" if requirement == "required"
+            else "optional_provider_outputs"
+        )
+        proofs = outcome.get(field)
+        if proofs is None:
+            return None
+        if type(proofs) is not list or len(proofs) > 4096:
+            raise PhaseCheckpointError("prior provider output proof is invalid")
+        matched = None
+        seen: set[tuple[str, str]] = set()
+        for proof in proofs:
+            if (
+                type(proof) is not dict
+                or frozenset(proof) != {"path", "kind", "sha256"}
+                or type(proof["path"]) is not str
+                or not proof["path"]
+                or Path(proof["path"]).is_absolute()
+                or any(part in {"", ".", ".."} for part in proof["path"].split("/"))
+                or type(proof["kind"]) is not str
+                or proof["kind"] not in {"file", "directory"}
+                or type(proof["sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", proof["sha256"]) is None
+            ):
+                raise PhaseCheckpointError("prior provider output proof is invalid")
+            key = (proof["path"], proof["kind"])
+            if key in seen:
+                raise PhaseCheckpointError("prior provider output proof is ambiguous")
+            seen.add(key)
+            if key == (path, kind):
+                matched = proof["sha256"]
+        return matched
+
+    accepted: list[tuple[str, str, str]] = []
+    for path, kind, requirement in artifacts:
+        if (
+            type(path) is not str or type(kind) is not str
+            or kind not in {"file", "directory"}
+            or requirement not in {"required", "optional"}
+        ):
+            raise PhaseCheckpointError("prior artifact declaration is invalid")
+        if Path(path).is_absolute() or any(part in {"", ".", ".."} for part in path.split("/")):
+            raise PhaseCheckpointError("prior artifact path is unsafe")
+        for outcome in reversed(outcomes[first_completion_index:]):
+            if (
+                not isinstance(outcome, Mapping)
+                or outcome.get("outcome") != "executed"
+                or outcome.get("checkpoint") != "required"
+            ):
+                continue
+            own_phase = outcome.get("phase") == phase
+            if own_phase:
+                proof_digest = (
+                    provider_output_proof(outcome, path, kind, "optional")
+                    if requirement == "optional" else None
+                )
+            else:
+                required_digest = provider_output_proof(outcome, path, kind, "required")
+                optional_digest = provider_output_proof(outcome, path, kind, "optional")
+                if required_digest is not None and optional_digest is not None:
+                    raise PhaseCheckpointError("prior provider output proof is ambiguous")
+                proof_digest = required_digest or optional_digest
+            if proof_digest is None and (not own_phase or requirement == "optional"):
+                continue
+            checkpoint = completed_checkpoint(outcome)
+            if checkpoint is None:
+                continue
+            digest = artifact_digest(checkpoint, path, kind)
+            if proof_digest is not None and digest != proof_digest:
+                raise PhaseCheckpointError("prior provider output proof digest drift")
+            if digest is not None:
+                accepted.append(("active_spec", path, digest))
+            break
+    return tuple(accepted)
+
+
 def _validate_checkpoint_rewind(checkpoint: PhaseCheckpoint) -> None:
     if checkpoint.rewind not in {"supported", "none"}:
         raise PhaseCheckpointError("invalid checkpoint rewind policy")

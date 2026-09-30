@@ -280,7 +280,7 @@ def prepare_lexicon_gate_publication(root, state_store, *, completion_id, max_it
     state = state_store.load()
     _require(state["phase"] == "phase1-lexicon" and state["status"] == "running"
         and type(state.get("max_iterations")) is int and state["max_iterations"] > 0
-        and not any(key in state for key in ("pending_controller_completion", "pending_external_publication", "product_input_mutation", "lexicon_gate")))
+        and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan", "product_input_mutation", "lexicon_gate")))
     selection = bootstrap_from_state(state)["selection"]
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     parent = _gate_parent(root, run, state, source)
@@ -306,7 +306,13 @@ def prepare_lexicon_gate_publication(root, state_store, *, completion_id, max_it
     projected = _inspect(provisional, before, writes, modes)
     graph = _graph(projected, history, selection)
     writes[spec.path + "/spec-artifact-graph.json"] = graph
-    publication = _seal(root, run, writes, modes)
+    publication = _seal(
+        root,
+        run,
+        writes,
+        modes,
+        transaction_id=completion_id,
+    )
     sources = _inspect(publication, before, writes, modes)
     baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
     recovery = dict(version=29, producer="lexicon_gate", completion_id=completion_id,

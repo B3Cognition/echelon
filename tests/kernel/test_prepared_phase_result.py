@@ -26,8 +26,8 @@ from harness.prepared_phase_result import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
     PRODUCT_INPUT_MUTATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
@@ -324,7 +324,7 @@ def test_prepared_phase_cannot_seal_pending_publication_removal() -> None:
             _result({}),
             controller_updates={},
             trusted_transaction_state_removals={
-                PENDING_EXTERNAL_PUBLICATION_KEY
+                SPEC_STEP_PUBLICATION_PLAN_KEY
             },
         )
 
@@ -343,7 +343,7 @@ def test_prepared_phase_cannot_seal_pending_completion_removal() -> None:
             _result({}),
             controller_updates={},
             trusted_transaction_state_removals={
-                PENDING_CONTROLLER_COMPLETION_KEY
+                SPEC_STEP_EFFECT_PLAN_KEY
             },
         )
 
@@ -436,7 +436,7 @@ def test_pending_publication_marker_rejects_non_exact_values(
     invalid_marker: object,
 ) -> None:
     with pytest.raises(ValueError):
-        state_transaction_namespace.validate_pending_external_publication(
+        state_transaction_namespace.validate_spec_step_publication_plan(
             invalid_marker
         )
 
@@ -449,11 +449,11 @@ def test_pending_publication_marker_rejects_dict_and_string_subclasses() -> None
         pass
 
     with pytest.raises(ValueError):
-        state_transaction_namespace.validate_pending_external_publication(
+        state_transaction_namespace.validate_spec_step_publication_plan(
             DictSubclass(VALID_MARKER)
         )
     with pytest.raises(ValueError):
-        state_transaction_namespace.validate_pending_external_publication(
+        state_transaction_namespace.validate_spec_step_publication_plan(
             {
                 **VALID_MARKER,
                 "transaction_id": StringSubclass("a" * 32),
@@ -465,7 +465,7 @@ def test_pending_publication_marker_returns_an_exact_detached_record() -> None:
     marker = dict(VALID_MARKER)
 
     validated = (
-        state_transaction_namespace.validate_pending_external_publication(
+        state_transaction_namespace.validate_spec_step_publication_plan(
             marker
         )
     )
@@ -478,17 +478,17 @@ def test_pending_publication_marker_returns_an_exact_detached_record() -> None:
 
 
 def test_pending_publication_key_is_reserved_for_all_untrusted_owners() -> None:
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in STORE_OWNED_TRANSACTION_KEYS
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in STORE_OWNED_TRANSACTION_KEYS
 
     node = PhaseNode(
         id="provider",
         type="agent",
-        allowed_state_updates=[PENDING_EXTERNAL_PUBLICATION_KEY],
+        allowed_state_updates=[SPEC_STEP_PUBLICATION_PLAN_KEY],
     )
     with pytest.raises(ControllerStateContractViolation):
         prepare_phase_result(
             node,
-            _result({PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER}),
+            _result({SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER}),
             controller_updates={},
         )
     with pytest.raises(ControllerStateContractViolation):
@@ -500,7 +500,7 @@ def test_pending_publication_key_is_reserved_for_all_untrusted_owners() -> None:
             ),
             _result({}),
             controller_updates={},
-            state_removals={PENDING_EXTERNAL_PUBLICATION_KEY},
+            state_removals={SPEC_STEP_PUBLICATION_PLAN_KEY},
         )
 
     prepared = prepare_phase_result(
@@ -520,15 +520,15 @@ def test_pending_publication_key_is_reserved_for_all_untrusted_owners() -> None:
             expected_state_revision=1,
             expected_previous_dispatch_sha256="0" * 64,
             queued_state_updates={
-                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+                SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER
             },
         )
 
 
 def test_pending_publication_marker_is_the_only_trusted_publication_effect() -> None:
-    assert PENDING_EXTERNAL_PUBLICATION_KEY in TRUSTED_ROUTING_EFFECT_KEYS
-    assert "external_publication_failure" in STORE_OWNED_TRANSACTION_KEYS
-    assert "external_publication_failure" not in TRUSTED_ROUTING_EFFECT_KEYS
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY in TRUSTED_ROUTING_EFFECT_KEYS
+    assert "spec_step_publication_failure" in STORE_OWNED_TRANSACTION_KEYS
+    assert "spec_step_publication_failure" not in TRUSTED_ROUTING_EFFECT_KEYS
 
     prepared = prepare_phase_result(
         PhaseNode(
@@ -546,12 +546,12 @@ def test_pending_publication_marker_is_the_only_trusted_publication_effect() -> 
         expected_state_revision=1,
         expected_previous_dispatch_sha256="0" * 64,
         transaction_state_updates={
-            PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+            SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER
         },
     )
 
     assert decision.transaction_state_updates == {
-        PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+        SPEC_STEP_PUBLICATION_PLAN_KEY: VALID_MARKER
     }
 
 
@@ -574,21 +574,21 @@ def test_pending_publication_marker_cannot_be_a_trusted_routing_removal() -> Non
             expected_state_revision=1,
             expected_previous_dispatch_sha256="0" * 64,
             transaction_state_removals={
-                PENDING_EXTERNAL_PUBLICATION_KEY
+                SPEC_STEP_PUBLICATION_PLAN_KEY
             },
         )
 
     assert raised.value.validator == "ownership"
     assert raised.value.json_path == (
         "$.transaction_state_removals."
-        f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+        f"{SPEC_STEP_PUBLICATION_PLAN_KEY}"
     )
 
 
 def test_pending_completion_marker_has_controller_only_routing_authority() -> None:
-    assert PENDING_CONTROLLER_COMPLETION_KEY in STORE_OWNED_TRANSACTION_KEYS
-    assert PENDING_CONTROLLER_COMPLETION_KEY in TRUSTED_ROUTING_EFFECT_KEYS
-    assert PENDING_CONTROLLER_COMPLETION_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
+    assert SPEC_STEP_EFFECT_PLAN_KEY in STORE_OWNED_TRANSACTION_KEYS
+    assert SPEC_STEP_EFFECT_PLAN_KEY in TRUSTED_ROUTING_EFFECT_KEYS
+    assert SPEC_STEP_EFFECT_PLAN_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
     assert PRODUCT_INPUT_MUTATION_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
 
     prepared = prepare_phase_result(
@@ -608,18 +608,18 @@ def test_pending_completion_marker_has_controller_only_routing_authority() -> No
         expected_previous_dispatch_sha256="0" * 64,
         dispatch_id=VALID_COMPLETION_MARKER["completion_id"],
         transaction_state_updates={
-            PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
+            SPEC_STEP_EFFECT_PLAN_KEY: VALID_COMPLETION_MARKER,
         },
     )
 
     assert decision.transaction_state_updates == {
-        PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
+        SPEC_STEP_EFFECT_PLAN_KEY: VALID_COMPLETION_MARKER,
     }
 
 
 def test_controller_completion_receipt_keys_are_store_owned_only() -> None:
     keys = {
-        "controller_completion_failure",
+        "spec_step_effect_failure",
         "last_terminal_completion",
         "phase_a_active_source_sha256",
         "phase_a_published_postimage_sha256",
@@ -664,14 +664,14 @@ def test_routing_decision_rejects_malformed_pending_completion_marker(
             expected_state_revision=1,
             expected_previous_dispatch_sha256="0" * 64,
             transaction_state_updates={
-                PENDING_CONTROLLER_COMPLETION_KEY: invalid_marker,
+                SPEC_STEP_EFFECT_PLAN_KEY: invalid_marker,
             },
         )
 
     assert raised.value.validator == "type"
     assert raised.value.json_path == (
         "$.transaction_state_updates."
-        f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+        f"{SPEC_STEP_EFFECT_PLAN_KEY}"
     )
 
 
@@ -679,14 +679,14 @@ def test_provider_cannot_set_or_remove_pending_completion_marker() -> None:
     node = PhaseNode(
         id="provider",
         type="agent",
-        allowed_state_updates=[PENDING_CONTROLLER_COMPLETION_KEY],
+        allowed_state_updates=[SPEC_STEP_EFFECT_PLAN_KEY],
     )
     with pytest.raises(ControllerStateContractViolation):
         prepare_phase_result(
             node,
             _result(
                 {
-                    PENDING_CONTROLLER_COMPLETION_KEY: (
+                    SPEC_STEP_EFFECT_PLAN_KEY: (
                         VALID_COMPLETION_MARKER
                     )
                 }
@@ -711,7 +711,7 @@ def test_provider_cannot_set_or_remove_pending_completion_marker() -> None:
             expected_state_revision=1,
             expected_previous_dispatch_sha256="0" * 64,
             transaction_state_removals={
-                PENDING_CONTROLLER_COMPLETION_KEY,
+                SPEC_STEP_EFFECT_PLAN_KEY,
             },
         )
 
@@ -1291,6 +1291,45 @@ def test_prepare_rejects_hostile_non_payload_fields_before_routing(
     assert _RAW_ATTESTATION_SECRET not in str(raised.value)
 
 
+def test_prepare_detaches_provider_attempt_records() -> None:
+    result = _result({})
+    attempt = {
+        "attempt_id": "primary-id",
+        "kind": "primary",
+        "provider": "codex",
+        "model": "gpt-test",
+        "started_at": "2026-09-26T10:00:00Z",
+        "ended_at": "2026-09-26T10:00:01Z",
+        "outcome": "OK",
+        "response_sha256": "a" * 64,
+    }
+    result.provider_attempts = (attempt,)
+
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        result,
+        controller_updates={},
+    )
+    attempt["outcome"] = "FORGED"
+
+    assert prepared.as_squad_agent_result().provider_attempts[0]["outcome"] == "OK"
+
+
+def test_prepare_rejects_mutable_provider_attempt_container() -> None:
+    result = _result({})
+    result.provider_attempts = []
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            result,
+            controller_updates={},
+        )
+
+    assert raised.value.json_path == "$.provider_attempts"
+    assert raised.value.validator == "type"
+
+
 def test_prepare_bounds_non_payload_strings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1550,6 +1589,7 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
         transition_index=1,
         increment_iteration=True,
         token_usage_delta=17,
+        cost_usd_delta=1.25,
     )
     queued["judgment_note"] = "changed"
     judgment["state_updates"]["iteration"] = 99
@@ -1566,6 +1606,7 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
     assert len(decision.judgment_payload_sha256) == 1
     assert decision.increment_iteration is True
     assert decision.token_usage_delta == 17
+    assert decision.cost_usd_delta == 1.25
 
 
 def test_routing_decision_attests_supplied_dispatch_id() -> None:
@@ -1684,7 +1725,7 @@ def test_routing_decision_binds_completion_id_to_dispatch_id() -> None:
         expected_previous_dispatch_sha256="0" * 64,
         dispatch_id=VALID_COMPLETION_MARKER["completion_id"],
         transaction_state_updates={
-            PENDING_CONTROLLER_COMPLETION_KEY: (
+            SPEC_STEP_EFFECT_PLAN_KEY: (
                 VALID_COMPLETION_MARKER
             )
         },
@@ -1700,7 +1741,7 @@ def test_routing_decision_binds_completion_id_to_dispatch_id() -> None:
             expected_previous_dispatch_sha256="0" * 64,
             dispatch_id="2" * 32,
             transaction_state_updates={
-                PENDING_CONTROLLER_COMPLETION_KEY: (
+                SPEC_STEP_EFFECT_PLAN_KEY: (
                     VALID_COMPLETION_MARKER
                 )
             },
@@ -1837,6 +1878,56 @@ def test_routing_token_usage_delta_tampering_breaks_attestation() -> None:
             decision,
             from_phase="provider",
             to_phase="next",
+        )
+
+
+def test_routing_cost_delta_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        cost_usd_delta=1.25,
+    )
+
+    object.__setattr__(decision, "cost_usd_delta", 2.5)
+
+    with pytest.raises(
+        PreparedPhaseResultAttestationError,
+        match="routing decision attestation mismatch",
+    ):
+        verify_prepared_routing_decision_attestation(
+            decision,
+            from_phase="provider",
+            to_phase="next",
+        )
+
+
+@pytest.mark.parametrize(
+    "cost",
+    [-1.0, 1_000_000_000.01, float("inf"), float("nan"), True],
+)
+def test_routing_decision_rejects_invalid_cost_delta(cost: object) -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(PreparedPhaseResultAttestationError):
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            cost_usd_delta=cost,
         )
 
 

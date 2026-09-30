@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from echelon.cli import _cmd_run, _consume_mode_arg, _print_squad_summary
+from echelon.spec_service import (
+    _cmd_run,
+    _consume_mode_arg,
+    _print_squad_summary,
+)
 
 
 def test_consume_mode_arg_accepts_split_form() -> None:
@@ -96,20 +100,20 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
                 run_id="spec-20260706-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
-    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_open_issues", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -145,7 +149,7 @@ def test_cmd_run_controller_exception_still_emits_one_squad_summary(
 ) -> None:
     from unittest.mock import patch
 
-    from echelon.cli import _spec_summary_session
+    from echelon.spec_service import _spec_summary_session
 
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
 
@@ -171,20 +175,20 @@ def test_cmd_run_controller_exception_still_emits_one_squad_summary(
             )
             raise RuntimeError("controller exploded")
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_a, **_k: (squad_dir, True))
-    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_a, **_k: None)
-    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_a, **_k: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._print_cost_summary", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._print_prior_knowledge", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._print_staging_artifacts", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.spec_service._print_open_issues", lambda *_a, **_k: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_a, **_k: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_a, **_k: object())
@@ -291,17 +295,17 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
                 run_id="spec-20260706-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
-    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -350,21 +354,21 @@ def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
             )
             return SimpleNamespace(status="done", phase="DONE", run_id=squad_dir.name)
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
-    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._fresh_stack_contract_or_exit", lambda *_args: {})
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -396,15 +400,15 @@ def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
         json.dumps({"user_message": "build notes", **state}),
         encoding="utf-8",
     )
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "echelon.cli._resolve_spec_run_implementation_targets",
+        "echelon.spec_service._resolve_spec_run_implementation_targets",
         lambda *_args, **_kwargs: ["."],
     )
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: squad_dir)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, False))
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: squad_dir)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, False))
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
 
     with pytest.raises(SystemExit) as exc:
@@ -425,8 +429,8 @@ def test_cmd_run_rejects_moved_reverse_engineering_policies(
     capsys: pytest.CaptureFixture[str],
     policy: str,
 ) -> None:
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_run(
@@ -477,16 +481,16 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
                 run_id="spec-20260711-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
-    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -517,11 +521,11 @@ def test_cmd_run_target_init_requires_target(
 ) -> None:
     squad_dir = tmp_path / "runs" / "spec-20260711-120000-000001"
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
 
     with pytest.raises(SystemExit) as exc:
         _cmd_run(["build notes", "--init"], project_root=tmp_path, ext_dir=tmp_path / "ext")
@@ -540,8 +544,8 @@ def test_cmd_run_requires_targets_before_multi_source_phase_a(
         source_root.mkdir(parents=True)
         (source_root / "package.json").write_text("{}\n", encoding="utf-8")
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_run(["build notes"], project_root=tmp_path, ext_dir=tmp_path / "ext")

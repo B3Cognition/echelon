@@ -5,9 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from harness.build_prompt import BuildPromptBuilder
-from harness.config import HarnessConfig, StacksConfig
-from harness.coordinator import StrategyCoordinator
+from harness.config import HarnessConfig, LlmConfig, StacksConfig
+from harness.delivery_controller import DeliveryController
 from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
 from harness.stacks.errors import StackResolutionError
@@ -31,17 +30,18 @@ def _coordinator_with_stacks(
     base_dir: Path,
     *,
     target_archetypes: list[str] | None = None,
-) -> StrategyCoordinator:
+) -> DeliveryController:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
+        llm=LlmConfig(enabled=True),
         stacks=StacksConfig(
             selected=selected,
             target_archetypes=target_archetypes or [],
         ),
     )
-    return StrategyCoordinator(
+    return DeliveryController(
         provider=MagicMock(),
         gitops=MagicMock(),
         config=config,
@@ -49,19 +49,6 @@ def _coordinator_with_stacks(
     )
 
 
-@pytest.mark.unit
-def test_build_prompt_includes_dedicated_stack_context_section() -> None:
-    prompt = BuildPromptBuilder().build_prompt(
-        worktree_path="/wt/001",
-        spec_content="spec",
-        tasks_content="tasks",
-        build_skill="echelon.build",
-        stack_context="# Resolved Echelon Stacks\n\n- statsperform-playbook\n",
-    )
-
-    assert "## Echelon Stack Context" in prompt
-    assert "# Resolved Echelon Stacks" in prompt
-    assert "statsperform-playbook" in prompt
 
 
 @pytest.mark.unit
@@ -110,17 +97,6 @@ def test_ios_runnability_stack_context_names_future_runner_without_claiming_pass
 
     assert "macOS simulator runner" in stack_context
     assert "cannot be represented as a pass" in stack_context
-
-
-@pytest.mark.unit
-def test_no_selected_stacks_preserves_original_strategy_context() -> None:
-    coord = _coordinator_with_stacks([], ROOT)
-
-    stack_context = coord._build_stack_context()
-    combined = coord._combine_strategy_context("Use the existing strategy", stack_context)
-
-    assert stack_context == ""
-    assert combined == "Use the existing strategy"
 
 
 @pytest.mark.unit
@@ -222,32 +198,9 @@ def test_stack_context_preflights_planned_coverage_types(
 
 
 @pytest.mark.unit
-def test_strategy_context_is_preserved_before_generated_stack_context() -> None:
-    coord = _coordinator_with_stacks(["statsperform-stark-webapp"], ROOT)
-
-    combined = coord._combine_strategy_context(
-        "Use the existing strategy file context",
-        coord._build_stack_context(),
-    )
-
-    strategy_index = combined.index("Use the existing strategy file context")
-    stack_index = combined.index("# Resolved Echelon Stacks")
-    assert strategy_index < stack_index
-    assert "statsperform-playbook" in combined
-    assert "statsperform-stark-webapp" in combined
-
-
-@pytest.mark.unit
-def test_coordinator_passes_combined_stack_context_to_ralph_and_build_prompt(
+def test_controller_passes_resolved_stack_context_to_controlled_delivery(
     tmp_path: Path,
 ) -> None:
-    strategy_dir = tmp_path / "runs" / "strategies" / "spec-001"
-    strategy_dir.mkdir(parents=True)
-    (strategy_dir / "default.md").write_text(
-        "Use the existing strategy file context",
-        encoding="utf-8",
-    )
-
     extension_stacks = tmp_path / "extension" / "stacks"
     for stack_id in ("statsperform-playbook", "statsperform-stark-webapp"):
         source = ROOT / "runtime" / "stacks" / stack_id
@@ -274,18 +227,17 @@ def test_coordinator_passes_combined_stack_context_to_ralph_and_build_prompt(
         )
 
         def capture_run_loop(**kwargs):
-            captured["strategy_context"] = kwargs.get("strategy_context", "")
+            captured["stack_context"] = kwargs.get("delivery_context", "")
             captured["build_prompt"] = kwargs.get("build_prompt", "")
             return mock_controller.run_loop.return_value
 
         mock_controller.run_loop.side_effect = capture_run_loop
         mock_ralph.return_value = mock_controller
-        monkeypatch.setattr("harness.coordinator.RalphController", mock_ralph)
+        monkeypatch.setattr("harness.delivery_controller.RalphController", mock_ralph)
 
-        coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+        coord.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
-    assert "Use the existing strategy file context" in captured["strategy_context"]
-    assert "# Resolved Echelon Stacks" in captured["strategy_context"]
-    assert "statsperform-playbook" in captured["strategy_context"]
-    assert "statsperform-stark-webapp" in captured["strategy_context"]
-    assert captured["strategy_context"] in captured["build_prompt"]
+    assert "# Resolved Echelon Stacks" in captured["stack_context"]
+    assert "statsperform-playbook" in captured["stack_context"]
+    assert "statsperform-stark-webapp" in captured["stack_context"]
+    assert captured["stack_context"] in captured["build_prompt"]

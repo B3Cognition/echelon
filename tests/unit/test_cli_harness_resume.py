@@ -1,4 +1,4 @@
-"""Tests for _cmd_harness_resume in cli.py."""
+"""Tests for the delivery-service recovery kernel."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ _TEST_BUILD_ID = "build-test"
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, state: dict) -> None:
-    """Write a fake harness state file (new layout: state_dir/{strategy}.json, no spec_id subdir)."""
-    path = state_dir / f"{strategy}.json"
+    """Write the fixed run-scoped delivery state file."""
+    path = state_dir / "delivery.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state))
 
@@ -36,6 +36,34 @@ def _setup_build(base: Path, spec_id: str) -> Path:
     sd = build_dir(base, _TEST_BUILD_ID) / "state"
     sd.mkdir(parents=True, exist_ok=True)
     return sd
+
+
+def _make_linked_candidate(base: Path, state_dir: Path, *, foreign: bool = False) -> Path:
+    source = base / "candidate-source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+    (source / "package.json").write_text(
+        json.dumps({"scripts": {"verify": "bash verify.sh"}}), encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "package.json"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source, check=True)
+    mirror = state_dir.parent.parent / "mirror.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(source), str(mirror)], check=True)
+    checkout_mirror = mirror
+    if foreign:
+        checkout_mirror = base / "foreign-mirror.git"
+        subprocess.run(
+            ["git", "clone", "-q", "--bare", str(source), str(checkout_mirror)], check=True,
+        )
+    candidate = state_dir.parent / "worktrees" / "iter-1"
+    candidate.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "--git-dir", str(checkout_mirror), "worktree", "add", "--detach", str(candidate), "HEAD"],
+        check=True, capture_output=True,
+    )
+    return candidate
 
 
 def _make_echelon_yml(
@@ -120,13 +148,13 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
 @pytest.mark.unit
 def test_refreshing_v1_spec_paths_keeps_delivery_state_v1(tmp_path: Path) -> None:
     """CLI metadata repair may not choose a V2 delivery phase plan."""
-    from echelon.cli import _refresh_harness_state_spec_paths
+    from echelon.delivery_service import _refresh_harness_state_spec_paths
     from harness.state import StateStore
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    state_store = StateStore(tmp_path / "runs" / "state", "001", "default")
+    state_store = StateStore(tmp_path / "runs" / "state", "001")
     state_store.state_file.parent.mkdir(parents=True, exist_ok=True)
     state_store.state_file.write_text(
         json.dumps({"status": "blocked", "legacy": True}), encoding="utf-8"
@@ -148,14 +176,14 @@ def test_refreshing_v1_spec_paths_keeps_delivery_state_v1(tmp_path: Path) -> Non
 
 @pytest.mark.unit
 class TestCmdHarnessResume:
-    """_cmd_harness_resume guards and banner."""
+    """_run_delivery_resume guards and banner."""
 
     def _call(self, args: list[str], cwd: Path) -> int:
-        """Call _cmd_harness_resume and return exit code (0 = ok, else sys.exit arg)."""
-        from echelon.cli import _cmd_harness_resume
+        """Call _run_delivery_resume and return exit code (0 = ok, else sys.exit arg)."""
+        from echelon.delivery_service import _run_delivery_resume
         with patch("pathlib.Path.cwd", return_value=cwd):
             try:
-                _cmd_harness_resume(args)
+                _run_delivery_resume(Path.cwd(), args)
                 return 0
             except SystemExit as e:
                 return int(e.code)
@@ -171,7 +199,7 @@ class TestCmdHarnessResume:
         rc = self._call(["001"], tmp_path)
         assert rc == 1
 
-    def test_unsupported_blocked_reason_exits_without_run_to_resume_guidance(
+    def test_budget_exhaustion_without_increase_exits_with_continue_guidance(
         self,
         tmp_path: Path,
         capsys,
@@ -184,12 +212,78 @@ class TestCmdHarnessResume:
         rc = self._call(["001"], tmp_path)
         assert rc == 1
         err = capsys.readouterr().err
-        assert "unsupported resume reason" in err
-        assert "echelon delivery resume 001" in err
-        assert "echelon delivery run 001 --reset" in err
+        assert "Token budget exhausted" in err
+        assert "--token-budget" in err
+        assert "echelon delivery run 001 --reset" not in err
         assert "echelon spec status" not in err
-        assert "delivery state" in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
+
+    def test_continue_budget_exhaustion_requires_explicit_sufficient_increase(
+        self, tmp_path: Path, capsys,
+    ) -> None:
+        # An implementation slice may be interrupted before the candidate
+        # exists in the source repo; runtime verification detects from that
+        # preserved candidate after the slice is accepted.
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "budget_exhausted",
+            "token_budget": 50, "tokens_used": 100, "max_outer": 1,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001", "token_budget=100", "max_outer=12"])
+            assert not mock_run.called
+            _run_delivery_continue(
+                tmp_path, ["001", "token_budget=1000", "max_outer=12", "mode=banzai", "auto_merge=false"],
+            )
+
+        message = mock_run.call_args.args[0]
+        assert "token_budget=1000" in message
+        assert "max 12 outer iterations" in message
+        assert "mode=banzai" in message
+        assert "no_auto_merge" in message
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "token budget" in capsys.readouterr().err.lower()
+
+    def test_continue_pending_slice_budget_exhaustion_preserves_build(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_budget_exhausted",
+                }],
+            },
+            "token_budget": 500, "tokens_used": 900,
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001", "token_budget=900"])
+            assert not mock_run.called
+            _run_delivery_continue(
+                tmp_path, ["001", "token_budget=2000", "mode=banzai", "auto_merge=false"],
+            )
+
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "token_budget=2000" in mock_run.call_args.args[0]
 
     def test_outer_cap_rejection_points_to_checkpoint_preserving_new_budget(
         self,
@@ -237,8 +331,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -247,6 +341,8 @@ class TestCmdHarnessResume:
         ("blocked_phase", "reason"),
         [
             ("visual", "visual_feedback_failed"),
+            ("visual", "semantic_visual_evidence_invalid"),
+            ("visual", "semantic_visual_validator_unavailable"),
             ("visual", "app_runtime_failed"),
             ("review", "review_provider_failed"),
             ("finalization", "finalization_write_failed"),
@@ -271,8 +367,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -296,11 +392,89 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_continue_interrupted_pending_candidate_without_source_verify_command(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A greenfield candidate can supply the verifier after interruption."""
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        candidate = _make_linked_candidate(tmp_path, sd)
+        _write_state(sd, "001", "default", {
+            "status": "interrupted",
+            "termination_reason": "user_cancel",
+            "interrupted_phase": "implementation",
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": str(candidate),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(tmp_path, ["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "auto-detect from candidate" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "candidate_kind", ["missing", "outside", "symlink", "applied", "plain", "root", "foreign"]
+    )
+    def test_continue_interrupted_without_valid_pending_candidate_still_needs_verify_command(
+        self, tmp_path: Path, capsys, candidate_kind: str
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        candidate = sd.parent / "worktrees" / "iter-1"
+        if candidate_kind in {"outside", "symlink"}:
+            outside = tmp_path / "unrelated-candidate"
+            outside.mkdir()
+            if candidate_kind == "outside":
+                candidate = outside
+            else:
+                candidate.parent.mkdir(parents=True)
+                candidate.symlink_to(outside, target_is_directory=True)
+        elif candidate_kind == "applied":
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "plain":
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "root":
+            candidate = candidate.parent
+            candidate.mkdir(parents=True)
+        elif candidate_kind == "foreign":
+            candidate = _make_linked_candidate(tmp_path, sd, foreign=True)
+        _write_state(sd, "001", "default", {
+            "status": "interrupted",
+            "termination_reason": "user_cancel",
+            "interrupted_phase": "implementation",
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": candidate_kind == "applied",
+                "worktree_path": str(candidate),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit) as exit_info:
+                _run_delivery_continue(tmp_path, ["001"])
+
+        assert exit_info.value.code == 1
+        mock_run.assert_not_called()
+        assert "verify_command is still not set" in capsys.readouterr().err
 
     def test_non_docs_containment_violation_stays_unsupported(
         self,
@@ -349,6 +523,182 @@ class TestCmdHarnessResume:
         assert "do not retry delivery until it is resolved" in err
         assert "echelon spec reopen 001" in err
         assert "echelon delivery continue 001" not in err
+
+    def test_delivery_continue_replays_pending_review_after_prior_repair_cap(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after two repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(tmp_path, ["001", "token_budget=50000000"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_delivery_continue_replays_pending_review_after_three_repair_cap(
+        self, tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "build_status": "blocked",
+            "build_reason": "delivery_gate_repair_limit: required review still failed after 3 repairs",
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(tmp_path, ["001", "token_budget=50000000"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_delivery_continue_does_not_replay_current_repair_cap(
+        self, tmp_path: Path, capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after four repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(tmp_path, ["001"])
+
+        assert not mock_run.called
+        assert "do not retry delivery" in capsys.readouterr().err
+
+    def test_delivery_continue_retries_implementation_provider_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A transient provider failure must resume the durable slice operation."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "build_status": "blocked",
+            "build_reason": "delivery_provider_failed",
+            "delivery_slice_operation": {"id": "slice-operation-1"},
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_delivery_continue_retries_cancelled_pending_slice(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A stopped controlled repair retains its unreviewed candidate."""
+        # A greenfield target may acquire its verify command only from the
+        # generated candidate, not from the target's default branch.
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": str(tmp_path / "pending-worktree"),
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    @pytest.mark.parametrize("operation", [None, {"id": "done", "progress_applied": True}])
+    def test_delivery_continue_rejects_cancelled_slice_without_pending_work(
+        self,
+        tmp_path: Path,
+        capsys,
+        operation: dict | None,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": operation,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            from echelon.delivery_service import _run_delivery_continue
+            with pytest.raises(SystemExit):
+                _run_delivery_continue(Path.cwd(), ["001"])
+
+        assert not mock_run.called
+        assert "do not retry delivery" in capsys.readouterr().err
 
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
@@ -413,8 +763,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -432,8 +782,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         assert mock_run.call_args.kwargs["summary_command"] == "echelon delivery continue"
 
@@ -457,8 +807,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "Use the recommended option", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "Use the recommended option", "mode=banzai"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -490,8 +840,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -509,8 +859,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
@@ -528,8 +878,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -537,6 +887,28 @@ class TestCmdHarnessResume:
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
+
+    def test_checkpoint_outer_cap_uses_candidate_detection_without_configured_verify_command(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "checkpoint_outer_cap",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert "auto-detect from candidate" in capsys.readouterr().out
 
     def test_no_progress_resumes_without_unsupported_reason_error(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
@@ -551,8 +923,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -580,8 +952,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001", "mode=banzai"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -604,14 +976,14 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         recover.assert_not_called()
         run.assert_called_once()
         assert run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert "resume" in run.call_args.args[0]
-        persisted = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        persisted = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert persisted["blocked_phase"] == phase
 
     def test_verification_infrastructure_retries_after_harness_update(
@@ -630,8 +1002,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -653,8 +1025,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -679,8 +1051,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -698,8 +1070,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001", "mode=banzai"])
 
         mock_run.assert_called_once()
         user_message = mock_run.call_args.args[0]
@@ -721,8 +1093,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         err = capsys.readouterr().err
@@ -748,8 +1120,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "Use the current implementation and continue", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "Use the current implementation and continue", "mode=banzai"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
@@ -777,9 +1149,9 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
+            from echelon.delivery_service import _run_delivery_resume
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001"])
+                _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
@@ -807,15 +1179,15 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001", "mode=banzai"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["spec_dir"] == str(spec_dir)
         assert state["spec_file"] == str(spec_dir / "spec.md")
         assert state["tasks_file"] == str(spec_dir / "tasks.md")
@@ -838,16 +1210,16 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
+            from echelon.delivery_service import _run_delivery_resume
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001"])
+                _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
         mock_run.assert_not_called()
         err = capsys.readouterr().err
         assert "Resume preflight failed" in err
         assert "tasks.md is not canonical" in err
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "harness_error"
 
     def test_phase_a_build_incomplete_retries_without_git_recovery(
@@ -869,8 +1241,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -896,9 +1268,9 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_resume
+            from echelon.delivery_service import _run_delivery_resume
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001"])
+                _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
         mock_recover.assert_not_called()
@@ -930,8 +1302,8 @@ class TestCmdHarnessResume:
                 target_branch="001-feature",
                 applied=True,
             )
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
@@ -987,10 +1359,10 @@ class TestCmdHarnessResume:
                 target_branch="harness/001/default/iter-0",
                 applied=True,
             )
-            from echelon.cli import _cmd_harness_continue
+            from echelon.delivery_service import _run_delivery_continue
 
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_continue(["001"])
+                _run_delivery_continue(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
 
@@ -1011,14 +1383,14 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
+            from echelon.delivery_service import _run_delivery_continue
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_continue(["001"])
+                _run_delivery_continue(Path.cwd(), ["001"])
 
         assert exc.value.code == 2
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "provider_session_limit"
 
     def test_converged_resume_ignores_historical_provider_limit_status(
@@ -1034,7 +1406,7 @@ class TestCmdHarnessResume:
         })
 
         def converge(*_args, **_kwargs) -> None:
-            state_path = sd / "default.json"
+            state_path = sd / "delivery.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state.update({"status": "converged", "termination_reason": "converged"})
             state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -1044,8 +1416,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run", side_effect=converge) as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
@@ -1076,7 +1448,7 @@ class TestCmdHarnessResume:
         }
         with patch.dict("os.environ", env, clear=False), \
              patch("pathlib.Path.cwd", return_value=harness_base), \
-             patch("echelon.cli._sync_polyrepo_runtime_extension"), \
+             patch("echelon.delivery_service._sync_polyrepo_runtime_extension"), \
              patch("harness.recovery.recover_blocked_run") as mock_recover, \
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
@@ -1088,8 +1460,8 @@ class TestCmdHarnessResume:
                 applied=False,
                 backed_up_untracked=(),
             )
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001-prose-distribution-engine"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001-prose-distribution-engine"])
 
         mock_recover.assert_called_once()
         assert mock_recover.call_args.kwargs["project_dir"] == source
@@ -1116,9 +1488,9 @@ class TestCmdHarnessResume:
 
         with patch("pathlib.Path.cwd", return_value=polyrepo), \
              patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
-            from echelon.cli import _cmd_harness_continue
+            from echelon.delivery_service import _run_delivery_continue
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_continue(["001-prose-distribution-engine"])
+                _run_delivery_continue(Path.cwd(), ["001-prose-distribution-engine"])
 
         assert exc.value.code == 0
         mock_run.assert_called_once()
@@ -1173,15 +1545,18 @@ class TestCmdHarnessResume:
             "ECHELON_TARGET_REPO_NAME": "prosaic",
             "ECHELON_POLYREPO_ROOT": str(polyrepo),
         }
-        from echelon import cli as echelon_cli
+        from echelon import delivery_service
 
         with patch.dict("os.environ", env, clear=False), \
              patch("pathlib.Path.cwd", return_value=harness_base), \
-             patch("echelon.cli._sync_polyrepo_runtime_extension"), \
+             patch("echelon.delivery_service._sync_polyrepo_runtime_extension"), \
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            echelon_cli._cmd_harness_resume(["001-prose-distribution-engine", "mode=banzai"])
+            delivery_service._run_delivery_resume(
+                Path.cwd(),
+                ["001-prose-distribution-engine", "mode=banzai"],
+            )
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["config"].verify_command == "npm test"
@@ -1215,12 +1590,12 @@ class TestCmdHarnessResume:
                 "Docker command failed: failed to connect to the docker API at "
                 "unix:///Users/example/.docker/run/docker.sock; check if the daemon is running"
             )
-            from echelon.cli import _cmd_harness_resume
+            from echelon.delivery_service import _run_delivery_resume
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001"])
+                _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
         assert state["termination_reason"] == "docker_unavailable"
         err = capsys.readouterr().err
@@ -1242,8 +1617,8 @@ class TestCmdHarnessResume:
              patch("harness.skills.run_skill.run") as mock_run, \
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
-            from echelon.cli import _cmd_harness_continue
-            _cmd_harness_continue(["001"])
+            from echelon.delivery_service import _run_delivery_continue
+            _run_delivery_continue(Path.cwd(), ["001"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -1271,12 +1646,12 @@ class TestCmdHarnessResume:
                 applied=True,
             )
             mock_run.side_effect = RuntimeError("fatal: invalid reference")
-            from echelon.cli import _cmd_harness_resume
+            from echelon.delivery_service import _run_delivery_resume
             with pytest.raises(SystemExit) as exc:
-                _cmd_harness_resume(["001"])
+                _run_delivery_resume(Path.cwd(), ["001"])
 
         assert exc.value.code == 1
-        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
         assert state["termination_reason"] == "harness_error"
         assert "fatal: invalid reference" in state["harness_error"]
@@ -1307,16 +1682,16 @@ class TestCmdHarnessResume:
                 target_branch="001-feature",
                 applied=True,
             )
-            from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001"])
+            from echelon.delivery_service import _run_delivery_resume
+            _run_delivery_resume(Path.cwd(), ["001"])
 
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_no_args_prints_help(self, tmp_path: Path, capsys) -> None:
-        from echelon.cli import _cmd_harness_resume
-        _cmd_harness_resume([])
+        from echelon.delivery_service import _run_delivery_resume
+        _run_delivery_resume(Path.cwd(), [])
         out = capsys.readouterr().out
         assert "verify_command" in out
         assert "echelon delivery resume" in out

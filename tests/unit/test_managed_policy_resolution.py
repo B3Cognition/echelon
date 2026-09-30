@@ -7,7 +7,7 @@ from tests.unit.test_discovery_turns import case, enrolled
 
 
 @pytest.mark.parametrize("stopped", [False, True])
-@pytest.mark.parametrize("diagnostic_key", ["external_publication_failure", "controller_completion_failure"])
+@pytest.mark.parametrize("diagnostic_key", ["spec_step_publication_failure", "spec_step_effect_failure"])
 def test_resolved_policy_checks_native_failure_resume_state_without_mutating(stopped, diagnostic_key):
     from harness.discovery_policy_resolution import _require_resolved_effects
     from harness.squad_state import StateAdvanceError
@@ -17,19 +17,19 @@ def test_resolved_policy_checks_native_failure_resume_state_without_mutating(sto
         updates["blocked_reason"] = "proportional_quality_debt_declined"
     recovery = dict(completion_id="a" * 32, effects=dict(state_updates=updates, state_removals=["quality_gate_remediation"]))
     state = dict(**{**updates, "status": "blocked", "blocked_reason": "external_publication_pending"},
-        pending_controller_completion=dict(completion_id="a" * 32), pending_external_publication=marker,
-        external_publication_failure=dict(schema_version=1, code="publish_io", resume_status=updates["status"],
+        _spec_step_effect_plan=dict(completion_id="a" * 32), _spec_step_publication_plan=marker,
+        spec_step_publication_failure=dict(schema_version=1, code="publish_io", resume_status=updates["status"],
             resume_blocked_reason=updates.get("blocked_reason")))
-    if diagnostic_key == "controller_completion_failure":
-        state[diagnostic_key] = {**state.pop("external_publication_failure"), "code": "stage_io"}
-        state.pop("pending_external_publication")
+    if diagnostic_key == "spec_step_effect_failure":
+        state[diagnostic_key] = {**state.pop("spec_step_publication_failure"), "code": "stage_io"}
+        state.pop("_spec_step_publication_plan")
         state["blocked_reason"] = "controller_completion_pending"
     before = deepcopy(state)
     _require_resolved_effects(state, recovery, dict(marker=marker))
     assert state == before
-    for change in (dict(pending_controller_completion=dict(completion_id="d" * 32)),
-            *((dict(pending_external_publication={**marker, "transaction_id": "d" * 32}),)
-                if diagnostic_key == "external_publication_failure" else ()),
+    for change in (dict(_spec_step_effect_plan=dict(completion_id="d" * 32)),
+            *((dict(_spec_step_publication_plan={**marker, "transaction_id": "d" * 32}),)
+                if diagnostic_key == "spec_step_publication_failure" else ()),
             dict(phase="phase3-plan"), dict(quality_gate_remediation={}),
             {diagnostic_key: {**state[diagnostic_key], "resume_status": "failed"}}):
         with pytest.raises((ValueError, StateAdvanceError)):

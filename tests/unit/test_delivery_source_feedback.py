@@ -7,7 +7,7 @@ from harness.config import HarnessConfig
 from harness.gitops import GitOpsManager
 from harness.llm_provider import AICodingCliProvider
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_controller_integration import _build, _controller, _reconstruct
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
@@ -62,7 +62,7 @@ def _accepted(slice_project, tmp_path, monkeypatch, mode="semi", cli="codex"):
 def _downstream(controller, root, *, phase="visual", base="Keep the isometric camera."):
     return controller.run_downstream_feedback(
         handle=None, worktree_path=str(root), verify_result=_failure(mixed=True),
-        build_command="echelon build", strategy_context="Preserve keyboard movement.",
+        build_command="echelon build", delivery_context="Preserve keyboard movement.",
         build_prompt=base, phase=phase, evidence_paths=("evidence/screenshot.png",),
     )
 
@@ -118,7 +118,7 @@ def test_actual_repair_roles_receive_one_contract_and_complete_evidence(
         assert context["failures"][1]["details"]["test_cases"]["UT-GREETING-000001"]["status"] == "unbound"
         assert context["context"] == {
             "base_prompt": "Keep the isometric camera.",
-            "strategy_context": "Preserve keyboard movement.",
+            "delivery_context": "Preserve keyboard movement.",
             "phase": route, "inner_iteration": 1 if route == "inner" else 0,
             "evidence_paths": [] if route == "inner" else ["evidence/screenshot.png"],
         }
@@ -175,16 +175,3 @@ def test_old_pending_source_repair_blocks_without_rewriting_records(slice_projec
     assert store.read()["delivery_slice_operation"] == saved["delivery_slice_operation"]
     assert store.read()["tokens_used"] == saved["tokens_used"]
     assert all(path.read_bytes() == before for path, before in journals.items())
-
-
-def test_feature_off_keeps_legacy_feedback_contract(slice_project, tmp_path, monkeypatch):
-    controller, store, _ = _accepted(slice_project, tmp_path, monkeypatch)
-    controller._config.llm.features["delivery_gate_controller"] = False
-    state = store.read()
-    state.pop("delivery_slice_operation")
-    store.write(state)
-    prompt = controller._make_feedback_prompt("Legacy build assignment", _failure(), 2)
-    assert prompt.startswith("Legacy build assignment")
-    assert "stop after writing the harness status marker" in prompt
-    assert "diagnose before editing" in prompt
-    assert "Wrong greeting" in prompt

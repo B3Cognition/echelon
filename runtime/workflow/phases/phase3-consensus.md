@@ -35,15 +35,15 @@ must not require a successful dependent planner before its owner can repair it.
 Incomplete, timed-out or malformed reviewer results remain blocking failures.
 Existing accepted-risk dispositions still require their normal planning and
 approval path; no new disposition is created by this deferral.
-# Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
-# Agent: parallel — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
+# Source: echelon.run.md §11 — CONSENSUS Phase
+# Agent: staged — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness
 
-## 11. CONSENSUS Phase (Parallel Validation)
+## 11. CONSENSUS Phase
 
-The harness dispatches **WHY3 and ASSESS2 in parallel, then PLAN2 sequentially**
-after both Stage 1 results are complete. It never dispatches all three agents in
-one parallel batch.
+The harness dispatches **WHY3, then ASSESS2, then PLAN2**, checking each
+reviewer's authorized outputs before starting the next. Both Stage 1 results
+must complete before PLAN2 starts.
 
 ### 11.1 WHY3 Context Pack
 
@@ -88,9 +88,9 @@ Read these artifacts in `{spec_dir}/`:
 
 ### Dispatch — Two Stages (see `definition.yaml` `phase3-consensus.type: staged_parallel`)
 
-This phase uses `type: staged_parallel`. **Always dispatch in the two stages below. NEVER dispatch all three agents in one parallel batch.** PLAN2 requires `implementability-report.md` from ASSESS2 — dispatching it simultaneously means it runs without that input.
+This phase uses the existing `type: staged_parallel` identifier. **Always dispatch in the two stages below, with Stage 1 reviewers in order. NEVER dispatch all three agents together.** PLAN2 requires `implementability-report.md` from ASSESS2 and may start only after both reviews are checked.
 
-**Stage 1 (parallel):** dispatch WHY3 and ASSESS2 together. Wait for BOTH to complete.
+**Stage 1 (ordered):** dispatch WHY3 and check its outputs, then dispatch ASSESS2 and check its outputs. Wait for BOTH to complete.
 
 **WHY3:**
 

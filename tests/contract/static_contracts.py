@@ -48,18 +48,14 @@ def _section_between(text: str, start: str, end: str) -> str:
 
 def validate_commander_loading_contract(root: Path) -> list[str]:
     run = root / "prosaic/commands/echelon.run.md"
-    build = root / "prosaic/commands/echelon.build.md"
     commander = root / "prosaic/subagents/echelon.commander.md"
-    finalize = root / "runtime/workflow/phases/build-8-finalize.md"
     definition = root / "runtime/workflow/definition.yaml"
     return _run_checks(
         [
             PatternCheck("run delegates to Python squad harness", run, r"squad.py|squad harness"),
-            PatternCheck("build avoids commander.md", build, r"commander\.md", should_match=False),
             PatternCheck("commander contains Evidence Hierarchy", commander, r"Evidence Hierarchy"),
             PatternCheck("commander contains EVOI", commander, r"EVOI"),
             PatternCheck("commander contains Toulmin", commander, r"Toulmin"),
-            PatternCheck("finalize contains Convergence Rules", finalize, r"Convergence Rules"),
             PatternCheck("commander contains Meta-Cognition", commander, r"Meta-Cognition"),
             PatternCheck(
                 "controller definition contains bounded WHY2 iteration routing",
@@ -67,12 +63,6 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
                 r"quality_gates\.fail AND iteration < max_iterations",
             ),
             PatternCheck("run mentions COMMANDER judgment role", run, r"COMMANDER"),
-            PatternCheck(
-                "build avoids workflow definition routing",
-                build,
-                r"workflow/definition\.yaml",
-                should_match=False,
-            ),
             PatternCheck("commander has no SCIENTIST references", commander, r"SCIENTIST", should_match=False),
             PatternCheck("commander uses INVESTIGATOR", commander, r"INVESTIGATOR"),
         ]
@@ -428,7 +418,7 @@ def validate_commander_token_tracking_contract(root: Path) -> list[str]:
     progress = root / "prosaic/subagents/echelon.progress-tracker.md"
     token_logger = root / "runtime/scripts/token-logger.py"
     config = root / "runtime/config-template.yml"
-    cli = root / "src/echelon/cli.py"
+    spec_service = root / "src/echelon/spec_service.py"
     journal_types = root / "runtime/workflow/journal-entry-types.yaml"
     commander = root / "prosaic/subagents/echelon.commander.md"
     return _run_checks(
@@ -440,7 +430,11 @@ def validate_commander_token_tracking_contract(root: Path) -> list[str]:
             PatternCheck("estimated_tokens in progress tracker", progress, r"estimated_tokens"),
             PatternCheck("per_agent in token logger", token_logger, r"per_agent"),
             PatternCheck("per_phase in config template", config, r"per_phase"),
-            PatternCheck("token_budget_k config key", cli, r"analysis\.token_budget_k|token_budget_k"),
+            PatternCheck(
+                "token_budget_k config key",
+                spec_service,
+                r"analysis\.token_budget_k|token_budget_k",
+            ),
             PatternCheck("commander avoids old budget key", commander, r"budget\.total_tokens", should_match=False),
             PatternCheck("budget_exhausted journal signal", journal_types, r"budget_exhausted"),
         ]
@@ -854,40 +848,21 @@ def validate_spec_retarget_contract(root: Path) -> list[str]:
     return failures
 
 
-def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str]:
-    """Build prompts must consume only preflight-validated constitution snapshots."""
+def validate_delivery_constitution_preflight_contract(root: Path) -> list[str]:
+    """Controlled delivery must consume only preflight-validated snapshots."""
 
-    build_init = root / "runtime/workflow/phases/build-1-init.md"
-    cli = root / "src/echelon/cli.py"
-    flags = re.IGNORECASE | re.DOTALL
+    delivery_service = root / "src/echelon/delivery_service.py"
 
     return _run_checks(
         [
             PatternCheck(
-                "build init forbids constitution copy recovery",
-                build_init,
-                r"Do not copy, synthesize, or repair `constitution\.md`",
-            ),
-            PatternCheck(
-                "build init no longer copies constitution from memory",
-                build_init,
-                r"cp\s+.*\.specify/memory/constitution\.md",
-                should_match=False,
-            ),
-            PatternCheck(
-                "build init treats template constitution as hard stop",
-                build_init,
-                r"unresolved constitution template markers.*STOP",
-                flags,
-            ),
-            PatternCheck(
-                "harness run calls Phase A readiness preflight",
-                cli,
+                "delivery run calls Phase A readiness preflight",
+                delivery_service,
                 r"_block_if_harness_phase_a_not_ready",
             ),
             PatternCheck(
-                "harness run preflight uses shared readiness validator",
-                cli,
+                "delivery run preflight uses shared readiness validator",
+                delivery_service,
                 r"validate_phase_a_readiness\(\{\"status\": \"done\"\}, \[spec_dir\]\)",
             ),
         ]
@@ -899,7 +874,6 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
 
     chief = root / "prosaic/subagents/echelon.chief.md"
     phase1_what = root / "runtime/workflow/phases/phase1-what.md"
-    codegen_preamble = root / "runtime/workflow/phases/codegen-A-preamble.md"
     phase3_how = root / "runtime/workflow/phases/phase3-how.md"
     artifact_index = root / "src/echelon/artifact_index.py"
     finalize = root / "runtime/scripts/bash/finalize-run.sh"
@@ -953,23 +927,6 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
             phase1_what,
             r"constitution_placeholder_fix|sed_fallback",
             should_match=False,
-        ),
-        PatternCheck(
-            "codegen treats constitution as published snapshot",
-            codegen_preamble,
-            r"constitution\.md is a published Phase A snapshot",
-        ),
-        PatternCheck(
-            "codegen no longer copies constitution from memory",
-            codegen_preamble,
-            r"cp\s+.*\.specify/memory/constitution\.md",
-            flags,
-            should_match=False,
-        ),
-        PatternCheck(
-            "codegen rejects constitution template markers",
-            codegen_preamble,
-            r"constitution\.md contains unresolved template markers",
         ),
         PatternCheck(
             "phase3 how treats constitution as read-only",

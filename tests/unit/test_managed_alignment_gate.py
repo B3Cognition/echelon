@@ -73,7 +73,7 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from harness.squad_state import StateAdvanceError
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     root, store, identity, _ = case
     before, history = store.load(), identity.identity_history(spec_id="game")
     executor = AlignmentExecutor(provider)
@@ -88,13 +88,13 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for route in ({"phase2-tracker-alignment", "phase3-specialists", "terminal-blocked", "done"} - {destination}):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=route, snapshot=snapshot,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=route, snapshot=snapshot,
                         manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id=completion_id,
                         managed_discovery_request=encode_publication_request(package.request))
             prepared_result = ctrl._prepare_phase_result(node, package.result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id)
             assert routing is not None, store.load()
             promote = PreparedSquadPublication._promote
@@ -109,15 +109,17 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
                 patch.setattr(PreparedSquadPublication, "_promote", interrupted)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     writes = package.sources.publication.operations
     # Gate publication may leave graph bytes unchanged. The real hook proves
     # partial report/graph promotion, or completion of the sole bypass write.
     assert interruptions == [1] and len(writes) == (2 if has_report else 1)
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
-    pending = store.load()
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    actual_pending = store.load()
+    pending, completion, _ = pending_spec_companion(ctrl)
     for key in ("iteration", "max_iterations", "feasibility_structural_attempts",
             "intent_alignment_check_structural_attempts", "intent_alignment_verdict", "structural_action"):
         changed = deepcopy(pending)
@@ -128,7 +130,7 @@ def assert_gate_handoff(case, package, provider, *, passed=False, action=None, a
         changed = deepcopy(pending)
         changed[key] = float(changed[key])
         with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
-    assert store.load() == pending
+    assert store.load() == actual_pending
     apply = IdentityStore.apply_identity_publication
     def after_apply(*args, **kwargs):
         apply(*args, **kwargs)

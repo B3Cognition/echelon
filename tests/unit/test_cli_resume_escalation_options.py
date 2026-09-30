@@ -110,7 +110,10 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume, _spec_summary_session
+    from echelon.spec_service import (
+        _cmd_resume,
+        _spec_summary_session,
+    )
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -196,7 +199,7 @@ def test_resume_rejects_stale_v2_reason_before_controller_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, [])
     decision = build_blocked_decision_v2(
@@ -241,7 +244,7 @@ def test_resume_rejects_stale_v2_reason_before_controller_construction(
 
 
 def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -281,7 +284,7 @@ def test_resume_rejects_option_with_invalid_next_phase(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -312,7 +315,7 @@ def test_resume_rejects_unmatched_answer_when_structured_options_exist(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -347,7 +350,7 @@ def test_resume_accepts_free_text_decision_without_options(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     _patch_resume_dependencies(monkeypatch)
@@ -374,7 +377,7 @@ def test_resume_uses_existing_blocked_decision_after_process_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -416,7 +419,7 @@ def test_resume_terminal_block_delegates_to_continue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     state_path = run_dir / "state.json"
@@ -440,7 +443,7 @@ def test_resume_terminal_block_delegates_to_continue(
     def fake_continue(args, project_root, ext_dir):
         calls.append((args, project_root, ext_dir))
 
-    monkeypatch.setattr("echelon.cli._cmd_continue", fake_continue)
+    monkeypatch.setattr("echelon.spec_service._cmd_continue", fake_continue)
 
     _cmd_resume(["retry with narrower scope"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
@@ -457,7 +460,7 @@ def test_resume_that_runs_the_controller_ends_with_the_shared_squad_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _write_blocked_run(
         tmp_path,
@@ -492,7 +495,7 @@ def test_resume_phase_dispatch_limit_requires_issue_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     state_path = run_dir / "state.json"
@@ -516,7 +519,7 @@ def test_resume_phase_dispatch_limit_requires_issue_resolution(
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
     _patch_resume_dependencies(monkeypatch)
-    monkeypatch.setattr("echelon.cli._cmd_continue", lambda *args, **kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._cmd_continue", lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_resume(
@@ -535,7 +538,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -576,10 +579,10 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
         }
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    _cmd_spec_resolve(
-        ["ISS-002", "Use exponential backoff with a documented cap."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-002",
+        decision="Use exponential backoff with a documented cap.",
     )
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
@@ -611,11 +614,72 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 1}
 
 
+def test_resolve_preserves_prior_resolved_decision_authority(
+    tmp_path: Path,
+) -> None:
+    from echelon.spec_service import _resolve_issue
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-046: Requirements omit the resolved boundary policy
+- **Severity:** CRITICAL
+- **Action Required:** Apply the recorded clarification to the specification.
+""",
+        encoding="utf-8",
+    )
+    prior_decision = build_blocked_decision_v2(
+        decision_id="dec-prior-clarification",
+        status="resolved",
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        source_phase="phase1-why2",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which boundary policy applies?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="clarification_resume",
+        autonomy_mode="semi",
+        source_state_revision=4,
+        answer_text="Use the governing work-location timezone.",
+        resolved_by="user",
+        now="2026-09-23T10:00:00+00:00",
+        resolved_at="2026-09-23T10:01:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase_a_state_version": 1,
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_candidate_integrity_failed",
+            "spec_dir": str(spec_dir),
+            "blocked_decision": prior_decision,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-046",
+        decision="Apply the recorded clarification.",
+    )
+
+    resolved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resolved["blocked_decision"] == prior_decision
+    assert resolved["selected_issue_resolution"] == "ISS-046"
+    assert resolved["status"] == "running"
+    assert resolved["phase"] == "phase1-what"
+
+
 def test_resolve_same_selected_decision_is_idempotent(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -648,17 +712,17 @@ def test_resolve_same_selected_decision_is_idempotent(
 
     # Establish content-bound authority through the real CLI first. A legacy
     # ID-only record cannot certify the current issue after an upgrade.
-    _cmd_spec_resolve(
-        ["ISS-001", "Use exponential backoff."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-001",
+        decision="Use exponential backoff.",
     )
     first_state = json.loads(state_path.read_text(encoding="utf-8"))
     first_baseline = first_state["issue_resolution_repair_baseline"]
-    _cmd_spec_resolve(
-        ["ISS-001", "Use exponential backoff."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-001",
+        decision="Use exponential backoff.",
     )
 
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
@@ -668,7 +732,7 @@ def test_resolve_same_selected_decision_is_idempotent(
 
 
 def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from echelon.cli import _cmd_spec_resolve
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -688,13 +752,13 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["spec_dir"] = str(spec_dir)
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr("echelon.spec_service._cmd_run", lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_spec_resolve(
-            ["ISS-002", "Second value"],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
+        _resolve_issue(
+            tmp_path,
+            issue_id="ISS-002",
+            decision="Second value",
         )
 
     assert exc.value.code == 1
@@ -703,7 +767,8 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: Path) -> None:
-    from echelon.cli import _cmd_spec_resolve, _issue_resolution_screen_guidance
+    from echelon.spec_service import _issue_resolution_screen_guidance
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -719,7 +784,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
     state = json.loads(state_path.read_text())
     state["spec_dir"] = str(spec_dir)
     state_path.write_text(json.dumps(state))
-    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    _resolve_issue(tmp_path, issue_id="ISS-001", decision="Reconcile the discovery evidence.")
     state = json.loads(state_path.read_text())
     state["issue_resolution_ledger"]["ISS-001"]["status"] = "validated"
     state["selected_issue_resolution"] = None
@@ -729,7 +794,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
 
     guidance = dict(_issue_resolution_screen_guidance(tmp_path, run_dir, state))
     assert "ISS-001" in guidance
-    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    _resolve_issue(tmp_path, issue_id="ISS-001", decision="Reconcile the discovery evidence.")
 
     selected = json.loads(state_path.read_text())["issue_resolution_ledger"]["ISS-001"]
     assert selected["status"] == "selected"
@@ -738,7 +803,7 @@ def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: 
 
 
 def test_issue_requests_skip_resolved_issues_and_read_required_amendment(tmp_path: Path) -> None:
-    from echelon.cli import _issue_resolution_requests
+    from echelon.spec_service import _issue_resolution_requests
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -772,7 +837,8 @@ No action required.
 def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
     tmp_path: Path,
 ) -> None:
-    from echelon.cli import _cmd_spec_resolve, _issue_resolution_requests
+    from echelon.spec_service import _issue_resolution_requests
+    from echelon.spec_service import _resolve_issue
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -816,10 +882,10 @@ def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
     assert [request["issue_id"] for request in requests] == ["ISS-002"]
     assert requests[0]["repair_phase"] == "phase1-discover"
 
-    _cmd_spec_resolve(
-        ["ISS-002", "Reconcile the discovery model."],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
+    _resolve_issue(
+        tmp_path,
+        issue_id="ISS-002",
+        decision="Reconcile the discovery model.",
     )
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
@@ -832,7 +898,7 @@ def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
 
 
 def test_issue_screen_guidance_shows_action_command_and_clickable_source(tmp_path: Path) -> None:
-    from echelon.cli import _issue_resolution_screen_guidance
+    from echelon.spec_service import _issue_resolution_screen_guidance
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     spec_dir = tmp_path / "specs" / "001-demo"

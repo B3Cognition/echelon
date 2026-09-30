@@ -62,7 +62,7 @@ def _make_spec(**overrides) -> SandboxSpec:
         post_create_command=None,
         forward_ports=[],
         session_timeout_ms=3_600_000,
-        labels={"strategy_id": "default", "spec_id": "001", "run_id": "r-1"},
+        labels={"spec_id": "001", "run_id": "r-1"},
     )
     defaults.update(overrides)
     return SandboxSpec(**defaults)
@@ -280,6 +280,37 @@ class TestVerificationSidecars:
 
         assert run.call_args_list[1].args[0] == ["exec", "service-id", "pg_isready"]
         assert run.call_args_list[1].kwargs["check"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+@pytest.mark.docker_image("python:3.11-slim")
+def test_real_isolated_candidate_mount_keeps_browser_writes_off_host(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = candidate / "app.py"
+    source.write_text("original\n", encoding="utf-8")
+    provider = DockerWorktreeProvider()
+    handle = provider.create(_make_spec(
+        image="python:3.11-slim",
+        worktree_mount=str(candidate),
+        isolate_candidate=True,
+        env={},
+    ))
+    try:
+        result = provider.exec(
+            handle,
+            "printf 'changed\\n' > app.py; printf 'generated\\n' > baseline.png; cat app.py",
+            cwd="/workspace",
+        )
+        assert result.exit_code == 0
+        assert result.stdout == "changed\n"
+        assert source.read_text(encoding="utf-8") == "original\n"
+        assert not (candidate / "baseline.png").exists()
+    finally:
+        provider.destroy(handle)
 
 
 @pytest.mark.integration

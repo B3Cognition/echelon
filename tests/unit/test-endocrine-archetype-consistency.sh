@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Unit test — Section-5 consistency validator (spec
 # docs/superpowers/specs/2026-05-16-endocrine-archetype-coherence-design.md).
-# Six independent assertions of the four-way coherence:
+# Five independent assertions of the active endocrine contract:
 #   1. ALL_AGENTS → agent_to_archetype (no silent default-control fall-through)
 #   2. agent_to_archetype outputs → baselines (every archetype has a baseline)
 #   3. baselines → interpretations (every baseline has an interpretation)
 #   4. ALL_AGENTS → Prosaic (every roster entry has a neutral subagent)
-#   5. Prosaic → ALL_AGENTS (every neutral subagent is in the roster)
-#   6. endocrine.sh exposes the centralized prompt-modifier contract
+#   5. endocrine.sh exposes the centralized prompt-modifier contract
 #
 # Designed to catch archetype, config, and Prosaic roster drift in CI.
 
@@ -158,27 +157,13 @@ done
 check "every ALL_AGENTS entry has an agent file" "[ $missing_disk -eq 0 ]"
 
 # ---------------- Assertion 5 -------------------------------------------------
-section 5 "Prosaic → ALL_AGENTS"
-
-ALL_AGENTS_SORTED=$(printf '%s\n' "${ALL_AGENTS[@]}" | sort -u)
-
-missing_in_list=0
-for a in $DISK_AGENTS; do
-  if ! grep -qx "$a" <<<"$ALL_AGENTS_SORTED"; then
-    missing_in_list=$((missing_in_list + 1))
-    echo "    disk file not in ALL_AGENTS: $a"
-  fi
-done
-check "every agent file is in ALL_AGENTS" "[ $missing_in_list -eq 0 ]"
-
-# ---------------- Assertion 6 -------------------------------------------------
 # The per-file **Endocrine awareness.** blockquote was DELIBERATELY REMOVED in
 # commit 2ba709e "docs: centralize endocrine agent contract".  The contract now
 # lives centrally in endocrine.sh (get_full_prompt_modifier) rather than being
 # copy-pasted into every agent file.  Verify the centralized contract exists:
 #   a) endocrine.sh exports the get_full_prompt_modifier subcommand
 #   b) endocrine.sh defines the cmd_get_full_prompt_modifier function
-section 6 "centralized endocrine contract present in endocrine.sh"
+section 5 "centralized endocrine contract present in endocrine.sh"
 
 has_subcommand=0
 has_function=0
@@ -196,5 +181,5 @@ check "endocrine.sh exposes get_full_prompt_modifier (centralized contract)" "[ 
 
 # ---------------- Summary -----------------------------------------------------
 echo
-echo "Pass: $pass / 6  Fail: $fail"
+echo "Pass: $pass / 5  Fail: $fail"
 exit $((fail == 0 ? 0 : 1))

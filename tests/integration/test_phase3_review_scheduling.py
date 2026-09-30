@@ -38,11 +38,19 @@ def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=F
         if "Operate in **WHY3**" in prompt:
             envelope = json.loads(prompt.split("## Phase 3 selected-issue review envelope\n```json\n")[1].split("\n```", 1)[0])
             calls.append(("review", envelope["selected_issue"]))
+            issues = (spec / "issues.md").read_text()
+            (spec / "issues.md").write_text(issues or "No unresolved issues")
+            (spec / "quality-gates.md").write_text("WHY3 PASS")
+            payload["output_files"] = [
+                str(spec / "issues.md"),
+                str(spec / "quality-gates.md"),
+            ]
             payload["phase3_issue_review"] = {"schema_version": 1, "identity": envelope["identity"],
                 "outcome": "resolved", "reviewed_artifacts": envelope["input_manifest"], "rationale": "Verified requirements"}
         elif "Operate in **ASSESS2**" in prompt:
             (spec / "implementability-report.md").write_text("Feasible")
-            payload.update(verdict="PASS", state_updates={"gate_decision": "PASS",
+            payload.update(verdict="PASS", output_files=[str(spec / "implementability-report.md")],
+                state_updates={"gate_decision": "PASS",
                 "phase_recommendation": "proceed-to-build", "implementability_metrics": {}})
         else:
             assert "Operate in **PLAN2**" in prompt
@@ -133,7 +141,7 @@ def test_semi_mode_keeps_existing_staged_planning(tmp_path):
 
 
 def test_sage_review_metadata_is_ignored_when_no_issue_is_selected(tmp_path):
-    _, store, executor, node, _, _ = scheduling_fixture(tmp_path)
+    _, store, executor, node, spec, _ = scheduling_fixture(tmp_path)
     state = store.load()
     state["selected_issue_resolution"] = None
     state["issue_resolution_ledger"] = {}
@@ -146,6 +154,12 @@ def test_sage_review_metadata_is_ignored_when_no_issue_is_selected(tmp_path):
             "journal_entries": [],
         }
         if "Operate in **WHY3**" in prompt:
+            (spec / "issues.md").write_text("No unresolved issues")
+            (spec / "quality-gates.md").write_text("WHY3 PASS")
+            payload["output_files"] = [
+                str(spec / "issues.md"),
+                str(spec / "quality-gates.md"),
+            ]
             payload["phase3_issue_review"] = {
                 "schema_version": 2,
                 "selected_issue": "ISS-OLD",

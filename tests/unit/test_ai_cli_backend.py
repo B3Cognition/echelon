@@ -15,7 +15,12 @@ from unittest.mock import patch
 
 import pytest
 
-from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
+from harness.ai_cli_backend import (
+    CliRunRequest,
+    CliRunResult,
+    ExclusiveWriteScopeBackend,
+    create_ai_cli_backend,
+)
 from harness.ai_cli_backends.claude import ClaudeCliBackend
 from harness.ai_cli_backends.claude import _workspace_sandbox_profile
 from harness.ai_cli_backends.codex import CodexCliBackend
@@ -24,6 +29,12 @@ from harness.ai_cli_backends.opencode import OpenCodeCliBackend
 from harness.ai_cli_backends.plain import PlainCliBackend
 from harness.config import HarnessConfig, LlmConfig
 from harness.llm_tool_policy import LlmToolPolicy
+from harness.llm_provider import AICodingCliProvider
+from harness.provider_output_publication import (
+    compile_provider_artifact_contract,
+    permission_metadata,
+    resolve_provider_artifact_contract,
+)
 
 
 def _config(cli: str) -> HarnessConfig:
@@ -156,6 +167,83 @@ def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:
     assert request.prompt == "Do work."
     assert request.env == {"A": "B"}
     assert request.timeout_s == 12.5
+
+
+def test_publish_projection_is_exact_and_exclusive(tmp_path: Path) -> None:
+    contract = compile_provider_artifact_contract(
+        {
+            "mode": "publish",
+            "artifacts": [
+                {
+                    "root": "active_spec",
+                    "path": "issues.md",
+                    "kind": "file",
+                    "requirement": "required",
+                }
+            ],
+        },
+        assignment_id="why2",
+    )
+    resolved = resolve_provider_artifact_contract(
+        contract,
+        assignment_id="why2",
+        roots={"active_spec": tmp_path / "spec"},
+    )
+
+    assert permission_metadata(resolved) == {
+        "tool_read_roots": [str((tmp_path / "spec").resolve())],
+        "tool_write_paths": [str((tmp_path / "spec/issues.md").resolve())],
+        "tool_write_scope_exclusive": True,
+    }
+
+
+def test_native_backends_advertise_exclusive_write_scope_contract() -> None:
+    for backend in (
+        ClaudeCliBackend(_config("claude")),
+        CodexCliBackend(_config("codex")),
+    ):
+        assert isinstance(backend, ExclusiveWriteScopeBackend)
+        assert (
+            backend.exclusive_write_scope_contract_id
+            == "echelon.exclusive-write-scope.v1"
+        )
+
+
+def test_exclusive_write_scope_unsupported_fails_before_backend_call(
+    tmp_path: Path,
+) -> None:
+    provider = AICodingCliProvider(_config("plain"))
+    called = False
+
+    class UnsupportedBackend:
+        name = "unsupported"
+
+        def run_agent(self, _request):
+            nonlocal called
+            called = True
+            raise AssertionError("unsupported backend must not run")
+
+        def run_prompt(self, _request):
+            raise AssertionError("not used")
+
+    provider._backend = UnsupportedBackend()
+
+    result = provider.run_agent_result(
+        str(tmp_path),
+        "prompt",
+        request_metadata={
+            "prompt_metadata": {
+                "tool_write_paths": [str(tmp_path / "spec.md")],
+                "tool_write_scope_exclusive": True,
+            }
+        },
+    )
+
+    assert result.exit_code == 125
+    assert result.metadata["failure_reason"] == (
+        "exclusive-write-scope-unsupported"
+    )
+    assert called is False
 
 
 @pytest.mark.parametrize(
@@ -3325,11 +3413,11 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
     assert "--strict-mcp-config" in command
     assert "--disable-slash-commands" in command
     assert allowed == {
-        f"Read(/{run_root}/**)",
-        f"Read(/{canonical_root}/**)",
-        f"Read(/{write_path})",
-        f"Write(/{write_path})",
-        f"Edit(/{write_path})",
+        f"Read({run_root}/**)",
+        f"Read({canonical_root}/**)",
+        f"Read({write_path})",
+        f"Write({write_path})",
+        f"Edit({write_path})",
     }
     assert f'(allow file-read* (literal "{write_path}"))' in profile
 
@@ -3460,9 +3548,9 @@ def test_claude_backend_compiles_review_triage_profile(tmp_path) -> None:
     assert "--safe-mode" not in command
     allowed = set(command[command.index("--allowedTools") + 1].split(","))
     assert allowed == {
-        f"Read(/{worktree}/**)",
-        f"Read(/{spec_dir}/**)",
-        *(f"{tool}(/{path})" for path in staged_files for tool in ("Write", "Edit")),
+        f"Read({worktree}/**)",
+        f"Read({spec_dir}/**)",
+        *(f"{tool}({path})" for path in staged_files for tool in ("Write", "Edit")),
         "Agent(echelon-debugger)",
         "Agent(echelon-sentinel)",
         "Agent(echelon-spec-guard)",
@@ -3766,6 +3854,95 @@ def test_claude_workspace_sandbox_enforces_overlapping_root_exceptions(
     assert forbidden_input.read_text(encoding="utf-8") == "forbidden\n"
     assert forbidden_output_write.returncode != 0
     assert not unlisted_output.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file(),
+    reason="requires macOS sandbox-exec",
+)
+def test_claude_workspace_sandbox_allows_atomic_replace_for_declared_output(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "specs" / "001-demo" / "quality-gates.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("old\n", encoding="utf-8")
+    temporary = output.with_name(f".{output.name}.tmp")
+    profile = _workspace_sandbox_profile(
+        (str(tmp_path.resolve()),),
+        read_roots=(str(tmp_path.resolve()),),
+        write_paths=(str(output.resolve()),),
+        allow_atomic_writes=True,
+    )
+
+    replaced = subprocess.run(
+        [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            profile,
+            "/bin/sh",
+            "-c",
+            'printf "new\\n" > "$1" && mv "$1" "$2"',
+            "sh",
+            str(temporary),
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert replaced.returncode == 0, replaced.stderr
+    assert output.read_text(encoding="utf-8") == "new\n"
+
+
+def test_claude_exclusive_scope_wires_atomic_write_profile(tmp_path: Path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    output = (tmp_path / "specs" / "001-demo" / "issues.md").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Review the candidate.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_write_paths": [str(output)],
+                "tool_write_scope_exclusive": True,
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.claude._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    profile = command[2]
+    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
+    assert command[command.index("--permission-mode") + 1] == "dontAsk"
+    assert "(allow file-write* (regex #" in profile
+    assert "issues\\.md" in profile
+    assert f"Write({output})" in command[command.index("--allowedTools") + 1]
 
 
 def test_claude_backend_allows_task_tools_without_canonical_task_metadata(

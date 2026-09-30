@@ -19,12 +19,35 @@ from harness.proportional_quality import (
     QualityCandidateManifest,
     capture_quality_candidate,
     initialize_repair_state,
+    is_actionable_sage_issue,
     load_quality_candidate_snapshot,
     rank_quality_candidates,
     record_what_outcome,
     restore_quality_candidate,
     validate_repair_state,
 )
+
+
+@pytest.mark.parametrize(
+    "action_required",
+    [
+        "None",
+        "None — advisory. No amendment requested.",
+        "None for WHY2 advancement; align during the next maintenance pass.",
+    ],
+)
+def test_explicit_nonblocking_sage_actions_are_advisory(
+    action_required: str,
+) -> None:
+    assert is_actionable_sage_issue(
+        {"action_required": action_required}
+    ) is False
+
+
+def test_deferred_but_required_sage_action_remains_actionable() -> None:
+    assert is_actionable_sage_issue(
+        {"action_required": "None now; fix this before delivery."}
+    ) is True
 
 
 def _repair_state(**overrides: object) -> dict[str, object]:

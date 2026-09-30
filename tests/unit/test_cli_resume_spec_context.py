@@ -5,7 +5,7 @@ import subprocess
 
 
 def test_resume_preserves_current_spec_branch_context(tmp_path):
-    from echelon.cli import _preserve_active_spec_context
+    from echelon.spec_service import _preserve_active_spec_context
 
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
@@ -29,7 +29,7 @@ def test_resume_preserves_current_spec_branch_context(tmp_path):
 
 
 def test_resume_does_not_mark_non_spec_branch(tmp_path):
-    from echelon.cli import _preserve_active_spec_context
+    from echelon.spec_service import _preserve_active_spec_context
 
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
@@ -48,7 +48,7 @@ def test_resume_does_not_mark_non_spec_branch(tmp_path):
 
 def test_resume_does_not_treat_planned_spec_dir_as_existing_spec(tmp_path):
     """A Phase A bootstrap path is not resumable until it has spec.md."""
-    from echelon.cli import _preserve_active_spec_context
+    from echelon.spec_service import _preserve_active_spec_context
 
     planned = tmp_path / "runs" / "run-004" / "specs" / "004-transform-selector"
     planned.mkdir(parents=True)

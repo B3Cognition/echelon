@@ -8,7 +8,10 @@ import pytest
 from typer.testing import CliRunner
 
 from echelon.checkpoint_cli import run_checkpoint_command
-from echelon.cli import _classify_run_recovery, _cmd_rewind
+from echelon.spec_service import (
+    _classify_run_recovery,
+    _cmd_rewind,
+)
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,

@@ -142,6 +142,14 @@ def validate_task_targets(
     )
 
 
+def task_files_section_for(markdown: str, task_id: str) -> str | None:
+    """Return one canonical task's fence-aware Files section, if the task exists."""
+    for candidate_id, block in _task_blocks(markdown):
+        if candidate_id == task_id:
+            return _task_files_section(block)
+    return None
+
+
 def _task_blocks(markdown: str) -> list[tuple[str, str]]:
     lines = markdown.splitlines()
     starts: list[tuple[int, str]] = []
@@ -171,21 +179,24 @@ def _normalize_target(target: object) -> str:
 
 
 def _task_files_section(block: str) -> str:
-    lines = block.splitlines()
-    start: int | None = None
-    for index, line in enumerate(lines):
-        if line.strip() == "**Files:**":
-            start = index + 1
-            break
-    if start is None:
-        return ""
-    end = len(lines)
-    for index in range(start, len(lines)):
-        stripped = lines[index].strip()
+    selected: list[str] = []
+    in_fence = False
+    in_files = False
+    for line in block.splitlines():
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        stripped = line.strip()
+        if not in_files:
+            if stripped == "**Files:**":
+                in_files = True
+            continue
         if stripped.startswith("**") and stripped.endswith(":**"):
-            end = index
             break
-    return "\n".join(lines[start:end])
+        selected.append(line)
+    return "\n".join(selected)
 
 
 def _task_title(block: str) -> str:

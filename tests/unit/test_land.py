@@ -46,7 +46,7 @@ from harness.workspace_landing import WorkspaceLandingResult
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{strategy}.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps({"spec_id": spec_id, "pr_url": pr_url}), encoding="utf-8"
     )
 
@@ -116,8 +116,7 @@ def _ready_project_with_passing_runnability(
         ),
         spec_id="042-demo",
         target_id="demo",
-        strategy_id="default",
-        build_id="build-test",
+                build_id="build-test",
         candidate_commit=commit,
         candidate_fingerprint=product_evidence_fingerprint(project),
         contract_hash=runnability_contract_sha256(contract),
@@ -133,7 +132,7 @@ def _ready_project_with_passing_runnability(
     )
     state_dir = harness_root / "runs/targets/demo/runs/build-test/state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "042-demo",
@@ -251,8 +250,7 @@ def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
     standard = write_verification_receipt(
         evidence_dir=tmp_path / "standard",
         spec_id="042-demo",
-        strategy_id="default",
-        build_id="build-coverage",
+                build_id="build-coverage",
         candidate_commit=commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -264,8 +262,7 @@ def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
     observer = write_verification_receipt(
         evidence_dir=tmp_path / "observer",
         spec_id="042-demo",
-        strategy_id="default",
-        build_id="build-coverage",
+                build_id="build-coverage",
         candidate_commit=commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -312,7 +309,7 @@ def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
     )
     state_dir = harness_root / "runs" / "build-coverage" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "042-demo",
@@ -514,14 +511,14 @@ class TestFindPrUrl:
         _write_state(tmp_path, "042", "default", None)
         assert find_pr_url("042", tmp_path) is None
 
-    def test_returns_first_sorted_file_when_multiple_have_pr_url(self, tmp_path: Path) -> None:
+    def test_ignores_historical_state_files(self, tmp_path: Path) -> None:
         (tmp_path / "a-state.json").write_text(
             '{"spec_id": "spec-042", "pr_url": "https://github.com/org/repo/pull/1"}'
         )
         (tmp_path / "b-state.json").write_text(
             '{"spec_id": "spec-042", "pr_url": "https://github.com/org/repo/pull/2"}'
         )
-        assert find_pr_url("spec-042", tmp_path) == "https://github.com/org/repo/pull/1"
+        assert find_pr_url("spec-042", tmp_path) is None
 
     def test_skips_corrupt_json(self, tmp_path: Path) -> None:
         (tmp_path / "bad.json").write_text("{not json}", encoding="utf-8")
@@ -1418,7 +1415,7 @@ class TestLand:
     ) -> None:
         _init_repo(tmp_path)
         _commit(tmp_path, "README.md", "base\n", "base")
-        _git(tmp_path, "checkout", "-b", "harness/911/default/iter-1")
+        _git(tmp_path, "checkout", "-b", "harness/911/build-911/iter-1")
         verified_commit = _commit(
             tmp_path,
             "feature.txt",
@@ -1426,7 +1423,7 @@ class TestLand:
             "verified implementation",
         )
         _git(tmp_path, "checkout", "main")
-        _git(tmp_path, "checkout", "-b", "harness/911/default/iter-4")
+        _git(tmp_path, "checkout", "-b", "harness/911/build-911/iter-4")
         _commit(tmp_path, "stale.txt", "stale work\n", "stale implementation")
         _git(tmp_path, "checkout", "main")
 
@@ -1450,7 +1447,7 @@ class TestLand:
                 "harness.land._prepare_for_land",
                 return_value=LandPrepareResult(
                     status="prepared",
-                    branch="harness/911/default/iter-4",
+                    branch="harness/911/build-911/iter-4",
                 ),
             ) as prepare,
             patch("harness.land._verify_before_land", return_value=True),
@@ -1514,7 +1511,7 @@ class TestLand:
         assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
 
     def test_cleans_up_worktrees(self, tmp_path: Path) -> None:
-        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
         worktree_dir.mkdir(parents=True)
         _write_state(tmp_path / "runs" / "build-test" / "state", "042", "default", None)
         unrelated = (
@@ -1781,8 +1778,7 @@ class TestLandVerify:
             evidence_dir=harness_root / "runs/build-test/evidence/default/verification",
             spec_id="042-demo",
             target_id="demo",
-            strategy_id="default",
-            build_id="build-test",
+                        build_id="build-test",
             candidate_commit=commit,
             fingerprint_before=fingerprint,
             fingerprint_after=fingerprint,
@@ -1803,7 +1799,7 @@ class TestLandVerify:
         )
         state_dir = harness_root / "runs/build-test/state"
         state_dir.mkdir(parents=True)
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps(
                 {
                     "spec_id": "042-demo",
@@ -1843,8 +1839,7 @@ class TestLandVerify:
             evidence_dir=harness_root / "runs/build-test/evidence/default/verification",
             spec_id="042-demo",
             target_id="demo",
-            strategy_id="default",
-            build_id="build-test",
+                        build_id="build-test",
             candidate_commit=commit,
             fingerprint_before=fingerprint,
             fingerprint_after=fingerprint,
@@ -1866,7 +1861,7 @@ class TestLandVerify:
         _commit(project, "src/app.py", "print('changed')\n", "changed after verify")
         state_dir = harness_root / "runs/build-test/state"
         state_dir.mkdir(parents=True)
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps(
                 {
                     "spec_id": "042-demo",
@@ -2113,7 +2108,7 @@ def test_polyrepo_land_uses_target_harness_pr_state_and_cleans_its_worktree(
     state_dir = harness_root / "runs" / "build-target" / "state"
     pr_url = "https://github.com/example/api/pull/42"
     _write_state(state_dir, "042-demo", "default", pr_url)
-    worktree = harness_root / "runs" / "build-target" / "worktrees" / "default" / "iter-0"
+    worktree = harness_root / "runs" / "build-target" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
 
     gitops = _make_gitops(feature_branch="042-demo")
@@ -2172,7 +2167,7 @@ def test_polyrepo_branchless_cleanup_uses_target_harness_root(tmp_path: Path) ->
 
     state_dir = harness_root / "runs" / "build-target" / "state"
     _write_state(state_dir, "043-demo", "default", None)
-    worktree = harness_root / "runs" / "build-target" / "worktrees" / "default" / "iter-0"
+    worktree = harness_root / "runs" / "build-target" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
 
     gitops = _make_gitops(feature_branch=None)
@@ -2795,10 +2790,10 @@ def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
     _init_repo(wrapper)
     _init_repo(target)
     _commit(target, "README.md", "base\n", "base")
-    _git(target, "checkout", "-b", "harness/911/default/iter-1")
+    _git(target, "checkout", "-b", "harness/911/build-911/iter-1")
     verified_commit = _commit(target, "feature.txt", "verified\n", "verified work")
     _git(target, "checkout", "main")
-    _git(target, "branch", "harness/911/default/iter-4")
+    _git(target, "branch", "harness/911/build-911/iter-4")
 
     spec_dir = wrapper / "specs" / "911-demo"
     spec_dir.mkdir(parents=True)
@@ -2815,11 +2810,10 @@ def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
     marker.write_text("build-911", encoding="utf-8")
     state_dir = wrapper / "runs" / "build-911" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "911-demo",
-                "strategy_id": "default",
                 "outer_iter": 1,
                 "status": "converged",
             }
@@ -2832,7 +2826,7 @@ def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
         patch("harness.land._check_ready_before_land", return_value=True),
         patch(
             "harness.land._prepare_for_land",
-            return_value=LandPrepareResult(status="prepared", branch="harness/911/default/iter-1"),
+            return_value=LandPrepareResult(status="prepared", branch="harness/911/build-911/iter-1"),
         ),
         patch("harness.land._verify_before_land", return_value=True),
         patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
@@ -2841,7 +2835,7 @@ def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
         assert land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
 
     gitops.merge_branch_into_default.assert_called_once_with(
-        "harness/911/default/iter-1", str(target.resolve())
+        "harness/911/build-911/iter-1", str(target.resolve())
     )
 
 
@@ -2854,8 +2848,8 @@ def test_land_blocks_when_current_build_branch_misses_verified_commit(
     _init_repo(wrapper)
     _init_repo(target)
     _commit(target, "README.md", "base\n", "base")
-    _git(target, "branch", "harness/911/default/iter-1")
-    _git(target, "branch", "harness/911/default/iter-4")
+    _git(target, "branch", "harness/911/build-911/iter-1")
+    _git(target, "branch", "harness/911/build-911/iter-4")
     _git(target, "checkout", "-b", "unrelated")
     verified_commit = _commit(target, "other.txt", "unrelated\n", "unrelated work")
     _git(target, "checkout", "main")
@@ -2875,11 +2869,10 @@ def test_land_blocks_when_current_build_branch_misses_verified_commit(
     marker.write_text("build-911", encoding="utf-8")
     state_dir = wrapper / "runs" / "build-911" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "911-demo",
-                "strategy_id": "default",
                 "outer_iter": 1,
                 "status": "converged",
             }
@@ -2899,7 +2892,7 @@ def test_land_blocks_when_current_build_branch_misses_verified_commit(
     assert "legacy" not in rendered_fields.lower()
     assert "recorded delivery branch" in rendered_fields.lower()
     assert not any(
-        call.args[0] in {"harness/911/default/iter-1", "harness/911/default/iter-4"}
+        call.args[0] in {"harness/911/build-911/iter-1", "harness/911/build-911/iter-4"}
         for call in gitops.merge_branch_into_default.call_args_list
     )
 
@@ -2915,7 +2908,7 @@ def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
     _init_repo(target)
     _commit(target, "README.md", "base\n", "base")
 
-    _git(target, "checkout", "-b", "harness/911/default/iter-1")
+    _git(target, "checkout", "-b", "harness/911/build-911/iter-1")
     verified_commit = _commit(
         target,
         "game.ts",
@@ -2923,7 +2916,7 @@ def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
         "verified delivery",
     )
     _git(target, "checkout", "main")
-    _git(target, "branch", "harness/911/default/iter-2")
+    _git(target, "branch", "harness/911/build-911/iter-2")
 
     spec_dir = wrapper / "specs" / "911-demo"
     spec_dir.mkdir(parents=True)
@@ -2940,13 +2933,12 @@ def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
     marker.write_text("build-911", encoding="utf-8")
     state_dir = wrapper / "runs" / "build-911" / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "911-demo",
-                "strategy_id": "default",
                 "outer_iter": 2,
-                "branch": "harness/911/default/iter-1",
+                "branch": "harness/911/build-911/iter-1",
                 "status": "converged",
             }
         ),
@@ -2960,7 +2952,7 @@ def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
             "harness.land._prepare_for_land",
             return_value=LandPrepareResult(
                 status="prepared",
-                branch="harness/911/default/iter-1",
+                branch="harness/911/build-911/iter-1",
             ),
         ),
         patch("harness.land._verify_before_land", return_value=True),
@@ -2973,7 +2965,7 @@ def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
         assert land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
 
     gitops.merge_branch_into_default.assert_called_once_with(
-        "harness/911/default/iter-1", str(target.resolve())
+        "harness/911/build-911/iter-1", str(target.resolve())
     )
 
 
@@ -2992,11 +2984,10 @@ def test_current_build_harness_branch_requires_exactly_one_converged_strategy(
     state_dir = repo / "runs" / "build-911" / "state"
     state_dir.mkdir(parents=True)
     for strategy in converged_states:
-        (state_dir / f"{strategy}.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps(
                 {
                     "spec_id": "911-demo",
-                    "strategy_id": strategy,
                     "outer_iter": 1,
                     "status": "converged",
                 }
@@ -3004,7 +2995,7 @@ def test_current_build_harness_branch_requires_exactly_one_converged_strategy(
             encoding="utf-8",
         )
     if not converged_states:
-        (state_dir / "default.json").write_text(
+        (state_dir / "delivery.json").write_text(
             json.dumps({"spec_id": "911-demo", "status": "failed"}),
             encoding="utf-8",
         )
@@ -3051,12 +3042,12 @@ def test_polyrepo_land_does_not_compare_wrapper_and_target_branch_names(
         encoding="utf-8",
     )
 
-    gitops = _make_gitops(feature_branch="harness/911/default/iter-1")
+    gitops = _make_gitops(feature_branch="harness/911/build-911/iter-1")
     with (
         patch("harness.land._check_ready_before_land", return_value=True),
         patch(
             "harness.land._prepare_for_land",
-            return_value=LandPrepareResult(status="prepared", branch="harness/911/default/iter-1"),
+            return_value=LandPrepareResult(status="prepared", branch="harness/911/build-911/iter-1"),
         ) as prepare,
         patch("harness.land._verify_before_land", return_value=True),
         patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
@@ -3991,7 +3982,7 @@ class TestLandIntegration:
         )
 
         # Worktree dir
-        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
         worktree_dir.mkdir(parents=True)
 
         gitops = _make_gitops()

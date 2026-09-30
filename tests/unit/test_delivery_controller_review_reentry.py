@@ -1,0 +1,438 @@
+"""Tests that the coordinator injects review-fix content into Phase 1 re-entry prompt."""
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
+from harness.delivery_controller import DeliveryController
+from harness.delivery_results import DeliveryResult, ImplementationResult, ReviewResult, VisualResult
+from harness.verify_result import VerifyResult
+from harness.repair_loop import RepairLoop
+from harness.run_intent import RunIntent
+from harness.state import StateStore
+
+
+def _config(tmp_path: Path) -> HarnessConfig:
+    return HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        pr_host="github",
+        review_loop=ReviewLoopConfig(
+            enabled=True,
+            max_fix_iterations=2,
+        ),
+        visual_tests=VisualTestsConfig(enabled=True, max_iterations=1),
+    )
+
+
+def _implementation_result(
+    status: str,
+    pr_url: str = "https://github.com/org/repo/pull/1",
+    *,
+    outer_iterations: int = 1,
+    tokens_used: int = 0,
+) -> ImplementationResult:
+    return ImplementationResult(
+        status="verified" if status == "converged" else status,
+        termination_reason="converged" if status == "converged" else status,
+        outer_iterations=outer_iterations,
+        inner_iterations=0,
+        pr_url=pr_url,
+        tokens_used=tokens_used,
+        final_verify=None,
+    )
+
+
+@pytest.mark.unit
+class TestCoordinatorReviewReentry:
+
+    def test_effects_only_resume_restores_persisted_ownership(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ambient targets cannot replace an already verified review handoff."""
+        config = _config(tmp_path)
+        config.llm.enabled = True
+        monkeypatch.setattr(
+            "harness.delivery_controller.AICodingCliProvider", lambda config: object()
+        )
+        spec_dir = tmp_path / "specs" / "005-owned"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - ambient-target\n---\n# Owned\n", encoding="utf-8"
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        store = StateStore(tmp_path / "runs" / "state", "005")
+        store.initialize(
+            "run-1", "semi", implementation_target="persisted-target",
+            declared_targets=["persisted-target"],
+            enabled_phases=["implementation", "review", "finalization"],
+        )
+        store.transition("running")
+        store.transition("verified", updates={"last_completed_phase": "implementation", "pr_url": "https://github.com/org/repo/pull/1", "registered_worktree": str(worktree)})
+        state = store.read()
+        state["pending_review_reentry"] = {
+            "attempt_id": "attempt-1", "task_ids": [], "artifact_paths": [],
+            "phase1_verified": True,
+        }
+        store.write(state)
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "ambient-target")
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "ambient-target")
+        coord = DeliveryController(
+            provider=MagicMock(), gitops=MagicMock(), config=config,
+            base_dir=str(tmp_path), orchestration_root=tmp_path,
+        )
+        captured: dict[str, object] = {}
+        terminal = DeliveryResult(
+            "converged", "converged", 1, 0,
+            "https://github.com/org/repo/pull/1", 0, None, None,
+        )
+
+        with patch("harness.delivery_controller.ReviewLoopController") as review, \
+             patch("harness.delivery_controller.RalphController") as ralph, \
+             patch.object(coord, "_downstream_resume_error", return_value=None), \
+             patch.object(coord, "_finalize_delivery", return_value=terminal) as finalize:
+            review.return_value.complete_published_batch.return_value = True
+            review.return_value.run_loop.return_value = ReviewResult(
+                "completed", "converged", 1, "https://github.com/org/repo/pull/1", 0
+            )
+            result = coord._run_delivery(
+                RunIntent(spec_id="005", max_outer=1, max_inner=1),
+                budget=None,
+            )
+            assert result.status == "converged", result
+            captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
+
+        assert captured["declared_targets"] == ["persisted-target"]
+        assert store.read()["implementation_target"] == "persisted-target"
+        assert store.read()["declared_targets"] == ["persisted-target"]
+        ralph.return_value.run_loop.assert_not_called()
+
+    def test_build_reentry_prompt_injects_only_published_review_fix_content(self, tmp_path):
+        """A re-entry may only use artifacts from its just-published batch."""
+        config = _config(tmp_path)
+        coord = DeliveryController(
+            provider=MagicMock(),
+            gitops=MagicMock(),
+            config=config,
+            base_dir=str(tmp_path),
+        )
+
+        spec_dir = tmp_path / "specs" / "005-my-spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "review-fix-1.md").write_text(
+            "# Review Fix 1\nFix the z-index issue.\n",
+            encoding="utf-8",
+        )
+        published = spec_dir / "review-fix-2.md"
+        published.write_text(
+            "# Review Fix 2\nFix the supplied review finding.\n",
+            encoding="utf-8",
+        )
+
+        with patch("subprocess.run") as run_git:
+            result = coord._build_reentry_prompt(
+                "spec 005 semi mode",
+                "005",
+                spec_dir=spec_dir,
+                published_artifacts=(published,),
+            )
+
+        run_git.assert_not_called()
+        assert "## Review Feedback" in result
+        assert "Review Fix 1" not in result
+        assert "Fix the z-index issue." not in result
+        assert "Review Fix 2" in result
+        assert "Fix the supplied review finding." in result
+        assert result.startswith("spec 005 semi mode")
+
+    def test_build_reentry_prompt_returns_base_when_no_spec_dir(self, tmp_path):
+        """Returns base prompt unchanged when no spec directory exists."""
+        config = _config(tmp_path)
+        coord = DeliveryController(
+            provider=MagicMock(),
+            gitops=MagicMock(),
+            config=config,
+            base_dir=str(tmp_path),
+        )
+
+        result = coord._build_reentry_prompt("spec 099 semi mode", "099")
+
+        assert result == "spec 099 semi mode"
+
+    def test_build_reentry_prompt_returns_base_when_no_review_fix_files(self, tmp_path):
+        """Returns base prompt unchanged when branch has no review-fix files."""
+        config = _config(tmp_path)
+        coord = DeliveryController(
+            provider=MagicMock(),
+            gitops=MagicMock(),
+            config=config,
+            base_dir=str(tmp_path),
+        )
+
+        spec_dir = tmp_path / "specs" / "005-my-spec"
+        spec_dir.mkdir(parents=True)
+
+        result = coord._build_reentry_prompt("spec 005 semi mode", "005")
+
+        assert result == "spec 005 semi mode"
+
+    def test_target_task_ids_extend_once_in_published_order(self, tmp_path):
+        """Re-entry persists only canonical IDs from the completed publication."""
+        coord = DeliveryController(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+        state_store = MagicMock()
+        state_store.read.return_value = {
+            "status": "reviewing", "target_task_ids": ["T-001", "T-003"],
+        }
+
+        coord._extend_target_task_ids(state_store, ("T-002", "T-003", "T-004"))
+
+        state_store.transition.assert_called_once_with(
+            "reviewing",
+            updates={"target_task_ids": ["T-001", "T-003", "T-002", "T-004"]},
+        )
+
+    def test_review_reentry_checkpoint_preserves_exact_published_batch(self, tmp_path):
+        """A crash after review returns must leave the exact re-entry recoverable."""
+        coord = DeliveryController(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+        state_store = MagicMock()
+        artifact = tmp_path / "specs" / "005-my-spec" / "review-fix-2.md"
+        state_store.read.return_value = {
+            "status": "reviewing", "target_task_ids": ["T-001"],
+        }
+
+        coord._checkpoint_review_reentry(
+            state_store,
+            attempt_id="attempt-1",
+            task_ids=("T-002", "T-003", "T-004"),
+            artifacts=(artifact,),
+        )
+
+        state_store.transition.assert_called_once_with(
+            "reviewing",
+            updates={
+                "target_task_ids": ["T-001", "T-002", "T-003", "T-004"],
+                "pending_review_reentry": {
+                    "attempt_id": "attempt-1",
+                    "task_ids": ["T-002", "T-003", "T-004"],
+                    "artifact_paths": [str(artifact)],
+                    "phase1_verified": False,
+                },
+            },
+        )
+
+    def test_verified_reentry_retries_only_side_effects_after_resume(self, tmp_path):
+        """A side-effect retry preserves Phase 1 counters and skips Ralph work."""
+        coord = DeliveryController(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+
+        class MemoryState:
+            def __init__(self):
+                self.data = {
+                    "status": "blocked",
+                    "blocked_phase": "review",
+                    "outer_iter": 9,
+                    "tokens_used": 44,
+                    "pending_review_reentry": {
+                        "attempt_id": "attempt-1",
+                        "task_ids": ["T-002"],
+                        "artifact_paths": ["review-fix-1.md"],
+                        "phase1_verified": True,
+                    },
+                }
+                self.transitions: list[tuple[str, dict | None]] = []
+
+            def read(self):
+                return dict(self.data)
+
+            def transition(self, status, *, updates=None):
+                self.data["status"] = status
+                if updates:
+                    self.data.update(updates)
+                self.transitions.append((status, updates))
+
+        state_store = MemoryState()
+        review_controller = MagicMock()
+        pending = state_store.data["pending_review_reentry"]
+        review_controller.complete_published_batch.side_effect = [False, True]
+
+        assert not coord._complete_verified_review_reentry(
+            state_store,
+            review_controller,
+            pr_url="https://github.com/org/repo/pull/1",
+            pending_reentry=pending,
+        )
+        assert state_store.data["status"] == "blocked"
+        assert state_store.data["outer_iter"] == 9
+        assert state_store.data["tokens_used"] == 44
+        assert state_store.transitions == []
+
+        assert coord._complete_verified_review_reentry(
+            state_store,
+            review_controller,
+            pr_url="https://github.com/org/repo/pull/1",
+            pending_reentry=pending,
+        )
+        assert state_store.transitions == [
+            ("running", None),
+            ("verified", {"pending_review_reentry": None}),
+        ]
+        assert state_store.data["pending_review_reentry"] is None
+        assert state_store.data["outer_iter"] == 9
+        assert state_store.data["tokens_used"] == 44
+
+    def test_reentry_run_loop_receives_review_content(self, tmp_path):
+        """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "runs" / "targets" / "api"
+        worktree = harness_root / "runs" / "build-1" / "worktrees" / "iter-0"
+        worktree.mkdir(parents=True)
+        config = _config(workspace)
+        config.llm.enabled = True
+
+        spec_dir = workspace / "specs" / "005-my-spec"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "review-fix-1.md").write_text(
+            "# Review Fix 1\nFix the z-index.\n",
+            encoding="utf-8",
+        )
+
+        gitops = MagicMock()
+        gitops.get_latest_worktree.return_value = str(worktree)
+
+        coord = DeliveryController(
+            provider=MagicMock(),
+            gitops=gitops,
+            config=config,
+            base_dir=str(harness_root),
+            build_id="build-1",
+            orchestration_root=workspace,
+        )
+
+        captured_prompts: list[str] = []
+
+        def phase1_run_loop(**kwargs):
+            captured_prompts.append(kwargs.get("build_prompt", ""))
+            return _implementation_result("converged")
+
+        intent = RunIntent(
+            spec_id="005",
+            mode="semi",
+            max_outer=1,
+            max_inner=1,
+        )
+        repair_loop_runs = []
+
+        class SpyRepairLoop(RepairLoop):
+            def run(self, draft):
+                repair_loop_runs.append(draft)
+                return super().run(draft)
+
+        with patch("harness.delivery_controller.AICodingCliProvider", return_value=object()), \
+             patch.object(coord, "_worktree_head", return_value="verified-head"), \
+             patch("harness.delivery_controller.RalphController") as MockRalph, \
+             patch("harness.delivery_controller.ReviewLoopController") as MockReview, \
+             patch("harness.delivery_controller.VisualRalphController") as MockVisual, \
+             patch("harness.delivery_controller.RepairLoop", SpyRepairLoop, create=True), \
+             patch("harness.delivery_controller.StateStore") as MockState:
+
+            # Phase 1: first call converges, second call (re-entry) converges too
+            ralph_instance = MagicMock()
+            ralph_instance.run_loop.side_effect = [
+                _implementation_result(
+                    "converged", outer_iterations=2, tokens_used=11
+                ),  # initial Phase 1
+                _implementation_result(
+                    "converged", outer_iterations=3, tokens_used=13
+                ),  # Phase 1 re-entry after review_fix_queued
+            ]
+            MockRalph.return_value = ralph_instance
+
+            # Phase 3: first call returns review_fix_queued, second converged
+            review_instance = MagicMock()
+            review_instance.run_loop.side_effect = [
+                ReviewResult(
+                    status="review_fix_queued",
+                    termination_reason="review_fix_queued",
+                    iterations=1,
+                    pr_url="https://github.com/org/repo/pull/1",
+                    tokens_used=5,
+                ),
+                ReviewResult(
+                    status="completed",
+                    termination_reason="converged",
+                    iterations=1,
+                    pr_url="https://github.com/org/repo/pull/1",
+                    tokens_used=7,
+                ),
+            ]
+            MockReview.return_value = review_instance
+            review_instance.queued_task_ids = ("T-001", "T-002", "T-003")
+            review_instance.published_artifacts = (spec_dir / "review-fix-1.md",)
+            review_instance.pending_batch_attempt_id = "attempt-1"
+            review_instance.complete_published_batch.return_value = True
+
+            MockVisual.return_value.run_loop.side_effect = [
+                VisualResult("passed", "converged", 1, 3, VerifyResult(True, [])),
+                VisualResult("passed", "converged", 1, 5, VerifyResult(True, [])),
+            ]
+
+            # State store: preserve each transition so the durable handoff can
+            # move from queued -> Phase 1 verified -> side-effect completion.
+            state_instance = MagicMock()
+            state_data = {"status": "initialized"}
+
+            def read_state():
+                return dict(state_data)
+
+            def initialize_state(**kwargs):
+                state_data.update(kwargs)
+                state_data["status"] = "initialized"
+
+            def transition_state(status, *, updates=None):
+                state_data["status"] = status
+                if updates:
+                    state_data.update(updates)
+                return dict(state_data)
+
+            state_instance.read.side_effect = read_state
+            state_instance.initialize.side_effect = initialize_state
+            state_instance.transition.side_effect = transition_state
+            MockState.return_value = state_instance
+
+            result = coord._run_delivery(intent, budget=None)
+
+        assert len(repair_loop_runs) == 1
+
+        # Phase 1 was called twice
+        assert ralph_instance.run_loop.call_count == 2
+
+        # Second call (re-entry) must have review content in build_prompt
+        reentry_call = ralph_instance.run_loop.call_args_list[1]
+        reentry_prompt = reentry_call.kwargs.get(
+            "build_prompt", reentry_call.args[0] if reentry_call.args else ""
+        )
+        assert "## Review Feedback" in reentry_prompt, (
+            f"Expected '## Review Feedback' in re-entry build_prompt, got:\n{reentry_prompt!r}"
+        )
+        assert "Review Fix 1" in reentry_prompt
+        assert MockReview.call_args.kwargs["base_dir"] == str(harness_root)
+        assert MockReview.call_args.kwargs["spec_dir"] == spec_dir.resolve()
+        assert MockVisual.return_value.run_loop.call_count == 2
+        assert result.final_verify == VerifyResult(True, [])
+        assert result.outer_iterations == 9
+        # Controlled re-entry reports cumulative Ralph usage, so the persisted
+        # baseline is subtracted instead of charging the first slice twice.
+        assert result.tokens_used == 31

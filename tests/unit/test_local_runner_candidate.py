@@ -138,8 +138,7 @@ def _write_fixture(
     standard = write_verification_receipt(
         evidence_dir=tmp_path / "evidence" / "standard",
         spec_id="003-local-demo",
-        strategy_id="default",
-        build_id="build-local-demo",
+                build_id="build-local-demo",
         candidate_commit=build_commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -151,8 +150,7 @@ def _write_fixture(
     observer = write_verification_receipt(
         evidence_dir=tmp_path / "evidence" / "observer",
         spec_id="003-local-demo",
-        strategy_id="default",
-        build_id="build-local-demo",
+                build_id="build-local-demo",
         candidate_commit=build_commit,
         fingerprint_before=fingerprint,
         fingerprint_after=fingerprint,
@@ -217,11 +215,10 @@ def _write_fixture(
         "resolved_stack_hash": _STACK_HASH,
         "observer_plan_hash": observer_plan_hash,
     }
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": "003-local-demo",
-                "strategy_id": "default",
                 "status": "converged",
                 "verified_commit": build_commit,
                 "delivery_stack_snapshot": snapshot,

@@ -17,10 +17,10 @@ from echelon.product_inputs import (
     validate_product_input_contract_pointers,
 )
 from harness.state_transaction_namespace import (
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
     PRODUCT_INPUT_MUTATION_KEY,
     require_product_input_mutation_publication_binding,
-    validate_pending_external_publication,
+    validate_spec_step_publication_plan,
     validate_product_input_mutation,
 )
 from harness.squad_publication import (
@@ -277,7 +277,7 @@ def build_product_input_mutation(
     added_count: int = 0,
     duplicate_count: int = 0,
 ) -> dict[str, object]:
-    publication = validate_pending_external_publication(marker)
+    publication = validate_spec_step_publication_plan(marker)
     paths_sha256, path_count = _owned_paths_sha256(owned_paths)
     value = {
         "schema_version": 1,
@@ -553,7 +553,7 @@ def pending_product_input_mutation(
     state: Mapping[str, object],
 ) -> dict[str, object] | None:
     raw = state.get(PRODUCT_INPUT_MUTATION_KEY)
-    publication = state.get(PENDING_EXTERNAL_PUBLICATION_KEY)
+    publication = state.get(SPEC_STEP_PUBLICATION_PLAN_KEY)
     if raw is None and publication is None:
         return None
     if raw is None or publication is None:

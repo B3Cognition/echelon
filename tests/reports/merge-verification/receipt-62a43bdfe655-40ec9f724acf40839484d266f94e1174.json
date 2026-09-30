@@ -1,0 +1,39 @@
+{
+  "plan": {
+    "base_commit": "46ef1d1c74a31fbd22ac27254a7a8840f5a9c198",
+    "candidate_commit": "62a43bdfe655705594b32c5354e7ad8b232dc746",
+    "candidate_tree": "eed7082adbdf6c19ca6ed0a41f9846a0aeb18bf6",
+    "changed_paths": [
+      "docs/runbooks/spec-recovery-regression-checklist.md",
+      "src/echelon/spec_service.py",
+      "tests/unit/test_cli_continue.py",
+      "tests/unit/test_cli_resume_escalation_options.py"
+    ],
+    "commands": [
+      [
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ]
+    ],
+    "requires_full_suite": true,
+    "scope": "full-unit"
+  },
+  "results": [
+    {
+      "command": [
+        "/Users/michalbachorik/work/echelon_r/echelon/.worktrees/spec-step-kernel/../../.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ],
+      "duration_ms": 1962647,
+      "exit_code": 0
+    }
+  ],
+  "schema_version": 1,
+  "status": "passed"
+}

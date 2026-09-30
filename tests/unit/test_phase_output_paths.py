@@ -6,16 +6,9 @@ CHECKPOINT = ROOT / "prosaic" / "subagents" / "echelon.checkpoint.md"
 PHASE2_DECIDE = ROOT / "runtime" / "workflow" / "phases" / "phase2-decide.md"
 PHASE1_WHAT = ROOT / "runtime" / "workflow" / "phases" / "phase1-what.md"
 PHASE1_WHY2 = ROOT / "runtime" / "workflow" / "phases" / "phase1-why2.md"
-BUILD_INIT = ROOT / "runtime" / "workflow" / "phases" / "build-1-init.md"
-BUILD_FINALIZE = ROOT / "runtime" / "workflow" / "phases" / "build-8-finalize.md"
-BUILD_COMMAND = ROOT / "prosaic" / "commands" / "echelon.build.md"
 PHASE3_CONSENSUS = ROOT / "runtime" / "workflow" / "phases" / "phase3-consensus.md"
 PHASE3_SPECIALISTS = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
 PHASE4_DOCUMENT = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
-BUILD_VERIFY_GATES = (
-    ROOT / "runtime" / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md"
-)
-CODEGEN_SECURITY = ROOT / "runtime" / "workflow" / "phases" / "codegen-6b-security.md"
 
 
 class TestPhaseOutputPaths:
@@ -55,55 +48,6 @@ class TestPhaseOutputPaths:
 
         assert "{spec_dir}/requirements-overview.md" in text
         assert "{spec_dir}/00-overview.md" not in text
-
-    def test_build_init_uses_canonical_report_paths(self) -> None:
-        text = BUILD_INIT.read_text(encoding="utf-8")
-
-        assert "Read and verify these files exist in `specs/{NNN}-{feature}/`" not in text
-        assert "Read and verify these files exist in `{spec_dir}/`" in text
-
-        for filename in [
-            "spec-compliance-report.md",
-            "code-review-report.md",
-            "test-quality-report.md",
-            "progress-report.md",
-        ]:
-            assert f"specs/{{feature}}/{filename}" not in text
-            assert f"{{spec_dir}}/{filename}" in text
-
-    def test_build_init_warns_harness_not_to_stop_on_next_phase(self) -> None:
-        text = BUILD_INIT.read_text(encoding="utf-8")
-        normalized = " ".join(text.split())
-
-        assert "Do not return `next_phase: build-2-implement` and stop" in text
-        assert "Ralph does not consume `next_phase`" in text
-        assert "one bounded verified progress slice" in normalized
-        assert "Ralph owns verification, commit, and the next build invocation" in normalized
-        assert ".harness-build-status.json" in text
-
-    def test_harness_status_contract_treats_done_as_iteration_completion(self) -> None:
-        finalize_text = BUILD_FINALIZE.read_text(encoding="utf-8")
-        command_text = BUILD_COMMAND.read_text(encoding="utf-8")
-        command_normalized = " ".join(command_text.split())
-
-        assert "useful verified progress" in finalize_text
-        assert "current bounded progress slice completed cleanly" in finalize_text
-        assert '"status":"done"' in finalize_text
-        assert '"completed_task_ids":["T-001"]' in finalize_text
-        assert (
-            'printf \'{"status":"done","reason":"completed verified build iteration"}\''
-            not in finalize_text
-        )
-        assert '"status":"impasse"' not in finalize_text
-        assert "Do not write `impasse` for ordinary partial progress" in finalize_text
-
-        assert "one bounded verified progress slice" in command_normalized
-        assert "iteration completion, not total MVP completion" in command_text
-        assert '"completed_task_ids":["T-001"]' in command_text
-        assert "Ralph marks those rows DONE in `tasks.md` before verify" in command_text
-        assert "Ralph owns the outer loop" in command_normalized
-        assert "Do not keep selecting more tasks after writing the marker" in command_normalized
-        assert 'Harness `{"status":"done"}` still means' in command_text
 
     def test_phase3_specialists_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE3_SPECIALISTS.read_text(encoding="utf-8")
@@ -155,18 +99,3 @@ class TestPhaseOutputPaths:
         assert "finalize-run.sh" not in text
         assert "git checkout" not in text
         assert "sibling branch from the configured default branch" in text
-
-    def test_build_finalize_generates_artifact_index_deterministically(self) -> None:
-        text = (
-            ROOT / "runtime" / "workflow" / "phases" / "build-8-finalize.md"
-        ).read_text(encoding="utf-8")
-
-        assert "echelon spec artifacts" in text
-        assert "NEVER hand-author `ARTIFACTS.md`" in text
-
-    def test_license_exception_paths_use_canonical_spec_dir(self) -> None:
-        for path in [BUILD_VERIFY_GATES, CODEGEN_SECURITY]:
-            text = path.read_text(encoding="utf-8")
-
-            assert "specs/{NNN}-{feature}/license-exceptions.md" not in text
-            assert "{spec_dir}/license-exceptions.md" in text

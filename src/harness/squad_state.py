@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import secrets
 import re
@@ -52,6 +53,14 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
+from harness.phase_a_state_version import CURRENT_PHASE_A_STATE_VERSION
+from harness.spec_step import (
+    PreparedSpecStep,
+    SpecStepFailure,
+    SpecStepMarker,
+    load_prepared_spec_step,
+    validate_spec_step_marker,
+)
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -64,21 +73,17 @@ from harness.recovery_instruction import (
     RecoveryKind,
     validate_decision_recovery_pair,
 )
-from harness.squad_completion import (
-    CompletionIntent,
-    CompletionMarker,
-    PreparedControllerCompletion,
-)
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
-    PENDING_EXTERNAL_PUBLICATION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
+    SPEC_STEP_PUBLICATION_PLAN_KEY,
+    PENDING_SPEC_STEP_KEY,
     PHASE_A_IDENTITY_KEYS,
     PRODUCT_INPUT_MUTATION_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
     require_product_input_mutation_publication_binding,
     store_owned_update_keys,
-    validate_pending_controller_completion,
-    validate_pending_external_publication,
+    validate_spec_step_effect_plan,
+    validate_spec_step_publication_plan,
     validate_product_input_mutation,
 )
 from harness.proportional_quality import initialize_repair_state
@@ -94,47 +99,6 @@ VALID_SQUAD_TRANSITIONS: dict[str, set[str]] = {
     "blocked": {"running"},
     "done": set(),
 }
-_EXTERNAL_PUBLICATION_FAILURE_KEY = "external_publication_failure"
-_EXTERNAL_PUBLICATION_FAILURE_CODES = frozenset(
-    {
-        "manifest_invalid",
-        "manifest_mismatch",
-        "publish_io",
-        "stage_corrupt",
-        "stage_missing",
-        "state_finalize",
-        "target_drift",
-    }
-)
-_EXTERNAL_PUBLICATION_FAILURE_KEYS = frozenset(
-    {
-        "schema_version",
-        "code",
-        "resume_status",
-        "resume_blocked_reason",
-    }
-)
-_CONTROLLER_COMPLETION_FAILURE_KEY = "controller_completion_failure"
-_CONTROLLER_COMPLETION_FAILURE_CODES = frozenset(
-    {
-        "completion_missing",
-        "intent_invalid",
-        "intent_mismatch",
-        "receipts_invalid",
-        "receipts_mismatch",
-        "stage_corrupt",
-        "stage_io",
-        "stage_missing",
-    }
-)
-_CONTROLLER_COMPLETION_FAILURE_KEYS = frozenset(
-    {
-        "schema_version",
-        "code",
-        "resume_status",
-        "resume_blocked_reason",
-    }
-)
 _COMPLETION_EFFECT_ORDER = (
     "journal",
     "timing",
@@ -1012,108 +976,39 @@ def _prepared_result_error(
     )
 
 
-def _validate_external_publication_failure(
-    value: object,
-) -> dict[str, object]:
-    if (
-        type(value) is not dict
-        or frozenset(dict.keys(value))
-        != _EXTERNAL_PUBLICATION_FAILURE_KEYS
-    ):
-        raise ValueError(
-            "external publication failure diagnostic has invalid fields"
-        )
-    schema_version = dict.__getitem__(value, "schema_version")
-    code = dict.__getitem__(value, "code")
-    resume_status = dict.__getitem__(value, "resume_status")
-    resume_blocked_reason = dict.__getitem__(
-        value,
-        "resume_blocked_reason",
-    )
-    if type(schema_version) is not int or schema_version != 1:
-        raise ValueError(
-            "external publication failure schema version is invalid"
-        )
-    if (
-        type(code) is not str
-        or code not in _EXTERNAL_PUBLICATION_FAILURE_CODES
-    ):
-        raise ValueError("external publication failure code is invalid")
-    if type(resume_status) is not str:
-        raise ValueError("external publication resume status is invalid")
-    if (
-        resume_blocked_reason is not None
-        and type(resume_blocked_reason) is not str
-    ):
-        raise ValueError(
-            "external publication resume blocked reason is invalid"
-        )
-    return {
-        "schema_version": schema_version,
-        "code": code,
-        "resume_status": resume_status,
-        "resume_blocked_reason": resume_blocked_reason,
-    }
-
-
-def _validate_controller_completion_failure(
-    value: object,
-) -> dict[str, object]:
-    if (
-        type(value) is not dict
-        or frozenset(dict.keys(value))
-        != _CONTROLLER_COMPLETION_FAILURE_KEYS
-    ):
-        raise ValueError(
-            "controller completion failure diagnostic has invalid fields"
-        )
-    schema_version = dict.__getitem__(value, "schema_version")
-    code = dict.__getitem__(value, "code")
-    resume_status = dict.__getitem__(value, "resume_status")
-    resume_blocked_reason = dict.__getitem__(
-        value,
-        "resume_blocked_reason",
-    )
-    if type(schema_version) is not int or schema_version != 1:
-        raise ValueError(
-            "controller completion failure schema version is invalid"
-        )
-    if (
-        type(code) is not str
-        or code not in _CONTROLLER_COMPLETION_FAILURE_CODES
-    ):
-        raise ValueError("controller completion failure code is invalid")
-    if (
-        type(resume_status) is not str
-        or resume_status not in VALID_SQUAD_TRANSITIONS
-    ):
-        raise ValueError(
-            "controller completion resume status is invalid"
-        )
-    if (
-        resume_blocked_reason is not None
-        and (
-            type(resume_blocked_reason) is not str
-            or len(resume_blocked_reason) > 4_096
-        )
-    ):
-        raise ValueError(
-            "controller completion resume blocked reason is invalid"
-        )
-    return {
-        "schema_version": schema_version,
-        "code": code,
-        "resume_status": resume_status,
-        "resume_blocked_reason": resume_blocked_reason,
-    }
-
-
 def _valid_completion_sha256(value: object) -> bool:
     return (
         type(value) is str
         and len(value) == 64
         and frozenset(value) <= _SHA256_CHARACTERS
     )
+
+
+def _validated_provider_output_proofs(
+    value: tuple[Mapping[str, object], ...] | None,
+) -> list[dict[str, str]] | None:
+    if value is None:
+        return None
+    if type(value) is not tuple or len(value) > 4096:
+        raise StateAdvanceError("provider output proofs are invalid", validator="completion_binding")
+    proofs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if type(item) is not dict or frozenset(item) != {"path", "kind", "sha256"}:
+            raise StateAdvanceError("provider output proof is invalid", validator="completion_binding")
+        path, kind, digest = item["path"], item["kind"], item["sha256"]
+        if (
+            type(path) is not str
+            or not path or Path(path).is_absolute()
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or type(kind) is not str or kind not in {"file", "directory"}
+            or not _valid_completion_sha256(digest)
+            or (path, kind) in seen
+        ):
+            raise StateAdvanceError("provider output proof is invalid", validator="completion_binding")
+        seen.add((path, kind))
+        proofs.append({"path": path, "kind": kind, "sha256": digest})
+    return proofs
 
 
 def _canonical_completion_document(
@@ -1135,19 +1030,19 @@ def _canonical_completion_document(
     except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise StateAdvanceError(
             "controller completion document is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         ) from exc
     if len(encoded) > maximum:
         raise StateAdvanceError(
             "controller completion document is too large",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         )
     return encoded, hashlib.sha256(encoded).hexdigest()
 
 
-def _validate_prepared_controller_completion(
+def _validate_prepared_spec_step_effects(
     prepared: object,
 ) -> tuple[
     dict[str, object],
@@ -1156,26 +1051,22 @@ def _validate_prepared_controller_completion(
     str,
     str,
 ]:
-    if (
-        type(prepared) is not PreparedControllerCompletion
-        or type(prepared.marker) is not CompletionMarker
-        or type(prepared.intent) is not CompletionIntent
-    ):
+    if prepared is None:
         raise StateAdvanceError(
-            "controller completion requires a loaded typed intent",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            "spec-step effects require a loaded intent",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         )
     try:
-        marker = validate_pending_controller_completion(
-            prepared.marker.to_dict()
+        marker = validate_spec_step_effect_plan(
+            prepared.marker.to_dict()  # type: ignore[attr-defined]
         )
-        intent = prepared.intent.to_dict()
-        receipts = prepared.receipts
+        intent = prepared.intent.to_dict()  # type: ignore[attr-defined]
+        receipts = prepared.receipts  # type: ignore[attr-defined]
     except Exception as exc:
         raise StateAdvanceError(
             "controller completion typed intent is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         ) from exc
     current_intent_keys = frozenset(
@@ -1206,7 +1097,7 @@ def _validate_prepared_controller_completion(
     ):
         raise StateAdvanceError(
             "controller completion intent identity is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         )
     intent_bytes, intent_sha256 = _canonical_completion_document(intent)
@@ -1216,14 +1107,14 @@ def _validate_prepared_controller_completion(
     ):
         raise StateAdvanceError(
             "controller completion intent digest changed",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.intent_sha256",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.intent_sha256",
             validator="completion_intent",
         )
     publication = intent["publication"]
     if type(publication) is not dict:
         raise StateAdvanceError(
             "controller completion publication binding is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         )
     _, publication_sha256 = _canonical_completion_document(publication)
@@ -1231,7 +1122,7 @@ def _validate_prepared_controller_completion(
         raise StateAdvanceError(
             "controller completion publication binding changed",
             json_path=(
-                f"$.{PENDING_CONTROLLER_COMPLETION_KEY}."
+                f"$.{SPEC_STEP_EFFECT_PLAN_KEY}."
                 "publication_binding_sha256"
             ),
             validator="completion_intent",
@@ -1240,21 +1131,21 @@ def _validate_prepared_controller_completion(
     if type(route) is not dict or route.get("kind") != intent["origin"]:
         raise StateAdvanceError(
             "controller completion route binding is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
             validator="completion_intent",
         )
     plan_value = intent["effect_plan"]
     if type(plan_value) is not list:
         raise StateAdvanceError(
             "controller completion effect plan is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.step",
             validator="completion_step",
         )
     plan = tuple(plan_value)
     if any(type(effect) is not str for effect in plan):
         raise StateAdvanceError(
             "controller completion effect plan is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.step",
             validator="completion_step",
         )
     try:
@@ -1265,19 +1156,19 @@ def _validate_prepared_controller_completion(
     except ValueError as exc:
         raise StateAdvanceError(
             "controller completion effect plan is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.step",
             validator="completion_step",
         ) from exc
     if indexes != tuple(sorted(set(indexes))):
         raise StateAdvanceError(
             "controller completion effect plan is not monotonic",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.step",
             validator="completion_step",
         )
     if intent_keys == legacy_intent_keys and "quality" in plan:
         raise StateAdvanceError(
             "legacy controller completion cannot contain a quality effect",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.step",
             validator="completion_step",
         )
     if (
@@ -1291,7 +1182,7 @@ def _validate_prepared_controller_completion(
     ):
         raise StateAdvanceError(
             "controller completion receipts are invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.receipts_sha256",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.receipts_sha256",
             validator="completion_receipts",
         )
     effects = receipts["effects"]
@@ -1301,7 +1192,7 @@ def _validate_prepared_controller_completion(
     ):
         raise StateAdvanceError(
             "controller completion receipts are invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.receipts_sha256",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.receipts_sha256",
             validator="completion_receipts",
         )
     receipt_keys = frozenset(dict.keys(effects))
@@ -1309,7 +1200,7 @@ def _validate_prepared_controller_completion(
     if receipt_keys != expected_prefix:
         raise StateAdvanceError(
             "controller completion receipt prefix is invalid",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.receipts_sha256",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.receipts_sha256",
             validator="completion_receipts",
         )
     _, receipts_sha256 = _canonical_completion_document(
@@ -1360,7 +1251,7 @@ def _validate_prepared_controller_completion(
     if not valid_prefix:
         raise StateAdvanceError(
             "controller completion receipt prefix does not match marker",
-            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.receipts_sha256",
+            json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}.receipts_sha256",
             validator="completion_receipts",
         )
     return marker, intent, receipts, receipts_sha256, prefix_kind
@@ -2068,13 +1959,13 @@ def _validate_routing_decision(
         for key, value in result["state_updates"].items()
         if key not in promoted_control_keys
     }
-    if PENDING_EXTERNAL_PUBLICATION_KEY in verified.transaction_state_updates:
+    if SPEC_STEP_PUBLICATION_PLAN_KEY in verified.transaction_state_updates:
         try:
             verified.transaction_state_updates[
-                PENDING_EXTERNAL_PUBLICATION_KEY
-            ] = validate_pending_external_publication(
+                SPEC_STEP_PUBLICATION_PLAN_KEY
+            ] = validate_spec_step_publication_plan(
                 verified.transaction_state_updates[
-                    PENDING_EXTERNAL_PUBLICATION_KEY
+                    SPEC_STEP_PUBLICATION_PLAN_KEY
                 ]
             )
         except ValueError as exc:
@@ -2082,7 +1973,7 @@ def _validate_routing_decision(
                 "pending external publication marker is invalid",
                 json_path=(
                     "$.transaction_state_updates."
-                    f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+                    f"{SPEC_STEP_PUBLICATION_PLAN_KEY}"
                 ),
                 validator="type",
             ) from exc
@@ -2097,7 +1988,7 @@ def _validate_routing_decision(
             mutation = require_product_input_mutation_publication_binding(
                 mutation_value,
                 verified.transaction_state_updates.get(
-                    PENDING_EXTERNAL_PUBLICATION_KEY
+                    SPEC_STEP_PUBLICATION_PLAN_KEY
                 ),
             )
         except ValueError as exc:
@@ -2684,7 +2575,7 @@ class SquadStateStore:
                 if (current.get("phase") != "phase1-synthesizer" or current.get("status") != "running"
                         or dispatch.get("post_dispatch_complete") is not True
                         or source != {key: dispatch.get(key) for key in SOURCE_FIELDS}
-                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))):
+                        or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))):
                     raise StateAdvanceError("accepted discovery required", json_path="$.managed_synthesizer_source", validator="synthesizer")
             if desired == current:
                 return self._confirm_durable_state_unlocked(current)
@@ -2700,7 +2591,7 @@ class SquadStateStore:
                     or current.get("status") != "running" or current.get("cancel_requested")
                     or dispatch.get("phase_id") != "phase1-why1" or dispatch.get("post_dispatch_complete") is not True
                     or source != {field: dispatch.get(field) for field in SOURCE_FIELDS}
-                    or any(field in current for field in ("pending_controller_completion", "pending_external_publication"))
+                    or any(field in current for field in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                     or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                 raise StateAdvanceError("Constitution requires exact accepted WHY1 state", validator="constitution")
             if key in current and current[key] != source:
@@ -2863,7 +2754,7 @@ class SquadStateStore:
                     or current.get("status") != "running" or current.get("cancel_requested")
                     or dispatch.get("phase_id") not in parents or dispatch.get("post_dispatch_complete") is not True
                     or (resolution is None and source != {field: dispatch.get(field) for field in SOURCE_FIELDS})
-                    or any(field in current for field in ("pending_controller_completion", "pending_external_publication"))
+                    or any(field in current for field in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                     or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                 raise StateAdvanceError("specification requires exact released parent state", validator="spec_round")
             rounds = _tracker_from_state(current, producer)
@@ -2908,7 +2799,7 @@ class SquadStateStore:
                 phase = "phase1-why1" if repair_unit is None else repair_return_phase(current, repair_unit)
                 if (current != expected_state or current.get("phase") != phase
                         or current.get("status") != "running" or current.get("mode") != "greenfield"
-                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human"}):
                     raise ValueError("exact settled WHY1 state required")
                 rounds = _tracker_from_state(current, "why1")
@@ -2937,7 +2828,7 @@ class SquadStateStore:
                 if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
                         or current.get("status") != "running" or current.get("phase") != phase
                         or current.get("mode") != "greenfield"
-                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}):
                     raise ValueError("refresh requires the exact accepted state")
                 dispatch = current.get("last_dispatch") or {}
@@ -2985,7 +2876,7 @@ class SquadStateStore:
                 if (producer not in {"synthesizer", "tracker", "why1"} or current != expected_state
                         or current.get("status") != "running" or current.get("phase") != phase
                         or current.get("mode") != "greenfield"
-                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved"}
                         or dispatch.get("phase_id") != {"synthesizer": "phase1-discover", "tracker": "phase1-synthesizer", "why1": "phase1-tracker"}[producer]
                         or dispatch.get("post_dispatch_complete") is not True
@@ -3044,7 +2935,7 @@ class SquadStateStore:
                 if (producer not in {"synthesizer", "tracker"} or current != expected_state
                         or current.get("status") != "running" or current.get("mode") != "greenfield"
                         or current.get("phase") not in {return_phase, phase} or current.get("cancel_requested")
-                        or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))
+                        or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
                         or (current.get("blocked_decision") or {}).get("status") in {"pending", "unresolved", "awaiting_human", "resolving"}):
                     raise ValueError("refresh activation requires a settled exact state")
                 dispatch = current.get("last_dispatch") or {}
@@ -3083,7 +2974,7 @@ class SquadStateStore:
             if (current.get("status") != "running" or current.get("phase") not in phases
                     or current.get("mode") != "greenfield" or dispatch.get("post_dispatch_complete") is not True
                     or source != {key: dispatch.get(key) for key in SOURCE_FIELDS}
-                    or any(key in current for key in ("pending_controller_completion", "pending_external_publication"))):
+                    or any(key in current for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))):
                 raise StateAdvanceError("completed Tracker parent required", validator="tracker")
             resolution = None
             predecessor = None if rounds is None else rounds["active"]
@@ -3140,6 +3031,14 @@ class SquadStateStore:
     def save(self, state: dict) -> None:
         with self._lock(exclusive=True):
             current = self._load_unlocked()
+            if current.get(PENDING_SPEC_STEP_KEY) != state.get(
+                PENDING_SPEC_STEP_KEY
+            ):
+                raise StateAdvanceError(
+                    "pending spec step requires its owning transition",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="ownership",
+                )
             if self._path.exists():
                 current_revision = current.get("state_revision", 0)
                 candidate_revision = state.get("state_revision", 0)
@@ -4714,9 +4613,11 @@ class SquadStateStore:
         state_updates: Mapping[str, Any],
         state_removals: Iterable[str],
         token_usage_delta: int = 0,
-        prepared_completion: PreparedControllerCompletion | None = None,
+        cost_usd_delta: float = 0.0,
+        prepared_completion: object | None = None,
         resolved_at: str | None = None,
         resolved_decision_postimage: Mapping[str, object] | None = None,
+        prepare_only: bool = False,
     ) -> dict[str, Any]:
         if type(resolution) is not AppliedHumanInputResolution:
             raise StateAdvanceError(
@@ -4728,6 +4629,17 @@ class SquadStateStore:
             raise StateAdvanceError(
                 "human-input token usage delta is invalid",
                 json_path="$.token_usage_delta",
+                validator="type",
+            )
+        if (
+            type(cost_usd_delta) not in (int, float)
+            or not math.isfinite(float(cost_usd_delta))
+            or float(cost_usd_delta) < 0
+            or float(cost_usd_delta) > 1_000_000_000
+        ):
+            raise StateAdvanceError(
+                "human-input cost delta is invalid",
+                json_path="$.cost_usd_delta",
                 validator="type",
             )
         if resolved_at is not None and (
@@ -4808,7 +4720,7 @@ class SquadStateStore:
             )
 
         def validate_resolution_completion(
-            prepared: PreparedControllerCompletion,
+            prepared: object,
         ) -> tuple[dict[str, object], dict[str, object]]:
             (
                 marker,
@@ -4816,7 +4728,7 @@ class SquadStateStore:
                 _,
                 _,
                 prefix_kind,
-            ) = _validate_prepared_controller_completion(prepared)
+            ) = _validate_prepared_spec_step_effects(prepared)
             route = intent["route"]
             from harness.discovery_completion import decode_binding
             binding = decode_binding(intent["publication"], completion_id=marker["completion_id"])
@@ -4831,7 +4743,7 @@ class SquadStateStore:
             ):
                 raise StateAdvanceError(
                     "human-input completion binding is invalid",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                    json_path=f"$.{SPEC_STEP_EFFECT_PLAN_KEY}",
                     validator="completion_binding",
                 )
             return marker, intent
@@ -4923,6 +4835,10 @@ class SquadStateStore:
                 int(desired.get("token_usage") or 0)
                 + token_usage_delta
             )
+            desired["cost_usd"] = (
+                float(desired.get("cost_usd") or 0.0)
+                + float(cost_usd_delta)
+            )
             self._replace_human_input_decision_unlocked(
                 desired,
                 resolved,
@@ -4960,24 +4876,25 @@ class SquadStateStore:
                 if (
                     route["from_phase"] != before.get("phase")
                     or route["to_phase"] != desired.get("phase")
-                    or PENDING_CONTROLLER_COMPLETION_KEY in before
+                    or SPEC_STEP_EFFECT_PLAN_KEY in before
                 ):
                     raise StateAdvanceError(
                         "human-input completion route changed",
                         json_path=(
-                            f"$.{PENDING_CONTROLLER_COMPLETION_KEY}"
+                            f"$.{SPEC_STEP_EFFECT_PLAN_KEY}"
                         ),
                         validator="completion_binding",
                     )
-                desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
-                    completion_marker
-                )
+                if not prepare_only:
+                    desired[SPEC_STEP_EFFECT_PLAN_KEY] = (
+                        completion_marker
+                    )
                 if "managed_discovery" in completion_intent["publication"]:
                     from harness.discovery_completion import decode_binding
                     binding = decode_binding(completion_intent["publication"],
                         completion_id=completion_marker["completion_id"], state=before)
                     if (not binding.resolution_publication or binding.recovery["resolution"] != resolved
-                            or expected_resolved is None or PENDING_EXTERNAL_PUBLICATION_KEY in before):
+                            or expected_resolved is None or SPEC_STEP_PUBLICATION_PLAN_KEY in before):
                         raise StateAdvanceError("clarification publication association changed", validator="completion_binding")
                     if (binding.policy_resolution or binding.recovery["version"] == 41) and (detached_updates != binding.recovery["effects"]["state_updates"]
                             or sorted(removals) != binding.recovery["effects"]["state_removals"]):
@@ -4989,7 +4906,10 @@ class SquadStateStore:
                     if binding.recovery["version"] == 41 and token_usage_delta != (
                             binding.recovery["commander_receipt"] or {}).get("token_usage", 0):
                         raise StateAdvanceError("native answer charge changed", validator="completion_binding")
-                    desired[PENDING_EXTERNAL_PUBLICATION_KEY] = completion_intent["publication"]["marker"]
+                    if not prepare_only:
+                        desired[SPEC_STEP_PUBLICATION_PLAN_KEY] = completion_intent["publication"]["marker"]
+            if prepare_only:
+                return desired
             return self._commit_human_input_state_unlocked(
                 before,
                 desired,
@@ -5019,6 +4939,7 @@ class SquadStateStore:
         ts = datetime.now(timezone.utc).isoformat()
         authoring_mode = normalize_spec_authoring_mode(spec_authoring_mode)
         initial_state = {
+            "phase_a_state_version": CURRENT_PHASE_A_STATE_VERSION,
             "run_id": run_id,
             "status": "running",
             "phase": entry_phase,
@@ -5173,6 +5094,480 @@ class SquadStateStore:
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=False,
+            ),
+        )
+
+    def begin_spec_step(
+        self,
+        prepared: PreparedSpecStep,
+        *,
+        snapshot: RoutingStateSnapshot,
+    ) -> None:
+        """Persist one sealed step marker against its exact routing snapshot."""
+        if type(prepared) is not PreparedSpecStep or type(snapshot) is not RoutingStateSnapshot:
+            raise StateAdvanceError(
+                "spec step begin requires prepared authority",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            )
+        intent = prepared.intent
+        if (
+            intent.expected_state_revision != snapshot.state_revision
+            or intent.expected_previous_dispatch_sha256
+            != snapshot.previous_dispatch_sha256
+        ):
+            raise StateAdvanceError(
+                "spec step snapshot binding changed",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="stale_state",
+            )
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            if current != snapshot.state:
+                raise StateAdvanceError(
+                    "state changed before spec step begin",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+            if PENDING_SPEC_STEP_KEY in current:
+                raise StateAdvanceError(
+                    "pending spec step already exists",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="ownership",
+                )
+            if (
+                current.get("state_revision", 0) != snapshot.state_revision
+                or _last_dispatch_sha256(current)
+                != snapshot.previous_dispatch_sha256
+            ):
+                raise StateAdvanceError(
+                    "state changed before spec step begin",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+            desired = deepcopy(current)
+            desired[PENDING_SPEC_STEP_KEY] = prepared.marker.to_dict()
+            self._save_exact_state_unlocked(
+                current,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                error_message="atomic spec step begin failed",
+            )
+
+    def record_spec_step_failure(
+        self,
+        marker: object,
+        *,
+        effect: str,
+        code: str,
+    ) -> None:
+        """Replace the bounded failure attached to one exact pending marker."""
+        try:
+            expected = validate_spec_step_marker(marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step marker is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            ) from exc
+        if effect != expected.cursor or type(code) is not str or not code or len(code) > 128:
+            raise StateAdvanceError(
+                "spec step failure does not match its cursor",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.failure",
+                validator="ownership",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if state.get(PENDING_SPEC_STEP_KEY) != expected.to_dict():
+                raise StateAdvanceError(
+                    "spec step marker changed before failure record",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="stale_state",
+                )
+            attempts = 1
+            if expected.failure is not None:
+                attempts = min(expected.failure.attempts + 1, 1_000_000)
+            resume_status = (
+                expected.failure.resume_status
+                if expected.failure is not None
+                else state.get("status")
+            )
+            if resume_status not in {"running", "blocked"}:
+                resume_status = "running"
+            updated = SpecStepMarker(
+                expected.schema_version,
+                expected.step_id,
+                expected.intent_sha256,
+                expected.receipts_sha256,
+                expected.cursor,
+                expected.origin,
+                expected.publication_binding_sha256,
+                SpecStepFailure(expected.cursor, code, attempts, resume_status),
+            )
+            desired = deepcopy(state)
+            desired[PENDING_SPEC_STEP_KEY] = updated.to_dict()
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = "spec_step_pending"
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.failure",
+                error_message="atomic spec step failure record failed",
+            )
+
+    def advance_spec_step(self, current: object, advanced: object) -> None:
+        """Advance one marker only after its exact next receipt is durable."""
+        try:
+            expected = validate_spec_step_marker(current)
+            next_marker = validate_spec_step_marker(advanced)
+            current_prepared = load_prepared_spec_step(self._squad_dir, expected)
+            next_prepared = load_prepared_spec_step(self._squad_dir, next_marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step receipt marker is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            ) from exc
+        effects = current_prepared.intent.effects
+        if expected.cursor == "commit" or expected.cursor not in effects:
+            raise StateAdvanceError(
+                "spec step cursor cannot advance",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.cursor",
+                validator="completion_binding",
+            )
+        index = effects.index(expected.cursor)
+        wanted = effects[index + 1] if index + 1 < len(effects) else "commit"
+        if (
+            next_marker.step_id != expected.step_id
+            or next_marker.intent_sha256 != expected.intent_sha256
+            or next_marker.origin != expected.origin
+            or next_marker.publication_binding_sha256
+            != expected.publication_binding_sha256
+            or next_marker.cursor != wanted
+            or next_marker.receipts_sha256 == expected.receipts_sha256
+            or next_marker.failure is not None
+            or len(next_prepared.receipts) != len(current_prepared.receipts)
+        ):
+            raise StateAdvanceError(
+                "spec step receipt advance is not exact",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.receipts_sha256",
+                validator="completion_binding",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if state.get(PENDING_SPEC_STEP_KEY) != expected.to_dict():
+                raise StateAdvanceError(
+                    "spec step marker changed before advance",
+                    json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                    validator="stale_state",
+                )
+            desired = deepcopy(state)
+            desired[PENDING_SPEC_STEP_KEY] = next_marker.to_dict()
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                error_message="atomic spec step advance failed",
+            )
+
+    def complete_spec_step(self, prepared: PreparedSpecStep) -> AdvanceReceipt:
+        """Install one sealed final postimage and remove its exact marker."""
+        if type(prepared) is not PreparedSpecStep:
+            raise StateAdvanceError(
+                "spec step completion requires prepared authority",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="type",
+            )
+        try:
+            loaded = load_prepared_spec_step(self._squad_dir, prepared.marker)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "spec step completion evidence is invalid",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            ) from exc
+        if loaded.marker.cursor != "commit":
+            raise StateAdvanceError(
+                "spec step effects are incomplete",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}.cursor",
+                validator="completion_binding",
+            )
+        final_state = loaded.intent.final_state
+        for effect_receipt in loaded.receipts:
+            if effect_receipt.effect != "quality":
+                continue
+            wrapped = effect_receipt.payload.get("completion_receipt")
+            receipt_payload = (
+                wrapped
+                if isinstance(wrapped, Mapping)
+                else effect_receipt.payload
+            )
+            candidate = (
+                receipt_payload.get("candidate")
+                if isinstance(receipt_payload, Mapping)
+                else None
+            )
+            evidence = final_state.get(
+                "proportional_quality_candidate_evidence"
+            )
+            if (
+                isinstance(candidate, Mapping)
+                and isinstance(evidence, Mapping)
+                and candidate.get("candidate_id")
+                == evidence.get("current_candidate_id")
+                and evidence.get("selected_candidate_id")
+                in {None, evidence.get("current_candidate_id")}
+                and _valid_completion_sha256(
+                    candidate.get("manifest_sha256")
+                )
+            ):
+                updated_evidence = deepcopy(dict(evidence))
+                updated_evidence["candidate_manifest_sha256"] = candidate[
+                    "manifest_sha256"
+                ]
+                final_state[
+                    "proportional_quality_candidate_evidence"
+                ] = updated_evidence
+        route = loaded.intent.route
+        if loaded.intent.origin == "terminal":
+            inventory: object = None
+            retarget_receipt: object = None
+            for effect_receipt in loaded.receipts:
+                candidate_inventory = effect_receipt.payload.get(
+                    "phase_a_inventory_digests"
+                )
+                if candidate_inventory is not None:
+                    inventory = candidate_inventory
+                if effect_receipt.effect == "retarget":
+                    retarget_receipt = effect_receipt.payload.get(
+                        "completion_receipt"
+                    )
+            if (
+                not isinstance(inventory, list)
+                or len(inventory) != 2
+                or any(
+                    not _valid_completion_sha256(value)
+                    for value in inventory
+                )
+            ):
+                raise StateAdvanceError(
+                    "terminal spec step receipts are incomplete",
+                    json_path="$.last_terminal_completion",
+                    validator="completion_binding",
+                )
+            final_state["status"] = "done"
+            final_state.pop("blocked_reason", None)
+            final_state["last_terminal_completion"] = {
+                "schema_version": 1,
+                "completion_id": loaded.marker.step_id,
+                "intent_sha256": loaded.marker.intent_sha256,
+                "receipts_sha256": loaded.marker.receipts_sha256,
+                "publication_binding_sha256": (
+                    loaded.marker.publication_binding_sha256
+                ),
+                "terminal_phase": route.get("terminal_phase"),
+                "phase_a_active_source_sha256": inventory[0],
+                "phase_a_published_postimage_sha256": inventory[1],
+            }
+            if "retarget" in loaded.intent.effects:
+                from echelon.spec_retarget_finalization import (
+                    validate_finalization_receipt,
+                )
+
+                try:
+                    checked = validate_finalization_receipt(
+                        retarget_receipt
+                    )
+                except Exception as exc:
+                    raise StateAdvanceError(
+                        "retarget completion receipt identity is invalid",
+                        json_path="$.retarget.finalization_receipt",
+                        validator="completion_binding",
+                    ) from exc
+                retarget = final_state.get("retarget")
+                if (
+                    not isinstance(retarget, dict)
+                    or retarget.get("status") != "finalizing"
+                    or checked.get("completion_id")
+                    != loaded.marker.step_id
+                ):
+                    raise StateAdvanceError(
+                        "retarget completion state is invalid",
+                        json_path="$.retarget.status",
+                        validator="completion_binding",
+                    )
+                updated_retarget = deepcopy(retarget)
+                updated_retarget["status"] = "complete"
+                updated_retarget["replacement_commit"] = checked[
+                    "replacement_commit"
+                ]
+                updated_retarget["finalization_receipt"] = checked
+                updated_retarget["comparison_pending_completion_id"] = (
+                    loaded.marker.step_id
+                )
+                updated_retarget["comparison_event_id"] = (
+                    "retarget-comparison-" + loaded.marker.step_id
+                )
+                updated_retarget["comparison_command"] = (
+                    "Compare old and replacement artifacts:\n"
+                    f"  git diff {retarget['checkpoint_commit']}.."
+                    f"{checked['replacement_commit']} -- "
+                    f"specs/{final_state['spec_id']}"
+                )
+                updated_retarget.pop("memory_excluded", None)
+                final_state["retarget"] = updated_retarget
+        elif loaded.intent.origin == "routed":
+            dispatch = final_state.get("last_dispatch")
+            if not isinstance(dispatch, dict):
+                raise StateAdvanceError(
+                    "routed spec step receipts are incomplete",
+                    json_path="$.last_dispatch",
+                    validator="completion_binding",
+                )
+            dispatch.update(
+                {
+                    "post_dispatch_complete": True,
+                    "completion_intent_sha256": loaded.marker.intent_sha256,
+                    "completion_receipts_sha256": loaded.marker.receipts_sha256,
+                    "completed_publication_binding_sha256": (
+                        loaded.marker.publication_binding_sha256
+                    ),
+                }
+            )
+        elif loaded.intent.origin == "resolution":
+            decision = final_state.get("blocked_decision")
+            if (
+                route.get("kind") != "resolution"
+                or not isinstance(decision, Mapping)
+                or decision.get("id") != route.get("decision_id")
+                or decision.get("status") != "resolved"
+                or final_state.get("phase") != route.get("to_phase")
+            ):
+                raise StateAdvanceError(
+                    "human-input spec step identity is invalid",
+                    json_path="$.blocked_decision",
+                    validator="completion_binding",
+                )
+            companion = loaded.intent.provenance.get("completion_marker")
+            if companion is not None:
+                if not isinstance(companion, Mapping):
+                    raise StateAdvanceError(
+                        "human-input completion provenance is invalid",
+                        json_path="$.last_human_input_completion",
+                        validator="completion_binding",
+                    )
+                completion_marker = dict(companion)
+                for effect_receipt in loaded.receipts:
+                    candidate = effect_receipt.payload.get(
+                        "completion_marker"
+                    )
+                    if isinstance(candidate, Mapping):
+                        completion_marker = dict(candidate)
+                if (
+                    completion_marker.get("completion_id")
+                    != loaded.marker.step_id
+                    or completion_marker.get("step") != "complete"
+                ):
+                    raise StateAdvanceError(
+                        "human-input completion receipts are incomplete",
+                        json_path="$.last_human_input_completion",
+                        validator="completion_binding",
+                    )
+                final_state["last_human_input_completion"] = {
+                    "schema_version": 1,
+                    "completion_id": loaded.marker.step_id,
+                    "intent_sha256": completion_marker.get(
+                        "intent_sha256"
+                    ),
+                    "receipts_sha256": completion_marker.get(
+                        "receipts_sha256"
+                    ),
+                    "decision_id": route.get("decision_id"),
+                }
+                if loaded.intent.publication is not None:
+                    final_state["last_human_input_completion"][
+                        "publication_binding_sha256"
+                    ] = completion_marker.get(
+                        "publication_binding_sha256"
+                    )
+        if PENDING_SPEC_STEP_KEY in final_state:
+            raise StateAdvanceError(
+                "spec step final state retains its marker",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="completion_binding",
+            )
+        dispatch = final_state.get("last_dispatch")
+        if loaded.intent.origin == "routed" and (
+            not isinstance(dispatch, Mapping)
+            or dispatch.get("dispatch_id") != loaded.marker.step_id
+        ):
+            raise StateAdvanceError(
+                "spec step final dispatch identity is invalid",
+                json_path="$.last_dispatch.dispatch_id",
+                validator="completion_binding",
+            )
+        from_phase = str(route.get("from_phase") or route.get("terminal_phase") or "")
+        to_phase = str(route.get("to_phase") or final_state.get("phase") or "")
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            marker_value = state.get(PENDING_SPEC_STEP_KEY)
+            if marker_value is None:
+                comparable = deepcopy(final_state)
+                comparable["state_revision"] = state.get("state_revision")
+                comparable["updated_at"] = state.get("updated_at")
+                if comparable != state:
+                    raise StateAdvanceError(
+                        "completed spec step postimage changed",
+                        json_path="$.state",
+                        validator="stale_state",
+                    )
+                saved = self._confirm_durable_state_unlocked(state)
+            else:
+                if marker_value != loaded.marker.to_dict():
+                    raise StateAdvanceError(
+                        "spec step marker changed before completion",
+                        json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                        validator="stale_state",
+                    )
+                if (
+                    state.get("phase") != from_phase
+                    or _last_dispatch_sha256(state)
+                    != loaded.intent.expected_previous_dispatch_sha256
+                ):
+                    raise StateAdvanceError(
+                        "spec step source state changed before completion",
+                        json_path="$.state",
+                        validator="stale_state",
+                    )
+                saved = self._save_exact_state_unlocked(
+                    state,
+                    final_state,
+                    allow_human_input_authority_update=any(
+                        state.get(key) != final_state.get(key)
+                        for key in _HUMAN_INPUT_PAIR_AUTHORITY_KEYS
+                    ),
+                    json_path="$.state",
+                    error_message="atomic spec step completion failed",
+                )
+        return AdvanceReceipt(
+            from_phase=from_phase,
+            to_phase=to_phase,
+            completed_at=str(
+                (
+                    dispatch.get("completed_at")
+                    if isinstance(dispatch, Mapping)
+                    else None
+                )
+                or saved.get("updated_at")
+                or ""
+            ),
+            controller_contract=None,
+            controller_contract_sha256=None,
+            conditional_skip=bool(route.get("conditional_skip", False)),
+            dispatch_id=loaded.marker.step_id,
+            state_revision=int(saved.get("state_revision") or 0),
+            routing_decision_sha256=str(
+                loaded.intent.provenance.get("routing_decision_sha256") or ""
             ),
         )
 
@@ -5334,6 +5729,7 @@ class SquadStateStore:
         checkpoint_policy: str = "none",
         record_completion: bool = True,
         token_usage_delta: int = 0,
+        cost_usd_delta: float = 0.0,
         dispatch_id: str | None = None,
         transaction_state_updates: dict[str, Any] | None = None,
         transaction_state_removals: object = (),
@@ -5402,6 +5798,7 @@ class SquadStateStore:
                 checkpoint_policy=checkpoint_policy,
                 record_completion=record_completion,
                 token_usage_delta=token_usage_delta,
+                cost_usd_delta=cost_usd_delta,
                 dispatch_id=dispatch_id,
                 transaction_state_updates=transaction_state_updates,
                 transaction_state_removals=transaction_state_removals,
@@ -5425,7 +5822,14 @@ class SquadStateStore:
             "awaiting_human",
         ]
         | None = None,
-    ) -> AdvanceReceipt:
+        provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+        optional_provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+        _prepare_only: bool = False,
+    ) -> AdvanceReceipt | tuple[dict[str, Any], AdvanceReceipt]:
+        accepted_output_proofs = _validated_provider_output_proofs(provider_output_proofs)
+        accepted_optional_output_proofs = _validated_provider_output_proofs(
+            optional_provider_output_proofs
+        )
         if (human_input is None) != (human_input_initial_status is None):
             raise StateAdvanceError(
                 "human-input request and initial status must be supplied together",
@@ -5542,7 +5946,7 @@ class SquadStateStore:
                 "record_completion": decision.record_completion,
             }
             completion_marker = transaction_updates.get(
-                PENDING_CONTROLLER_COMPLETION_KEY
+                SPEC_STEP_EFFECT_PLAN_KEY
             )
             if completion_marker is not None:
                 next_state["last_dispatch"].update(
@@ -5590,7 +5994,7 @@ class SquadStateStore:
                             "versioned completion requires a completion marker",
                             json_path=(
                                 "$.transaction_state_updates."
-                                f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                                f"{SPEC_STEP_EFFECT_PLAN_KEY}"
                             ),
                             validator="completion_binding",
                         )
@@ -5610,6 +6014,10 @@ class SquadStateStore:
                         ),
                         "checkpoint": decision.checkpoint_policy,
                     }
+                    if accepted_output_proofs is not None and not decision.conditional_skip:
+                        outcome["required_provider_outputs"] = accepted_output_proofs
+                    if accepted_optional_output_proofs is not None and not decision.conditional_skip:
+                        outcome["optional_provider_outputs"] = accepted_optional_output_proofs
                     matching = [
                         row
                         for row in outcomes
@@ -5694,6 +6102,11 @@ class SquadStateStore:
                 int(next_state.get("token_usage") or 0)
                 + decision.token_usage_delta
             )
+            next_state["cost_usd"] = round(
+                float(next_state.get("cost_usd") or 0.0)
+                + decision.cost_usd_delta,
+                8,
+            )
             next_state.pop("controller_contract_error", None)
             if decision.record_completion and not decision.conditional_skip:
                 # Successful validated completion opens the next repair cycle.
@@ -5713,14 +6126,17 @@ class SquadStateStore:
                     initial_status=str(human_input_initial_status),
                 )
 
-            saved_state = self._save_exact_state_unlocked(
-                state,
-                next_state,
-                allow_human_input_authority_update=human_input is not None,
-                json_path="$.state",
-                error_message="atomic state save failed",
-            )
-        return AdvanceReceipt(
+            if _prepare_only:
+                saved_state = {**next_state, "state_revision": revision + 1}
+            else:
+                saved_state = self._save_exact_state_unlocked(
+                    state,
+                    next_state,
+                    allow_human_input_authority_update=human_input is not None,
+                    json_path="$.state",
+                    error_message="atomic state save failed",
+                )
+        receipt = AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
             completed_at=completed_at,
@@ -5731,6 +6147,39 @@ class SquadStateStore:
             state_revision=saved_state["state_revision"],
             routing_decision_sha256=decision.routing_sha256,
         )
+        if _prepare_only:
+            return next_state, receipt
+        return receipt
+
+    def prepare_advance_postimage(
+        self,
+        from_phase: str,
+        to_phase: str,
+        decision: PreparedRoutingDecision,
+        *,
+        human_input: PreparedHumanInput | None = None,
+        human_input_initial_status: Literal["pending", "awaiting_human"] | None = None,
+        provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+        optional_provider_output_proofs: tuple[Mapping[str, object], ...] | None = None,
+    ) -> tuple[dict[str, Any], AdvanceReceipt]:
+        """Compute and validate an advance without making it externally visible."""
+        result = self.advance(
+            from_phase,
+            to_phase,
+            decision,
+            human_input=human_input,
+            human_input_initial_status=human_input_initial_status,
+            provider_output_proofs=provider_output_proofs,
+            optional_provider_output_proofs=optional_provider_output_proofs,
+            _prepare_only=True,
+        )
+        if not isinstance(result, tuple):
+            raise StateAdvanceError(
+                "state advance preparation did not return a receipt",
+                json_path="$.advance_receipt",
+                validator="receipt",
+            )
+        return result
 
     def merge_advance_failure_diagnostic(
         self,
@@ -5774,74 +6223,6 @@ class SquadStateStore:
             )
             return True
 
-    def begin_external_publication(
-        self,
-        marker: object,
-        *,
-        snapshot: RoutingStateSnapshot,
-        state_updates: dict[str, object] | None = None,
-    ) -> None:
-        """Install one terminal publication marker under an exact state CAS."""
-        try:
-            expected_marker = validate_pending_external_publication(marker)
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "external publication marker is invalid",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="type",
-            ) from exc
-        if not isinstance(snapshot, RoutingStateSnapshot):
-            raise StateAdvanceError(
-                "external publication snapshot is invalid",
-                json_path="$.routing_snapshot",
-                validator="type",
-            )
-        updates = deepcopy(state_updates or {})
-        if frozenset(updates) - {"published_spec_dir"}:
-            raise StateAdvanceError(
-                "external publication state update is not owned",
-                json_path="$.state_updates",
-                validator="ownership",
-            )
-        if "published_spec_dir" in updates and (
-            type(updates["published_spec_dir"]) is not str
-            or not updates["published_spec_dir"].strip()
-        ):
-            raise StateAdvanceError(
-                "published spec directory is invalid",
-                json_path="$.state_updates.published_spec_dir",
-                validator="type",
-            )
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            revision = state.get("state_revision", 0)
-            if (
-                state.get("phase") != snapshot.phase
-                or type(revision) is not int
-                or revision != snapshot.state_revision
-                or _last_dispatch_sha256(state)
-                != snapshot.previous_dispatch_sha256
-                or PENDING_EXTERNAL_PUBLICATION_KEY in state
-            ):
-                raise StateAdvanceError(
-                    "persisted state changed before external publication",
-                    json_path="$.routing_snapshot",
-                    validator="stale_state",
-                )
-            next_state = deepcopy(state)
-            next_state.update(updates)
-            next_state[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
-            try:
-                self._save_unlocked(next_state)
-            except StateDurabilityError:
-                raise
-            except Exception as exc:
-                raise StateAdvanceError(
-                    "atomic external publication marker save failed",
-                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                    validator="save",
-                ) from exc
-
     def begin_product_input_publication(
         self,
         marker: object,
@@ -5852,7 +6233,7 @@ class SquadStateStore:
     ) -> None:
         """Persist one exact add-input post-state and write-ahead receipt."""
         try:
-            expected_marker = validate_pending_external_publication(marker)
+            expected_marker = validate_spec_step_publication_plan(marker)
             expected_mutation = require_product_input_mutation_publication_binding(
                 mutation,
                 expected_marker,
@@ -5995,7 +6376,7 @@ class SquadStateStore:
                 or revision != snapshot.state_revision
                 or _last_dispatch_sha256(state)
                 != snapshot.previous_dispatch_sha256
-                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+                or SPEC_STEP_PUBLICATION_PLAN_KEY in state
                 or PRODUCT_INPUT_MUTATION_KEY in state
                 or type(current_product_inputs) is not dict
                 or current_product_inputs.get("tree_hash")
@@ -6008,7 +6389,7 @@ class SquadStateStore:
                 )
             desired = deepcopy(state)
             desired.update(updates)
-            desired[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
+            desired[SPEC_STEP_PUBLICATION_PLAN_KEY] = expected_marker
             desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
             self._save_exact_state_unlocked(
                 state,
@@ -6027,7 +6408,7 @@ class SquadStateStore:
     ) -> None:
         """Persist the exact repair post-state before any package write."""
         try:
-            expected_marker = validate_pending_external_publication(marker)
+            expected_marker = validate_spec_step_publication_plan(marker)
             expected_mutation = require_product_input_mutation_publication_binding(
                 mutation,
                 expected_marker,
@@ -6090,7 +6471,7 @@ class SquadStateStore:
                 or type(revision) is not int
                 or revision != snapshot.state_revision
                 or _last_dispatch_sha256(state) != snapshot.previous_dispatch_sha256
-                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+                or SPEC_STEP_PUBLICATION_PLAN_KEY in state
                 or PRODUCT_INPUT_MUTATION_KEY in state
                 or changed - allowed_updates
                 or removed - {"phase_a_readiness_blockers"}
@@ -6118,397 +6499,13 @@ class SquadStateStore:
                     validator="transaction_binding",
                 )
             desired = deepcopy(desired_input)
-            desired[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
+            desired[SPEC_STEP_PUBLICATION_PLAN_KEY] = expected_marker
             desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
             self._save_exact_state_unlocked(
                 state,
                 desired,
                 json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
                 error_message="atomic traceability repair state save failed",
-            )
-
-    def begin_terminal_controller_completion(
-        self,
-        prepared: PreparedControllerCompletion,
-        *,
-        snapshot: RoutingStateSnapshot,
-        state_updates: dict[str, object] | None = None,
-    ) -> None:
-        """Atomically install one terminal completion and its publication."""
-        (
-            completion_marker,
-            intent,
-            _,
-            _,
-            prefix_kind,
-        ) = _validate_prepared_controller_completion(prepared)
-        route = intent["route"]
-        publication = intent["publication"]
-        if (
-            completion_marker["origin"] != "terminal"
-            or prefix_kind != "bound"
-            or type(route) is not dict
-            or route.get("kind") != "terminal"
-            or type(publication) is not dict
-        ):
-            raise StateAdvanceError(
-                "terminal completion intent is invalid",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="completion_binding",
-            )
-        if not isinstance(snapshot, RoutingStateSnapshot):
-            raise StateAdvanceError(
-                "terminal completion snapshot is invalid",
-                json_path="$.routing_snapshot",
-                validator="type",
-            )
-        updates = deepcopy(state_updates or {})
-        if frozenset(updates) - {"published_spec_dir"}:
-            raise StateAdvanceError(
-                "terminal completion state update is not owned",
-                json_path="$.state_updates",
-                validator="ownership",
-            )
-        if "published_spec_dir" in updates and (
-            type(updates["published_spec_dir"]) is not str
-            or not updates["published_spec_dir"].strip()
-        ):
-            raise StateAdvanceError(
-                "published spec directory is invalid",
-                json_path="$.state_updates.published_spec_dir",
-                validator="type",
-            )
-        publication_marker: dict[str, object] | None
-        if publication.get("kind") == "external":
-            try:
-                publication_marker = validate_pending_external_publication(
-                    publication.get("marker")
-                )
-            except ValueError as exc:
-                raise StateAdvanceError(
-                    "terminal publication binding is invalid",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                    validator="completion_binding",
-                ) from exc
-        elif publication == {"kind": "none"}:
-            publication_marker = None
-        else:
-            raise StateAdvanceError(
-                "terminal publication binding is invalid",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="completion_binding",
-            )
-
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            revision = state.get("state_revision", 0)
-            if (
-                state.get("phase") != snapshot.phase
-                or route.get("terminal_phase") != snapshot.phase
-                or type(revision) is not int
-                or revision != snapshot.state_revision
-                or _last_dispatch_sha256(state)
-                != snapshot.previous_dispatch_sha256
-                or PENDING_CONTROLLER_COMPLETION_KEY in state
-                or PENDING_EXTERNAL_PUBLICATION_KEY in state
-            ):
-                raise StateAdvanceError(
-                    "persisted state changed before terminal completion",
-                    json_path="$.routing_snapshot",
-                    validator="stale_state",
-                )
-            desired = deepcopy(state)
-            desired.update(updates)
-            desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
-                completion_marker
-            )
-            if publication_marker is not None:
-                desired[PENDING_EXTERNAL_PUBLICATION_KEY] = (
-                    publication_marker
-                )
-            self._save_exact_completion_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-            )
-
-    @staticmethod
-    def _require_external_publication_marker(
-        state: dict[str, Any],
-        expected_marker: dict[str, object],
-    ) -> None:
-        try:
-            current_marker = validate_pending_external_publication(
-                state.get(PENDING_EXTERNAL_PUBLICATION_KEY)
-            )
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "persisted external publication marker is invalid",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="state_contract",
-            ) from exc
-        if current_marker != expected_marker:
-            raise StateAdvanceError(
-                "external publication marker changed",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="stale_state",
-            )
-
-    def record_external_publication_failure(
-        self,
-        marker: object,
-        code: object,
-    ) -> None:
-        try:
-            expected_marker = validate_pending_external_publication(marker)
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "external publication marker is invalid",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="type",
-            ) from exc
-        if (
-            type(code) is not str
-            or code not in _EXTERNAL_PUBLICATION_FAILURE_CODES
-        ):
-            raise StateAdvanceError(
-                "external publication failure code is invalid",
-                json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}.code",
-                validator="enum",
-            )
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            self._require_external_publication_marker(
-                state,
-                expected_marker,
-            )
-            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
-                try:
-                    diagnostic = _validate_external_publication_failure(
-                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
-                    )
-                except ValueError:
-                    resume_status = state.get("status", "running")
-                    resume_blocked_reason = state.get("blocked_reason")
-                    if (
-                        resume_status == "blocked"
-                        and resume_blocked_reason
-                        == "external_publication_pending"
-                    ):
-                        resume_status = "running"
-                        resume_blocked_reason = None
-                    if type(resume_status) is not str:
-                        resume_status = "running"
-                    if (
-                        resume_blocked_reason is not None
-                        and type(resume_blocked_reason) is not str
-                    ):
-                        resume_blocked_reason = None
-                    diagnostic = _validate_external_publication_failure(
-                        {
-                            "schema_version": 1,
-                            "code": code,
-                            "resume_status": resume_status,
-                            "resume_blocked_reason": (
-                                resume_blocked_reason
-                            ),
-                        }
-                    )
-                else:
-                    diagnostic["code"] = code
-            else:
-                resume_status = state.get("status", "running")
-                resume_blocked_reason = state.get("blocked_reason")
-                diagnostic = _validate_external_publication_failure(
-                    {
-                        "schema_version": 1,
-                        "code": code,
-                        "resume_status": resume_status,
-                        "resume_blocked_reason": resume_blocked_reason,
-                    }
-                )
-            state[_EXTERNAL_PUBLICATION_FAILURE_KEY] = diagnostic
-            state["status"] = "blocked"
-            state["blocked_reason"] = "external_publication_pending"
-            self._save_unlocked(state)
-
-    def record_malformed_external_publication_failure(
-        self,
-        marker: object,
-    ) -> None:
-        """Block on one exact malformed marker without accepting it as valid."""
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            if (
-                PENDING_EXTERNAL_PUBLICATION_KEY not in state
-                or state[PENDING_EXTERNAL_PUBLICATION_KEY] != marker
-            ):
-                raise StateAdvanceError(
-                    "malformed external publication marker changed",
-                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                    validator="stale_state",
-                )
-            try:
-                validate_pending_external_publication(
-                    state[PENDING_EXTERNAL_PUBLICATION_KEY]
-                )
-            except ValueError:
-                pass
-            else:
-                raise StateAdvanceError(
-                    "external publication marker is not malformed",
-                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                    validator="state_contract",
-                )
-            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
-                try:
-                    diagnostic = _validate_external_publication_failure(
-                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
-                    )
-                except ValueError:
-                    resume_status = state.get("status", "running")
-                    resume_blocked_reason = state.get("blocked_reason")
-                    if (
-                        resume_status == "blocked"
-                        and resume_blocked_reason
-                        == "external_publication_pending"
-                    ):
-                        resume_status = "running"
-                        resume_blocked_reason = None
-                    if type(resume_status) is not str:
-                        resume_status = "running"
-                    if (
-                        resume_blocked_reason is not None
-                        and type(resume_blocked_reason) is not str
-                    ):
-                        resume_blocked_reason = None
-                    diagnostic = _validate_external_publication_failure(
-                        {
-                            "schema_version": 1,
-                            "code": "manifest_invalid",
-                            "resume_status": resume_status,
-                            "resume_blocked_reason": (
-                                resume_blocked_reason
-                            ),
-                        }
-                    )
-                else:
-                    diagnostic["code"] = "manifest_invalid"
-            else:
-                diagnostic = _validate_external_publication_failure(
-                    {
-                        "schema_version": 1,
-                        "code": "manifest_invalid",
-                        "resume_status": state.get("status", "running"),
-                        "resume_blocked_reason": state.get("blocked_reason"),
-                    }
-                )
-            state[_EXTERNAL_PUBLICATION_FAILURE_KEY] = diagnostic
-            state["status"] = "blocked"
-            state["blocked_reason"] = "external_publication_pending"
-            self._save_unlocked(state)
-
-    @staticmethod
-    def _complete_product_input_mutation(
-        state: dict[str, Any],
-        desired: dict[str, Any],
-        marker: dict[str, object],
-        verified_tree_hash: object,
-    ) -> None:
-        raw = state.get(PRODUCT_INPUT_MUTATION_KEY)
-        if raw is None:
-            if verified_tree_hash is not None:
-                raise StateAdvanceError(
-                    "unexpected product input postimage proof",
-                    json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
-                    validator="transaction_binding",
-                )
-            return
-        try:
-            mutation = require_product_input_mutation_publication_binding(
-                raw,
-                marker,
-            )
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "persisted product input mutation is invalid",
-                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
-                validator="state_contract",
-            ) from exc
-        product_inputs = state.get("product_inputs")
-        if (
-            type(verified_tree_hash) is not str
-            or verified_tree_hash != mutation["new_tree_hash"]
-            or type(product_inputs) is not dict
-            or product_inputs.get("tree_hash") != verified_tree_hash
-            or product_inputs.get("inputs_dir") != mutation["inputs_dir"]
-        ):
-            raise StateAdvanceError(
-                "product input mutation postimage is not verified",
-                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
-                validator="transaction_binding",
-            )
-        desired.pop(PRODUCT_INPUT_MUTATION_KEY, None)
-
-    def complete_external_publication(
-        self,
-        marker: object,
-        *,
-        verified_product_input_tree_hash: str | None = None,
-    ) -> None:
-        try:
-            expected_marker = validate_pending_external_publication(marker)
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "external publication marker is invalid",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="type",
-            ) from exc
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            self._require_external_publication_marker(
-                state,
-                expected_marker,
-            )
-            if PENDING_CONTROLLER_COMPLETION_KEY in state:
-                raise StateAdvanceError(
-                    "coupled publication requires completion handoff",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                    validator="completion_binding",
-                )
-            desired = deepcopy(state)
-            self._complete_product_input_mutation(
-                state,
-                desired,
-                expected_marker,
-                verified_product_input_tree_hash,
-            )
-            if _EXTERNAL_PUBLICATION_FAILURE_KEY in desired:
-                try:
-                    diagnostic = _validate_external_publication_failure(
-                        desired[_EXTERNAL_PUBLICATION_FAILURE_KEY]
-                    )
-                except ValueError as exc:
-                    raise StateAdvanceError(
-                        "persisted external publication failure is invalid",
-                        json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}",
-                        validator="state_contract",
-                    ) from exc
-                desired["status"] = diagnostic["resume_status"]
-                resume_blocked_reason = diagnostic[
-                    "resume_blocked_reason"
-                ]
-                if resume_blocked_reason is None:
-                    desired.pop("blocked_reason", None)
-                else:
-                    desired["blocked_reason"] = resume_blocked_reason
-            desired.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
-            desired.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
-            self._save_exact_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                error_message="atomic external publication completion failed",
             )
 
     def _save_exact_completion_state_unlocked(
@@ -6524,674 +6521,6 @@ class SquadStateStore:
             json_path=json_path,
             error_message="atomic controller completion state save failed",
         )
-
-    @staticmethod
-    def _require_controller_completion_marker(
-        state: dict[str, Any],
-        expected_marker: dict[str, object],
-    ) -> None:
-        if PENDING_CONTROLLER_COMPLETION_KEY not in state:
-            raise StateAdvanceError(
-                "controller completion marker is missing",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="stale_state",
-            )
-        try:
-            current_marker = validate_pending_controller_completion(
-                state[PENDING_CONTROLLER_COMPLETION_KEY]
-            )
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "persisted controller completion marker is invalid",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="state_contract",
-            ) from exc
-        if current_marker != expected_marker:
-            raise StateAdvanceError(
-                "controller completion marker changed",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="stale_state",
-            )
-
-    @staticmethod
-    def _require_controller_completion_provenance(
-        state: dict[str, Any],
-        marker: dict[str, object],
-        intent: dict[str, object],
-    ) -> None:
-        from harness.discovery_completion import decode_binding, require_tracker_skip
-        if intent["publication"] == {"kind": "none"} and "managed_identity" in state:
-            require_tracker_skip(state, intent)
-        else:
-            decode_binding(intent["publication"], completion_id=marker["completion_id"], state=state)
-        route = intent["route"]
-        if marker["origin"] == "terminal":
-            if (
-                type(route) is not dict
-                or frozenset(dict.keys(route))
-                != frozenset({"kind", "terminal_phase"})
-                or route["kind"] != "terminal"
-                or type(route["terminal_phase"]) is not str
-                or not route["terminal_phase"]
-                or state.get("phase") != route["terminal_phase"]
-            ):
-                raise StateAdvanceError(
-                    "terminal completion provenance changed",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                    validator="completion_binding",
-                )
-            return
-        if marker["origin"] == "resolution":
-            decision = state.get("blocked_decision")
-            if (
-                type(route) is not dict
-                or frozenset(dict.keys(route))
-                != frozenset(
-                    {"kind", "decision_id", "from_phase", "to_phase"}
-                )
-                or route.get("kind") != "resolution"
-                or state.get("phase") != route.get("to_phase")
-                or not isinstance(decision, Mapping)
-                or decision.get("id") != route.get("decision_id")
-                or decision.get("status") != "resolved"
-            ):
-                raise StateAdvanceError(
-                    "human-input completion provenance changed",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                    validator="completion_binding",
-                )
-            return
-        routed_keys = {
-            "kind",
-            "from_phase",
-            "to_phase",
-            "manual_phase_run",
-            "record_completion",
-        }
-        versioned_route = (
-            type(route) is dict
-            and "checkpoint_policy_version" in route
-        )
-        if versioned_route:
-            routed_keys.update({
-                "checkpoint_policy_version",
-                "checkpoint_policy",
-                "rewind_policy",
-            })
-        if (
-            type(route) is not dict
-            or frozenset(dict.keys(route)) != frozenset(routed_keys)
-            or route["kind"] != "routed"
-            or type(route["from_phase"]) is not str
-            or not route["from_phase"]
-            or type(route["to_phase"]) is not str
-            or not route["to_phase"]
-            or type(route["manual_phase_run"]) is not bool
-            or type(route["record_completion"]) is not bool
-            or state.get("phase") != route["to_phase"]
-            or (
-                versioned_route
-                and state.get("checkpoint_policy_version")
-                != route["checkpoint_policy_version"]
-            )
-        ):
-            raise StateAdvanceError(
-                "routed completion provenance changed",
-                json_path="$.last_dispatch",
-                validator="completion_binding",
-            )
-        dispatch = state.get("last_dispatch")
-        if (
-            type(dispatch) is not dict
-            or dispatch.get("dispatch_id") != marker["completion_id"]
-            or dispatch.get("phase_id") != route["from_phase"]
-            or dispatch.get("next_phase") != route["to_phase"]
-            or dispatch.get("post_dispatch_complete") is not False
-            or dispatch.get("completion_intent_sha256")
-            != marker["intent_sha256"]
-            or dispatch.get("completion_origin") != "routed"
-            or dispatch.get(
-                "completion_publication_binding_sha256"
-            )
-            != marker["publication_binding_sha256"]
-            or dispatch.get("record_completion")
-            is not route["record_completion"]
-            or dispatch.get("manual_phase_run", False)
-            is not route["manual_phase_run"]
-            or type(dispatch.get("judgment_payload_sha256")) is not list
-            or dispatch.get("judgment_payload_sha256")
-            != intent["judgment_payload_sha256"]
-        ):
-            raise StateAdvanceError(
-                "routed completion dispatch binding changed",
-                json_path="$.last_dispatch",
-                validator="completion_binding",
-            )
-
-    @staticmethod
-    def _restore_failure_lifecycle(
-        state: dict[str, Any],
-        *,
-        diagnostic_key: str,
-    ) -> None:
-        if diagnostic_key not in state:
-            return
-        if diagnostic_key == _EXTERNAL_PUBLICATION_FAILURE_KEY:
-            validator = _validate_external_publication_failure
-        elif diagnostic_key == _CONTROLLER_COMPLETION_FAILURE_KEY:
-            validator = _validate_controller_completion_failure
-        else:  # pragma: no cover - internal programming error
-            raise AssertionError("unknown failure lifecycle")
-        try:
-            diagnostic = validator(state[diagnostic_key])
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "persisted completion diagnostic is invalid",
-                json_path=f"$.{diagnostic_key}",
-                validator="state_contract",
-            ) from exc
-        state["status"] = diagnostic["resume_status"]
-        blocked_reason = diagnostic["resume_blocked_reason"]
-        if blocked_reason is None:
-            state.pop("blocked_reason", None)
-        else:
-            state["blocked_reason"] = blocked_reason
-
-    def handoff_external_publication(
-        self,
-        publication_marker: object,
-        prepared: PreparedControllerCompletion,
-        *,
-        verified_product_input_tree_hash: str | None = None,
-    ) -> None:
-        try:
-            expected_publication = validate_pending_external_publication(
-                publication_marker
-            )
-        except ValueError as exc:
-            raise StateAdvanceError(
-                "external publication marker is invalid",
-                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
-                validator="type",
-            ) from exc
-        (
-            expected_completion,
-            intent,
-            _,
-            _,
-            prefix_kind,
-        ) = _validate_prepared_controller_completion(prepared)
-        publication = intent["publication"]
-        if (
-            expected_completion["step"] != "awaiting_publication"
-            or prefix_kind != "bound"
-            or type(publication) is not dict
-            or frozenset(dict.keys(publication))
-            != frozenset({"kind", "marker"} | ({"managed_discovery"} if "managed_discovery" in publication else set()))
-            or publication["kind"] != "external"
-            or publication["marker"] != expected_publication
-        ):
-            raise StateAdvanceError(
-                "publication handoff is not bound to this completion",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="completion_binding",
-            )
-        effect_plan = intent["effect_plan"]
-        next_step = effect_plan[0] if effect_plan else "complete"
-        next_marker = {
-            **expected_completion,
-            "step": next_step,
-        }
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            self._require_external_publication_marker(
-                state,
-                expected_publication,
-            )
-            self._require_controller_completion_marker(
-                state,
-                expected_completion,
-            )
-            self._require_controller_completion_provenance(
-                state,
-                expected_completion,
-                intent,
-            )
-            desired = deepcopy(state)
-            self._complete_product_input_mutation(
-                state,
-                desired,
-                expected_publication,
-                verified_product_input_tree_hash,
-            )
-            self._restore_failure_lifecycle(
-                desired,
-                diagnostic_key=_EXTERNAL_PUBLICATION_FAILURE_KEY,
-            )
-            desired.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
-            desired.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
-            desired[PENDING_CONTROLLER_COMPLETION_KEY] = next_marker
-            if _CONTROLLER_COMPLETION_FAILURE_KEY in desired:
-                try:
-                    _validate_controller_completion_failure(
-                        desired[_CONTROLLER_COMPLETION_FAILURE_KEY]
-                    )
-                except ValueError as exc:
-                    raise StateAdvanceError(
-                        "persisted completion diagnostic is invalid",
-                        json_path=(
-                            f"$.{_CONTROLLER_COMPLETION_FAILURE_KEY}"
-                        ),
-                        validator="state_contract",
-                    ) from exc
-                desired["status"] = "blocked"
-                desired["blocked_reason"] = (
-                    "controller_completion_pending"
-                )
-            self._save_exact_completion_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-            )
-
-    def advance_controller_completion(
-        self,
-        prepared: PreparedControllerCompletion,
-    ) -> None:
-        (
-            expected_marker,
-            intent,
-            _,
-            receipts_sha256,
-            prefix_kind,
-        ) = _validate_prepared_controller_completion(prepared)
-        effect_plan = intent["effect_plan"]
-        current_step = expected_marker["step"]
-        if (
-            current_step not in effect_plan
-            or prefix_kind != "one_ahead"
-        ):
-            raise StateAdvanceError(
-                "controller completion effect has no exact receipt",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
-                validator="completion_step",
-            )
-        current_index = effect_plan.index(current_step)
-        next_step = (
-            effect_plan[current_index + 1]
-            if current_index + 1 < len(effect_plan)
-            else "complete"
-        )
-        next_marker = {
-            **expected_marker,
-            "receipts_sha256": receipts_sha256,
-            "step": next_step,
-        }
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            self._require_controller_completion_marker(
-                state,
-                expected_marker,
-            )
-            self._require_controller_completion_provenance(
-                state,
-                expected_marker,
-                intent,
-            )
-            desired = deepcopy(state)
-            desired[PENDING_CONTROLLER_COMPLETION_KEY] = next_marker
-            self._save_exact_completion_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-            )
-
-    def record_controller_completion_failure(
-        self,
-        marker: object,
-        code: object,
-    ) -> None:
-        if (
-            type(code) is not str
-            or code not in _CONTROLLER_COMPLETION_FAILURE_CODES
-        ):
-            raise StateAdvanceError(
-                "controller completion failure code is invalid",
-                json_path=f"$.{_CONTROLLER_COMPLETION_FAILURE_KEY}.code",
-                validator="enum",
-            )
-        try:
-            marker_bytes, _ = _canonical_completion_document(marker)
-            expected_raw_marker = json.loads(marker_bytes)
-        except (StateAdvanceError, json.JSONDecodeError) as exc:
-            raise StateAdvanceError(
-                "controller completion raw marker is invalid",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                validator="type",
-            ) from exc
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            if code == "completion_missing":
-                if (
-                    expected_raw_marker is not None
-                    or PENDING_CONTROLLER_COMPLETION_KEY in state
-                    or PENDING_EXTERNAL_PUBLICATION_KEY not in state
-                ):
-                    raise StateAdvanceError(
-                        "missing completion authority changed",
-                        json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                        validator="stale_state",
-                    )
-            elif (
-                PENDING_CONTROLLER_COMPLETION_KEY not in state
-                or state[PENDING_CONTROLLER_COMPLETION_KEY]
-                != expected_raw_marker
-            ):
-                raise StateAdvanceError(
-                    "controller completion marker changed",
-                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                    validator="stale_state",
-                )
-            existing = state.get(_CONTROLLER_COMPLETION_FAILURE_KEY)
-            try:
-                diagnostic = _validate_controller_completion_failure(
-                    existing
-                )
-            except ValueError:
-                status = state.get("status", "running")
-                blocked_reason = state.get("blocked_reason")
-                if (
-                    status == "blocked"
-                    and blocked_reason == "external_publication_pending"
-                    and _EXTERNAL_PUBLICATION_FAILURE_KEY in state
-                ):
-                    try:
-                        publication_diagnostic = (
-                            _validate_external_publication_failure(
-                                state[
-                                    _EXTERNAL_PUBLICATION_FAILURE_KEY
-                                ]
-                            )
-                        )
-                    except ValueError:
-                        status = "running"
-                        blocked_reason = None
-                    else:
-                        status = publication_diagnostic["resume_status"]
-                        blocked_reason = publication_diagnostic[
-                            "resume_blocked_reason"
-                        ]
-                elif (
-                    status == "blocked"
-                    and blocked_reason == "controller_completion_pending"
-                ):
-                    status = "running"
-                    blocked_reason = None
-                if status not in VALID_SQUAD_TRANSITIONS:
-                    status = "running"
-                    blocked_reason = None
-                if (
-                    blocked_reason is not None
-                    and (
-                        type(blocked_reason) is not str
-                        or len(blocked_reason) > 4_096
-                    )
-                ):
-                    blocked_reason = None
-                diagnostic = {
-                    "schema_version": 1,
-                    "code": code,
-                    "resume_status": status,
-                    "resume_blocked_reason": blocked_reason,
-                }
-            else:
-                diagnostic["code"] = code
-            diagnostic = _validate_controller_completion_failure(
-                diagnostic
-            )
-            desired = deepcopy(state)
-            desired[_CONTROLLER_COMPLETION_FAILURE_KEY] = diagnostic
-            active_decision = state.get("blocked_decision")
-            if not (
-                _is_human_input_decision(active_decision)
-                and active_decision.get("status")
-                in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES
-            ):
-                desired["status"] = "blocked"
-                desired["blocked_reason"] = "controller_completion_pending"
-            self._save_exact_completion_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{_CONTROLLER_COMPLETION_FAILURE_KEY}",
-            )
-
-    def complete_controller_completion(
-        self,
-        prepared: PreparedControllerCompletion,
-        *,
-        phase_a_active_source_sha256: str | None = None,
-        phase_a_published_postimage_sha256: str | None = None,
-    ) -> None:
-        (
-            expected_marker,
-            intent,
-            _,
-            receipts_sha256,
-            prefix_kind,
-        ) = _validate_prepared_controller_completion(prepared)
-        if (
-            expected_marker["step"] != "complete"
-            or prefix_kind != "bound"
-            or receipts_sha256 != expected_marker["receipts_sha256"]
-        ):
-            raise StateAdvanceError(
-                "controller completion is not ready to finalize",
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
-                validator="completion_step",
-            )
-        has_active_digest = phase_a_active_source_sha256 is not None
-        has_published_digest = (
-            phase_a_published_postimage_sha256 is not None
-        )
-        if (
-            has_active_digest != has_published_digest
-            or (
-                has_active_digest
-                and (
-                    not _valid_completion_sha256(
-                        phase_a_active_source_sha256
-                    )
-                    or not _valid_completion_sha256(
-                        phase_a_published_postimage_sha256
-                    )
-                )
-            )
-        ):
-            raise StateAdvanceError(
-                "Phase A completion inventory digests are invalid",
-                json_path="$.phase_a_active_source_sha256",
-                validator="type",
-            )
-        route = intent["route"]
-        is_phase4_completion = (
-            expected_marker["origin"] == "routed"
-            and route["from_phase"] == "phase4-document"
-        )
-        if (
-            (is_phase4_completion and not has_active_digest)
-            or (
-                expected_marker["origin"] == "routed"
-                and not is_phase4_completion
-                and has_active_digest
-            )
-        ):
-            raise StateAdvanceError(
-                "Phase A inventory digests do not match completion origin",
-                json_path="$.phase_a_active_source_sha256",
-                validator="completion_binding",
-            )
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            self._require_controller_completion_marker(
-                state,
-                expected_marker,
-            )
-            self._require_controller_completion_provenance(
-                state,
-                expected_marker,
-                intent,
-            )
-            desired = deepcopy(state)
-            if expected_marker["origin"] == "routed":
-                self._restore_failure_lifecycle(
-                    desired,
-                    diagnostic_key=_CONTROLLER_COMPLETION_FAILURE_KEY,
-                )
-                dispatch = desired["last_dispatch"]
-                dispatch.update(
-                    {
-                        "post_dispatch_complete": True,
-                        "completion_intent_sha256": (
-                            expected_marker["intent_sha256"]
-                        ),
-                        "completion_receipts_sha256": receipts_sha256,
-                        "completed_publication_binding_sha256": (
-                            expected_marker[
-                                "publication_binding_sha256"
-                            ]
-                        ),
-                    }
-                )
-                if has_active_digest:
-                    desired["phase_a_active_source_sha256"] = (
-                        phase_a_active_source_sha256
-                    )
-                    desired[
-                        "phase_a_published_postimage_sha256"
-                    ] = phase_a_published_postimage_sha256
-                if "quality" in intent["effect_plan"]:
-                    quality_receipt = prepared.receipts["effects"].get(
-                        "quality"
-                    )
-                    candidate_receipt = (
-                        quality_receipt.get("candidate")
-                        if isinstance(quality_receipt, Mapping)
-                        else None
-                    )
-                    evidence = desired.get(
-                        "proportional_quality_candidate_evidence"
-                    )
-                    if (
-                        isinstance(candidate_receipt, Mapping)
-                        and isinstance(evidence, Mapping)
-                        and candidate_receipt.get("candidate_id")
-                        == evidence.get("current_candidate_id")
-                        and evidence.get("selected_candidate_id")
-                        in {None, evidence.get("current_candidate_id")}
-                        and _valid_completion_sha256(
-                            candidate_receipt.get("manifest_sha256")
-                        )
-                    ):
-                        updated_evidence = deepcopy(dict(evidence))
-                        updated_evidence["candidate_manifest_sha256"] = (
-                            candidate_receipt["manifest_sha256"]
-                        )
-                        desired[
-                            "proportional_quality_candidate_evidence"
-                        ] = updated_evidence
-            elif expected_marker["origin"] == "terminal":
-                desired["status"] = "done"
-                desired.pop("blocked_reason", None)
-                terminal_receipt = {
-                    "schema_version": 1,
-                    "completion_id": expected_marker["completion_id"],
-                    "intent_sha256": expected_marker["intent_sha256"],
-                    "receipts_sha256": receipts_sha256,
-                    "publication_binding_sha256": (
-                        expected_marker[
-                            "publication_binding_sha256"
-                        ]
-                    ),
-                    "terminal_phase": route["terminal_phase"],
-                }
-                if has_active_digest:
-                    terminal_receipt.update(
-                        {
-                            "phase_a_active_source_sha256": (
-                                phase_a_active_source_sha256
-                            ),
-                            "phase_a_published_postimage_sha256": (
-                                phase_a_published_postimage_sha256
-                            ),
-                        }
-                    )
-                desired["last_terminal_completion"] = terminal_receipt
-            else:
-                self._restore_failure_lifecycle(
-                    desired,
-                    diagnostic_key=_CONTROLLER_COMPLETION_FAILURE_KEY,
-                )
-                desired["last_human_input_completion"] = {
-                    "schema_version": 1,
-                    "completion_id": expected_marker["completion_id"],
-                    "intent_sha256": expected_marker["intent_sha256"],
-                    "receipts_sha256": receipts_sha256,
-                    "decision_id": route["decision_id"],
-                }
-                if "managed_discovery" in intent["publication"]:
-                    desired["last_human_input_completion"]["publication_binding_sha256"] = expected_marker["publication_binding_sha256"]
-            if "retarget" in intent["effect_plan"]:
-                from echelon.spec_retarget_finalization import (
-                    verify_retarget_finalization_receipt,
-                )
-
-                receipt = prepared.receipts["effects"].get("retarget")
-                if (
-                    type(receipt) is not dict
-                    or receipt.get("completion_id")
-                    != expected_marker["completion_id"]
-                ):
-                    raise StateAdvanceError(
-                        "retarget completion receipt identity is invalid",
-                        json_path="$.retarget.finalization_receipt",
-                        validator="completion_binding",
-                    )
-                checked = verify_retarget_finalization_receipt(
-                    prepared._project_root,
-                    desired,
-                    receipt,
-                )
-                retarget = desired.get("retarget")
-                if type(retarget) is not dict or retarget.get("status") != "finalizing":
-                    raise StateAdvanceError(
-                        "retarget completion state is invalid",
-                        json_path="$.retarget.status",
-                        validator="completion_binding",
-                    )
-                updated_retarget = deepcopy(retarget)
-                updated_retarget["status"] = "complete"
-                updated_retarget["replacement_commit"] = checked["replacement_commit"]
-                updated_retarget["finalization_receipt"] = checked
-                updated_retarget["comparison_pending_completion_id"] = (
-                    expected_marker["completion_id"]
-                )
-                updated_retarget["comparison_event_id"] = (
-                    "retarget-comparison-" + expected_marker["completion_id"]
-                )
-                updated_retarget["comparison_command"] = (
-                    "Compare old and replacement artifacts:\n"
-                    f"  git diff {retarget['checkpoint_commit']}.."
-                    f"{checked['replacement_commit']} -- specs/{desired['spec_id']}"
-                )
-                updated_retarget.pop("memory_excluded", None)
-                desired["retarget"] = updated_retarget
-            desired.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
-            desired.pop(_CONTROLLER_COMPLETION_FAILURE_KEY, None)
-            self._save_exact_completion_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-            )
 
     def mark_retarget_comparison_emitted(self, completion_id: str) -> bool:
         """Durably consume one post-adoption retarget comparison event."""

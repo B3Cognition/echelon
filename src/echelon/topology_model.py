@@ -107,7 +107,8 @@ def validate_generation(generation: int) -> int:
 
 
 def canonical_symbol_key(
-    path: str, qualified_name: str, kind: str, signature: str | None = None
+    path: str, qualified_name: str, kind: str, signature: str | None = None,
+    locator_occurrence: int | None = None,
 ) -> str:
     """Return the schema-2 SHA-256 key for one provider symbol locator."""
     normalized_path = normalize_source_path(path)
@@ -117,12 +118,63 @@ def canonical_symbol_key(
         raise TopologyValidationError("symbol kind must be a non-empty string")
     if signature is not None and not isinstance(signature, str):
         raise TopologyValidationError("symbol signature must be a string or null")
+    if locator_occurrence is not None and (
+        not isinstance(locator_occurrence, int)
+        or isinstance(locator_occurrence, bool)
+        or locator_occurrence < 1
+    ):
+        raise TopologyValidationError("locator occurrence must be a positive integer")
+    locator_parts = [normalized_path, qualified_name, kind, signature or ""]
+    if locator_occurrence is not None:
+        locator_parts.append(locator_occurrence)
     locator = json.dumps(
-        [normalized_path, qualified_name, kind, signature or ""],
+        locator_parts,
         ensure_ascii=False,
         separators=(",", ":"),
     )
     return "sha256:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+
+
+def canonical_occurrence_groups_valid(symbols: list[Mapping[str, object]]) -> bool:
+    """Verify that occurrence keys represent distinct, ordered source positions.
+
+    A provider may add an occurrence only when the ordinary four-field locator
+    collides. The position establishes which occurrence belongs to which node;
+    it is not itself hashed, so unrelated line shifts do not change identity.
+    """
+    groups: dict[tuple[object, ...], list[Mapping[str, object]]] = {}
+    for symbol in symbols:
+        locator = (
+            symbol.get("file_path"), symbol.get("qualified_name"),
+            symbol.get("kind"), symbol.get("signature") or "",
+        )
+        groups.setdefault(locator, []).append(symbol)
+    for group in groups.values():
+        if len(group) == 1:
+            if group[0].get("locator_occurrence") is not None:
+                return False
+            continue
+        positions: list[tuple[tuple[int, int, int, int], int]] = []
+        for symbol in group:
+            occurrence = symbol.get("locator_occurrence")
+            position = tuple(symbol.get(field) for field in (
+                "line_start", "column_start", "line_end", "column_end",
+            ))
+            if (
+                not isinstance(occurrence, int) or isinstance(occurrence, bool)
+                or any(not isinstance(value, int) or isinstance(value, bool) for value in position)
+                or position[0] < 1 or position[1] < 0
+                or position[2] < 1 or position[3] < 0
+                or position[2:] < position[:2]
+            ):
+                return False
+            positions.append((position, occurrence))
+        ordered = sorted(positions)
+        if len({position for position, _ in ordered}) != len(group):
+            return False
+        if [occurrence for _, occurrence in ordered] != list(range(1, len(group) + 1)):
+            return False
+    return True
 
 
 def source_node_id(source_id: str) -> str:
@@ -193,6 +245,7 @@ class TopologySymbol:
     qualified_name: str
     kind: str
     signature: str = ""
+    locator_occurrence: int | None = None
     name: str = ""
     line_start: int | None = None
     line_end: int | None = None
@@ -210,7 +263,8 @@ class TopologySymbol:
             raise TopologyValidationError("symbol signature must be a string")
         _reject_absolute_host_path(self.name, "symbol name")
         expected = canonical_symbol_key(
-            self.path, self.qualified_name, self.kind, self.signature
+            self.path, self.qualified_name, self.kind, self.signature,
+            self.locator_occurrence,
         )
         if validate_symbol_key(self.symbol_key) != expected:
             raise TopologyValidationError(

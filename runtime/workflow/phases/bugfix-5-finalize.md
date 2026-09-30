@@ -90,13 +90,8 @@ Print the handoff block and stop:
     {spec_dir}/bugfix-{n}.md
     {spec_dir}/tasks.md  (BF{n} tasks appended)
 
-  Next step — choose your build strategy:
-
-    Default (LLM implements directly):
-      echelon delivery run {spec_id} --strategy default
-
-    Codegen (SOAR pipeline):
-      echelon delivery run {spec_id} --strategy codegen
+  Next step:
+    echelon delivery run {spec_id}
 ════════════════════════════════════════════════
 ```
 

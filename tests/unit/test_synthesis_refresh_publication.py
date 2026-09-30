@@ -105,7 +105,7 @@ def publish_synthesis_refresh(checkpoint_case, provider, monkeypatch, *, prepare
     if provider == "claude":
         captured = json.dumps(executor.calls[-3]["context"]["evidence"])
         assert "Use arrow keys" in captured and "Single player" in captured
-    sealed = ctrl._prepare_controller_completion(from_phase="phase1-synthesizer", to_phase="phase1-why1",
+    sealed = ctrl._prepare_spec_step_effects(from_phase="phase1-synthesizer", to_phase="phase1-why1",
         snapshot=store.capture_routing_snapshot(expected_phase="phase1-synthesizer"), manual_phase_run=False,
         conditional_skip=False, record_completion=True, publication_marker=package.publication.marker.to_dict(),
         completion_id="d" * 32, managed_discovery_request=encode_publication_request(package.request))

@@ -6,7 +6,7 @@ import json
 import pytest
 from pathlib import Path
 
-from echelon.cli import (
+from echelon.spec_service import (
     _next_continue_phase,
     _print_next_steps,
     _print_open_issues,

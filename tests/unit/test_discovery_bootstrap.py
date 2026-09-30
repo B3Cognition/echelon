@@ -350,8 +350,8 @@ def test_bootstrap_rejects_ineligible_controller_state(case, change):
     current = state.load()
     if change == "phase": current["phase"] = "phase2-specify"
     if change == "status": current["status"] = "completed"
-    if change == "completion": current["pending_controller_completion"] = {}
-    if change == "publication": current["pending_external_publication"] = {}
+    if change == "completion": current["_spec_step_effect_plan"] = {}
+    if change == "publication": current["_spec_step_publication_plan"] = {}
     # Fault fixture: no public controller operation is used to manufacture a pending outbox.
     path = state.squad_dir / "state.json"
     path.write_text(json.dumps(current))

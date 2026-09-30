@@ -2340,7 +2340,11 @@ def test_v2_controller_decision_restart_uses_registered_dynamic_preparer(
             spec_dir = Path(str(store.load()["spec_dir"]))
             spec_dir.mkdir(parents=True, exist_ok=True)
             (spec_dir / "issues.md").write_text(
-                """### ISS-001: Retry policy
+                """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -2590,7 +2594,11 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_continue, _cmd_resume, _cmd_status
+    from echelon.spec_service import (
+        _cmd_continue,
+        _cmd_resume,
+        _cmd_status,
+    )
 
     _controller_instance, store, provider, decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2646,7 +2654,7 @@ def test_clarification_discards_stale_proportional_quality_candidates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A material clarification cannot reuse quality evidence for old requirements."""
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2735,7 +2743,7 @@ def test_cli_resume_refuses_external_execution_owner_without_mutation(
     lock_type,
     root_selector,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -2769,7 +2777,7 @@ def test_concurrent_cli_resume_keeps_decision_and_file_answer_identical(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.spec_service import _cmd_resume
 
     _controller_instance, store, provider, _decision_id = (
         _cli_awaiting_human_controller(tmp_path)
@@ -3961,7 +3969,7 @@ def test_debt_acceptance_aborts_before_publication_on_postimage_divergence(
     assert state["blocked_decision"]["status"] == "awaiting_human"
     assert "spec_quality_debt_authorization" not in state
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 def test_debt_acceptance_aborts_on_completion_receipt_divergence(
@@ -4004,7 +4012,7 @@ def test_debt_acceptance_aborts_on_completion_receipt_divergence(
     state = store.load()
     assert state == before
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 @pytest.mark.parametrize(
@@ -4060,10 +4068,10 @@ def test_debt_acceptance_rejects_unbound_effect_postimage_before_commit(
 
     assert state_path.read_bytes() == before
     state = store.load()
-    assert "pending_controller_completion" not in state
+    assert "_spec_step_effect_plan" not in state
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
     assert not (tmp_path / alternate_path).exists()
-    assert not list((store.squad_dir / ".completion-outbox").glob("*"))
+    assert not list((store.squad_dir / ".spec-step-effects").glob("*"))
 
 
 def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(
@@ -4101,7 +4109,10 @@ def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_rewind, _cmd_status
+    from echelon.spec_service import (
+        _cmd_rewind,
+        _cmd_status,
+    )
     from harness.phase_checkpoints import (
         create_phase_checkpoint,
         load_checkpoint_ledger,
@@ -4585,7 +4596,11 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4652,7 +4667,11 @@ def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corrid
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Coverage handoff is stale
+        """# Issues — WHY3
+
+## Issues
+
+### ISS-001: Coverage handoff is stale
 
 - **Responsible agent:** SENTINEL
 - **Action Required:** Amend coverage-map.md from the current task plan.
@@ -4733,7 +4752,11 @@ def test_dispatch_cap_routes_discovery_issue_to_its_owner_and_resets_phase1_corr
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Discovery model is stale
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Discovery model is stale
 
 - **Responsible agent:** SCOUT
 - **Action Required:** Reconcile the discovery model with the resolved input decision.
@@ -4832,7 +4855,11 @@ def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     spec_dir.mkdir()
     issues_path = spec_dir / "issues.md"
     issues_path.write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4853,7 +4880,11 @@ def test_dispatch_cap_rejects_evidence_drift_after_sealing(
         (sealed_candidate,),
     )
     issues_path.write_text(
-        """### ISS-002: New issue
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-002: New issue
 
 ### Resolution Guidance
 - **Decision required:** New behavior.
@@ -4909,7 +4940,11 @@ def test_dispatch_cap_accepts_legacy_candidate_description(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -4960,7 +4995,11 @@ def test_dispatch_cap_accepts_pending_schema1_reference_without_route_rewrite(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 - **Responsible agent:** SENTINEL
 - **Action Required:** Repair the test handoff.
@@ -5041,7 +5080,11 @@ def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -5275,7 +5318,11 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     spec_dir = tmp_path / "spec"
     spec_dir.mkdir()
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Retry policy
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Retry policy
 
 ### Resolution Guidance
 - **Decision required:** Retry behavior.
@@ -5435,7 +5482,11 @@ def test_dispatch_cap_option_contract_failure_is_not_malformed_evidence(
     spec_dir = Path(store.load()["spec_dir"])
     spec_dir.mkdir(parents=True)
     (spec_dir / "issues.md").write_text(
-        """### ISS-001: Valid issue
+        """# Issues — WHY2
+
+## Issues
+
+### ISS-001: Valid issue
 
 ### Resolution Guidance
 - **Decision required:** Repair the issue.
@@ -5483,7 +5534,8 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
     evidence: str,
     expected_reason: str,
 ) -> None:
-    from echelon.cli import _active_v2_decision, _classify_run_recovery
+    from echelon.spec_service import _classify_run_recovery
+    from echelon.cli import _active_v2_decision
 
     policy = replace(
         _safeguard_policy(
@@ -5516,11 +5568,15 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
         content = {
             "empty": "",
             "malformed": (
+                "# Issues — WHY2\n\n"
+                "## Issues\n\n"
                 "### ISS-001: Incomplete guidance\n\n"
                 "### Resolution Guidance\n"
                 "- **Banzai eligible:** yes\n"
             ),
             "ineligible": (
+                "# Issues — WHY2\n\n"
+                "## Issues\n\n"
                 "### ISS-001: Product preference\n\n"
                 "### Resolution Guidance\n"
                 "- **Decision required:** Choose a product preference.\n"
@@ -5642,11 +5698,18 @@ def test_dispatch_cap_bounds_issue_reads_and_candidate_count(
         "- **Banzai eligible:** yes\n"
     )
     if evidence == "oversized":
-        content = issue.format(issue_id="ISS-001") + ("x" * 1_000_000)
+        content = (
+            "# Issues — WHY2\n\n## Issues\n\n"
+            + issue.format(issue_id="ISS-001")
+            + ("x" * 1_000_000)
+        )
     else:
-        content = "\n".join(
-            issue.format(issue_id=f"ISS-{index:03d}")
-            for index in range(1, 66)
+        content = (
+            "# Issues — WHY2\n\n## Issues\n\n"
+            + "\n".join(
+                issue.format(issue_id=f"ISS-{index:03d}")
+                for index in range(1, 66)
+            )
         )
     (spec_dir / "issues.md").write_text(content, encoding="utf-8")
 

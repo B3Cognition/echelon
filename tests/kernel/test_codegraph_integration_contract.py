@@ -213,6 +213,67 @@ const adapter = require(process.argv[2]);
     assert completed.returncode == 0, completed.stderr
 
 
+def test_adapter_disambiguates_same_locator_at_distinct_source_positions(tmp_path: Path) -> None:
+    script = """
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const first = {id: 'one', filePath: 'tests/node-builtins.d.ts', qualifiedName: 'client',
+    name: 'client', kind: 'constant', startLine: 6, endLine: 6, startColumn: 8, endColumn: 14};
+  const second = {...first, id: 'two', startLine: 11, endLine: 11};
+  const cg = {getNodesByKind: (kind) => kind === 'constant' ? [second, first] : []};
+  const symbols = await adapter.getSymbols(cg);
+  assert.strictEqual(symbols.length, 2);
+  assert.notStrictEqual(symbols[0].symbol_key, symbols[1].symbol_key);
+  assert.deepStrictEqual(symbols.map(s => s.locator_occurrence).sort(), [1, 2]);
+  assert.strictEqual(symbols.find(s => s.line_start === 6).locator_occurrence, 1);
+  const realDuplicate = {getNodesByKind: (kind) => kind === 'constant'
+    ? [first, {...first, id: 'three'}] : []};
+  await assert.rejects(adapter.getSymbols(realDuplicate), /duplicate canonical locator/);
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+    script_path = tmp_path / "adapter-occurrence-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(script_path), str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js")],
+        text=True, capture_output=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_bridge_publishes_repeated_typescript_declarations(tmp_path: Path) -> None:
+    """The actual provider output remains valid across the Echelon boundary."""
+    from echelon.topology_provider import load_provider_document
+    from harness.codegraph_evidence import _analysis_is_usable
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "node-builtins.d.ts").write_text(
+        "declare module 'node:alpha' {\n"
+        "  const client: unknown;\n"
+        "}\n"
+        "declare module 'node:beta' {\n"
+        "  const client: unknown;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "codegraph-analysis.json"
+    completed = subprocess.run(
+        ["node", str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js"), "analyze",
+         "--repo-path", str(source), "--output-path", str(analysis),
+         "--languages", "typescript"],
+        text=True, capture_output=True, check=False, timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert _analysis_is_usable(analysis), completed.stderr
+    document = json.loads(analysis.read_text(encoding="utf-8"))
+    loaded = load_provider_document(document, provider="codegraph", source_id="api")
+    repeated = [symbol for symbol in loaded.symbols if symbol.qualified_name == "client"]
+    assert len(repeated) == 2
+    assert {symbol.locator_occurrence for symbol in repeated} == {1, 2}
+
+
 def test_adapter_fails_when_native_node_kind_query_fails(tmp_path: Path) -> None:
     script = r"""
 const assert = require('assert');

@@ -124,7 +124,7 @@ def prepare_why1_discovery_repair(project_root, state_store):
     _require(selected is not None and str(root) == selected["selection"]["project_root"]
         and str(state_store.squad_dir) == selected["selection"]["run_dir"]
         and state.get("phase") == "phase1-discover" and state.get("status") == "running"
-        and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
+        and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
         and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved"})
     dispatch = state["last_dispatch"]
     _require(dispatch.get("phase_id") in {"phase1-why1", "phase1-why2"} and dispatch.get("post_dispatch_complete") is True)
@@ -218,7 +218,7 @@ def _repair_refresh_context(project_root, state_store, producer):
         _require(str(root) == selected["project_root"] and str(state_store.squad_dir) == selected["run_dir"]
             and state.get("phase") in {"phase1-why1", "phase1-why2"} and state.get("status") == "running"
             and state.get("mode") == "greenfield"
-            and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
+            and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
             and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved"})
         dispatch = state["last_dispatch"]
         _require(dispatch.get("phase_id") == "phase1-discover" and dispatch.get("post_dispatch_complete") is True)
@@ -310,7 +310,7 @@ def _tracker_refresh_context(root, state_store, producer="tracker"):
     _require(str(root) == selected["project_root"] and str(state_store.squad_dir) == selected["run_dir"]
         and state.get("phase") == "phase1-why1" and state.get("status") == "running"
         and state.get("mode") == "greenfield"
-        and not any(key in state for key in ("pending_controller_completion", "pending_external_publication"))
+        and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan"))
         and (state.get("blocked_decision") or {}).get("status") not in {"pending", "unresolved", "awaiting_human"})
     dispatch = state["last_dispatch"]
     _require(producer in {"tracker", "why1"})

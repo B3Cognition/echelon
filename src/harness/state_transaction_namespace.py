@@ -8,17 +8,18 @@ from collections.abc import Iterable
 from harness.element_identity_state import MANAGED_IDENTITY_KEY
 
 
-PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
-PENDING_CONTROLLER_COMPLETION_KEY = "pending_controller_completion"
+SPEC_STEP_PUBLICATION_PLAN_KEY = "_spec_step_publication_plan"
+SPEC_STEP_EFFECT_PLAN_KEY = "_spec_step_effect_plan"
+PENDING_SPEC_STEP_KEY = "pending_spec_step"
 PRODUCT_INPUT_MUTATION_KEY = "product_input_mutation"
-_PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
+_SPEC_STEP_PUBLICATION_PLAN_KEYS = frozenset(
     {
         "schema_version",
         "transaction_id",
         "manifest_sha256",
     }
 )
-_PENDING_CONTROLLER_COMPLETION_KEYS = frozenset(
+_SPEC_STEP_EFFECT_PLAN_KEYS = frozenset(
     {
         "schema_version",
         "completion_id",
@@ -146,9 +147,10 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "lexicon_repair_no_artifact_progress",
         "quality_gate_remediation_no_artifact_progress",
         "tasks_lexicon_gate_exhausted",
-        PENDING_EXTERNAL_PUBLICATION_KEY,
-        PENDING_CONTROLLER_COMPLETION_KEY,
-        "external_publication_failure",
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
+        SPEC_STEP_EFFECT_PLAN_KEY,
+        PENDING_SPEC_STEP_KEY,
+        "spec_step_publication_failure",
         PRODUCT_INPUT_MUTATION_KEY,
     }
 )
@@ -180,7 +182,7 @@ MANAGED_IDENTITY_KEYS = frozenset({MANAGED_IDENTITY_KEY})
 
 CONTROLLER_COMPLETION_RECEIPT_KEYS = frozenset(
     {
-        "controller_completion_failure",
+        "spec_step_effect_failure",
         "last_terminal_completion",
         "phase_a_active_source_sha256",
         "phase_a_published_postimage_sha256",
@@ -221,10 +223,13 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "phase_dispatch_limit",
         "phase_dispatch_limit_recovery",
         "cartographer_resume_existing_spec",
+        "why3_verdict",
+        "assess2_verdict",
         "lexicon_repair_no_artifact_progress",
         "quality_gate_remediation_no_artifact_progress",
-        PENDING_EXTERNAL_PUBLICATION_KEY,
-        PENDING_CONTROLLER_COMPLETION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
+        SPEC_STEP_EFFECT_PLAN_KEY,
+        PENDING_SPEC_STEP_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
         "product_inputs",
         *PHASE_A_IDENTITY_KEYS,
@@ -237,8 +242,9 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
 TRUSTED_ROUTING_REMOVAL_KEYS = (
     TRUSTED_ROUTING_EFFECT_KEYS
     - {
-        PENDING_EXTERNAL_PUBLICATION_KEY,
-        PENDING_CONTROLLER_COMPLETION_KEY,
+        SPEC_STEP_PUBLICATION_PLAN_KEY,
+        SPEC_STEP_EFFECT_PLAN_KEY,
+        PENDING_SPEC_STEP_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
         "product_inputs",
     }
@@ -259,14 +265,14 @@ def store_owned_update_keys(keys: Iterable[str]) -> frozenset[str]:
     return frozenset(keys) & STORE_OWNED_TRANSACTION_KEYS
 
 
-def validate_pending_external_publication(
+def validate_spec_step_publication_plan(
     value: object,
 ) -> dict[str, object]:
     """Return a detached exact-schema durable publication marker."""
     if (
         type(value) is not dict
         or frozenset(dict.keys(value))
-        != _PENDING_EXTERNAL_PUBLICATION_KEYS
+        != _SPEC_STEP_PUBLICATION_PLAN_KEYS
     ):
         raise ValueError(
             "pending external publication marker must have exact fields"
@@ -381,7 +387,7 @@ def require_product_input_mutation_publication_binding(
     publication: object,
 ) -> dict[str, object]:
     validated = validate_product_input_mutation(mutation)
-    marker = validate_pending_external_publication(publication)
+    marker = validate_spec_step_publication_plan(publication)
     if (
         validated["operation_id"] != marker["transaction_id"]
         or validated["manifest_sha256"] != marker["manifest_sha256"]
@@ -390,14 +396,14 @@ def require_product_input_mutation_publication_binding(
     return validated
 
 
-def validate_pending_controller_completion(
+def validate_spec_step_effect_plan(
     value: object,
 ) -> dict[str, object]:
     """Return a detached exact-schema durable completion marker."""
     if (
         type(value) is not dict
         or frozenset(dict.keys(value))
-        != _PENDING_CONTROLLER_COMPLETION_KEYS
+        != _SPEC_STEP_EFFECT_PLAN_KEYS
     ):
         raise ValueError(
             "pending controller completion marker must have exact fields"

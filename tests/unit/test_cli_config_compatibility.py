@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from echelon.cli import (
+from echelon.spec_service import (
     _cmd_resume,
     _cmd_run,
     _cmd_status,

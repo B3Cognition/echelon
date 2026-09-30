@@ -39,6 +39,13 @@ class AICodingCliBackend(Protocol):
 
 
 @runtime_checkable
+class ExclusiveWriteScopeBackend(Protocol):
+    """Backend that natively enforces an exact, exclusive write allowlist."""
+
+    exclusive_write_scope_contract_id: str
+
+
+@runtime_checkable
 class ConstrainedPromptBackend(Protocol):
     """Optional native operation for one screened, explicitly bounded prompt."""
 

@@ -455,7 +455,7 @@ def test_preview_never_calls_writers_source_or_provider_paths(tmp_path, monkeypa
     def forbidden(*args, **kwargs):
         pytest.fail("preview invoked a write/source/runtime path")
     def guarded_import(name, *args, **kwargs):
-        if name.startswith(("harness.state", "harness.llm_provider", "harness.coordinator", "harness.ralph")):
+        if name.startswith(("harness.state", "harness.llm_provider", "harness.delivery_controller", "harness.ralph")):
             forbidden()
         return original_import(name, *args, **kwargs)
     class GuardedConnection(sqlite3.Connection):

@@ -101,12 +101,12 @@ def test_successful_command_that_changes_inputs_refreshes_existing_vault(
     _workspace(tmp_path)
     run(["wiki", "build"])
 
-    def mutate(_args: list[str]) -> None:
+    def mutate(_project_root: Path, **_values: object) -> None:
         (tmp_path / "specs/001-demo/spec.md").write_text(
             "# Changed by command\n", encoding="utf-8"
         )
 
-    monkeypatch.setattr("echelon.cli._cmd_artifacts", mutate)
+    monkeypatch.setattr("echelon.spec_service.write_artifacts", mutate)
 
     run(["spec", "artifacts", "001"])
 

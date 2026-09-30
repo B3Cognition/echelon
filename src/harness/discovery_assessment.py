@@ -52,7 +52,7 @@ def require_feasibility_parent(root, run, state, source):
         _require(dispatch.get("phase_id") == "phase2-feasibility-structural"
             and dispatch.get("post_dispatch_complete") is True
             and source == {key: dispatch.get(key) for key in SOURCE_FIELDS}
-            and not any(key in state for key in ("pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
+            and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan", "product_input_mutation", "governance")))
         if selected is not None:
             _require(selected["resolution"] is None and selected["source"] == source)
         binding = require_feasibility_repair(root, run, state, source, predecessor)
@@ -94,8 +94,8 @@ def require_strategy_parent(root, run, state, source):
     from harness.squad_completion import validate_retained_completion_proof
     _require(type(state) is dict and state.get("phase") == "phase2-strategic-overview"
         and state.get("status") == "running" and not state.get("cancel_requested")
-        and not any(key in state for key in ("pending_controller_completion",
-            "pending_external_publication", "product_input_mutation", "governance")))
+        and not any(key in state for key in ("_spec_step_effect_plan",
+            "_spec_step_publication_plan", "product_input_mutation", "governance")))
     dispatch = state.get("last_dispatch") or {}
     _require(dispatch.get("phase_id") == "phase2-feasibility-structural"
         and dispatch.get("post_dispatch_complete") is True
@@ -153,8 +153,8 @@ def require_alignment_parent(root, run, state, source):
     from harness.squad_completion import validate_retained_completion_proof
     _require(type(state) is dict and state.get("phase") == "phase2-tracker-alignment"
         and state.get("status") == "running" and not state.get("cancel_requested")
-        and not any(key in state for key in ("pending_controller_completion",
-            "pending_external_publication", "product_input_mutation", "governance")))
+        and not any(key in state for key in ("_spec_step_effect_plan",
+            "_spec_step_publication_plan", "product_input_mutation", "governance")))
     dispatch = state.get("last_dispatch") or {}
     rounds = tracker_rounds(state, "alignment")
     operation_id = "alignment-" + source.get("dispatch_id", "")
@@ -291,7 +291,7 @@ def require_alignment_question_evidence(root, run, state, source):
     from harness.human_input import select_initial_decision_status
     _require(state.get("phase") == "phase2-tracker-alignment" and state.get("status") == "blocked"
         and not state.get("cancel_requested") and not any(key in state for key in (
-            "pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
+            "_spec_step_effect_plan", "_spec_step_publication_plan", "product_input_mutation", "governance")))
     dispatch = state.get("last_dispatch") or {}
     _require(dispatch.get("phase_id") == "phase2-tracker-alignment" and dispatch.get("post_dispatch_complete") is True
         and source == {key: dispatch.get(key) for key in SOURCE_FIELDS})

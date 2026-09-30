@@ -46,11 +46,20 @@ outside host-authorized roots.
 
 ## Reply contract
 
-Return only the JSON envelope specified by the host: repeat its assignment
-identity exactly, then one `read`, `blocked`, or `final` action. A final reply
+Return only the JSON envelope specified by the host: repeat its compact
+`reply_contract.binding` exactly, then one `read`, `blocked`, or `final` action. A final reply
 contains one structured mapping row per assigned ID and separate
 `unmapped_candidates` notes. The host supplies field names/enums and owns
 Markdown rendering, sequencing, state, budgets and publication.
+
+For a `read` action, return exactly one singular read operation nested under
+the top-level `request` field. NEVER put `op`, `root`, `path`, or bounds at the
+top level, and NEVER emit a `requests` array or batch multiple reads.
+
+Every row field except `runtime_threshold` is one JSON string, never an array
+or object. Join multiple citations or candidates with `; ` in that one string.
+`unmapped_candidates` is always an array of single-line strings; return `[]`
+when there are no separate unmapped discoveries.
 
 ALWAYS leave verified evidence empty when no inspected evidence supports it,
 and explain the limitation in notes or return `blocked` for missing context.

@@ -3,11 +3,10 @@
 All runtime artifacts live under runs/ at the project root:
   runs/
     mirror.git               -- bare mirror of the target repo
-    strategies/              -- user-managed strategy config (project-level)
     .current-build-{spec_id} -- marker: latest build_id for a spec
     build-{timestamp}/       -- one directory per harness run
-      state/                 -- per-strategy state JSON files
-      worktrees/             -- ephemeral git worktrees per strategy+iter
+      state/delivery.json    -- one durable delivery state
+      worktrees/iter-{N}/    -- ephemeral git worktrees per iteration
   spec-{timestamp}/          -- squad (Phase A) run output
 """
 

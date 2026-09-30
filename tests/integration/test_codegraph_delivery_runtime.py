@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from echelon.cli import _sync_polyrepo_runtime_extension
+from echelon.delivery_service import _sync_polyrepo_runtime_extension
 from harness.config import HarnessConfig
 from harness.gitops import GitOpsManager
 

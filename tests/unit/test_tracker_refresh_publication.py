@@ -111,7 +111,7 @@ def test_tracker_binds_accepted_synthesis_not_repair(checkpoint_case, provider, 
     assert recovery["source_completion"] == row["execution_input"]["source"]
     assert all(recovery[key] == row[key] for key in ("refresh", "execution_input", "predecessor"))
     ctrl = controller(checkpoint_case, executor)
-    sealed = ctrl._prepare_controller_completion(from_phase="phase1-tracker", to_phase="phase1-why1",
+    sealed = ctrl._prepare_spec_step_effects(from_phase="phase1-tracker", to_phase="phase1-why1",
         snapshot=store.capture_routing_snapshot(expected_phase="phase1-tracker"), manual_phase_run=False,
         conditional_skip=False, record_completion=True, publication_marker=package.publication.marker.to_dict(),
         completion_id="e" * 32, managed_discovery_request=encode_publication_request(package.request))

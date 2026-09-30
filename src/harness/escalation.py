@@ -2,7 +2,7 @@
 
 Per data-model Escalation entity:
   question, context, options_considered, recommended_answer, category,
-  spec_id, strategy_id, timestamp, last_verify_result.
+  spec_id, timestamp, last_verify_result.
 
 Per FR-LOOP-005: write escalation .md file, print terminal banner,
   support resume with answer.
@@ -33,14 +33,13 @@ def _resume_choice_command(spec_id: str, answer: str) -> str:
     return f'echelon delivery resume {spec_id} "{safe_answer}"'
 
 
-def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
+def print_escalation_sticky_banner(spec_id: str, esc_file: str) -> None:
     """Print a structured blocked banner to stderr when an escalation is still pending."""
     from echelon.ui import banner as _banner
     _banner(
         "HARNESS — ESCALATION PENDING",
         [
             ("spec", spec_id),
-            ("strategy", strategy_id),
             ("escalation", esc_file),
             ("answer with", _resume_answer_command(spec_id)),
             ("continue without answer", _continue_command(spec_id)),
@@ -91,7 +90,6 @@ class EscalationHandler:
     def escalate(
         self,
         spec_id: str,
-        strategy_id: str,
         category: str,
         context: str,
         *,
@@ -104,7 +102,6 @@ class EscalationHandler:
 
         Args:
             spec_id: Spec being executed.
-            strategy_id: Strategy variant.
             category: Escalation category (must be valid).
             context: Current state description.
             question: What decision is needed from the human.
@@ -128,7 +125,7 @@ class EscalationHandler:
 
         timestamp = datetime.now(timezone.utc)
         timestamp_str = timestamp.strftime("%Y%m%dT%H%M%SZ")
-        filename = f"{spec_id}-{strategy_id}-{timestamp_str}.md"
+        filename = f"delivery-escalation-{timestamp_str}.md"
         filepath = self.escalations_dir / filename
 
         if not question:
@@ -140,7 +137,6 @@ class EscalationHandler:
         # Build escalation file content
         content = _render_escalation_file(
             spec_id=spec_id,
-            strategy_id=strategy_id,
             category=category,
             question=question,
             context=context,
@@ -267,7 +263,6 @@ def _default_question(category: str, context: str) -> str:
 def _render_escalation_file(
     *,
     spec_id: str,
-    strategy_id: str,
     category: str,
     question: str,
     context: str,
@@ -286,7 +281,6 @@ def _render_escalation_file(
         f"# Escalation: {category}",
         "",
         f"**Spec:** {spec_id}",
-        f"**Strategy:** {strategy_id}",
         f"**Category:** {category}",
         f"**Timestamp:** {timestamp}",
         "",
@@ -332,7 +326,6 @@ def _render_escalation_file(
         "question": question,
         "category": category,
         "spec_id": spec_id,
-        "strategy_id": strategy_id,
         "blocked_at": timestamp,
     }
     if suggested_answers:

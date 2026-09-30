@@ -6,10 +6,40 @@ from unittest.mock import MagicMock
 import pytest
 
 from harness.phase3_repair import RepairIdentity
+from harness.phase_a_provider_assignments import CompiledProviderAssignment
 from harness.phase_graph import PhaseNode
-from harness.squad_executors import StagedParallelExecutor
+from harness.provider_output_publication import (
+    ProviderArtifactContractError,
+    compile_provider_artifact_contract,
+)
+from harness.squad_executors import PhaseExecutor, StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+
+
+@pytest.fixture(autouse=True)
+def _result_only_contracts_for_handoff_tests(monkeypatch):
+    original = PhaseExecutor._provider_assignment
+
+    def resolve(self, node, *, collection=None, index=None):
+        try:
+            return original(self, node, collection=collection, index=index)
+        except ProviderArtifactContractError:
+            entry = node.agents[index] if index is not None else {}
+            agent_id = str(entry.get("id") or "echelon.test")
+            mode = entry.get("mode")
+            assignment_id = f"{node.id}/{collection}/{index}/{agent_id}:{mode}"
+            return CompiledProviderAssignment(
+                assignment_id=assignment_id,
+                agent_id=agent_id,
+                mode=mode,
+                contract=compile_provider_artifact_contract(
+                    {"mode": "result_only", "artifacts": []},
+                    assignment_id=assignment_id,
+                ),
+            )
+
+    monkeypatch.setattr(PhaseExecutor, "_provider_assignment", resolve)
 
 
 def test_bad_legacy_selection_blocks_without_dispatch_or_false_closure(tmp_path):
@@ -79,7 +109,7 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
                 "outcome": outcome, "reviewed_artifacts": envelope["input_manifest"],
                 "rationale": "The enum declares ignored."})
         assert "Operate in **PLAN2**" in prompt
-        assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == ("validated" if outcome == "resolved" else "repaired")
+        assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
         if mutate_plan2:
             (spec / "data-model.md").write_text("PLAN2 changed the reviewed candidate")
         return result("BLOCKED", phase3_blocker={"issue_id": "ISS-B", "owner_phase": "phase3-how",
@@ -102,7 +132,7 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
     assert all(any(section["name"] == "Required Phase 3 review context"
                    for section in report["bounded"]["top_sections"]) for report in reports)
     persisted = SquadStateStore(run).load()
-    assert persisted["why3_verdict"] == ("PASS" if missing_review else sage_verdict)
+    assert "why3_verdict" not in persisted
     if missing_review:
         assert persisted["selected_issue_resolution"] == "ISS-A"
         assert observed.reason == "repair_review_missing"
@@ -111,13 +141,24 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
         assert observed.reason == "repair_review_stale"
     else:
         assert observed.verdict == "BLOCKED"
-        assert persisted["selected_issue_resolution"] == (None if outcome == "resolved" else "ISS-A")
-        assert persisted["issue_resolution_ledger"]["ISS-A"]["status"] == ("validated" if outcome == "resolved" else "repaired")
+        assert persisted["selected_issue_resolution"] == "ISS-A"
+        assert persisted["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+        projected = {**persisted, **observed.state_updates}
+        assert projected["selected_issue_resolution"] == (
+            None if outcome == "resolved" else "ISS-A"
+        )
+        assert projected["issue_resolution_ledger"]["ISS-A"]["status"] == (
+            "validated" if outcome == "resolved" else "repaired"
+        )
         revalidated = mutate_plan2 and sage_verdict != "BLOCKED"
         assert len(saw_review) == (2 if revalidated else 1)
         if revalidated:
-            assert len(persisted["phase3_issue_reviews"]) == 2
-            assert not persisted["issue_resolution_ledger"]["ISS-A"].get("review_revalidation_required")
+            occurrence_ids = [item.occurrence_id for item in observed.manifest]
+            assert occurrence_ids.count("why3/initial") == 1
+            assert occurrence_ids.count("why3/final-revalidation") == 1
+            assert len(observed.receipts) == 3
+            assert len(projected["phase3_issue_reviews"]) == 2
+            assert not projected["issue_resolution_ledger"]["ISS-A"].get("review_revalidation_required")
         if sage_verdict != "BLOCKED":
-            assert persisted["phase3_last_blocker"]["producer"] == "PLAN2"
-            assert persisted["phase3_last_blocker"]["detail"] == "Observation contract is missing"
+            assert projected["phase3_last_blocker"]["producer"] == "PLAN2"
+            assert projected["phase3_last_blocker"]["detail"] == "Observation contract is missing"

@@ -38,5 +38,5 @@ class TestDegradedMode:
         assert mgr.mirror_path.exists()
 
         # PR operations return empty / False
-        assert mgr.create_draft_pr("branch", "spec", "strat") == ""
+        assert mgr.create_draft_pr("branch", "spec") == ""
         assert mgr.merge_pr("https://example.com/pr/1") is False

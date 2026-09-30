@@ -4,24 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Echelon is a Prosaic-first multi-agent system for AI-assisted software development. Neutral command and subagent prose lives under `prosaic/`; Echelon-owned workflows, templates, scripts, stacks, and configuration live under `runtime/`. Provider adapters execute the rendered prose through Claude Code, Codex CLI, Copilot CLI, OpenCode, or an OpenAI-compatible endpoint. Python under `src/` is the deterministic substrate around them: CLI dispatch, spec orchestration, delivery harness, provider routing, SOAR codegen, and the `understanding` requirements-quality CLI.
+Echelon is a Prosaic-first multi-agent system for AI-assisted software development. Neutral command and subagent prose lives under `prosaic/`; Echelon-owned workflows, templates, scripts, stacks, and configuration live under `runtime/`. Provider adapters execute the rendered prose through Claude Code, Codex CLI, Copilot CLI, OpenCode, or an OpenAI-compatible endpoint. Python under `src/` is the deterministic substrate around them: CLI dispatch, spec orchestration, delivery harness, provider routing, shared memory utilities, and the `understanding` requirements-quality CLI.
 
 The README is unusually load-bearing for orientation — when you need the big picture (4-phase model, 41-agent layout, harness phases, deploy infra, build strategies), read it rather than re-deriving from the code.
 
 ## Build, test, and dev commands
 
 ```bash
-# Run all Python tests (configured in pyproject.toml; src on pythonpath)
-pytest
+# Run all Python tests in the project environment
+.venv/bin/python -m pytest
 
 # Run one Python test file or test
-pytest tests/unit/test_config.py
-pytest tests/unit/test_config.py::test_load_defaults
+.venv/bin/python -m pytest tests/unit/test_config.py
+.venv/bin/python -m pytest tests/unit/test_config.py::test_load_defaults
 
 # Filter by marker (see pyproject.toml [tool.pytest.ini_options] markers)
-pytest -m unit
-pytest -m "integration and not docker"
-pytest -m e2e
+.venv/bin/python -m pytest -m unit
+.venv/bin/python -m pytest -m "integration and not docker"
+.venv/bin/python -m pytest -m e2e
 
 # Bash tests (legacy; not collected by pytest)
 bash tests/unit/test-some-thing.sh
@@ -33,8 +33,7 @@ bash scripts/bash/dry-run.sh
 # Reinstall the core CLIs into ~/.echelon/venv after editing src/ — needed
 # because the CLIs run from an installed venv on PATH, not from this checkout.
 bash scripts/install.sh
-# SOAR execution and its legacy tests are disabled pending removal.
-# Do not install or invoke SOAR; shared codegen memory/graph utilities remain active.
+# Shared MemPalace and knowledge-base utilities remain active under src/codegen/.
 ```
 
 There is no lint config — don't add one unless asked.
@@ -51,16 +50,16 @@ When debugging, first determine whether the failure is bundle installation, Pros
 ## Phase A / Phase B split
 
 - **Phase A — spec authoring.** `echelon spec run` / `echelon spec bugfix` / `echelon spec change`. The squad publishes under `specs/{NNN-slug}/`; durable controller state stays under `runs/spec-*`. The Echelon constitution is `.echelon/constitution.md`.
-- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. Strategies include the default squad delivery loop only; SOAR/codegen execution is disabled. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
+- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. The default squad delivery loop is the supported strategy. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
 
 `echelon land <id>` and `echelon spec target …` are pure-Python (no LLM); `_cmd_init`, `_cmd_land`, `_cmd_harness_init`, `_cmd_harness_run` in `src/echelon/cli.py` are the dispatch points.
 
 ## Controlled delivery ownership
 
-With `llm.features.delivery_gate_controller: true`, `echelon delivery run`
-bypasses the legacy build prompt. Ralph and its Python helpers own task
-selection, gate sequencing, bounded repairs, durable operation journals,
-progress, authoritative verification and documentation report publication.
+`echelon delivery run <id>` is the only supported Phase B entry point. Ralph
+and its Python helpers own task selection, gate sequencing, bounded repairs,
+durable operation journals, progress, authoritative verification, and
+documentation report publication.
 Prosaic supplies the six neutral `echelon.delivery-*` role bodies and metadata;
 provider-specific permissions remain in the provider adapters.
 
@@ -73,16 +72,16 @@ reconciliation, not rewriting the journal or resetting attempts.
 
 PR triage separately uses neutral Prosaic diagnostic/composer roles, with Python
 owning sequencing and canonical publication. Fulfillment verify-spec retains its
-separate command-driven contract; do not claim every delivery model call has
-migrated. Legacy `echelon build` and feature-off behavior remain outside this
-migration; do not alias, remove or rewrite them as part of convergence.
+separate command-driven contract. The strategy field still stores `echelon
+build` as an internal identifier; production code must validate it, never
+execute it or resolve it as Prosaic command prose.
 
 ## Thin command wrappers + externalized workflow
 
-The following wrapper and journal conventions apply to command-driven legacy
-workflows, not the controlled delivery roles described above.
+The following wrapper and journal conventions apply to command-driven spec and
+standalone verification workflows, not the controlled delivery roles above.
 
-The big squad commands (`echelon.run.md`, `echelon.bugfix.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.codegenlight.md`) are **thin wrappers — typically 35–75 lines**. They set the COMMANDER role, load `agents/control/commander.md`, then delegate to:
+The big squad commands (`echelon.run.md` and `echelon.bugfix.md`) are **thin wrappers — typically 35–75 lines**. They set the COMMANDER role, load `agents/control/commander.md`, then delegate to:
 
 - `runtime/workflow/definition.yaml` — phase graph: routing conditions, transitions, agent assignments, convergence thresholds, and controller contracts.
 - `runtime/workflow/phases/*.md` — per-phase dispatch contracts with context-pack assembly, prompts, and expected outputs.
@@ -104,7 +103,7 @@ src/
   echelon/           CLI entrypoint (cli.py main → SKILL_MAP, harness, spec, land subcommands)
   harness/           Delivery harness library — invoked via `echelon delivery`
     coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
-    ralph.py           RalphController — Phase 1 build outer/inner loop
+    ralph.py           RalphController — controlled delivery outer/inner loop
     visual_ralph.py    VisualRalphController — Phase 2 (Playwright, off by default)
     review_loop.py     ReviewLoopController — Phase 3 PR review cycle
     docker_provider.py DockerWorktreeProvider — sandbox lifecycle
@@ -114,8 +113,7 @@ src/
     state.py           Per-strategy state JSON (atomic writes)
     config.py          4-level config cascade (defaults → repo → env → CLI args)
     spec_frontmatter.py  Polyrepo `targets:` read/write
-  codegen/           SOAR-powered build pipeline (RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER)
-                     Uses MemPalace (ChromaDB) for wing-scoped requirements memory.
+  codegen/           Shared MemPalace, KB-validation, and secret-scrubbing utilities.
   understanding/     34-metric requirements quality CLI (Phase 1 quality gates)
 prosaic/
   commands/          Neutral command prose

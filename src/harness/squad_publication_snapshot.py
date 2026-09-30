@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from harness.squad_publication import PublicationError, PublicationMarker
+from harness.squad_publication_schema import PublicationError, PublicationMarker
 
 
 @dataclass(frozen=True)

@@ -52,27 +52,32 @@ function normalizeSourcePath(filePath) {
     }
     return sourceRelative;
 }
-function symbolKey(node) {
+function symbolKey(node, locatorOccurrence) {
     const locator = [
         normalizeSourcePath(node.filePath),
         String(node.qualifiedName),
         String(node.kind),
         node.signature == null ? '' : String(node.signature),
     ];
+    if (locatorOccurrence != null)
+        locator.push(locatorOccurrence);
     return `sha256:${crypto.createHash('sha256')
         .update(JSON.stringify(locator), 'utf8').digest('hex')}`;
 }
 /** Map CodeGraph Node to integration OutputSymbol (camelCase → snake_case). */
-function nodeToOutputSymbol(n) {
+function nodeToOutputSymbol(n, locatorOccurrence) {
     // Build object with only defined optional fields so JSON.stringify omits nulls
     return {
-        symbol_key: symbolKey(n),
+        symbol_key: symbolKey(n, locatorOccurrence),
+        ...(locatorOccurrence != null ? { locator_occurrence: locatorOccurrence } : {}),
         qualified_name: n.qualifiedName,
         name: n.name,
         kind: n.kind,
         file_path: normalizeSourcePath(n.filePath),
         line_start: n.startLine,
         line_end: n.endLine,
+        column_start: n.startColumn,
+        column_end: n.endColumn,
         // Optional fields: only include when non-null to avoid null values in JSON
         ...(n.visibility != null ? { visibility: n.visibility } : {}),
         ...(n.isExported != null ? { is_exported: n.isExported } : {}),
@@ -108,15 +113,52 @@ function collectNativeNodeData(cg) {
                 continue;
             }
             seenNodeIds.add(node.id);
-            const symbol = nodeToOutputSymbol(node);
-            const existingNodeId = keyToNodeId.get(symbol.symbol_key);
-            if (existingNodeId !== undefined && existingNodeId !== node.id) {
-                throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${existingNodeId} and ${node.id}`);
-            }
-            keyToNodeId.set(symbol.symbol_key, node.id);
-            symbolByNodeId.set(node.id, symbol);
             nodes.push(node);
         }
+    }
+    const byBaseKey = new Map();
+    for (const node of nodes) {
+        const key = symbolKey(node);
+        if (!byBaseKey.has(key))
+            byBaseKey.set(key, []);
+        byBaseKey.get(key).push(node);
+    }
+    const occurrenceByNodeId = new Map();
+    for (const group of byBaseKey.values()) {
+        if (group.length === 1)
+            continue;
+        const positioned = group.map((node) => {
+            const position = [node.startLine, node.startColumn, node.endLine, node.endColumn];
+            if (!Number.isInteger(position[0]) || position[0] < 1 ||
+                !Number.isInteger(position[1]) || position[1] < 0 ||
+                !Number.isInteger(position[2]) || position[2] < 1 ||
+                !Number.isInteger(position[3]) || position[3] < 0) {
+                throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${group[0].id} and ${group[1].id} (source positions unavailable)`);
+            }
+            return { node, position };
+        });
+        positioned.sort((left, right) => {
+            for (let index = 0; index < 4; index++) {
+                if (left.position[index] !== right.position[index])
+                    return left.position[index] - right.position[index];
+            }
+            return 0;
+        });
+        for (let index = 0; index < positioned.length; index++) {
+            if (index > 0 && positioned[index].position.every((value, part) => value === positioned[index - 1].position[part])) {
+                throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${positioned[index - 1].node.id} and ${positioned[index].node.id}`);
+            }
+            occurrenceByNodeId.set(positioned[index].node.id, index + 1);
+        }
+    }
+    for (const node of nodes) {
+        const symbol = nodeToOutputSymbol(node, occurrenceByNodeId.get(node.id));
+        const existingNodeId = keyToNodeId.get(symbol.symbol_key);
+        if (existingNodeId !== undefined && existingNodeId !== node.id) {
+            throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${existingNodeId} and ${node.id}`);
+        }
+        keyToNodeId.set(symbol.symbol_key, node.id);
+        symbolByNodeId.set(node.id, symbol);
     }
     return { nodes, keyToNodeId, symbolByNodeId };
 }

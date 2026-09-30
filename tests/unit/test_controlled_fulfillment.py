@@ -52,13 +52,14 @@ class SemanticExecutor:
         assert 0 < timeout_ms <= 300000
         data = json.loads(prompt.split("\nHOST_INPUT_JSON\n", 1)[1])
         assignment = data["assignment"]
+        reply_binding = data["reply_contract"]["binding"]
         self.dispatches.append(data)
         if self.bad == "provider":
             return CliRunResult(125, "", "scripted native tool rejection", token_usage=self.usage)
         if self.bad == "malformed":
             return CliRunResult(0, "[]", "", token_usage=self.usage)
         if self.bad == "read_forever" or (self.inspect_source and assignment["step"] == "mapper" and not data["reads"]):
-            value = {**assignment, "action": "read", "request": {
+            value = {**reply_binding, "action": "read", "request": {
                 "op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 2}}
         else:
             rows = []
@@ -76,13 +77,391 @@ class SemanticExecutor:
                 rows[0]["id"] = "FR-999999"
             if self.bad == "unread_citation":
                 rows[0]["verified_implementation_evidence"] = "worktree:app.py:1"
-            value = {**assignment, "action": "final", "rows": rows, "unmapped_candidates": []}
+            value = {**reply_binding, "action": "final", "rows": rows, "unmapped_candidates": []}
         return CliRunResult(0, json.dumps(value), "", token_usage=self.usage)
 
 
 def run(context, executor, **kwargs):
     from harness.controlled_fulfillment import ControlledFulfillment
     return ControlledFulfillment(executor, context.workspace_root).run(context, **kwargs)
+
+
+def test_mapper_reply_contract_declares_exact_scalar_json_types(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    fields = executor.dispatches[0]["reply_contract"]["row_fields"]
+    assert fields["runtime_threshold"] == {"type": "boolean"}
+    assert all(
+        definition["type"] == "string"
+        for name, definition in fields.items()
+        if name != "runtime_threshold"
+    )
+    for name in (
+        "verified_implementation_evidence",
+        "verified_test_evidence",
+        "codegraph_candidates",
+    ):
+        assert fields[name]["multiple_values"] == "join with ; in one string"
+
+
+def test_host_binds_mapper_input_fingerprint_and_retains_raw_reply(preparation_context):
+    class FingerprintEchoDriftExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            fingerprint = payload["input_fingerprint"]
+            payload["input_fingerprint"] = fingerprint[:32] + "c" + fingerprint[32:]
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = FingerprintEchoDriftExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    record = journal["steps"]["mapper"]["records"][0]
+    raw = json.loads(record["raw_stdout"])
+    assignment = journal["steps"]["mapper"]["assignment"]
+    assert raw["input_fingerprint"] != assignment["input_fingerprint"]
+    assert record["reply"]["input_fingerprint"] == assignment["input_fingerprint"]
+    assert record["reply"]["action"] == "final"
+
+
+def test_mapper_read_digest_echo_typo_gets_one_bound_correction(preparation_context):
+    class DigestEchoTypoExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                payload["assigned_ids_sha256"] += "e"
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = DigestEchoTypoExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == "assigned-ID digest echo mismatch"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["reply"] is None and records[0]["read"] is None
+    assert records[0]["error"] == "fulfillment assigned-ID digest echo mismatch"
+    assert records[1]["reply"]["action"] == "read"
+    assert records[2]["final_validation"] == {"status": "accepted"}
+
+
+def test_truncated_dispatch_echo_on_read_gets_one_bound_correction(preparation_context):
+    class DispatchEchoTypoExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = DispatchEchoTypoExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == "dispatch ID echo mismatch"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["reply"] is None and records[0]["read"] is None
+    assert records[0]["error"] == "fulfillment dispatch ID echo mismatch"
+    assert records[1]["reply"]["dispatch_id"] == journal["steps"]["mapper"]["assignment"]["dispatch_id"]
+
+
+@pytest.mark.parametrize("fault", [
+    "repeat_digest", "repeat_dispatch", "wrong_dispatch", "wrong_run", "digest_and_dispatch",
+    "unrelated_hex_dispatch", "unrelated_29_hex_dispatch",
+])
+def test_read_echo_correction_does_not_accept_repeated_or_other_identity_errors(
+    preparation_context, fault,
+):
+    class BadBindingExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            if fault == "wrong_dispatch":
+                payload["dispatch_id"] = "stale-dispatch"
+            elif fault in {"unrelated_hex_dispatch", "unrelated_29_hex_dispatch"}:
+                dispatch_id = payload["dispatch_id"]
+                replacement = "f" if dispatch_id[0] != "f" else "e"
+                payload["dispatch_id"] = replacement * (29 if fault == "unrelated_29_hex_dispatch" else 32)
+            elif fault == "wrong_run":
+                payload["run_id"] = "stale-run"
+            elif fault == "digest_and_dispatch":
+                payload["assigned_ids_sha256"] += "e"
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+            elif fault == "repeat_dispatch":
+                dispatch_id = payload["dispatch_id"]
+                payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+            elif len(self.dispatches) <= 2:
+                payload["assigned_ids_sha256"] += "e"
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = BadBindingExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == "fulfillment assignment binding mismatch"
+    assert executor.dispatch_count == (2 if fault in {"repeat_digest", "repeat_dispatch"} else 1)
+    assert not (preparation_context.spec_dir / "fulfillment-report.md").exists()
+
+
+@pytest.mark.parametrize("read_request", [
+    {"op": "delete", "root": "worktree", "path": "app.py"},
+    {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1},
+    {"op": "read_file", "root": "worktree", "path": "../app.py", "start_line": 1, "line_count": 2},
+    {"op": "read_file", "root": "worktree", "path": "app.py", "start_line": 1, "line_count": 201},
+])
+@pytest.mark.parametrize("wrong_field", ["assigned_ids_sha256", "dispatch_id"])
+def test_read_echo_correction_requires_a_valid_read_request(preparation_context, read_request, wrong_field):
+    class BadReadExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                if wrong_field == "dispatch_id":
+                    dispatch_id = payload["dispatch_id"]
+                    payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                else:
+                    payload["assigned_ids_sha256"] += "e"
+                payload["request"] = read_request
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = BadReadExecutor(inspect_source=True)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == "fulfillment assignment binding mismatch"
+    assert executor.dispatch_count == 1
+
+
+def test_unread_mapper_citation_gets_one_grounding_correction_turn(preparation_context):
+    class CorrectingUnreadCitationExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            dispatch = self.dispatches[-1]
+            if payload["step"] != "mapper":
+                return result
+            correction = dispatch.get("correction")
+            if correction is None:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+            elif not dispatch["reads"]:
+                payload = {
+                    **dispatch["reply_contract"]["binding"],
+                    "action": "read",
+                    "request": {
+                        "op": "read_file",
+                        "root": "worktree",
+                        "path": "app.py",
+                        "start_line": 1,
+                        "line_count": 2,
+                    },
+                }
+            else:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+            result.stdout = json.dumps(payload)
+            return result
+
+    executor = CorrectingUnreadCitationExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    mapper_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "mapper"
+    ]
+    assert len(mapper_dispatches) == 3
+    correction = mapper_dispatches[1]["correction"]
+    assert correction["attempt"] == 1
+    assert correction["max_attempts"] == 1
+    assert correction["reason"] == "verified evidence cites unread source"
+    assert correction["rejected_final"]["action"] == "final"
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert records[0]["raw_stdout"] is not None
+    assert records[0]["final_validation"] == {
+        "status": "rejected",
+        "reason": "verified evidence cites unread source",
+    }
+    assert records[-1]["final_validation"] == {"status": "accepted"}
+
+
+def test_repeated_unread_mapper_citation_exhausts_single_correction(preparation_context):
+    executor = SemanticExecutor(bad="unread_citation")
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == (
+        "fulfillment mapper grounding correction exhausted: "
+        "verified evidence cites unread source"
+    )
+    assert executor.dispatch_count == 2
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    records = journal["steps"]["mapper"]["records"]
+    assert [record["final_validation"]["status"] for record in records] == [
+        "rejected",
+        "rejected",
+    ]
+    assert records[0]["error"] is None
+    assert records[1]["error"] == result.reason
+
+
+def test_reply_contract_declares_bounded_unmapped_candidate_array(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatches[0]["reply_contract"]["unmapped_candidates"] == {
+        "type": "array",
+        "items": {"type": "string", "format": "nonempty safe single-line note"},
+        "maxItems": 100,
+        "when_none": "return []",
+    }
+
+
+def test_reply_contract_declares_one_nested_read_request(preparation_context):
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    contract = executor.dispatches[0]["reply_contract"]
+    assert contract["actions"]["read"] == {
+        "fields_after_binding": ["action", "request"],
+        "shape": {"action": "read", "request": "one read_request_schemas object"},
+        "request_count": 1,
+        "batching": "forbidden; never use a requests array",
+        "flattening": "forbidden; op/root/path belong inside request",
+    }
+    assert contract["read_request_schemas"] == {
+        "read_file": {
+            "op": "read_file",
+            "root": "evidence",
+            "path": "requirement-audit.md",
+            "start_line": 1,
+            "line_count": 200,
+        },
+        "list_directory": {
+            "op": "list_directory",
+            "root": "worktree",
+            "path": ".",
+        },
+    }
+    assert "read_file" not in contract
+    assert "list_directory" not in contract
+
+
+def test_large_mapper_assignment_is_partitioned_into_bounded_contexts(preparation_context):
+    ids = [f"FR-{index:06d}" for index in range(1, 14)]
+    (preparation_context.spec_dir / "spec.md").write_text(
+        "# Spec\n" + "".join(f"{item}: Requirement {item}.\n" for item in ids)
+    )
+    executor = SemanticExecutor()
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert [dispatch["assignment"]["assigned_ids"] for dispatch in executor.dispatches] == [
+        ids[:12],
+        ids[12:],
+    ]
+    for dispatch, assigned in zip(executor.dispatches, (ids[:12], ids[12:]), strict=True):
+        assert [row["id"] for row in dispatch["context"]["canonical_requirements"]] == assigned
+        assert [row["id"] for row in dispatch["context"]["deterministic_map"]["requirements"]] == assigned
+        assert set(dispatch["context"]["coverage"]["requirements"]) <= set(assigned)
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    assert list(journal["steps"]) == ["mapper", "mapper-0002"]
+    assert result.token_usage == 14
+
+
+def test_large_judge_assignment_uses_only_its_mapper_batch_evidence(preparation_context):
+    ids = [f"FR-{index:06d}" for index in range(1, 14)]
+    (preparation_context.spec_dir / "spec.md").write_text(
+        "# Spec\n" + "".join(f"{item}: Requirement {item}.\n" for item in ids)
+    )
+    (preparation_context.spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        + "".join(
+            f"| {item} | TC-{index:06d} | unit | automated | automated | tests/test_app.py | none |\n"
+            for index, item in enumerate(ids, start=1)
+        )
+    )
+    (preparation_context.spec_dir / "tasks.md").write_text(
+        "".join(
+            f"- [ ] T-{index:06d} complexity=standard phase=build req={item} depends=none\n"
+            for index, item in enumerate(ids, start=1)
+        )
+    )
+    class EvidenceExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            if payload["step"] == "mapper" and payload["action"] == "final":
+                for row in payload["rows"]:
+                    row.update(
+                        verified_implementation_evidence="worktree:app.py:1",
+                        confidence="low",
+                    )
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = EvidenceExecutor(inspect_source=True)
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    judge_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "judge"
+    ]
+    assert [dispatch["assignment"]["assigned_ids"] for dispatch in judge_dispatches] == [
+        ids[:12],
+        ids[12:],
+    ]
+    for dispatch, assigned in zip(judge_dispatches, (ids[:12], ids[12:]), strict=True):
+        assert [row["id"] for row in dispatch["context"]["implementation_map"]] == assigned
+        assert [row["id"] for row in dispatch["context"]["judgment_prepass"]["rows"]] == assigned
+        assert len(dispatch["context"]["mapper_reads"]) == 1
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    assert set(journal["steps"]) == {
+        "mapper",
+        "mapper-0002",
+        "judge",
+        "judge-0002",
+    }
 
 
 def test_mechanical_missing_report_skips_judge_and_stays_staged(preparation_context):
@@ -121,13 +500,66 @@ def test_real_host_read_and_prepass_select_only_unresolved_ids(preparation_conte
     assert "TC-000001" in result.gaps_path.read_text()
 
 
+def test_invalid_read_bounds_are_returned_for_correction_instead_of_failing_refresh(
+    preparation_context,
+):
+    class CorrectingExecutor(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if self.dispatch_count in {1, 2}:
+                binding = self.dispatches[-1]["reply_contract"]["binding"]
+                result.stdout = json.dumps(
+                    {
+                        **binding,
+                        "action": "read",
+                        "request": {
+                            "op": "read_file",
+                            "root": "worktree",
+                            "path": "app.py",
+                            "start_line": 1,
+                            "line_count": 201 if self.dispatch_count == 1 else 2,
+                        },
+                    }
+                )
+            return result
+
+    executor = CorrectingExecutor()
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["reads"] == [
+        {
+            "request": {
+                "op": "read_file",
+                "root": "worktree",
+                "path": "app.py",
+                "start_line": 1,
+                "line_count": 201,
+            },
+            "response": {
+                "status": "rejected",
+                "reason": "invalid_line_bounds",
+                "constraints": {
+                    "start_line": "integer >= 1",
+                    "line_count": "integer from 1 through 200",
+                },
+            },
+        }
+    ]
+    assert executor.dispatches[2]["reads"][1]["response"]["text"] == (
+        "def hello(): return 'hello'\n"
+    )
+
+
 @pytest.mark.parametrize("bad", ["provider", "malformed", "extra_id", "unread_citation"])
 def test_failed_semantics_never_publish_and_keep_usage(preparation_context, bad):
     (preparation_context.spec_dir / "fulfillment-report.md").write_text("previous accepted report")
     before = _snapshot(preparation_context.spec_dir)
     result = run(preparation_context, SemanticExecutor(bad=bad))
     assert result.exit_code != 0
-    assert result.token_usage == 7
+    assert result.token_usage == (14 if bad == "unread_citation" else 7)
+    assert result.dispatch_count == (2 if bad == "unread_citation" else 1)
     assert result.report_path is None
     assert _snapshot(preparation_context.spec_dir) == before
 
@@ -263,7 +695,7 @@ rows = [{"id": item, "verified_implementation_evidence": "", "verified_test_evid
 '''
         if fault == "extra_id":
             script += 'rows[0]["id"] = "FR-999999"\n'
-        script += '''answer = json.dumps({**data["assignment"], "action": "final", "rows": rows, "unmapped_candidates": []})
+        script += '''answer = json.dumps({**data["reply_contract"]["binding"], "action": "final", "rows": rows, "unmapped_candidates": []})
 '''
         script += f"sys.stdout.write({wire!r}.replace(json.dumps('__RESULT__'), json.dumps(answer)))\n"
     real_popen = subprocess.Popen
@@ -324,7 +756,8 @@ def test_judge_cannot_publish_implemented_from_unread_or_absent_citations(prepar
     result = run(preparation_context, FabricatingJudge(inspect_source=True))
     assert result.exit_code != 0
     assert "citat" in result.reason or "unread" in result.reason
-    assert result.token_usage == 21
+    assert result.token_usage == 28
+    assert result.dispatch_count == 4
     assert not (preparation_context.verify_run_dir / "fulfillment-report.staged.md").exists()
 
 

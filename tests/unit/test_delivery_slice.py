@@ -74,6 +74,80 @@ def test_bound_passing_result_is_accepted():
     assert validate_delivery_result(_response(), _assignment())["verdict"] == "PASS"
 
 
+@pytest.mark.parametrize("step,verdict", [("spec_guard", "FAIL"), ("test_guardian", "FAIL"),
+                                         ("spec_guard", "PASS")])
+def test_reviewed_test_paths_are_bound_review_evidence(step, verdict):
+    from harness.delivery_slice import DeliveryAssignment, validate_delivery_result
+
+    assignment = DeliveryAssignment("review-1", step, "T-009", "candidate", "inputs")
+    payload = {**assignment.identity(), "verdict": verdict, "summary": "Inspected candidate tests",
+               "findings": ["tests/integration/bootstrap.test.ts:1 misses wiring"] if verdict == "FAIL" else [],
+               "reviewed_test_paths": ["tests/integration/bootstrap.test.ts"]}
+
+    assert validate_delivery_result(json.dumps(payload), assignment)["reviewed_test_paths"] == [
+        "tests/integration/bootstrap.test.ts"
+    ]
+
+
+@pytest.mark.parametrize("paths", [
+    ["../other.test.ts"], ["/tmp/test.ts"], ["tests//entry.test.ts"],
+    ["tests\\entry.test.ts"], [""], [42],
+    ["tests/entry.test.ts", "tests/entry.test.ts"],
+])
+def test_reviewed_test_paths_reject_unsafe_or_duplicate_entries(paths):
+    from harness.delivery_slice import DeliverySliceError, validate_delivery_result
+
+    with pytest.raises(DeliverySliceError):
+        validate_delivery_result(
+            _response(verdict="FAIL", findings=["Missing test"], reviewed_test_paths=paths),
+            _assignment(),
+        )
+
+
+def test_implementer_cannot_claim_reviewed_test_paths():
+    from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, validate_delivery_result
+
+    assignment = DeliveryAssignment("impl-1", "implementer", "T-009", "candidate", "inputs")
+    payload = {**assignment.identity(), "verdict": "DONE", "summary": "Implemented",
+               "findings": [], "reviewed_test_paths": ["tests/integration/entry.test.ts"]}
+    with pytest.raises(DeliverySliceError):
+        validate_delivery_result(json.dumps(payload), assignment)
+
+
+def test_implementer_can_request_task_bound_browser_capture():
+    from harness.delivery_slice import DeliveryAssignment, bind_delivery_result
+
+    assignment = DeliveryAssignment("capture-1", "implementer", "T-010", "candidate", "inputs")
+    response = json.dumps({
+        **assignment.identity(), "verdict": "BROWSER_EVIDENCE_REQUIRED",
+        "summary": "Pinned baseline images require the configured browser sandbox",
+        "findings": [], "browser_evidence_request": {"purpose": "baseline_capture"},
+    })
+
+    assert bind_delivery_result(response, assignment)["browser_evidence_request"] == {
+        "purpose": "baseline_capture"
+    }
+
+
+@pytest.mark.parametrize("step,capture_request", [
+    ("spec_guard", {"purpose": "baseline_capture"}),
+    ("implementer", {"purpose": "baseline_capture", "command": "playwright test --update-snapshots"}),
+    ("implementer", {"purpose": "unsupported"}),
+])
+def test_browser_capture_request_cannot_expand_authority(step, capture_request):
+    from harness.delivery_slice import DeliveryAssignment, DeliverySliceError, bind_delivery_result
+
+    assignment = DeliveryAssignment("capture-1", step, "T-010", "candidate", "inputs")
+    response = json.dumps({
+        **assignment.identity(), "verdict": "BROWSER_EVIDENCE_REQUIRED",
+        "summary": "Browser evidence needed", "findings": [],
+        "browser_evidence_request": capture_request,
+    })
+
+    with pytest.raises(DeliverySliceError):
+        bind_delivery_result(response, assignment)
+
+
 @pytest.mark.parametrize("changes", [
     {"schema_version": True}, {"schema_version": 2}, {"dispatch_id": "stale"},
     {"step": "test_guardian"}, {"task_id": "T-002"}, {"candidate_fingerprint": "old"},

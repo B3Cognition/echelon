@@ -57,7 +57,7 @@ def test_refresh_activation_cannot_bypass_admission(after_synthesis, enrolled, d
     target = rounds["rounds"][rounds["active"]]
     if damage == "unbound": del target["execution_input"]
     elif damage == "source": state["last_dispatch"].update(source("f"))
-    elif damage == "pending": state["pending_controller_completion"] = {}
+    elif damage == "pending": state["_spec_step_effect_plan"] = {}
     elif damage == "cancelled": state["cancel_requested"] = True
     elif damage == "phase": state["phase"] = "phase1-discover"
     elif damage == "parent_phase": state["last_dispatch"]["phase_id"] = "phase1-discover"

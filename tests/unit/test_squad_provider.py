@@ -20,7 +20,9 @@ def test_squad_provider_preserves_normalized_token_usage(monkeypatch, tmp_path) 
     )
     provider = SquadCliProvider(config)
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         return CliRunResult(
             exit_code=0,
             stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
@@ -59,7 +61,9 @@ def test_squad_provider_preserves_backend_stderr(monkeypatch, tmp_path) -> None:
     )
     provider = SquadCliProvider(config)
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         return CliRunResult(
             exit_code=1,
             stdout="",
@@ -83,7 +87,9 @@ def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_pat
     )
     provider = SquadCliProvider(config)
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         return CliRunResult(
             exit_code=0,
             stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
@@ -145,7 +151,9 @@ def test_squad_provider_repairs_missing_echelon_result_after_clean_exit(monkeypa
     provider = SquadCliProvider(config)
     prompts: list[str] = []
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         prompts.append(prompt)
         if len(prompts) == 1:
             return CliRunResult(
@@ -177,6 +185,75 @@ def test_squad_provider_repairs_missing_echelon_result_after_clean_exit(monkeypa
     assert result.echelon_result_repair_ended_at.endswith("Z")
 
 
+def test_result_repair_cannot_inherit_publish_scope(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    requests: list[dict[str, object]] = []
+
+    def fake_run_agent_result(
+        project_root,
+        prompt,
+        timeout_ms=None,
+        request_metadata=None,
+    ):
+        requests.append(
+            {
+                "project_root": project_root,
+                "prompt": prompt,
+                "timeout_ms": timeout_ms,
+                "prompt_metadata": dict(
+                    (request_metadata or {}).get("prompt_metadata", {})
+                ),
+            }
+        )
+        if len(requests) == 1:
+            return CliRunResult(
+                exit_code=0,
+                stdout="clean result without an envelope",
+                stderr="",
+                metadata={"response_model": "gpt-primary"},
+            )
+        return CliRunResult(
+            exit_code=0,
+            stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
+            stderr="",
+            metadata={"response_model": "gpt-repair"},
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(
+        str(tmp_path),
+        "prompt",
+        prompt_metadata={
+            "tool_write_paths": [str(tmp_path / "spec.md")],
+            "tool_write_scope_exclusive": True,
+        },
+    )
+
+    assert requests[0]["prompt_metadata"]["tool_write_paths"] == [
+        str(tmp_path / "spec.md")
+    ]
+    assert requests[1]["prompt_metadata"] == {
+        "tool_read_roots": [str(tmp_path.resolve())],
+        "tool_write_paths": [],
+        "tool_write_scope_exclusive": True,
+    }
+    assert [attempt["kind"] for attempt in result.provider_attempts] == [
+        "primary",
+        "result_repair",
+    ]
+    assert result.provider_attempts[0]["attempt_id"] != (
+        result.provider_attempts[1]["attempt_id"]
+    )
+    assert all(len(attempt["response_sha256"]) == 64 for attempt in result.provider_attempts)
+
+
 def test_squad_provider_does_not_repair_timeout_or_nonzero_exit(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",
@@ -187,7 +264,9 @@ def test_squad_provider_does_not_repair_timeout_or_nonzero_exit(monkeypatch, tmp
     provider = SquadCliProvider(config)
     calls = 0
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         nonlocal calls
         calls += 1
         return CliRunResult(
@@ -216,7 +295,9 @@ def test_squad_provider_captures_provider_session_limit_without_repair(monkeypat
     provider = SquadCliProvider(config)
     calls = 0
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         nonlocal calls
         calls += 1
         return CliRunResult(
@@ -245,7 +326,9 @@ def test_squad_provider_repairs_schema_invalid_echelon_result_after_clean_exit(m
     provider = SquadCliProvider(config)
     prompts: list[str] = []
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         prompts.append(prompt)
         if len(prompts) == 1:
             return CliRunResult(
@@ -283,7 +366,9 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
     monkeypatch.chdir(tmp_path)
     prompts: list[str] = []
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         prompts.append(prompt)
         if len(prompts) == 1:
             return CliRunResult(
@@ -328,7 +413,9 @@ def test_squad_provider_repairs_missing_required_dispatch_state(monkeypatch, tmp
         unexpected_state_updates="quarantine",
     )
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         prompts.append(prompt)
         if len(prompts) == 1:
             return CliRunResult(
@@ -380,7 +467,9 @@ def test_squad_provider_quarantines_extra_reporting_state_without_repair(
         unexpected_state_updates="quarantine",
     )
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         nonlocal calls
         calls += 1
         return CliRunResult(
@@ -422,7 +511,9 @@ def test_squad_provider_rejects_git_mutation_during_agent_boundary(
     )
     provider = SquadCliProvider(config)
 
-    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+    def fake_run_agent_result(
+        project_root, prompt, timeout_ms=None, request_metadata=None
+    ):
         if mutation == "branch":
             subprocess.run(["git", "switch", "-c", "unexpected"], cwd=tmp_path, check=True)
         else:

@@ -67,18 +67,7 @@ class TestAutoMerge:
         intent.spec_id = "001"
         intent.mode = "guided"
         intent.auto_merge = True
-        intent.strategies = ["default"]
 
-        gitops = MagicMock()
-        result = attempt_auto_merge(_make_converged_result(), intent, gitops)
-        assert result is False
-        gitops.merge_pr.assert_not_called()
-
-    def test_merge_skipped_multiple_strategies(self) -> None:
-        intent = RunIntent(
-            spec_id="001", mode="banzai", auto_merge=True,
-            strategies=["fast", "safe"],
-        )
         gitops = MagicMock()
         result = attempt_auto_merge(_make_converged_result(), intent, gitops)
         assert result is False

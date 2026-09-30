@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from harness.config import HarnessConfig
@@ -43,32 +44,60 @@ def test_get_latest_worktree_returns_most_recent(tmp_path):
     """get_latest_worktree returns highest-mtime worktree dir for strategy."""
     gitops = _make_gitops(tmp_path)
 
-    wt_base = tmp_path / "runs" / "build-test" / "worktrees" / "default"
+    wt_base = tmp_path / "runs" / "build-test" / "worktrees"
     iter1 = wt_base / "iter-1"
     iter2 = wt_base / "iter-2"
     iter1.mkdir(parents=True)
     time.sleep(0.02)
     iter2.mkdir(parents=True)
 
-    result = gitops.get_latest_worktree("001", "default")
+    result = gitops.get_latest_worktree("001", build_id="build-test")
     assert result == str(iter2)
 
 
 def test_get_latest_worktree_returns_none_when_no_dir(tmp_path):
     """get_latest_worktree returns None when strategy directory does not exist."""
     gitops = _make_gitops(tmp_path)
-    result = gitops.get_latest_worktree("001", "default")
+    result = gitops.get_latest_worktree("001", build_id="build-test")
     assert result is None
 
 
 def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     """get_latest_worktree returns None when strategy dir exists but has no children."""
     gitops = _make_gitops(tmp_path)
-    wt_base = tmp_path / "runs" / "build-test" / "worktrees" / "default"
+    wt_base = tmp_path / "runs" / "build-test" / "worktrees"
     wt_base.mkdir(parents=True)
 
-    result = gitops.get_latest_worktree("001", "default")
+    result = gitops.get_latest_worktree("001", build_id="build-test")
     assert result is None
+
+
+def test_get_clean_worktree_head_returns_only_a_clean_commit(tmp_path):
+    gitops = _make_gitops(tmp_path)
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    head = "a" * 40
+
+    with patch(
+        "harness.gitops._run_git",
+        side_effect=(
+            SimpleNamespace(returncode=0, stdout=""),
+            SimpleNamespace(returncode=0, stdout=f"{head}\n"),
+        ),
+    ):
+        assert gitops.get_clean_worktree_head("001", build_id="build-test") == head
+
+
+def test_get_clean_worktree_head_rejects_dirty_worktree(tmp_path):
+    gitops = _make_gitops(tmp_path)
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+
+    with patch(
+        "harness.gitops._run_git",
+        return_value=SimpleNamespace(returncode=0, stdout=" M src/app.ts\n"),
+    ):
+        assert gitops.get_clean_worktree_head("001", build_id="build-test") is None
 
 
 def test_commit_is_ancestor_of_default_checks_the_mirror_default_branch(tmp_path):
@@ -134,7 +163,7 @@ def test_commit_excludes_ignored_verification_artifacts_after_staging(tmp_path):
 def test_destroy_worktree_reports_git_failure_when_given_path(tmp_path, caplog):
     """A failed cleanup with a Path preserves Git's diagnostic instead of raising TypeError."""
     gitops = _make_gitops(tmp_path)
-    orphaned_worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    orphaned_worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     failure = subprocess.CalledProcessError(
         128,
         ["git", "worktree", "remove"],
@@ -158,7 +187,7 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -173,6 +202,227 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert ".echelon/runtime/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_initializes_persistent_dependency_ignore(tmp_path):
+    """The initializer is idempotent for an empty greenfield target."""
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(worktree)
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# Echelon-managed generated-file rules", "node_modules/",
+    ]
+
+
+def test_sync_runtime_extension_preserves_existing_ignore_and_adds_python_rules(tmp_path):
+    """Detected stack rules extend rather than replace a target's policy."""
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    (worktree / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (worktree / ".gitignore").write_text("# own policy\ncustom/\n", encoding="utf-8")
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# own policy", "custom/", "# Echelon-managed generated-file rules",
+        "node_modules/", ".venv/", "__pycache__/", "*.py[cod]",
+    ]
+
+
+def test_sync_runtime_extension_uses_resolved_stack_rules_before_files_exist(tmp_path):
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._config.resolved_stacks = SimpleNamespace(
+        capabilities={"web_app.framework": SimpleNamespace(value="nextjs")}
+    )
+    gitops._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "# Echelon-managed generated-file rules", "node_modules/", ".next/",
+    ]
+
+
+def test_runtime_resync_does_not_migrate_existing_product_ignore(tmp_path):
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    worktree = tmp_path / "runs" / "build-old" / "worktrees" / "iter-0"
+    worktree.mkdir(parents=True)
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(tmp_path / "git-exclude") + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert not (worktree / ".gitignore").exists()
+
+
+def test_product_ignore_initializer_preserves_existing_bytes(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".gitignore").write_bytes(b"# custom \xff\ncustom/\n")
+
+    _make_gitops(tmp_path)._initialize_product_gitignore(worktree)
+
+    assert (worktree / ".gitignore").read_bytes() == (
+        b"# custom \xff\ncustom/\n# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("generated_dir", "framework", "python_target"),
+    (("node_modules", None, False), (".venv", None, True),
+     (".next", "nextjs", False), ("DerivedData", "swiftui", False),
+     (".build", "swiftui", False)),
+)
+def test_commit_rejects_already_tracked_node_dependencies(
+    tmp_path, generated_dir, framework, python_target
+):
+    """A polluted branch needs explicit repair, never silent evidence omission."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    dependency = repo / generated_dir / "package" / "index.js"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("module.exports = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", generated_dir], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    gitops = _make_gitops(tmp_path)
+    if python_target:
+        (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    if framework:
+        gitops._config.resolved_stacks = SimpleNamespace(
+            capabilities={"web_app.framework": SimpleNamespace(value=framework)}
+        )
+    with pytest.raises(GitOpsError, match=f"tracked {generated_dir}"):
+        gitops.commit(str(repo), "checkpoint")
+
+
+def test_commit_does_not_block_unmanaged_build_directory(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    artifact = repo / ".build" / "intentional.txt"
+    artifact.parent.mkdir()
+    artifact.write_text("source-controlled\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".build"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    gitops = _make_gitops(tmp_path)
+    gitops.commit(str(repo), "checkpoint")
+
+
+@pytest.mark.parametrize("bytecode_name", ("module.pyc", "module.pyo", "module.pyd"))
+def test_commit_rejects_tracked_python_bytecode(tmp_path, bytecode_name):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (repo / bytecode_name).write_bytes(b"generated")
+    subprocess.run(["git", "add", "pyproject.toml", bytecode_name], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+    with pytest.raises(GitOpsError, match="tracked Python bytecode"):
+        _make_gitops(tmp_path).commit(str(repo), "checkpoint")
+
+
+def test_greenfield_checkpoint_commits_ignore_and_source_not_installed_dependencies(tmp_path):
+    """Real git staging honors the policy created before a Delivery slice."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    runtime_workflow = tmp_path / ".echelon" / "runtime" / "workflow"
+    runtime_workflow.mkdir(parents=True)
+    (runtime_workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(repo)
+    gitops.sync_runtime_extension(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "main.js").write_text("export const demo = true;\n", encoding="utf-8")
+    (repo / "dist").mkdir()
+    (repo / "dist" / "bundle.js").write_text("deliverable\n", encoding="utf-8")
+    dependency = repo / "node_modules" / "package" / "index.js"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("module.exports = 1\n", encoding="utf-8")
+
+    gitops.commit(str(repo), "checkpoint")
+
+    committed = subprocess.run(
+        ["git", "show", "--format=", "--name-only", "HEAD"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert committed == [".gitignore", "dist/bundle.js", "src/main.js"]
+    assert subprocess.run(
+        ["git", "ls-files", "node_modules"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout == ""
+
+
+def test_greenfield_checkpoint_refreshes_rules_for_late_python_stack(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    gitops = _make_gitops(tmp_path)
+    gitops._initialize_product_gitignore(repo)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    dependency = repo / ".venv" / "lib" / "package.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("installed = True\n", encoding="utf-8")
+
+    gitops.commit(str(repo), "checkpoint")
+
+    assert ".venv/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    assert subprocess.run(
+        ["git", "ls-files", ".venv"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout == ""
+
+
+def test_commit_never_publishes_new_generated_dependencies_without_marker(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    dependency = repo / ".venv" / "lib" / "package.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("installed = True\n", encoding="utf-8")
+
+    with pytest.raises(GitOpsError, match="tracked .venv"):
+        _make_gitops(tmp_path).commit(str(repo), "checkpoint")
+
+    assert subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=repo,
+        check=True, capture_output=True, text=True,
+    ).stdout.strip() == "base"
+    assert not (repo / ".gitignore").exists()
+
+
 def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
     """Prosaic workspaces copy their deployed prose and runtime into delivery worktrees."""
     prose = tmp_path / ".echelon" / "prosaic"
@@ -180,7 +430,7 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
     (prose / "commands").mkdir(parents=True)
     (prose / "subagents").mkdir()
     (runtime / "workflow").mkdir(parents=True)
-    (prose / "commands" / "echelon.build.md").write_text("build\n", encoding="utf-8")
+    (prose / "commands" / "echelon.run.md").write_text("run\n", encoding="utf-8")
     (prose / "subagents" / "echelon.implementer.md").write_text(
         "implementer\n", encoding="utf-8"
     )
@@ -188,7 +438,7 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
     (runtime / "scripts").mkdir()
     (runtime / "scripts" / "runtime-helper.sh").write_text("helper\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -197,9 +447,9 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    assert (worktree / ".echelon/prosaic/commands/echelon.build.md").read_text(
+    assert (worktree / ".echelon/prosaic/commands/echelon.run.md").read_text(
         encoding="utf-8"
-    ) == "build\n"
+    ) == "run\n"
     assert (worktree / ".echelon/prosaic/subagents/echelon.implementer.md").exists()
     assert (worktree / ".echelon/runtime/workflow/definition.yaml").read_text(
         encoding="utf-8"
@@ -358,7 +608,7 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
         / "package.json"
     ).write_text('{"name":"picomatch"}\n', encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -377,7 +627,7 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
 
 
 def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(tmp_path):
-    """Delivery worktrees keep PerlGraph source but never copied dependencies/build output."""
+    """Delivery worktrees keep PerlGraph source, not its build or test artifacts."""
     source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
@@ -399,6 +649,10 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
     (source / "scripts" / "node" / "perlgraph" / "src" / "index.ts").write_text(
         "export {}\n", encoding="utf-8"
     )
+    (source / "scripts" / "node" / "perlgraph" / "tests").mkdir()
+    (source / "scripts" / "node" / "perlgraph" / "tests" / "analyze.test.ts").write_text(
+        "test('harness only', () => {})\n", encoding="utf-8"
+    )
     (
         source
         / "scripts"
@@ -412,7 +666,7 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
         source / "scripts" / "node" / "perlgraph" / "dist" / "cli" / "perlgraph.js"
     ).write_text("#!/usr/bin/env node\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -427,6 +681,7 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
     assert (runtime_node / "perlgraph" / "src" / "index.ts").exists()
     assert not (runtime_node / "perlgraph" / "node_modules").exists()
     assert not (runtime_node / "perlgraph" / "dist").exists()
+    assert not (runtime_node / "perlgraph" / "tests").exists()
 
 
 def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tmp_path):
@@ -447,7 +702,7 @@ def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tm
         "fresh lock\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     dest = worktree / ".echelon" / "runtime"
     (dest / "agents" / "control").mkdir(parents=True)
     (dest / "workflow").mkdir(parents=True)
@@ -493,7 +748,7 @@ def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
         "print('migration helper')\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -526,7 +781,7 @@ def test_sync_runtime_extension_excludes_reverse_engineering_bash_helpers(tmp_pa
         "#!/usr/bin/env bash\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -568,7 +823,7 @@ def test_sync_runtime_extension_excludes_learning_and_journal_bash_helpers(tmp_p
             "#!/usr/bin/env bash\n", encoding="utf-8"
         )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -621,7 +876,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_bash_helpers(tmp_path
             "#!/usr/bin/env bash\n", encoding="utf-8"
         )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -670,7 +925,7 @@ def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
         "# runtime task template\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -706,7 +961,7 @@ def test_sync_runtime_extension_excludes_phase_a_config_registers(tmp_path):
         "# runtime task template\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -742,7 +997,7 @@ def test_sync_runtime_extension_excludes_stack_playbooks(tmp_path):
         "# runtime task template\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -776,7 +1031,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_templates(tmp_path):
         "# phase a template\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -814,7 +1069,7 @@ def test_sync_runtime_extension_excludes_all_runtime_agent_prompts(tmp_path):
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -838,14 +1093,13 @@ def test_sync_runtime_extension_excludes_all_runtime_command_docs(tmp_path):
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     for name in [
-        "echelon.build.md",
         "echelon.verify-spec.md",
         "echelon.run.md",
         "echelon.re-extract.md",
     ]:
         (source / "commands" / name).write_text(f"# {name}\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -869,14 +1123,8 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     for name in [
-        "build-1-init.md",
         "verify-spec-1-init.md",
         "bugfix-1-init.md",
-        "codegen-0-preflight.md",
-        "codegen-A-preamble.md",
-        "codegen-resume.md",
-        "codegenlight-0-preflight.md",
-        "codegenlight-resume.md",
         "phase1-what.md",
         "phase3-plan.md",
         "phase4-document.md",
@@ -888,14 +1136,11 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         (source / "workflow" / "phases" / name).write_text(
             f"# {name}\n", encoding="utf-8"
         )
-    (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
-        "# appendix\n", encoding="utf-8"
-    )
     (source / "workflow" / "phases" / "appendices" / "phase1-what-reference.md").write_text(
         "# phase-a appendix\n", encoding="utf-8"
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -905,16 +1150,9 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         gitops.sync_runtime_extension(worktree)
 
     phases = worktree / ".echelon" / "runtime" / "workflow" / "phases"
-    assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
-    assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "bugfix-1-init.md").exists()
-    assert not (phases / "codegen-0-preflight.md").exists()
-    assert not (phases / "codegen-A-preamble.md").exists()
-    assert not (phases / "codegen-resume.md").exists()
-    assert not (phases / "codegenlight-0-preflight.md").exists()
-    assert not (phases / "codegenlight-resume.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()
@@ -940,13 +1178,11 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
                 "phases": [
                     {"id": "init", "spec_file": "workflow/phases/init.md"},
                     {"id": "phase1-what", "spec_file": "workflow/phases/phase1-what.md"},
-                    {"id": "build-1-init", "spec_file": "workflow/phases/build-1-init.md"},
                     {
                         "id": "verify-spec-1-init",
                         "spec_file": "workflow/phases/verify-spec-1-init.md",
                     },
                 ],
-                "build": {"task_loop": {}},
                 "verify_spec": {"phases": []},
                 "re_extraction": {"phases": []},
                 "re_planning": {"phases": []},
@@ -956,7 +1192,7 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
         encoding="utf-8",
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -975,10 +1211,9 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
         ).read_text(encoding="utf-8")
     )
     assert [phase["id"] for phase in definition["phases"]] == [
-        "build-1-init",
         "verify-spec-1-init",
     ]
-    assert "build" in definition
+    assert "build" not in definition
     assert "verify_spec" in definition
     assert "re_extraction" not in definition
     assert "re_planning" not in definition
@@ -995,7 +1230,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
         dirs_exist_ok=True,
     )
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -1009,7 +1244,8 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
 
     assert not (runtime / "commands").exists()
     assert not (runtime / "agents").exists()
-    assert (prose / "commands" / "echelon.build.md").is_file()
+    assert not (runtime / "scripts" / "node" / "perlgraph" / "tests").exists()
+    assert not (prose / "commands" / "echelon.build.md").exists()
     assert (prose / "commands" / "echelon.verify-spec.md").is_file()
     assert (prose / "subagents" / "echelon.implementer.md").is_file()
 
@@ -1023,7 +1259,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
     for path in phases_root.rglob("*.md"):
         relative = Path("workflow") / "phases" / path.relative_to(phases_root)
         assert is_delivery_workflow_phase_path(relative), relative
-        assert not path.name.startswith(("bugfix-", "codegen-", "codegenlight-"))
+        assert not path.name.startswith("bugfix-")
         assert not path.name.startswith(("phase", "re-", "init"))
 
     for forbidden in [
@@ -1047,7 +1283,7 @@ def test_sync_runtime_extension_does_not_materialize_provider_native_prose(tmp_p
     (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -1070,7 +1306,7 @@ def test_sync_runtime_extension_has_same_control_plane_for_codex(tmp_path):
     (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
@@ -1084,7 +1320,7 @@ def test_sync_runtime_extension_has_same_control_plane_for_codex(tmp_path):
 
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):
     """Missing runtime prompts fail deterministically instead of inviting global search."""
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "iter-0"
     worktree.mkdir(parents=True)
 
     gitops = _make_gitops(tmp_path)
@@ -1102,7 +1338,7 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
     """Feature-branch mode must not reuse old harness worktrees from prior builds."""
     mirror = tmp_path / "runs" / "mirror.git"
     mirror.mkdir(parents=True)
-    stale = tmp_path / "runs" / "build-old" / "worktrees" / "default" / "iter-0"
+    stale = tmp_path / "runs" / "build-old" / "worktrees" / "iter-0"
     stale.mkdir(parents=True)
 
     gitops = _make_gitops(tmp_path)
@@ -1127,13 +1363,12 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
     ) as sync_runtime:
         result = gitops.create_worktree(
             "001-feature",
-            "default",
             0,
             base_branch="001-feature",
             build_id="build-new",
         )
 
-    expected = tmp_path / "runs" / "build-new" / "worktrees" / "default" / "iter-0"
+    expected = tmp_path / "runs" / "build-new" / "worktrees" / "iter-0"
     assert result == str(expected)
     assert (
         ["worktree", "remove", "--force", str(stale)],
@@ -1146,15 +1381,44 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
     sync_runtime.assert_called_once_with(expected, prepare_codegraph=False)
 
 
+def test_create_worktree_initializes_reused_external_checkout_for_new_run(tmp_path):
+    mirror = tmp_path / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
+    existing = tmp_path / "external-checkout"
+    existing.mkdir()
+    gitops = _make_gitops(tmp_path)
+
+    def fake_run_git(args, cwd=None, **_kwargs):
+        if args[:2] == ["worktree", "add"]:
+            raise GitOpsError(
+                f"fatal: '001-feature' is already used by worktree at '{existing}'",
+                command="git worktree add",
+            )
+        return SimpleNamespace(stdout="")
+
+    with patch("harness.gitops._run_git", side_effect=fake_run_git), patch.object(
+        gitops, "sync_runtime_extension"
+    ):
+        result = gitops.create_worktree(
+            "001-feature", 0, base_branch="001-feature", build_id="build-new",
+            fresh_branch=True,
+        )
+
+    assert result == str(existing)
+    assert (existing / ".gitignore").read_text(encoding="utf-8") == (
+        "# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
+
+
 def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_path):
     """Legacy harness/* branches must not be blocked by stale prior worktrees."""
     mirror = tmp_path / "runs" / "mirror.git"
     mirror.mkdir(parents=True)
-    stale = tmp_path / "runs" / "build-old" / "worktrees" / "default" / "iter-1"
+    stale = tmp_path / "runs" / "build-old" / "worktrees" / "iter-1"
     stale.mkdir(parents=True)
 
     gitops = _make_gitops(tmp_path)
-    branch_name = "harness/905-import-prose/default/iter-1"
+    branch_name = "harness/905-import-prose/build-new/iter-1"
     add_error = GitOpsError(
         f"fatal: '{branch_name}' is already used by worktree at '{stale}'",
         command="git worktree add",
@@ -1179,13 +1443,12 @@ def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_pat
     ) as sync_runtime:
         result = gitops.create_worktree(
             "905-import-prose",
-            "default",
             1,
             base_branch=None,
             build_id="build-new",
         )
 
-    expected = tmp_path / "runs" / "build-new" / "worktrees" / "default" / "iter-1"
+    expected = tmp_path / "runs" / "build-new" / "worktrees" / "iter-1"
     assert result == str(expected)
     assert (
         ["worktree", "remove", "--force", str(stale)],
@@ -1216,8 +1479,8 @@ def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
     )
     gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
     gitops.clone_mirror(str(target))
-    branch = "harness/905-import-prose/default/iter-0"
-    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "default" / "iter-0"
+    branch = "harness/905-import-prose/build-new/iter-0"
+    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "iter-0"
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(stale), "main"],
         cwd=gitops.mirror_path,
@@ -1235,7 +1498,6 @@ def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
         worktree = Path(
             gitops.create_worktree(
                 "905-import-prose",
-                "default",
                 0,
                 build_id="build-new",
                 fresh_branch=True,
@@ -1244,6 +1506,9 @@ def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
 
     assert (worktree / "current.txt").read_text(encoding="utf-8") == "current main\n"
     assert not (worktree / "stale.txt").exists()
+    assert (worktree / ".gitignore").read_text(encoding="utf-8") == (
+        "# Echelon-managed generated-file rules\nnode_modules/\n"
+    )
 
 
 def test_fresh_legacy_worktree_retains_explicit_checkpoint_baseline(tmp_path):
@@ -1283,7 +1548,7 @@ def test_fresh_legacy_worktree_retains_explicit_checkpoint_baseline(tmp_path):
 
     with patch.object(gitops, "sync_runtime_extension"):
         worktree = Path(gitops.create_worktree(
-            "905-import-prose", "default", 0, build_id="build-new",
+            "905-import-prose", 0, build_id="build-new",
             fresh_branch=True, fresh_branch_base=candidate,
         ))
 
@@ -1344,7 +1609,7 @@ def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base
     )
     gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
     gitops.clone_mirror(str(target))
-    iter0 = "harness/905-import-prose/default/iter-0"
+    iter0 = "harness/905-import-prose/build-new/iter-0"
     current = tmp_path / "current-iter-0"
     subprocess.run(
         ["git", "worktree", "add", "-b", iter0, str(current), "main"],
@@ -1355,8 +1620,8 @@ def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base
     subprocess.run(["git", "add", "current.txt"], cwd=current, check=True)
     subprocess.run(["git", "commit", "-m", "current iteration zero"], cwd=current, check=True)
 
-    iter1 = "harness/905-import-prose/default/iter-1"
-    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "default" / "iter-1"
+    iter1 = "harness/905-import-prose/build-new/iter-1"
+    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "iter-1"
     subprocess.run(
         ["git", "worktree", "add", "-b", iter1, str(stale), "main"],
         cwd=gitops.mirror_path,
@@ -1370,7 +1635,6 @@ def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base
         worktree = Path(
             gitops.create_worktree(
                 "905-import-prose",
-                "default",
                 1,
                 build_id="build-new",
             )
@@ -1387,8 +1651,8 @@ def test_create_worktree_bases_legacy_iteration_on_previous_iteration_branch(tmp
 
     gitops = _make_gitops(tmp_path)
     calls: list[tuple[list[str], str | None]] = []
-    new_branch = "harness/905-import-prose/default/iter-2"
-    previous_branch = "harness/905-import-prose/default/iter-1"
+    new_branch = "harness/905-import-prose/build-new/iter-2"
+    previous_branch = "harness/905-import-prose/build-new/iter-1"
 
     def fake_run_git(args, cwd=None, **_kwargs):
         calls.append((args, cwd))
@@ -1405,7 +1669,6 @@ def test_create_worktree_bases_legacy_iteration_on_previous_iteration_branch(tmp
     ):
         gitops.create_worktree(
             "905-import-prose",
-            "default",
             2,
             base_branch=None,
             build_id="build-new",
@@ -1425,9 +1688,9 @@ def test_create_worktree_bases_legacy_iteration_on_latest_existing_prior_branch(
 
     gitops = _make_gitops(tmp_path)
     calls: list[tuple[list[str], str | None]] = []
-    new_branch = "harness/905-import-prose/default/iter-2"
-    missing_branch = "harness/905-import-prose/default/iter-1"
-    recovered_branch = "harness/905-import-prose/default/iter-0"
+    new_branch = "harness/905-import-prose/build-new/iter-2"
+    missing_branch = "harness/905-import-prose/build-new/iter-1"
+    recovered_branch = "harness/905-import-prose/build-new/iter-0"
 
     def fake_run_git(args, cwd=None, **_kwargs):
         calls.append((args, cwd))
@@ -1446,7 +1709,6 @@ def test_create_worktree_bases_legacy_iteration_on_latest_existing_prior_branch(
     ):
         gitops.create_worktree(
             "905-import-prose",
-            "default",
             2,
             base_branch=None,
             build_id="build-new",

@@ -54,7 +54,6 @@ license-files = ["LICENSE", "LICENSE-MIT", "NOTICE"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"codegen" = ["soar/*.soar", "library/packs/**/*.yaml"]
 "echelon" = ["assets/*.js", "assets/licenses/*"]
 "lexicon" = ["*.lark"]
 

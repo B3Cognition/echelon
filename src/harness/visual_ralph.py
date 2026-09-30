@@ -2,23 +2,23 @@
 
 Runs Playwright headless tests inside the container sandbox after Phase 1
 (unit/logic) converges. Retrieves screenshots via container cp and passes
-them as evidence to echelon build --fix.
+them to the controller-owned repair callback as evidence.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import logging
 import shlex
 import subprocess
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional
 
 from harness.config import HarnessConfig
+from harness.delivery_errors import DeliveryConfigurationError
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
-from harness.delivery_prompt import DeliveryPromptError
 from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -28,6 +28,20 @@ from harness.verification_evidence import redact_verification_text
 from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
 
 logger = logging.getLogger(__name__)
+
+MAX_BROWSER_BASELINE_IMAGES = 64
+MAX_BROWSER_BASELINE_IMAGE_BYTES = 10_000_000
+MAX_BROWSER_BASELINE_TOTAL_BYTES = 64_000_000
+
+
+@dataclass(frozen=True)
+class BrowserBaselineCapture:
+    """Unpublished baseline bytes from one isolated browser execution."""
+
+    candidate_fingerprint: str
+    verification: VerifyResult
+    images: Dict[str, bytes]
+    diagnostic: str = ""
 
 
 class VisualRalphController:
@@ -42,7 +56,6 @@ class VisualRalphController:
         provider: SandboxProvider,
         config: HarnessConfig,
         spec_id: str,
-        strategy_id: str,
         base_dir: str = ".",
         build_id: str = "",
         sandbox_spec_factory: Callable[[str], SandboxSpec] | None = None,
@@ -50,20 +63,83 @@ class VisualRalphController:
             Callable[[SandboxHandle, str, VerifyResult, List[str]], Dict[str, Any]]
             | None
         ) = None,
+        semantic_visual_gate_required: bool = False,
+        semantic_validator: Callable[[str, VisualEvidenceRef], Dict[str, Any]] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
         self._spec_id = spec_id
-        self._strategy_id = strategy_id
         self._base_dir = base_dir
         self._build_id = build_id or "unscoped"
         self._vc = config.visual_tests
         self._last_staging_dir: Path | None = None
         self._sandbox_spec_factory = sandbox_spec_factory
         self._feedback_runner = feedback_runner
+        self._semantic_visual_gate_required = semantic_visual_gate_required
+        self._semantic_validator = semantic_validator
         self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
+
+    def capture_baselines(self, worktree_path: str) -> BrowserBaselineCapture:
+        """Run configured Playwright capture in a disposable candidate copy."""
+        command = self._vc.test_command.strip()
+        if "playwright test" not in command:
+            raise RuntimeError("browser baseline capture requires a Playwright test command")
+        fingerprint = product_evidence_fingerprint(Path(worktree_path))
+        handle = self._provider.create(self._build_sandbox_spec(worktree_path))
+        try:
+            self._prepare_verification_runtime(handle, worktree_path)
+            self._setup_app_runtime(handle)
+            self._start_app_runtime(handle)
+            self._wait_for_app_runtime(handle)
+            verification = self._exec_visual_verify(
+                handle, command=f"{command} --update-snapshots",
+            )
+            listing = self._provider.exec(
+                handle,
+                "find . -type d -name node_modules -prune -o "
+                "-type f -path '*-snapshots/*' -print0",
+                cwd="/workspace", timeout_ms=30_000,
+            )
+            if listing.exit_code != 0:
+                raise RuntimeError("browser baseline paths could not be listed")
+            images: Dict[str, bytes] = {}
+            total_image_bytes = 0
+            for raw_path in listing.stdout.split("\0"):
+                if not raw_path:
+                    continue
+                relative = PurePosixPath(raw_path.removeprefix("./"))
+                if (relative.is_absolute() or ".." in relative.parts
+                        or not any(part.endswith("-snapshots") for part in relative.parts[:-1])
+                        or relative.suffix.lower() not in {".png", ".jpg", ".jpeg"}):
+                    raise RuntimeError("invalid browser baseline path")
+                if len(images) >= MAX_BROWSER_BASELINE_IMAGES:
+                    raise RuntimeError("browser baseline capture exceeded image limit")
+                content = self._provider.read_file(handle, f"/workspace/{relative}")
+                if len(content) > MAX_BROWSER_BASELINE_IMAGE_BYTES:
+                    raise RuntimeError("browser baseline image exceeded size limit")
+                total_image_bytes += len(content)
+                if total_image_bytes > MAX_BROWSER_BASELINE_TOTAL_BYTES:
+                    raise RuntimeError("browser baseline capture exceeded total size limit")
+                images[relative.as_posix()] = content
+            if fingerprint != product_evidence_fingerprint(Path(worktree_path)):
+                raise RuntimeError("candidate changed during browser baseline capture")
+            diagnostic = ""
+            if not verification.passed:
+                failures = (
+                    f"{failure.id}: {failure.error}" for failure in verification.failures[:8]
+                )
+                diagnostic = redact_verification_text(
+                    "; ".join(failures) or "Playwright verification failed",
+                    self._runtime_env,
+                )[:4000]
+            return BrowserBaselineCapture(fingerprint, verification, images, diagnostic)
+        finally:
+            try:
+                self._stop_app_runtime(handle)
+            finally:
+                self._provider.destroy(handle)
 
     def run_loop(
         self,
@@ -75,13 +151,15 @@ class VisualRalphController:
 
         for iteration in range(self._vc.max_iterations):
             logger.info(
-                "Visual loop iteration %d/%d for %s/%s",
+                "Visual loop iteration %d/%d for %s",
                 iteration + 1, self._vc.max_iterations,
-                self._spec_id, self._strategy_id,
+                self._spec_id,
             )
 
+            candidate_before = _safe_product_fingerprint(worktree_path)
             sandbox_spec = self._build_sandbox_spec(worktree_path)
             handle = self._provider.create(sandbox_spec)
+            runtime_stopped = False
 
             try:
                 try:
@@ -115,6 +193,21 @@ class VisualRalphController:
 
                 attempt_sequence = self._next_visual_attempt_sequence()
                 screenshots = self._retrieve_screenshots(handle, attempt_sequence)
+                runtime_stopped = True
+                self._stop_app_runtime(handle)
+                if candidate_before and candidate_before != _safe_product_fingerprint(worktree_path):
+                    verify_result = self._with_visual_failure(
+                        verify_result,
+                        failure_id="candidate-mutated-during-visual-verification",
+                        error="sandbox browser verification changed bounded candidate content",
+                    )
+                    return VisualResult(
+                        status="blocked",
+                        termination_reason="candidate_mutated_during_visual_verification",
+                        iterations=iteration + 1,
+                        tokens_used=tokens_used,
+                        final_verify=verify_result,
+                    )
                 try:
                     evidence = self._record_visual_evidence(
                         worktree_path=Path(worktree_path),
@@ -143,14 +236,70 @@ class VisualRalphController:
                         )
 
                 if verify_result.passed and evidence is not None and evidence.passed:
-                    return VisualResult(
-                        status="passed",
-                        termination_reason="converged",
-                        iterations=iteration + 1,
-                        tokens_used=tokens_used,
-                        final_verify=verify_result,
-                        evidence=evidence,
-                    )
+                    if self._semantic_visual_gate_required:
+                        verdict = None
+                        if self._semantic_validator is not None:
+                            try:
+                                verdict = self._semantic_validator(worktree_path, evidence)
+                            except Exception as exc:
+                                verdict = {"status": "blocked", "reason": str(exc)}
+                        if isinstance(verdict, dict):
+                            usage = verdict.get("tokens_used")
+                            if type(usage) is int and usage > 0:
+                                tokens_used += usage
+                        if isinstance(verdict, dict):
+                            if (
+                                verdict.get("status") == "passed"
+                                and isinstance(verdict.get("receipt"), dict)
+                                and verdict["receipt"].get("verdict") == "PASS"
+                            ):
+                                return VisualResult(
+                                    status="passed",
+                                    termination_reason="converged",
+                                    iterations=iteration + 1,
+                                    tokens_used=tokens_used,
+                                    final_verify=verify_result,
+                                    evidence=evidence,
+                                    semantic_evidence=verdict["receipt"],
+                                )
+                            if (
+                                verdict.get("status") == "failed"
+                                and isinstance(verdict.get("receipt"), dict)
+                                and verdict["receipt"].get("verdict") == "FAIL"
+                                and isinstance(verdict.get("findings"), list)
+                                and verdict["findings"]
+                            ):
+                                verify_result = self._with_visual_failure(
+                                    verify_result,
+                                    failure_id="semantic-visual-failed",
+                                    error="; ".join(str(item) for item in verdict["findings"]),
+                                )
+                        if verify_result.passed:
+                            verify_result = self._with_visual_failure(
+                                verify_result,
+                                failure_id="semantic-visual-validator-unavailable",
+                                error=str(
+                                    verdict.get("reason") if isinstance(verdict, dict)
+                                    else "The published semantic visual gate has no independent verdict."
+                                ),
+                            )
+                            return VisualResult(
+                                status="blocked",
+                                termination_reason="semantic_visual_validator_unavailable",
+                                iterations=iteration + 1,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                evidence=evidence,
+                            )
+                    else:
+                        return VisualResult(
+                            status="passed",
+                            termination_reason="converged",
+                            iterations=iteration + 1,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                            evidence=evidence,
+                        )
 
                 fingerprint_before_fix = _safe_product_fingerprint(worktree_path)
                 fix_result = self._exec_visual_feedback(
@@ -184,8 +333,9 @@ class VisualRalphController:
                     return VisualResult(
                         status="blocked",
                         termination_reason=(
-                            "delivery_prompt_invalid"
-                            if fix_result.get("build_status") == "delivery_prompt_invalid"
+                            "delivery_configuration_invalid"
+                            if fix_result.get("build_status")
+                            == "delivery_configuration_invalid"
                             else "visual_feedback_failed"
                         ),
                         iterations=iteration + 1,
@@ -204,7 +354,8 @@ class VisualRalphController:
 
             finally:
                 self._cleanup_screenshot_staging()
-                self._stop_app_runtime(handle)
+                if not runtime_stopped:
+                    self._stop_app_runtime(handle)
                 self._provider.destroy(handle)
 
         return VisualResult(
@@ -217,14 +368,14 @@ class VisualRalphController:
 
     # === Verify ===
 
-    def _exec_visual_verify(self, handle: SandboxHandle) -> VerifyResult:
+    def _exec_visual_verify(self, handle: SandboxHandle, *, command: str | None = None) -> VerifyResult:
         """Run Playwright tests inside the sandbox.
 
         Expects playwright.config.ts to handle server startup via webServer.
         """
         result = self._provider.exec(
             handle,
-            self._vc.test_command,
+            command or self._vc.test_command,
             cwd="/workspace",
             env=dict(self._runtime_env),
             timeout_ms=self._vc.timeout_ms,
@@ -493,7 +644,6 @@ class VisualRalphController:
             / self._build_id
             / "evidence"
             / "visual"
-            / self._strategy_id
         )
 
     def _next_visual_attempt_sequence(self) -> int:
@@ -518,7 +668,6 @@ class VisualRalphController:
         return write_visual_receipt(
             evidence_dir=self._visual_evidence_dir(),
             spec_id=self._spec_id,
-            strategy_id=self._strategy_id,
             build_id=self._build_id,
             candidate_commit=self._worktree_head(worktree_path),
             candidate_fingerprint=fingerprint,
@@ -579,7 +728,7 @@ class VisualRalphController:
         verify_result: VerifyResult,
         screenshots: List[str],
     ) -> Dict[str, Any]:
-        """Run echelon build --fix with visual failure context."""
+        """Run controller-owned visual repair with visual failure context."""
         if self._feedback_runner is not None:
             try:
                 result = dict(
@@ -590,14 +739,14 @@ class VisualRalphController:
                         screenshots,
                     )
                 )
-            except DeliveryPromptError as exc:
+            except DeliveryConfigurationError as exc:
                 # Return through normal accounting so evidence and usage survive.
                 return {
                     "exit_code": 1,
                     "passed": False,
                     "duration_s": 0.0,
                     "tokens": 0,
-                    "build_status": "delivery_prompt_invalid",
+                    "build_status": "delivery_configuration_invalid",
                     "build_reason": str(exc),
                 }
             except Exception as exc:
@@ -615,33 +764,13 @@ class VisualRalphController:
             )[-1000:]
             return result
 
-        failures_json = json.dumps([
-            {"category": f.category.value, "id": f.id, "error": f.error}
-            for f in verify_result.failures
-        ])
-
-        screenshot_env = ""
-        if screenshots:
-            screenshot_env = f"VISUAL_SCREENSHOTS='{json.dumps(screenshots)}' "
-
-        cmd = (
-            f"{screenshot_env}"
-            f"echelon build --fix --failures '{failures_json}' --context 'visual'"
-        )
-
-        result = self._provider.exec(
-            handle,
-            cmd,
-            cwd="/workspace",
-            env=dict(self._runtime_env),
-            timeout_ms=1_200_000,
-        )
         return {
-            "exit_code": result.exit_code,
-            "passed": result.exit_code == 0,
-            "duration_s": result.duration_ms / 1000.0,
-            "tokens": _estimate_tokens(result),
-            "diagnostic": self._command_diagnostic(result),
+            "exit_code": 1,
+            "passed": False,
+            "duration_s": 0.0,
+            "tokens": 0,
+            "build_status": "delivery_configuration_invalid",
+            "build_reason": "Controlled visual repair requires a controller callback",
         }
 
     # === Sandbox spec ===
@@ -654,11 +783,11 @@ class VisualRalphController:
             spec = self._sandbox_spec_factory(worktree_path)
             return replace(
                 spec,
+                isolate_candidate=True,
                 labels={
                     **dict(spec.labels),
                     "phase": "visual",
                     "spec_id": self._spec_id,
-                    "strategy_id": self._strategy_id,
                 },
             )
 
@@ -684,8 +813,8 @@ class VisualRalphController:
             labels={
                 "phase": "visual",
                 "spec_id": self._spec_id,
-                "strategy_id": self._strategy_id,
             },
+            isolate_candidate=True,
         )
 
     def _command_diagnostic(self, result: ExecResult, limit: int = 1000) -> str:

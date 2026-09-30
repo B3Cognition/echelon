@@ -99,13 +99,168 @@ PLAYWRIGHT_FAIL_JSON = json.dumps({
 })
 
 
+def test_baseline_capture_uses_isolated_browser_and_returns_snapshot_bytes(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = candidate / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-1")
+    snapshot_path = "tests/e2e/checkpoints.spec.ts-snapshots/establishing-chromium.png"
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout=f"./{snapshot_path}\0")
+        if "playwright test" in command:
+            assert command.endswith("--update-snapshots")
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"\x89PNG\r\n\x1a\nimage"
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert capture.images == {snapshot_path: b"\x89PNG\r\n\x1a\nimage"}
+    assert capture.verification.passed
+    assert source.read_text(encoding="utf-8") == "export const ready = true;\n"
+    assert provider.create.call_args.args[0].isolate_candidate is True
+    provider.read_file.assert_called_once_with(
+        provider.create.return_value, f"/workspace/{snapshot_path}"
+    )
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_baseline_capture_accepts_full_thirty_three_checkpoint_suite(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-many")
+    paths = [f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i:02d}.png" for i in range(33)]
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="".join(f"./{path}\0" for path in paths))
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"image"
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert list(capture.images) == paths
+    assert capture.verification.passed
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_baseline_capture_rejects_aggregate_image_bytes(tmp_path: Path, monkeypatch):
+    import harness.visual_ralph as visual_ralph
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-overweight")
+    paths = [f"tests/e2e/checkpoints.spec.ts-snapshots/checkpoint-{i}.png" for i in range(3)]
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="".join(f"./{path}\0" for path in paths))
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    provider.read_file.return_value = b"1234"
+    monkeypatch.setattr(visual_ralph, "MAX_BROWSER_BASELINE_TOTAL_BYTES", 10, raising=False)
+    controller = visual_ralph.VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+        base_dir=str(tmp_path), build_id="build-1",
+    )
+
+    with pytest.raises(RuntimeError, match="total size limit"):
+        controller.capture_baselines(str(candidate))
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_passing_baseline_capture_without_images_returns_observation_and_destroys_sandbox(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-2")
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="")
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(), spec_id="001",
+    )
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert capture.verification.passed
+    assert capture.images == {}
+    provider.read_file.assert_not_called()
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
+def test_failing_baseline_capture_without_images_returns_test_diagnostics(tmp_path: Path):
+    from harness.visual_ralph import VisualRalphController
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="browser", session_id="capture-3")
+
+    def execute(_handle, command, **_kwargs):
+        if "find ." in command:
+            return _exec_result(stdout="")
+        if "playwright test" in command:
+            return _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
+        return _exec_result()
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(provider=provider, config=_make_config(), spec_id="001")
+
+    capture = controller.capture_baselines(str(candidate))
+
+    assert capture.images == {}
+    assert capture.verification.passed is False
+    assert capture.diagnostic
+    provider.destroy.assert_called_once_with(provider.create.return_value)
+
+
 def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Path):
-    from harness.delivery_prompt import DeliveryPromptError
+    from harness.delivery_errors import DeliveryConfigurationError
     from harness.visual_evidence import validate_visual_receipt
     from harness.visual_ralph import VisualRalphController
 
     def invalid_setup(*args):
-        raise DeliveryPromptError("canonical build command is missing")
+        raise DeliveryConfigurationError("canonical build command is missing")
 
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -117,7 +272,7 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
     provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
     controller = VisualRalphController(
         provider=provider, config=_make_config(max_iterations=1), spec_id="001",
-        strategy_id="default", feedback_runner=invalid_setup, base_dir=str(tmp_path),
+        feedback_runner=invalid_setup, base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -125,7 +280,7 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
         result = controller.run_loop(worktree_path=str(worktree))
 
     assert result.status == "blocked"
-    assert result.termination_reason == "delivery_prompt_invalid"
+    assert result.termination_reason == "delivery_configuration_invalid"
     assert result.iterations == 1
     assert result.tokens_used > 0
     assert result.final_verify is not None
@@ -143,6 +298,32 @@ def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Pa
     provider.destroy.assert_called_once()
 
 
+def test_visual_feedback_without_controller_callback_is_configuration_failure(
+    tmp_path: Path,
+):
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(exit_code=0)
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+                base_dir=str(tmp_path),
+    )
+
+    result = controller._exec_visual_feedback(
+        SandboxHandle(id="visual", session_id="attempt-1"),
+        str(tmp_path),
+        VerifyResult(passed=False),
+        [],
+    )
+
+    assert result["passed"] is False
+    assert result["build_status"] == "delivery_configuration_invalid"
+    provider.exec.assert_not_called()
+
+
 def test_exec_visual_verify_pass():
     """Passing playwright JSON → VerifyResult.passed = True, no failures."""
     from harness.visual_ralph import VisualRalphController
@@ -154,8 +335,7 @@ def test_exec_visual_verify_pass():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -177,8 +357,7 @@ def test_exec_visual_verify_rejects_zero_test_success() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
 
@@ -209,8 +388,7 @@ def test_exec_visual_verify_rejects_skipped_required_test() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
 
@@ -232,8 +410,7 @@ def test_exec_visual_verify_fail_parses_failures():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -256,8 +433,7 @@ def test_exec_visual_verify_non_json_stdout():
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
     handle = SandboxHandle(id="abc123", session_id="s1")
     result = ctrl._exec_visual_verify(handle)
@@ -284,8 +460,7 @@ def test_run_loop_converges_on_first_pass(tmp_path: Path):
         provider=provider,
         config=_make_config(max_iterations=3),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -296,6 +471,142 @@ def test_run_loop_converges_on_first_pass(tmp_path: Path):
     assert result.termination_reason == "converged"
     assert result.iterations == 1
     provider.destroy.assert_called_once()
+
+
+def test_semantic_visual_gate_blocks_after_browser_pass_without_validator_receipt(
+    tmp_path: Path,
+) -> None:
+    """Passing Playwright and retained images are not a semantic verdict."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    feedback = MagicMock()
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        feedback_runner=feedback, semantic_visual_gate_required=True,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "semantic_visual_validator_unavailable"
+    assert result.final_verify is not None
+    assert any(
+        failure.id == "semantic-visual-validator-unavailable"
+        for failure in result.final_verify.failures
+    )
+    assert result.evidence is not None
+    feedback.assert_not_called()
+
+
+def test_semantic_visual_gate_accepts_independent_passing_verdict(
+    tmp_path: Path,
+) -> None:
+    """A passing browser receipt alone is insufficient; the validator must run."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    accepted = []
+
+    def validate(candidate: str, evidence):
+        from harness.visual_evidence import write_semantic_visual_receipt
+
+        accepted.append((candidate, evidence))
+        image = json.loads(evidence.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+        receipt = write_semantic_visual_receipt(
+            visual_ref=evidence, candidate_fingerprint=evidence.candidate_fingerprint,
+            spec_digest="a" * 64, verdict="PASS", summary="Pitch and sky render correctly",
+            findings=[], reviewed_artifacts=[image], token_usage=7,
+        )
+        return {
+            "status": "passed",
+            "tokens_used": 7,
+            "receipt": receipt,
+        }
+
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        semantic_visual_gate_required=True, semantic_validator=validate,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "passed"
+    assert result.tokens_used >= 7
+    assert result.semantic_evidence is not None
+    assert result.semantic_evidence["verdict"] == "PASS"
+    assert len(accepted) == 1
+    assert accepted[0][0] == str(worktree)
+    assert accepted[0][1].receipt_sha256 == result.evidence.receipt_sha256
+
+
+def test_semantic_visual_failure_uses_existing_visual_repair_path(
+    tmp_path: Path,
+) -> None:
+    """A concrete semantic finding is repair feedback, not gate unavailability."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    feedback = MagicMock(return_value={"passed": True, "tokens": 5})
+
+    def validate(_candidate, evidence):
+        from harness.visual_evidence import write_semantic_visual_receipt
+
+        image = json.loads(evidence.path.read_text(encoding="utf-8"))["artifacts"][0]["path"]
+        finding = "Pitch markings are invisible in journey.png"
+        receipt = write_semantic_visual_receipt(
+            visual_ref=evidence, candidate_fingerprint=evidence.candidate_fingerprint,
+            spec_digest="a" * 64, verdict="FAIL", summary="Pitch markings missing",
+            findings=[finding], reviewed_artifacts=[image], token_usage=7,
+        )
+        return {
+            "status": "failed", "tokens_used": 7,
+            "findings": [finding], "receipt": receipt,
+        }
+
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=2),
+        spec_id="001", base_dir=str(tmp_path), build_id="build-1",
+        feedback_runner=feedback, semantic_visual_gate_required=True,
+        semantic_validator=validate,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "fix_applied"
+    assert result.tokens_used >= 12
+    assert result.final_verify is not None
+    assert any(
+        failure.id == "semantic-visual-failed"
+        for failure in result.final_verify.failures
+    )
+    feedback.assert_called_once()
 
 
 def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
@@ -335,8 +646,7 @@ def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
         provider=provider,
         config=config,
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
         sandbox_spec_factory=sandbox_factory,
     )
@@ -378,8 +688,7 @@ def test_zero_test_failure_reports_command_stderr() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller._exec_visual_verify(
         SandboxHandle(id="abc123", session_id="s1")
@@ -403,8 +712,7 @@ def test_playwright_parse_failure_reports_command_stderr() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller._exec_visual_verify(
         SandboxHandle(id="abc123", session_id="s1")
@@ -428,8 +736,7 @@ def test_visual_command_diagnostics_redact_runtime_credentials() -> None:
         provider=provider,
         config=_make_config(),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
     controller._runtime_env = {"TEST_DATABASE_URL": secret_url}
 
     result = controller._exec_visual_verify(
@@ -458,8 +765,7 @@ def test_visual_dependency_bootstrap_failure_is_actionable(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-    )
+            )
 
     result = controller.run_loop(worktree_path=str(tmp_path))
 
@@ -489,8 +795,7 @@ def test_run_loop_retains_success_screenshot_as_candidate_evidence(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -507,6 +812,104 @@ def test_run_loop_retains_success_screenshot_as_candidate_evidence(
     ).valid
 
 
+def test_visual_verifier_cannot_pass_after_mutating_candidate(tmp_path: Path) -> None:
+    """A writable sandbox must not bless Playwright-generated source changes."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    source = worktree / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+
+    def mutate_during_browser_test(*_args, **_kwargs):
+        source.write_text("export const ready = false;\n", encoding="utf-8")
+        return _exec_result(stdout=PLAYWRIGHT_PASS_JSON)
+
+    provider.exec.side_effect = mutate_during_browser_test
+    feedback = MagicMock()
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+        feedback_runner=feedback,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "candidate_mutated_during_visual_verification"
+    assert result.final_verify is not None
+    assert any(f.id == "candidate-mutated-during-visual-verification" for f in result.final_verify.failures)
+    assert result.evidence is None
+    feedback.assert_not_called()
+    provider.destroy.assert_called_once()
+
+
+def test_visual_runtime_teardown_cannot_mutate_passing_candidate(tmp_path: Path) -> None:
+    """A passing receipt must describe the candidate after runtime shutdown too."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    source = worktree / "app.ts"
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+
+    def execute(_handle, command, **_kwargs):
+        if command == "npx nx reset":
+            source.write_text("export const ready = false;\n", encoding="utf-8")
+        return _exec_result(
+            stdout=PLAYWRIGHT_PASS_JSON if "npx playwright test" in command else "ready"
+        )
+
+    provider.exec.side_effect = execute
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "candidate_mutated_during_visual_verification"
+    assert result.evidence is None
+
+
+def test_visual_sandbox_requests_disposable_candidate_copy() -> None:
+    """The visual controller must opt into the provider's isolated mount."""
+    from harness.visual_ralph import VisualRalphController
+
+    original = SandboxSpec(
+        image="playwright:test", image_source="playwright",
+        worktree_mount="/host/candidate", container_mount="/workspace",
+        resource_limits=SandboxResourceLimits(), network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+    controller = VisualRalphController(
+        provider=MagicMock(), config=_make_config(), spec_id="001",
+        sandbox_spec_factory=lambda _worktree: original,
+    )
+
+    visual_spec = controller._build_sandbox_spec("/host/candidate")
+
+    assert visual_spec.isolate_candidate is True
+    assert original.isolate_candidate is False
+
+
 def test_retrieve_screenshots_falls_back_to_playwright_test_results(
     tmp_path: Path,
 ) -> None:
@@ -517,8 +920,7 @@ def test_retrieve_screenshots_falls_back_to_playwright_test_results(
         provider=MagicMock(),
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
     handle = SandboxHandle(id="ctr1", session_id="s1")
@@ -563,8 +965,7 @@ def test_run_loop_rejects_success_without_required_screenshot(tmp_path: Path) ->
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -601,8 +1002,7 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime(tmp_path: Path):
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
 
@@ -638,8 +1038,10 @@ def test_run_loop_reports_fix_applied_after_visual_feedback():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
+        feedback_runner=lambda *args: {
+            "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
@@ -668,8 +1070,7 @@ def test_run_loop_reports_failure_when_command_app_never_ready():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -697,8 +1098,7 @@ def test_run_loop_reports_failure_when_setup_command_fails():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -725,8 +1125,10 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
         provider=provider,
         config=_make_config(max_iterations=2),
         spec_id="001",
-        strategy_id="default",
-        base_dir=".",
+                base_dir=".",
+        feedback_runner=lambda *args: {
+            "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
@@ -762,8 +1164,7 @@ def test_visual_feedback_uses_configured_provider_repair_runner(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        feedback_runner=repair_runner,
+                feedback_runner=repair_runner,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
@@ -814,8 +1215,7 @@ def test_changed_visual_repair_can_defer_host_browser_verification(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
-        feedback_runner=defer_after_change,
+                feedback_runner=defer_after_change,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
@@ -839,7 +1239,13 @@ def test_run_loop_blocks_when_visual_feedback_fails():
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-        strategy_id="default",
+                feedback_runner=lambda *args: {
+            "exit_code": 1,
+            "passed": False,
+            "duration_s": 0.0,
+            "tokens": 0,
+            "stderr": "build fix failed",
+        },
     )
 
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):

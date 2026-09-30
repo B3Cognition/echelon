@@ -6,8 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.docker_provider import DockerWorktreeProvider
+from harness.errors import SandboxCreationError
 from harness.errors import NotSupportedError
-from harness.provider import SandboxHandle
+from harness.provider import NetworkPolicy, ResourceLimits, SandboxHandle, SandboxSpec
 from harness.verification_plan import SandboxServiceSpec
 
 
@@ -22,6 +23,193 @@ def _active_provider() -> tuple[DockerWorktreeProvider, SandboxHandle]:
         service_ids_by_name={},
     )
     return provider, handle
+
+
+@pytest.mark.unit
+def test_isolated_candidate_is_copied_from_read_only_mount(tmp_path) -> None:
+    """Browser writes must land in a disposable volume, never in the host candidate."""
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="playwright:test",
+        image_source="playwright",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={},
+        secrets_env={},
+        post_create_command=None,
+        forward_ports=[],
+        isolate_candidate=True,
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker, patch(
+        "harness.docker_provider.subprocess.run"
+    ) as process:
+        docker.return_value = MagicMock(stdout="sandbox-id\n")
+        process.return_value = MagicMock(returncode=0, stderr="")
+        handle = provider.create(spec)
+
+    sandbox_command = next(
+        call.args[0]
+        for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "-d"] and "playwright:test" in call.args[0]
+    )
+    # Docker's init process reaps orphaned verifier children; a bare `tail`
+    # as PID 1 leaves zombies visible to kill(pid, 0) cleanup checks.
+    assert "--init" in sandbox_command
+    mounts = [sandbox_command[index + 1] for index, arg in enumerate(sandbox_command[:-1])
+              if arg == "--volume"]
+    assert f"{spec.worktree_mount}:/workspace-source:ro" in mounts
+    assert any(mount.endswith(":/workspace") and mount.startswith("harness-volume-")
+               for mount in mounts)
+    assert f"{spec.worktree_mount}:/workspace" not in mounts
+    assert process.call_args.args[0] == [
+        "docker", "exec", "sandbox-id", "cp", "-a", "/workspace-source/.", "/workspace/",
+    ]
+    assert provider._containers[handle.session_id].volume_names
+
+
+@pytest.mark.unit
+def test_official_playwright_image_prefers_capable_native_variant(tmp_path, monkeypatch) -> None:
+    """A capable native image must not run through x86 emulation."""
+    monkeypatch.setenv("DOCKER_DEFAULT_PLATFORM", "linux/amd64")
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        handle = provider.create(spec)
+
+    sandbox_command = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "-d"] and spec.image in call.args[0]
+    )
+    assert sandbox_command[sandbox_command.index("--platform") + 1] == "linux/arm64"
+    probe = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "--rm"]
+    )
+    assert probe[probe.index("--platform") + 1] == "linux/arm64"
+    assert handle.platform == "linux/arm64"
+
+
+@pytest.mark.unit
+def test_official_playwright_image_falls_back_when_native_probe_fails(tmp_path) -> None:
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"] and "--platform" in args and args[args.index("--platform") + 1] == "linux/arm64":
+                return MagicMock(returncode=42, stdout="", stderr="browser missing")
+            if args[:2] == ["run", "--rm"]:
+                return MagicMock(returncode=0, stdout="x86_64\n", stderr="")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        handle = provider.create(spec)
+
+    sandbox_command = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "-d"] and spec.image in call.args[0]
+    )
+    assert sandbox_command[sandbox_command.index("--platform") + 1] == "linux/amd64"
+    assert handle.platform == "linux/amd64"
+    assert len([call for call in docker.call_args_list if call.args[0][:2] == ["run", "--rm"]]) == 2
+
+
+@pytest.mark.unit
+def test_official_playwright_image_does_not_fallback_on_docker_failure(tmp_path) -> None:
+    """A daemon or image-pull failure is not evidence that native is incapable."""
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"] and (
+                "--platform" not in args or args[args.index("--platform") + 1] == "linux/arm64"
+            ):
+                return MagicMock(returncode=125, stdout="", stderr="image pull failed")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        with pytest.raises(SandboxCreationError, match="image pull failed"):
+            provider.create(spec)
+
+    assert len([call for call in docker.call_args_list if call.args[0][:2] == ["run", "--rm"]]) == 1
+
+
+@pytest.mark.unit
+def test_failed_isolated_copy_releases_candidate_volume(tmp_path) -> None:
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="playwright:test", image_source="playwright",
+        worktree_mount=str(tmp_path / "candidate"), container_mount="/workspace",
+        resource_limits=ResourceLimits(), network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+        isolate_candidate=True,
+    )
+    with patch("harness.docker_provider._run_docker") as docker, patch(
+        "harness.docker_provider.subprocess.run"
+    ) as process:
+        docker.return_value = MagicMock(stdout="sandbox-id\n")
+        process.side_effect = [
+            MagicMock(returncode=1, stderr="copy failed"),
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+        ]
+
+        with pytest.raises(SandboxCreationError, match="isolated candidate copy failed"):
+            provider.create(spec)
+
+    cleanup = [call.args[0] for call in process.call_args_list[1:]]
+    assert any(command[:4] == ["docker", "volume", "rm", "-f"] for command in cleanup)
+    assert provider._containers == {}
 
 
 @pytest.mark.unit

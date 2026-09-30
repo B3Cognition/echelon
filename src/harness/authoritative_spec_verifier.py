@@ -164,13 +164,11 @@ class AuthoritativeSpecVerifier:
                 self._config,
                 worktree=worktree,
                 spec_id=self._spec_dir.name,
-                strategy_id="standalone",
                 run_id=verify_run_dir.name,
             ),
             evidence_root=verify_run_dir / "evidence",
             spec_id=self._spec_dir.name,
             target_id=self._target.name,
-            strategy_id="standalone",
             build_id=verify_run_dir.name,
             runtime_root=self._spec_dir.parent.parent / ".echelon" / "runtime",
         )

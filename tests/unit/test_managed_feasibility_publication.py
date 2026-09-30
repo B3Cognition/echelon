@@ -10,6 +10,7 @@ from harness.discovery_completion import decode_binding
 from harness.discovery_publication import prepare_discovery_publication
 from harness.element_identity_publication import encode_publication_request
 from harness.squad_completion import CompletionError
+from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
 from tests.unit.test_managed_feasibility import (
     case, enrolled, turn_prepared, prepared, checkpoint_case,
     test_feasibility_parent_is_real_native_checkpoint as complete_review,
@@ -115,7 +116,7 @@ def assert_structural_gate_cannot_be_skipped(case, package, provider):
     before = case[1].load()
     for destination in ("phase2-strategic-overview", "phase3-specialists", "done", "phase1-what"):
         with pytest.raises(StateAdvanceError):
-            ctrl._prepare_controller_completion(from_phase="phase2-decide", to_phase=destination,
+            ctrl._prepare_spec_step_effects(from_phase="phase2-decide", to_phase=destination,
                 snapshot=case[1].capture_routing_snapshot(expected_phase="phase2-decide"),
                 manual_phase_run=False, conditional_skip=False, record_completion=True,
                 publication_marker=package.publication.marker.to_dict(), completion_id=completion_id,
@@ -126,7 +127,7 @@ def assert_structural_gate_cannot_be_skipped(case, package, provider):
 def assert_feasibility_handoff(case, package, provider):
     from harness.squad_provider import SquadAgentResult
     from tests.unit.test_discovery_completion import controller, drain
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from tests.unit.test_discovery_turns import Interrupted
@@ -144,7 +145,7 @@ def assert_feasibility_handoff(case, package, provider):
                 raw_output="", duration_ms=0, timed_out=False)
             prepared_result = ctrl._prepare_phase_result(node, result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id=completion_id,
                 token_usage_delta=21)
             assert routing is not None, store.load()
@@ -156,7 +157,9 @@ def assert_feasibility_handoff(case, package, provider):
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision,
                         prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    interrupted = store.load()
+    assert interrupted["last_dispatch"] == before["last_dispatch"]
+    assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == spec_bytes
     interruptions = []
     def after_one_promotion(*args, **kwargs):
@@ -169,7 +172,9 @@ def assert_feasibility_handoff(case, package, provider):
         patch.setattr(PreparedSquadPublication, "_promote", after_one_promotion)
         with pytest.raises(Interrupted):
             drain(controller(case, executor))
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    interrupted = store.load()
+    assert interrupted["last_dispatch"] == before["last_dispatch"]
+    assert interrupted[PENDING_SPEC_STEP_KEY]["cursor"] == "publication"
     writes = package.sources.publication.operations
     # Repair publications can preserve most documents byte-for-byte. The
     # publisher's actual operation hook proves the partial promotion boundary.

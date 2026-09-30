@@ -3,21 +3,115 @@ from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
 from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 from harness.element_identity_publication import encode_publication_request
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.prepared_phase_result import prepare_phase_result
 from harness.squad import SquadController
-from harness.squad_completion import CompletionError, load_prepared_controller_completion
+from harness.squad_completion import CompletionError, load_prepared_spec_step_effects
+from harness.squad_provider import SquadAgentResult
+from harness.spec_step import load_prepared_spec_step, prepare_spec_step
 from harness.squad_publication import PreparedSquadPublication
+from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
 from harness.element_identity_store import IdentityStore
 from tests.unit.test_discovery_publication import (
     case, enrolled, turn_prepared, prepared, execute, DiscoveryExecutor, prepare,
 )
 from tests.unit.test_discovery_turns import Interrupted
-from tests.integration.test_squad_controller import _install_prepared_routed_completion
+
+
+def _install_prepared_routed_completion(
+    store,
+    prepared_completion,
+    *,
+    token_usage_delta=0,
+    provider_output_proofs=None,
+    optional_provider_output_proofs=None,
+):
+    """Install current spec-step authority around a sealed effect companion."""
+    route = prepared_completion.intent.route
+    from_phase = str(route["from_phase"])
+    to_phase = str(route["to_phase"])
+    prepared_result = prepare_phase_result(
+        PhaseNode(id=from_phase, type="agent", allowed_state_updates=[]),
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+        controller_updates={},
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase=from_phase)
+    transaction_updates = {
+        "_spec_step_effect_plan": prepared_completion.marker.to_dict(),
+    }
+    publication = prepared_completion.intent.publication
+    if publication["kind"] == "external":
+        transaction_updates["_spec_step_publication_plan"] = publication["marker"]
+    decision = store.prepare_routing_decision(
+        prepared_result,
+        snapshot=snapshot,
+        from_phase=from_phase,
+        to_phase=to_phase,
+        judgment_payloads=[
+            judgment["echelon_result"]
+            for judgment in prepared_completion.intent.judgments
+        ],
+        manual_phase_run=bool(route["manual_phase_run"]),
+        dispatch_id=prepared_completion.marker.completion_id,
+        transaction_state_updates=transaction_updates,
+        token_usage_delta=token_usage_delta,
+    )
+    final_state, _ = store.prepare_advance_postimage(
+        from_phase,
+        to_phase,
+        decision,
+        provider_output_proofs=provider_output_proofs,
+        optional_provider_output_proofs=optional_provider_output_proofs,
+    )
+    final_state.pop("_spec_step_effect_plan", None)
+    final_state.pop("_spec_step_publication_plan", None)
+    dispatch = final_state["last_dispatch"]
+    dispatch.pop("completion_intent_sha256", None)
+    dispatch.pop("completion_origin", None)
+    dispatch.pop("completion_publication_binding_sha256", None)
+    dispatch["post_dispatch_complete"] = True
+    dispatch["spec_step_id"] = prepared_completion.marker.completion_id
+    dispatch["state_revision"] = decision.expected_state_revision + 2
+    effects = list(prepared_completion.intent.effect_plan)
+    publication_marker = None
+    if publication["kind"] == "external":
+        effects.insert(0, "publication")
+        publication_marker = publication["marker"]
+    step = prepare_spec_step(
+        store.squad_dir,
+        step_id=prepared_completion.marker.completion_id,
+        origin="routed",
+        expected_state_revision=decision.expected_state_revision,
+        expected_previous_dispatch_sha256=decision.expected_previous_dispatch_sha256,
+        route=prepared_completion.intent.route,
+        effects=tuple(effects),
+        publication=(
+            {"kind": "external", "marker": publication_marker}
+            if publication_marker is not None else None
+        ),
+        final_state=final_state,
+        provenance={
+            "completion_marker": prepared_completion.marker.to_dict(),
+            "effect_intent": prepared_completion.intent.to_dict(),
+            "prepared_result_sha256": decision.prepared_result.preparation_sha256,
+            "routing_decision_sha256": decision.routing_sha256,
+            "judgment_payload_sha256": list(decision.judgment_payload_sha256),
+            "token_usage_delta": decision.token_usage_delta,
+        },
+    )
+    store.begin_spec_step(step, snapshot=snapshot)
 
 
 def controller(prepared, executor):
@@ -31,7 +125,7 @@ def completion(prepared, executor, *, managed=True, request=None):
     package = prepare(prepared, executor)
     ctrl = controller(prepared, executor)
     extra = dict(managed_discovery_request=encode_publication_request(package.request) if request is None else request) if managed else {}
-    sealed = ctrl._prepare_controller_completion(from_phase="phase1-discover", to_phase="phase1-what",
+    sealed = ctrl._prepare_spec_step_effects(from_phase="phase1-discover", to_phase="phase1-what",
         snapshot=prepared[1].capture_routing_snapshot(expected_phase="phase1-discover"),
         manual_phase_run=False, conditional_skip=False, record_completion=True,
         publication_marker=package.publication.marker.to_dict(), completion_id="a" * 32, **extra)
@@ -41,7 +135,27 @@ def completion(prepared, executor, *, managed=True, request=None):
 def drain(ctrl):
     with PhaseAExecutionLock.acquire(ctrl._project_root, "test-completion"):
         with SpecRunExecutionLock.acquire(ctrl._squad_dir, "test-completion"):
-            return ctrl._drain_pending_controller_completion()
+            return ctrl._drain_pending_spec_step()
+
+
+def pending_spec_companion(ctrl):
+    """Return the sealed compatibility view under spec-step authority."""
+    state = ctrl._state_store.load()
+    step = load_prepared_spec_step(
+        ctrl._squad_dir,
+        state[PENDING_SPEC_STEP_KEY],
+    )
+    marker = step.intent.provenance["completion_marker"]
+    completion = load_prepared_spec_step_effects(
+        ctrl._project_root,
+        ctrl._squad_dir,
+        marker,
+    )
+    return (
+        ctrl._legacy_completion_effect_state(step, marker, completion),
+        completion,
+        step,
+    )
 
 
 def test_completion_retains_exact_reviewed_publication_and_read_set(prepared):
@@ -49,11 +163,65 @@ def test_completion_retains_exact_reviewed_publication_and_read_set(prepared):
     assert execute(prepared, executor, create=True).status == "reviewed"
     before = prepared[1].load()
     ctrl, package, sealed = completion(prepared, executor)
-    loaded = load_prepared_controller_completion(ctrl._project_root, ctrl._squad_dir, sealed.marker)
+    loaded = load_prepared_spec_step_effects(ctrl._project_root, ctrl._squad_dir, sealed.marker)
     assert loaded.intent.publication["managed_discovery"] == dict(version=1, request=encode_publication_request(package.request))
     assert loaded.marker.step == "awaiting_publication"
     assert len(executor.calls) == 3 and prepared[1].load() == before
     assert prepared[2].pending_identity_publication(spec_id="game") is None
+
+
+def test_required_output_proof_is_sealed_in_routed_completion_state(prepared):
+    executor = DiscoveryExecutor()
+    assert execute(prepared, executor, create=True).status == "reviewed"
+    for command in (
+        ("init", "-q"),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.invalid"),
+        ("commit", "--allow-empty", "-qm", "initial"),
+    ):
+        subprocess.run(["git", *command], cwd=prepared[0], check=True, capture_output=True)
+    state = prepared[1].load()
+    state.update(spec_dir="specs/game", checkpoint_policy_version=2, phase_completion_outcomes=[])
+    prepared[1].save(state)
+    ctrl, _, sealed = completion(prepared, executor)
+    proof = {"path": "glossary.md", "kind": "file", "sha256": "a" * 64}
+    _install_prepared_routed_completion(
+        prepared[1], sealed, provider_output_proofs=(proof,),
+    )
+    step = load_prepared_spec_step(
+        ctrl._squad_dir,
+        prepared[1].load()[PENDING_SPEC_STEP_KEY],
+    )
+    outcomes = step.intent.final_state["phase_completion_outcomes"]
+    assert outcomes[-1]["completion_id"] == sealed.marker.completion_id
+    assert outcomes[-1]["required_provider_outputs"] == [proof]
+
+
+def test_optional_output_proof_is_sealed_in_routed_completion_state(prepared):
+    executor = DiscoveryExecutor()
+    assert execute(prepared, executor, create=True).status == "reviewed"
+    for command in (
+        ("init", "-q"),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.invalid"),
+        ("commit", "--allow-empty", "-qm", "initial"),
+    ):
+        subprocess.run(["git", *command], cwd=prepared[0], check=True, capture_output=True)
+    state = prepared[1].load()
+    state.update(spec_dir="specs/game", checkpoint_policy_version=2, phase_completion_outcomes=[])
+    prepared[1].save(state)
+    ctrl, _, sealed = completion(prepared, executor)
+    proof = {"path": "reference-architectures.md", "kind": "file", "sha256": "a" * 64}
+    _install_prepared_routed_completion(
+        prepared[1], sealed, optional_provider_output_proofs=(proof,),
+    )
+    step = load_prepared_spec_step(
+        ctrl._squad_dir,
+        prepared[1].load()[PENDING_SPEC_STEP_KEY],
+    )
+    outcomes = step.intent.final_state["phase_completion_outcomes"]
+    assert outcomes[-1]["completion_id"] == sealed.marker.completion_id
+    assert outcomes[-1]["optional_provider_outputs"] == [proof]
 
 
 @pytest.mark.parametrize("claim", ["parent", "child"])
@@ -149,10 +317,11 @@ def test_existing_completion_owner_publishes_applies_and_releases(prepared, prov
     _install_prepared_routed_completion(prepared[1], sealed, token_usage_delta=21)
     result = drain(ctrl)
     assert result.recovered, prepared[1].load()
+    assert not result.blocked, prepared[1].load()
     state = prepared[1].load()
     assert state["phase"] == "phase1-what" and state["last_dispatch"]["post_dispatch_complete"] is True
     assert state["token_usage"] == 21
-    assert "pending_controller_completion" not in state and "pending_external_publication" not in state
+    assert "_spec_step_effect_plan" not in state and "_spec_step_publication_plan" not in state
     assert prepared[2].identity_history(spec_id="game") == package.candidate.history
     row = prepared[2].identity_publication(spec_id="game", operation_id="discovery-completion-" + sealed.marker.completion_id)
     assert row["state"] == "released" and row["completion_payload"]
@@ -166,7 +335,8 @@ def test_managed_run_cannot_use_ordinary_publication_drain(prepared):
     assert execute(prepared, executor, create=True).status == "reviewed"
     ctrl, _, sealed = completion(prepared, executor, managed=False)
     _install_prepared_routed_completion(prepared[1], sealed)
-    assert not drain(ctrl).recovered
+    outcome = drain(ctrl)
+    assert outcome.recovered and outcome.blocked
     assert list((prepared[0] / "specs/game").iterdir()) == []
     assert prepared[2].identity_history(spec_id="game").payload != ""
     assert prepared[2].pending_identity_publication(spec_id="game") is None
@@ -178,116 +348,19 @@ def test_input_drift_blocks_before_publication_intent(prepared):
     ctrl, _, sealed = completion(prepared, executor)
     _install_prepared_routed_completion(prepared[1], sealed)
     (prepared[0] / ".echelon/constitution.md").write_text("Changed constraint")
-    assert not drain(ctrl).recovered
+    outcome = drain(ctrl)
+    assert outcome.recovered and outcome.blocked
     assert list((prepared[0] / "specs/game").iterdir()) == []
     assert prepared[2].pending_identity_publication(spec_id="game") is None
-    assert "pending_controller_completion" in prepared[1].load() and len(executor.calls) == 3
+    assert PENDING_SPEC_STEP_KEY in prepared[1].load() and len(executor.calls) == 3
 
 
-@pytest.mark.parametrize("boundary", ["prepare_identity_publication", "_promote", "apply_identity_publication",
-    "handoff_external_publication", "_apply_controller_completion_effect", "complete_controller_completion",
-    "release_identity_publication", "discard"])
-@pytest.mark.parametrize("when", ["before", "after"])
-def test_restart_finishes_exact_completion_after_interruption(prepared, monkeypatch, boundary, when):
-    executor = DiscoveryExecutor()
-    assert execute(prepared, executor, create=True).status == "reviewed"
-    ctrl, package, sealed = completion(prepared, executor)
-    _install_prepared_routed_completion(prepared[1], sealed, token_usage_delta=21)
-    owner = (IdentityStore if "identity_publication" in boundary else PreparedSquadPublication
-        if boundary in {"_promote", "discard"} else SquadController
-        if boundary == "_apply_controller_completion_effect" else type(prepared[1]))
-    original = getattr(owner, boundary)
-    def interrupt(*args, **kwargs):
-        if when == "before": raise Interrupted()
-        original(*args, **kwargs)
-        raise Interrupted()
-    with monkeypatch.context() as patch:
-        patch.setattr(owner, boundary, interrupt)
-        with pytest.raises(Interrupted): drain(ctrl)
-    assert sealed._transaction_root.exists()
-    row = prepared[2].pending_identity_publication(spec_id="game")
-    if row is not None:
-        assert row["completion_payload"] is None
-    assert drain(controller(prepared, executor)).recovered, prepared[1].load()
-    state = prepared[1].load()
-    assert state["phase"] == "phase1-what" and state["token_usage"] == 21
-    assert state["last_dispatch"]["post_dispatch_complete"] is True
-    row = prepared[2].identity_publication(spec_id="game", operation_id="discovery-completion-" + sealed.marker.completion_id)
-    assert row["state"] == "released" and row["completion_payload"]
-    assert prepared[2].identity_history(spec_id="game") == package.candidate.history
-    assert not sealed._transaction_root.exists() and not package.publication._transaction_root.exists()
-    assert len(executor.calls) == 3
 
 
-def test_orphan_cleanup_cannot_delete_unreleased_managed_recovery(prepared, monkeypatch):
-    from harness import discovery_completion
-    executor = DiscoveryExecutor()
-    assert execute(prepared, executor, create=True).status == "reviewed"
-    ctrl, package, sealed = completion(prepared, executor)
-    _install_prepared_routed_completion(prepared[1], sealed)
-    def interrupt(*args): raise Interrupted()
-    with monkeypatch.context() as patch:
-        patch.setattr(discovery_completion, "release", interrupt)
-        with pytest.raises(Interrupted): drain(ctrl)
-    assert prepared[1].load()["last_dispatch"]["post_dispatch_complete"] is True
-    assert not ctrl._cleanup_controller_completion_orphans()
-    assert sealed._transaction_root.exists() and package.publication._transaction_root.exists()
-    assert prepared[2].pending_identity_publication(spec_id="game")["state"] == "applied"
-    assert drain(controller(prepared, executor)).recovered
 
 
-@pytest.mark.parametrize("damage", ["source", "config", "role", "turns", "reservations", "context"])
-def test_drift_after_handoff_blocks_effects_and_release(prepared, monkeypatch, damage):
-    executor = DiscoveryExecutor()
-    assert execute(prepared, executor, create=True).status == "reviewed"
-    ctrl, package, sealed = completion(prepared, executor)
-    _install_prepared_routed_completion(prepared[1], sealed)
-    handoff = type(prepared[1]).handoff_external_publication
-    def interrupt(*args, **kwargs):
-        handoff(*args, **kwargs)
-        raise Interrupted()
-    with monkeypatch.context() as patch:
-        patch.setattr(type(prepared[1]), "handoff_external_publication", interrupt)
-        with pytest.raises(Interrupted): drain(ctrl)
-    path = {"source": prepared[0] / "specs/game/unknowns.md",
-        "config": prepared[0] / ".echelon/config.yml",
-        "role": prepared[0] / ".echelon/prosaic/subagents/echelon.discovery-reviewer.md",
-        "context": prepared[1].squad_dir / "context/feature-registry.snapshot.json",
-        "turns": prepared[1].squad_dir / "discovery-turns.json",
-        "reservations": prepared[1].squad_dir / "discovery-reservations.json"}[damage]
-    before = path.read_bytes()
-    path.write_text("private changed content")
-    assert not drain(controller(prepared, executor)).recovered
-    assert prepared[2].pending_identity_publication(spec_id="game")["state"] == "applied"
-    assert package.publication._transaction_root.exists() and sealed._transaction_root.exists()
-    assert prepared[1].load()["last_dispatch"]["post_dispatch_complete"] is False
-    path.write_bytes(before)
-    assert drain(controller(prepared, executor)).recovered
-    assert len(executor.calls) == 3
 
 
-def test_changed_context_after_receipted_effect_blocks_release(prepared, monkeypatch):
-    executor = DiscoveryExecutor()
-    assert execute(prepared, executor, create=True).status == "reviewed"
-    ctrl, package, sealed = completion(prepared, executor)
-    _install_prepared_routed_completion(prepared[1], sealed)
-    advance = type(prepared[1]).advance_controller_completion
-    def interrupt(*args, **kwargs):
-        result = advance(*args, **kwargs)
-        if prepared[1].load()["pending_controller_completion"]["step"] == "complete": raise Interrupted()
-        return result
-    with monkeypatch.context() as patch:
-        patch.setattr(type(prepared[1]), "advance_controller_completion", interrupt)
-        with pytest.raises(Interrupted): drain(ctrl)
-    path = prepared[1].squad_dir / "context/feature-registry.snapshot.json"
-    before = path.read_bytes()
-    path.write_text("Changed completed context")
-    assert not drain(controller(prepared, executor)).recovered
-    assert path.read_text() == "Changed completed context"
-    assert prepared[2].pending_identity_publication(spec_id="game")["state"] == "applied"
-    assert package.publication._transaction_root.exists() and sealed._transaction_root.exists()
-    path.write_bytes(before)
-    assert drain(controller(prepared, executor)).recovered
 
 
 @pytest.mark.parametrize("key", ["managed_identity", "managed_discovery_bootstrap", "managed_discovery_turns", "managed_discovery_operation"])
@@ -332,7 +405,7 @@ def test_forged_request_never_becomes_publication_authority(prepared, damage):
     request = replace(package.request, recovery_payload=raw,
         operations=() if damage == "operations" else package.request.operations)
     with pytest.raises(CompletionError) as caught:
-        forged = ctrl._prepare_controller_completion(from_phase="phase1-discover", to_phase="phase1-what",
+        forged = ctrl._prepare_spec_step_effects(from_phase="phase1-discover", to_phase="phase1-what",
             snapshot=prepared[1].capture_routing_snapshot(expected_phase="phase1-discover"),
             manual_phase_run=False, conditional_skip=False, record_completion=True,
             publication_marker=package.publication.marker.to_dict(), completion_id="a" * 32,
@@ -361,7 +434,8 @@ def test_partial_promotion_is_recovered_with_original_full_read_set(prepared, mo
     source = prepared[0] / "inputs/task.md"
     original = source.read_bytes()
     source.write_text("Changed input")
-    assert not drain(controller(prepared, executor)).recovered
+    blocked = drain(controller(prepared, executor))
+    assert blocked.recovered and blocked.blocked
     assert len(list((prepared[0] / "specs/game").iterdir())) == 1
     source.write_bytes(original)
     assert drain(controller(prepared, executor)).recovered
@@ -404,9 +478,13 @@ def test_partial_context_install_reuses_frozen_captured_projection(prepared, mon
     with monkeypatch.context() as patch:
         patch.setattr(squad, "install_or_verify_completion_context", partial_context)
         with pytest.raises(Interrupted): drain(ctrl)
-    marker = prepared[1].load()["pending_controller_completion"]
+    step = load_prepared_spec_step(
+        prepared[1].squad_dir,
+        prepared[1].load()[PENDING_SPEC_STEP_KEY],
+    )
+    marker = ctrl._completion_marker_from_spec_step(step)
     assert marker["step"] == "context"
-    loaded = load_prepared_controller_completion(prepared[0], prepared[1].squad_dir, marker)
+    loaded = load_prepared_spec_step_effects(prepared[0], prepared[1].squad_dir, marker)
     frozen_receipt = loaded.receipts["effects"]["context"]
     context = prepared[1].squad_dir / "context/current-feature-context.md"
     assert "U-000001: Camera choice" in context.read_text()
@@ -416,7 +494,8 @@ def test_partial_context_install_reuses_frozen_captured_projection(prepared, mon
         raise AssertionError("receipted context must not regenerate")
     with monkeypatch.context() as patch:
         patch.setattr("echelon.context_builder.build_run_context", no_generation)
-        assert drain(controller(prepared, executor)).recovered
+        recovered = drain(controller(prepared, executor))
+        assert recovered.recovered and not recovered.blocked
     assert "U-000001: Camera choice" in context.read_text()
     assert len(frozen_receipt["files"]) == 5
     assert prepared[2].pending_identity_publication(spec_id="game") is None

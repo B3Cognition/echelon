@@ -12,16 +12,14 @@ import pytest
 def _write_delivery_state(
     project_root: Path,
     *,
-    strategy: str = "default",
     user_runnability: dict | None = None,
     coverage_observation: dict | None = None,
 ) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"{strategy}.json"
+    state_file = state_dir / "delivery.json"
     payload = {
                 "spec_id": "001",
-                "strategy_id": strategy,
                 "status": "blocked",
                 "mode": "banzai",
                 "outer_iter": 2,
@@ -72,12 +70,11 @@ def _write_target_delivery_state(project_root: Path) -> Path:
         / "state"
     )
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / "default.json"
+    state_file = state_dir / "delivery.json"
     state_file.write_text(
         json.dumps(
             {
                 "spec_id": "001",
-                "strategy_id": "default",
                 "status": "blocked",
                 "target_repo": "browser-3d-game",
                 "implementation_target": "sources/browser-3d-game",
@@ -124,7 +121,7 @@ def _write_escalation(project_root: Path) -> Path:
 
 @pytest.mark.unit
 def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step(
         {
@@ -140,9 +137,80 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
+def test_prior_repair_cap_with_pending_slice_status_offers_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_gate_repair_limit: required review still failed after two repairs",
+                }],
+            },
+            "delivery_slice_operation": {"id": "pending-review", "progress_applied": False},
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
+def test_provider_failed_status_matches_checkpoint_preserving_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "build_status": "blocked",
+            "build_reason": "delivery_provider_failed",
+            "delivery_slice_operation": {"id": "slice-operation-1"},
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
+def test_cancelled_pending_slice_status_offers_checkpoint_preserving_continue() -> None:
+    from echelon.delivery_service import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "blocked_phase": "implementation",
+            "last_verify_result": {
+                "passed": False,
+                "failures": [{
+                    "category": "other", "id": "build-blocked",
+                    "error": "delivery_slice_cancelled",
+                }],
+            },
+            "delivery_slice_operation": {
+                "id": "pending-controlled-repair",
+                "progress_applied": False,
+                "worktree_path": "/tmp/pending-worktree",
+            },
+        },
+        "001",
+    )
+
+    assert next_step == "echelon delivery continue 001"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": status}, "001")
 
@@ -151,7 +219,7 @@ def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
 
 @pytest.mark.unit
 def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
-    from echelon.cli import _delivery_status_next_step
+    from echelon.delivery_service import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": "running"}, "001")
 
@@ -396,6 +464,7 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
         "artifact_count": 3,
         "candidate_fingerprint": "product-1",
     }
+    state["semantic_visual_gate_required"] = True
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
     from echelon.delivery_status import command
@@ -404,11 +473,14 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
     payload = json.loads(capsys.readouterr().out)["latest"]
     assert payload["playwright"] == {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
     assert payload["visual_evidence"]["artifact_count"] == 3
+    assert payload["semantic_visual"]["status"] == "pending"
 
     command(spec_id="001", project_root=tmp_path)
     output = capsys.readouterr().out
     assert "2 passed, 0 failed, 0 skipped" in output
     assert "3 retained (passed)" in output
+    assert "semantic visual" in output
+    assert "pending" in output
     assert "pnpm session:local" in output
     assert "postgres-host: pg_isready -h 127.0.0.1" in output
 
@@ -512,18 +584,18 @@ def test_delivery_status_prints_publication_failure_cause(
 
 
 @pytest.mark.unit
-def test_delivery_status_json_filters_strategy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_delivery_status_json_has_no_strategy_dimension(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.delivery_status import command
 
-    _write_delivery_state(tmp_path, strategy="default")
-    _write_delivery_state(tmp_path, strategy="codegen")
+    _write_delivery_state(tmp_path)
 
-    command(spec_id="001", strategy="codegen", json_output=True, project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "blocked"
     assert payload["latest"]["spec_id"] == "001"
-    assert payload["latest"]["strategy"] == "codegen"
+    assert "strategy" not in payload
+    assert "strategy" not in payload["latest"]
     assert payload["latest"]["next"] == 'echelon delivery resume 001 "<answer>"'
     assert len(payload["states"]) == 1
 

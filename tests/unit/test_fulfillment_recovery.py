@@ -1,4 +1,5 @@
 """Recover exact fulfillment work without resetting calls, usage or publication."""
+from copy import deepcopy
 import json
 from dataclasses import replace
 
@@ -71,6 +72,203 @@ def test_completed_model_turn_survives_host_step_failure(preparation_context, mo
     assert second.token_usage == 7
 
 
+def test_grounding_correction_survives_restart_without_repeating_rejected_final(
+    preparation_context,
+    monkeypatch,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    class CorrectAfterRejection(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            payload = json.loads(result.stdout)
+            dispatch = self.dispatches[-1]
+            if payload["step"] == "mapper" and dispatch.get("correction") is None:
+                payload["rows"][0]["verified_implementation_evidence"] = "worktree:app.py:1"
+                result.stdout = json.dumps(payload)
+            return result
+
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_after_rejection(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (
+            not interrupted[0]
+            and records
+            and records[-1]["final_validation"] is not None
+            and records[-1]["final_validation"]["status"] == "rejected"
+        ):
+            interrupted[0] = True
+            raise Crash()
+
+    executor = CorrectAfterRejection()
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_after_rejection)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 0, result.reason
+    mapper_dispatches = [
+        dispatch for dispatch in executor.dispatches
+        if dispatch["assignment"]["step"] == "mapper"
+    ]
+    assert len(mapper_dispatches) == 2
+    assert mapper_dispatches[1]["correction"]["reason"] == (
+        "verified evidence cites unread source"
+    )
+
+
+@pytest.mark.parametrize("wrong_field, marker, reason", [
+    ("assigned_ids_sha256", "fulfillment assigned-ID digest echo mismatch", "assigned-ID digest echo mismatch"),
+    ("dispatch_id", "fulfillment dispatch ID echo mismatch", "dispatch ID echo mismatch"),
+])
+def test_read_echo_correction_survives_restart_without_repeating_bad_read(
+    preparation_context, monkeypatch, wrong_field, marker, reason,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    class TypoOnFirstRead(SemanticExecutor):
+        def run_inspection_turn(self, *args, **kwargs):
+            result = super().run_inspection_turn(*args, **kwargs)
+            if len(self.dispatches) == 1:
+                payload = json.loads(result.stdout)
+                if wrong_field == "dispatch_id":
+                    dispatch_id = payload["dispatch_id"]
+                    payload["dispatch_id"] = dispatch_id[:11] + dispatch_id[14:]
+                else:
+                    payload["assigned_ids_sha256"] += "e"
+                result.stdout = json.dumps(payload)
+            return result
+
+    executor = TypoOnFirstRead(inspect_source=True)
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_after_bad_read(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (not interrupted[0] and records
+                and records[-1]["error"] == marker):
+            interrupted[0] = True
+            raise Crash()
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_after_bad_read)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+    assert result.exit_code == 0, result.reason
+    assert executor.dispatch_count == 3
+    assert executor.dispatches[1]["correction"]["reason"] == reason
+
+
+def test_recovery_accepts_full_read_limit_with_both_allowed_corrections(preparation_context):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    assert run(preparation_context, SemanticExecutor(inspect_source=True)).exit_code == 0
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        data = journal.load()
+        read_record, final_record = data["steps"]["mapper"]["records"]
+        bad_read = json.loads(read_record["raw_stdout"])
+        bad_read["assigned_ids_sha256"] += "e"
+        digest_correction = {
+            **deepcopy(read_record), "reply": None, "read": None,
+            "raw_stdout": json.dumps(bad_read),
+            "error": "fulfillment assigned-ID digest echo mismatch",
+        }
+        rejected_final = deepcopy(final_record)
+        rejected_final["final_validation"] = {
+            "status": "rejected", "reason": "verified evidence cites unread source",
+        }
+        data["steps"]["mapper"]["records"] = (
+            [deepcopy(read_record) for _ in range(32)]
+            + [digest_correction, rejected_final, deepcopy(final_record)]
+        )
+        journal.save()
+
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        assert len(journal.load()["steps"]["mapper"]["records"]) == 35
+
+
+def test_recovery_rejects_digest_correction_that_would_replace_grounding_feedback(
+    preparation_context,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+    from harness.fulfillment_semantics import FulfillmentAssignment
+
+    assert run(preparation_context, SemanticExecutor(bad="unread_citation")).exit_code == 2
+    with FulfillmentRecovery(preparation_context.verify_run_dir) as journal:
+        data = journal.load()
+        step = data["steps"]["mapper"]
+        assignment = FulfillmentAssignment(**{
+            key: value for key, value in step["assignment"].items() if key != "schema_version"
+        })
+        bad_read = {
+            **assignment.reply_identity(),
+            "action": "read",
+            "request": {"op": "list_directory", "root": "worktree", "path": "."},
+        }
+        bad_read["assigned_ids_sha256"] += "e"
+        step["records"][1].update(
+            reply=None, read=None, raw_stdout=json.dumps(bad_read),
+            final_validation=None, error="fulfillment assigned-ID digest echo mismatch",
+        )
+        with pytest.raises(ValueError, match="invalid recovered read echo correction"):
+            journal.save()
+
+
+def test_second_rejected_final_becomes_terminal_after_restart(
+    preparation_context,
+    monkeypatch,
+):
+    from harness.fulfillment_recovery import FulfillmentRecovery
+
+    class Crash(BaseException):
+        pass
+
+    original = FulfillmentRecovery.save
+    interrupted = [False]
+
+    def crash_before_second_final_validation(journal):
+        original(journal)
+        records = journal.data["steps"].get("mapper", {}).get("records", [])
+        if (
+            not interrupted[0]
+            and len(records) == 2
+            and records[-1]["reply"] is not None
+            and records[-1]["reply"]["action"] == "final"
+            and records[-1]["final_validation"] is None
+        ):
+            interrupted[0] = True
+            raise Crash()
+
+    executor = SemanticExecutor(bad="unread_citation")
+    monkeypatch.setattr(FulfillmentRecovery, "save", crash_before_second_final_validation)
+    with pytest.raises(Crash):
+        run(preparation_context, executor)
+
+    monkeypatch.setattr(FulfillmentRecovery, "save", original)
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    assert result.reason == (
+        "fulfillment mapper grounding correction exhausted: "
+        "verified evidence cites unread source"
+    )
+    assert executor.dispatch_count == 2
+
+
 def test_unknown_external_completion_is_not_redispatched(preparation_context):
     class Crash(BaseException):
         pass
@@ -128,6 +326,21 @@ def test_failed_provider_usage_survives_reentry_without_retry(preparation_contex
     assert first.exit_code == second.exit_code == 2
     assert first.token_usage == second.token_usage == 7
     assert executor.dispatch_count == 1
+
+
+def test_invalid_provider_reply_is_durably_bound_to_its_turn(preparation_context):
+    executor = SemanticExecutor(bad="malformed")
+
+    result = run(preparation_context, executor)
+
+    assert result.exit_code == 2
+    journal = json.loads(
+        (preparation_context.verify_run_dir / "controlled-fulfillment.json").read_text()
+    )["payload"]
+    record = journal["steps"]["mapper"]["records"][0]
+    assert record["raw_stdout"] == "[]"
+    assert record["reply"] is None
+    assert record["error"] == "fulfillment reply must be a versioned object"
 
 
 def test_pending_publication_replays_exact_bytes(preparation_context, monkeypatch):

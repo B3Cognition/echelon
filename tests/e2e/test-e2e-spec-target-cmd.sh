@@ -25,9 +25,9 @@ run_spec_target() {
 import os, sys
 os.chdir('$1')
 sys.argv = ['echelon', 'spec', 'target'] + $2
-from echelon.cli import _cmd_spec_target
+from echelon.spec_service import reject_target_mutation
 try:
-    _cmd_spec_target(sys.argv[3:])
+    reject_target_mutation()
 except SystemExit as e:
     sys.exit(e.code or 0)
 " 2>/dev/null
@@ -45,8 +45,8 @@ set +e
 target_output="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
-from echelon.cli import _cmd_spec_target
-_cmd_spec_target(['024', 'og-platform'])
+from echelon.spec_service import reject_target_mutation
+reject_target_mutation()
 " 2>&1)"
 target_rc=$?
 set -e
@@ -77,8 +77,8 @@ set +e
 PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
-from echelon.cli import _cmd_spec_target
-_cmd_spec_target(['024', 'og-platform'])
+from echelon.spec_service import reject_target_mutation
+reject_target_mutation()
 " > /dev/null 2>&1
 ambig_rc=$?
 set -e

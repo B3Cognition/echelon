@@ -82,14 +82,12 @@ def test_typer_routes_normal_run_to_reviewed_knowledge_and_explicit_v2_to_legacy
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReRunRequest
 
-    knowledge_calls: list[list[str]] = []
-    legacy_calls: list[list[str]] = []
+    calls: list[ReRunRequest] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_run", lambda args: knowledge_calls.append(args)
-    )
-    monkeypatch.setattr(
-        "echelon.cli._cmd_re_run", lambda args: legacy_calls.append(args)
+        "echelon.re_service.run_re",
+        lambda request: calls.append(request),
     )
     runner = CliRunner()
 
@@ -101,16 +99,9 @@ def test_typer_routes_normal_run_to_reviewed_knowledge_and_explicit_v2_to_legacy
 
     assert normal.exit_code == 0, normal.output
     assert v2.exit_code == 0, v2.output
-    assert knowledge_calls == [[]]
-    assert legacy_calls == [
-        [
-            "--re-policy",
-            "changed",
-            "--engine",
-            "v2",
-            "--goal",
-            "inventory",
-        ],
+    assert calls == [
+        ReRunRequest(),
+        ReRunRequest(engine="v2", goals=("inventory",)),
     ]
 
 

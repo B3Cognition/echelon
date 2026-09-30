@@ -56,12 +56,12 @@ delivery_app = typer.Typer(
         "Common forms:\n"
         "  init\n"
         "  target <spec_id>\n"
-        "  status [<spec_id>] [--strategy <s>]\n"
+        "  status [<spec_id>]\n"
         "  verify-local <spec_id> [--target <target-id>] [--engine auto|docker|podman]\n"
         "  cleanup-local <local-run-id>\n"
-        "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
-        "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
-        "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
+        "  run <spec_id> [--target <source-id-or-path>] [--mode <m>]\n"
+        "  continue <spec_id> [--mode <m>]\n"
+        "  resume <spec_id> \"<answer>\" [--mode <m>]\n"
         "  land <spec_id> [--continue] [--prepare-only]"
     ),
     rich_markup_mode=None,
@@ -225,7 +225,7 @@ graph_app.add_typer(graph_workspace_app, name="workspace")
 
 @harness_app.command(
     "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def harness_run(
     ctx: typer.Context,
@@ -233,17 +233,15 @@ def harness_run(
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode."),
 ) -> None:
     """Compatibility alias for ``echelon delivery run``."""
-    args = [spec_id]
-    if mode:
-        args.append(f"mode={mode}")
-    args.extend(_ctx_args(ctx))
-    display_args = [spec_id]
-    if mode:
-        display_args.append(f"mode={mode}")
-    _legacy_cli()._cmd_harness_run(
-        args,
-        command_prefix="echelon delivery run",
-        display_args=display_args,
+    delivery_run(
+        ctx,
+        spec_id,
+        mode=mode,
+        max_outer=None,
+        max_inner=None,
+        token_budget=None,
+        auto_merge=None,
+        reset=False,
     )
 
 
@@ -257,27 +255,29 @@ def harness_land(
     continue_landing: bool = typer.Option(False, "--continue", help="Resume landing."),
 ) -> None:
     """Compatibility alias for ``echelon delivery land``."""
-    args = [spec_id]
-    if continue_landing:
-        args.append("--continue")
-    args.extend(_ctx_args(ctx))
-    _legacy_cli()._cmd_land(args)
+    delivery_land(
+        ctx,
+        spec_id,
+        continue_=continue_landing,
+        prepare_only=False,
+        no_autoresolve=False,
+        allow_fulfillment_gaps=False,
+        strategy=None,
+    )
 
 
-@harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True})
 def harness_continue(ctx: typer.Context, spec_id: str = typer.Argument(...)) -> None:
-    _legacy_cli()._cmd_harness_continue([spec_id, *_ctx_args(ctx)])
+    delivery_continue(ctx, spec_id, mode=None)
 
 
-@harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True})
 def harness_resume(
     ctx: typer.Context,
     spec_id: str = typer.Argument(...),
     answer: Optional[str] = typer.Argument(None),
 ) -> None:
-    _legacy_cli()._cmd_harness_resume(
-        [spec_id, *([answer] if answer else []), *_ctx_args(ctx)]
-    )
+    delivery_resume(ctx, spec_id, answer=answer, mode=None)
 
 
 class TopologyDirection(str, Enum):
@@ -524,12 +524,6 @@ def _extend_repeated_option(args: list[str], flag: str, values: list[str] | None
         args.extend([flag, value])
 
 
-def _legacy_cli():
-    from echelon import cli as legacy_cli
-
-    return legacy_cli
-
-
 def _memory_exit_code(status: str) -> int:
     if status in {"pass", "warn", "complete"}:
         return 0
@@ -738,21 +732,6 @@ def _render_memory_audit_markdown(
     return "\n".join(lines) + "\n"
 
 
-def _dispatch_phase(args: list[str]) -> None:
-    legacy_cli = _legacy_cli()
-    project_root = Path.cwd()
-    ext_dir = legacy_cli._installed_phase_runtime_or_exit(project_root)
-    cfg_file = legacy_cli._project_echelon_config(project_root)
-    if not cfg_file.exists():
-        typer.echo(
-            f"✗ Project not initialized — config not found: {cfg_file}\n"
-            "  Run: echelon workspace init",
-            err=True,
-        )
-        raise typer.Exit(1)
-    legacy_cli._cmd_phase(args, project_root=project_root, ext_dir=ext_dir)
-
-
 @app.callback()
 def root(
     version: Optional[bool] = typer.Option(
@@ -769,8 +748,9 @@ def root(
 ) -> None:
     """Echelon CLI."""
     if version:
-        legacy_cli = _legacy_cli()
-        typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+        from echelon.version import CLI_VERSION
+
+        typer.echo(f"echelon {CLI_VERSION}")
         raise typer.Exit()
 
 
@@ -896,9 +876,9 @@ def llm_smoke_openai_compatible(
 @app.command("version")
 def version_command() -> None:
     """Print the Echelon CLI version."""
-    legacy_cli = _legacy_cli()
+    from echelon.version import CLI_VERSION
 
-    typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+    typer.echo(f"echelon {CLI_VERSION}")
 
 
 @re_app.command("run")
@@ -973,6 +953,8 @@ def re_run(
     ),
 ) -> None:
     """Analyze the workspace and publish one validated knowledge generation."""
+    from echelon.re_service import ReRunRequest, run_re
+
     legacy = bool(
         engine is not None
         or shadow
@@ -991,32 +973,21 @@ def re_run(
         raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
     if goal and engine is not ReEngine.V2:
         raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
-    if not legacy:
-        args: list[str] = []
-        if reset:
-            args.append("--reset")
-        if depth is not None:
-            args.extend(["--depth", depth.value])
-        _extend_option(args, "--re-token-limit", re_token_limit)
-        _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-        _legacy_cli()._cmd_re_knowledge_run(args)
-        return
-    args = ["--re-policy", re_policy]
-    _extend_option(args, "--profile", profile)
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    if reset:
-        args.append("--reset")
-    if no_reuse:
-        args.append("--no-reuse")
-    if engine is not None:
-        args.extend(["--engine", engine.value])
-    if goal:
-        args.extend(["--goal", goal[0].value])
-    if shadow:
-        args.append("--shadow")
-    _legacy_cli()._cmd_re_run(args)
+    run_re(
+        ReRunRequest(
+            depth=depth.value if depth is not None else None,
+            re_policy=re_policy,
+            re_max_inner=re_max_inner,
+            profile=profile,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            reset=reset,
+            no_reuse=no_reuse,
+            engine=engine.value if engine is not None else None,
+            shadow=shadow,
+            goals=tuple(item.value for item in goal),
+        )
+    )
 
 
 @re_app.command("refresh")
@@ -1046,14 +1017,16 @@ def re_refresh(
     ),
 ) -> None:
     """Check selected sources and atomically publish affected knowledge."""
-    args: list[str] = []
-    for source_id in source:
-        args.extend(["--source", source_id])
-    if depth is not None:
-        args.extend(["--depth", depth.value])
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _legacy_cli()._cmd_re_knowledge_refresh(args)
+    from echelon.re_service import ReRefreshRequest, refresh_re
+
+    refresh_re(
+        ReRefreshRequest(
+            sources=tuple(source),
+            depth=depth.value if depth is not None else None,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+        )
+    )
 
 
 @re_app.command("deepen")
@@ -1125,6 +1098,8 @@ def re_deepen(
     prerequisite pauses, run the copy-paste continuation command shown in the
     status output, then rerun the same deepen command after L3 completes.
     """
+    from echelon.re_service import ReDeepenRequest, deepen_re
+
     if all_sources and (source or domain):
         raise typer.BadParameter(
             "--all cannot be combined with --source or --domain",
@@ -1156,23 +1131,21 @@ def re_deepen(
             "L4 --shadow cannot be combined with resource authorization",
             param_hint="--shadow",
         )
-    args = ["--to", target_layer.value]
-    if all_sources:
-        args.append("--all")
-    for source_id in source:
-        args.extend(["--source", source_id])
-    for domain_id in domain:
-        args.extend(["--domain", domain_id])
-    _extend_option(args, "--from-run", from_run)
-    _extend_option(args, "--token-limit", token_limit)
-    _extend_option(args, "--active-ms-limit", active_ms_limit)
-    _extend_option(args, "--semantic-token-limit", semantic_token_limit)
-    _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
-    if new_audit_epoch:
-        args.append("--new-audit-epoch")
-    if shadow:
-        args.append("--shadow")
-    _legacy_cli()._cmd_re_deepen(args)
+    deepen_re(
+        ReDeepenRequest(
+            target_layer=target_layer.value,
+            all_sources=all_sources,
+            sources=tuple(source),
+            domains=tuple(domain),
+            from_run=from_run,
+            token_limit=token_limit,
+            active_ms_limit=active_ms_limit,
+            semantic_token_limit=semantic_token_limit,
+            semantic_active_ms_limit=semantic_active_ms_limit,
+            new_audit_epoch=new_audit_epoch,
+            shadow=shadow,
+        )
+    )
 
 
 @re_app.command("status")
@@ -1188,10 +1161,9 @@ def re_status(
     ),
 ) -> None:
     """Show live RE state, source quality, debt, and the next safe action."""
-    args: list[str] = [run_id] if run_id else []
-    if as_json:
-        args.append("--json")
-    _legacy_cli()._cmd_re_status(args)
+    from echelon.re_service import ReStatusRequest, show_re_status
+
+    show_re_status(ReStatusRequest(run_id=run_id, as_json=as_json))
 
 
 @re_app.command("continue")
@@ -1244,19 +1216,18 @@ def re_continue(
     ),
 ) -> None:
     """Continue the active RE run without a human answer."""
-    args: list[str] = []
-    if run_id:
-        args.append(run_id)
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
-    _extend_option(
-        args,
-        "--re-semantic-time-limit-minutes",
-        re_semantic_time_limit_minutes,
+    from echelon.re_service import ReContinueRequest, continue_re
+
+    continue_re(
+        ReContinueRequest(
+            run_id=run_id,
+            re_max_inner=re_max_inner,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            re_semantic_token_limit=re_semantic_token_limit,
+            re_semantic_time_limit_minutes=re_semantic_time_limit_minutes,
+        )
     )
-    _legacy_cli()._cmd_re_continue(args)
 
 
 @re_app.command("resume")
@@ -1310,21 +1281,20 @@ def re_resume(
     ),
 ) -> None:
     """Resume with exactly one custom, recommended, or bounded Banzai mode."""
-    args = [answer] if answer is not None else []
-    if recommended:
-        args.append("--recommended")
-    if banzai:
-        args.append("--banzai")
-    _extend_option(args, "--re-max-inner", re_max_inner)
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
-    _extend_option(
-        args,
-        "--re-semantic-time-limit-minutes",
-        re_semantic_time_limit_minutes,
+    from echelon.re_service import ReResumeRequest, resume_re
+
+    resume_re(
+        ReResumeRequest(
+            answer=answer,
+            recommended=recommended,
+            banzai=banzai,
+            re_max_inner=re_max_inner,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+            re_semantic_token_limit=re_semantic_token_limit,
+            re_semantic_time_limit_minutes=re_semantic_time_limit_minutes,
+        )
     )
-    _legacy_cli()._cmd_re_resume(args)
 
 
 @re_app.command("publish")
@@ -1342,12 +1312,15 @@ def re_publish(
     ),
 ) -> None:
     """Publish validated reverse-engineering output from one run."""
-    args = [run_id]
-    if allow_partial:
-        args.append("--allow-partial")
-    if commit:
-        args.append("--commit")
-    _legacy_cli()._cmd_re_publish(args)
+    from echelon.re_service import RePublishRequest, publish_re
+
+    publish_re(
+        RePublishRequest(
+            run_id=run_id,
+            allow_partial=allow_partial,
+            commit=commit,
+        )
+    )
 
 
 @re_app.command("finalize")
@@ -1363,12 +1336,11 @@ def re_finalize(
     ),
 ) -> None:
     """Finalize a structurally publishable blocked RE run with explicit debt."""
-    args: list[str] = []
-    if run_id:
-        args.append(run_id)
-    if allow_partial:
-        args.append("--allow-partial")
-    _legacy_cli()._cmd_re_finalize(args)
+    from echelon.re_service import ReFinalizeRequest, finalize_re
+
+    finalize_re(
+        ReFinalizeRequest(run_id=run_id, allow_partial=allow_partial)
+    )
 
 
 @re_app.command("synthesize")
@@ -1418,32 +1390,36 @@ def re_synthesize(
     ),
 ) -> None:
     """Regenerate workspace synthesis from finalized partial source results."""
-    args: list[str] = []
+    from echelon.re_service import ReSynthesizeRequest, synthesize_re
+
     if from_run is not None:
         if run_id is not None or allow_partial or re_token_limit is not None or re_time_limit_minutes is not None:
             raise typer.BadParameter(
                 "--from-run cannot be combined with legacy run-id/--allow-partial/--re-* options",
                 param_hint="--from-run",
             )
-        args.extend(["--from-run", from_run])
-        for source_id in accept_partial or []:
-            args.extend(["--accept-partial", source_id])
-        _extend_option(args, "--token-limit", token_limit)
-        _extend_option(args, "--active-ms-limit", active_ms_limit)
-        _legacy_cli()._cmd_re_synthesize(args)
+        synthesize_re(
+            ReSynthesizeRequest(
+                from_run=from_run,
+                accept_partial=tuple(accept_partial or ()),
+                token_limit=token_limit,
+                active_ms_limit=active_ms_limit,
+            )
+        )
         return
     if accept_partial or token_limit is not None or active_ms_limit is not None:
         raise typer.BadParameter(
             "--accept-partial, --token-limit, and --active-ms-limit require --from-run",
             param_hint="--from-run",
         )
-    if run_id:
-        args.append(run_id)
-    if allow_partial:
-        args.append("--allow-partial")
-    _extend_option(args, "--re-token-limit", re_token_limit)
-    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
-    _legacy_cli()._cmd_re_synthesize(args)
+    synthesize_re(
+        ReSynthesizeRequest(
+            run_id=run_id,
+            allow_partial=allow_partial,
+            re_token_limit=re_token_limit,
+            re_time_limit_minutes=re_time_limit_minutes,
+        )
+    )
 
 
 @re_app.command("analyze", hidden=True)
@@ -1585,7 +1561,9 @@ def re_execute_run(
     run_id: str = typer.Argument(..., help="Active workspace run id."),
 ) -> None:
     """Execute active workspace RE with harness-owned transitions."""
-    _legacy_cli()._cmd_re_execute_run([run_id])
+    from echelon.re_service import execute_re_run
+
+    execute_re_run(run_id=run_id)
 
 
 @re_app.command("check-domain", hidden=True)
@@ -1595,19 +1573,17 @@ def re_check_domain(
     domain_id: str = typer.Argument(..., help="Domain id from the source manifest."),
 ) -> None:
     """Check one staged source-domain spec before the agent returns DONE."""
-    _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
+    from echelon.re_service import check_re_domain
 
-
-@app.command("cicd", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_cicd(ctx: typer.Context) -> None:
-    """Retired CI/CD compatibility command."""
-    _legacy_cli()._cmd_cicd(_ctx_args(ctx))
+    check_re_domain(run_id=run_id, source_id=source_id, domain_id=domain_id)
 
 
 @app.command("init", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_init() -> None:
     """Compatibility alias for workspace init."""
-    _legacy_cli()._cmd_init(Path.cwd())
+    from echelon.workspace_service import initialize_workspace
+
+    initialize_workspace(Path.cwd())
 
 
 @app.command("artifacts", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1616,13 +1592,13 @@ def root_artifacts(
     spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to index."),
 ) -> None:
     """Compatibility alias for spec artifact indexing."""
-    _legacy_cli()._cmd_artifacts([spec_id, *_ctx_args(ctx)])
+    spec_artifacts(ctx, spec_id)
 
 
 @app.command("status", hidden=True)
 def root_status() -> None:
     """Compatibility alias for spec status."""
-    _legacy_cli()._cmd_status(Path.cwd())
+    spec_status()
 
 
 @app.command("land", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1636,11 +1612,15 @@ def root_land(
     strategy: Optional[str] = typer.Option(None, "--strategy", help="Landing strategy, usually merge or rebase."),
 ) -> None:
     """Compatibility alias for delivery land."""
-    _legacy_cli()._cmd_land(_merge_land_args(
-        spec_id, _ctx_args(ctx), continue_=continue_, prepare_only=prepare_only,
-        no_autoresolve=no_autoresolve, allow_fulfillment_gaps=allow_fulfillment_gaps,
+    delivery_land(
+        ctx,
+        spec_id,
+        continue_=continue_,
+        prepare_only=prepare_only,
+        no_autoresolve=no_autoresolve,
+        allow_fulfillment_gaps=allow_fulfillment_gaps,
         strategy=strategy,
-    ))
+    )
 
 
 @app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1649,9 +1629,7 @@ def root_continue(
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override for legacy runs."),
 ) -> None:
     """Compatibility alias for spec continue."""
-    args = _ctx_args(ctx)
-    _extend_option(args, "--mode", mode)
-    _legacy_cli()._cmd_spec_continue(args)
+    spec_continue(ctx, mode=mode)
 
 
 @app.command("rewind", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1663,12 +1641,13 @@ def root_rewind(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
-    args = [phase_id, *_ctx_args(ctx)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
-    if confirm:
-        args.append("--confirm")
-    _legacy_cli()._cmd_rewind(args, project_root=Path.cwd())
+    spec_rewind(
+        ctx,
+        phase_id,
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=checkpoint_next_phase,
+        confirm=confirm,
+    )
 
 
 @app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1677,8 +1656,7 @@ def root_resume(
     answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for an awaiting-human Phase A decision."),
 ) -> None:
     """Compatibility alias for spec resume."""
-    args = ([answer] if answer is not None else []) + _ctx_args(ctx)
-    _legacy_cli()._cmd_spec_resume(args)
+    spec_resume(ctx, answer=answer)
 
 
 @app.command("run", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1697,30 +1675,29 @@ def root_run(
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Compatibility alias for spec run."""
-    spec_run(ctx, description=description, mode=mode, reset=reset, init=init,
-             message=message, next_phase=next_phase, target=target, input_values=None,
-             ignore_re=ignore_re, stash=stash, discard=discard, confirm=confirm)
+    spec_run(
+        ctx,
+        description=description,
+        mode=mode,
+        reset=reset,
+        perfectionist=False,
+        init=init,
+        message=message,
+        next_phase=next_phase,
+        target=target,
+        input_values=None,
+        ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
+    )
 
 
-def _dispatch_compatibility_skill(command: str, args: list[str]) -> None:
-    _legacy_cli()._dispatch_skill_command(command, args)
+def _dispatch_review_compatibility(args: list[str]) -> None:
+    """Keep the unmatched review alias behind one explicit legacy boundary."""
+    from echelon.skill_command_service import dispatch_skill
 
-
-@app.command("build", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_build(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build."),
-    fix: bool = typer.Option(False, "--fix", help="Run build as a targeted fix pass."),
-    failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
-    context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
-) -> None:
-    """Compatibility alias for the build skill command."""
-    args = ([spec_id] if spec_id else [])
-    if fix:
-        args.append("--fix")
-    _extend_option(args, "--failures", failures)
-    _extend_option(args, "--context", context)
-    _dispatch_compatibility_skill("build", args + _ctx_args(ctx))
+    dispatch_skill("review", args, project_root=Path.cwd())
 
 
 @app.command("review", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1732,16 +1709,7 @@ def root_review(
     """Compatibility alias for the review skill command."""
     args = ([spec_id] if spec_id else [])
     _extend_option(args, "--pr-url", pr_url)
-    _dispatch_compatibility_skill("review", args + _ctx_args(ctx))
-
-
-@app.command("codegen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def root_codegen(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Legacy spec id; SOAR execution is disabled."),
-) -> None:
-    """Retired compatibility command; SOAR execution is disabled."""
-    _dispatch_compatibility_skill("codegen", ([spec_id] if spec_id else []) + _ctx_args(ctx))
+    _dispatch_review_compatibility(args + _ctx_args(ctx))
 
 
 @app.command("verify-spec", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1752,8 +1720,7 @@ def root_verify_spec(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
 ) -> None:
     """Compatibility alias for spec verify."""
-    _reject_spec_verify_extra_args(ctx)
-    _run_spec_verify(Path.cwd(), spec_id, reconcile=reconcile, dry_run=dry_run)
+    spec_verify(ctx, spec_id, reconcile=reconcile, dry_run=dry_run)
 
 
 @app.command("reopen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1763,7 +1730,7 @@ def root_reopen(
     report: Optional[str] = typer.Argument(None, help="Optional from=<report> fulfillment report selector."),
 ) -> None:
     """Compatibility alias for spec reopen."""
-    _dispatch_compatibility_skill("reopen", [spec_id, *([report] if report else []), *_ctx_args(ctx)])
+    spec_reopen(ctx, spec_id, report=report)
 
 
 @app.command("bugfix", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1773,7 +1740,7 @@ def root_bugfix(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
 ) -> None:
     """Compatibility alias for spec bugfix."""
-    _dispatch_compatibility_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
+    spec_bugfix(ctx, spec_id, description)
 
 
 @app.command("change", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1783,7 +1750,7 @@ def root_change(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
 ) -> None:
     """Compatibility alias for spec change."""
-    _dispatch_compatibility_skill("change", [spec_id, description, *_ctx_args(ctx)])
+    spec_change(ctx, spec_id, description)
 
 
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1822,36 +1789,64 @@ def workspace_init(
     ),
 ) -> None:
     """One-time project setup."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import (
+        bootstrap_workspace_git,
+        initialize_workspace,
+        wants_unsafe_host_execution_interactively,
+    )
 
-    args = ["init"]
-    _extend_option(args, "--llm", llm)
-    _extend_option(args, "--openai-base-url", openai_base_url)
-    _extend_option(args, "--openai-model", openai_model)
-    _extend_option(args, "--openai-api-key-file", openai_api_key_file)
-    _extend_option(args, "--openai-api-key-env", openai_api_key_env)
-    if allow_unsafe_host_execution is True:
-        args.append("--allow-unsafe-host-execution")
-    elif allow_unsafe_host_execution is False:
-        args.append("--no-unsafe-host-execution")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace init: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    allow_unsafe = (
+        wants_unsafe_host_execution_interactively()
+        if allow_unsafe_host_execution is None
+        else allow_unsafe_host_execution
+    )
+    project_root = Path.cwd()
+    initialize_workspace(
+        project_root,
+        allow_unsafe_host_execution=allow_unsafe,
+        llm_cli=llm,
+        openai_base_url=openai_base_url,
+        openai_model=openai_model,
+        openai_api_key_file=openai_api_key_file,
+        openai_api_key_env=openai_api_key_env,
+    )
+    bootstrap_workspace_git(project_root)
 
 
 @workspace_app.command("doctor")
 def workspace_doctor() -> None:
     """Validate workspace/source/runtime contract."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import inspect_workspace
 
-    legacy_cli._cmd_workspace(["doctor"])
+    result = inspect_workspace(Path.cwd())
+    typer.echo(f"Workspace: {result.workspace_root}")
+    typer.echo(f"Buildable: {'yes' if result.buildable else 'no'}")
+    if not result.findings:
+        typer.echo("Findings: none")
+    else:
+        typer.echo("Findings:")
+        for finding in result.findings:
+            path = f" [{finding.path}]" if finding.path else ""
+            typer.echo(
+                f"  {finding.severity.upper()} {finding.code}{path}: "
+                f"{finding.message}"
+            )
+    if result.has_errors:
+        raise typer.Exit(code=1)
 
 
 @workspace_app.command("migrate-to-prosaic")
 def workspace_migrate_to_prosaic() -> None:
     """Deploy and validate the Prosaic runtime without deleting legacy files."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import migrate_to_prosaic
 
-    legacy_cli._cmd_workspace(["migrate-to-prosaic"])
+    migrate_to_prosaic(Path.cwd())
 
 
 @workspace_app.command("migrate", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1862,16 +1857,28 @@ def workspace_migrate(
     message: Optional[str] = typer.Option(None, "--message", help="Migration commit message."),
 ) -> None:
     """Migrate legacy workspace layout."""
-    legacy_cli = _legacy_cli()
+    import subprocess
 
-    args = ["migrate"]
-    if write:
-        args.append("--write")
-    if commit:
-        args.append("--commit")
-    _extend_option(args, "--message", message)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    from echelon.workspace_git_migration import MigrationError
+    from echelon.workspace_service import migrate_workspace_layout
+
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace migrate: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    try:
+        result = migrate_workspace_layout(
+            Path.cwd(),
+            write=write,
+            commit=commit,
+            commit_message=message or "chore: initialize echelon workspace",
+        )
+    except (MigrationError, subprocess.CalledProcessError) as exc:
+        typer.echo(f"migration failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _render_workspace_migration(result)
 
 
 @workspace_sources_app.command(
@@ -1883,19 +1890,90 @@ def workspace_sources_sync(
     write: bool = typer.Option(False, "--write", help="Write sources to workspace config."),
 ) -> None:
     """Sync configured source roots from the canonical sources/ directory."""
-    legacy_cli = _legacy_cli()
+    from echelon.workspace_service import sync_workspace_sources
 
-    args = ["sources", "sync"]
-    if write:
-        args.append("--write")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_workspace(args)
+    if ctx.args:
+        typer.echo(
+            f"echelon workspace sources sync: unknown option '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    result = sync_workspace_sources(Path.cwd(), write=write)
+
+    def label(values: tuple[str, ...]) -> str:
+        return ", ".join(values) if values else "none"
+
+    typer.echo(f"Config: {result.config_path}")
+    typer.echo(f"Dry run: {'yes' if result.dry_run else 'no'}")
+    typer.echo(f"discovered: {label(result.discovered)}")
+    typer.echo(f"added: {label(result.added)}")
+    typer.echo(f"removed: {label(result.removed)}")
+    typer.echo(f"unchanged: {label(result.unchanged)}")
+    if result.dry_run:
+        typer.echo("Next: echelon workspace sources sync --write")
+    else:
+        typer.echo(f"updated: {'yes' if result.changed else 'no changes'}")
+
+
+def _render_workspace_migration(result) -> None:
+    plan = result.plan
+    typer.echo(f"Workspace: {plan.workspace_root}")
+    typer.echo(f"Git-backed: {'yes' if plan.already_git_backed else 'no'}")
+    typer.echo("Gitignore entries:")
+    for entry in plan.gitignore_entries:
+        typer.echo(f"  {entry}")
+    typer.echo("Stage paths:")
+    for path in plan.stage_paths:
+        typer.echo(f"  {path}")
+    if plan.canonical_config_needed:
+        typer.echo(
+            f"Canonical config: copy {plan.legacy_config} -> {plan.canonical_config}"
+        )
+    if not result.write_requested:
+        typer.echo("Dry-run only. Re-run with --write to apply.")
+    elif not any(
+        (
+            result.git_initialized,
+            result.canonical_config_copied,
+            result.source_roots_scaffolded,
+            result.gitignore_updated,
+            result.untracked_runtime_paths,
+            result.staged_paths,
+            result.committed,
+        )
+    ):
+        typer.echo("No changes needed.")
+    else:
+        typer.echo("Applied:")
+        typer.echo(f"  git_initialized: {result.git_initialized}")
+        typer.echo(f"  canonical_config_copied: {result.canonical_config_copied}")
+        typer.echo(f"  source_roots_scaffolded: {result.source_roots_scaffolded}")
+        typer.echo(f"  gitignore_updated: {result.gitignore_updated}")
+        typer.echo(
+            "  untracked_runtime_paths: "
+            f"{', '.join(result.untracked_runtime_paths) or '(none)'}"
+        )
+        typer.echo(f"  staged_paths: {', '.join(result.staged_paths) or '(none)'}")
+        typer.echo(f"  committed: {result.committed}")
+        if not result.committed:
+            typer.echo("Next: echelon workspace migrate --commit")
 
 
 @phase_app.command("list")
 def phase_list() -> None:
     """List workflow phases available for manual replay."""
-    _dispatch_phase(["list"])
+    from echelon.phase_service import list_phases
+    from echelon.ui import banner
+
+    phases = list_phases(Path.cwd())
+    banner(
+        "PHASES",
+        [
+            (phase.phase_id, f"{phase.label}  [{phase.phase_type}]")
+            for phase in phases
+        ],
+        subtitle="Workflow phases available for manual replay",
+    )
 
 
 @phase_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1907,20 +1985,51 @@ def phase_run(
     message: Optional[str] = typer.Option(None, "--message", help="Additional phase replay context."),
 ) -> None:
     """Run one explicit phase through COMMANDER contracts."""
-    args = ["run", phase_id]
-    _extend_option(args, "--spec", spec)
-    _extend_option(args, "--mode", mode)
-    _extend_option(args, "--message", message)
-    args.extend(_ctx_args(ctx))
-    _dispatch_phase(args)
+    from echelon.phase_service import run_phase
+
+    if ctx.args:
+        typer.echo(f"✗ Unknown phase run argument: {ctx.args[0]}", err=True)
+        typer.echo(
+            "  Usage: echelon phase run <phase-id> [--spec <id>] "
+            "[--mode semi|banzai|guided] [--message <text>]",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    run_phase(
+        Path.cwd(),
+        phase_id,
+        spec_id=spec,
+        mode=mode,
+        message=message,
+    )
 
 
 @benchmark_app.command("list")
 def benchmark_list() -> None:
     """List experimental benchmark fixtures and variants."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import list_fixtures, list_variants
+    from echelon.ui import banner
 
-    legacy_cli._cmd_benchmark(["list"], project_root=Path.cwd())
+    fixtures = list_fixtures()
+    variants = list_variants()
+    banner(
+        "BENCHMARKS",
+        [("Fixtures", "benchmark prompts"), ("Variants", "pass with --variant <id>")],
+        subtitle="Experimental artifact-quality benchmark fixtures and variants",
+    )
+    typer.echo("Fixtures:")
+    for fixture in fixtures:
+        typer.echo(f"  {fixture.id:<30} {fixture.name}")
+    typer.echo("\nVariants (--variant <id>):")
+    for variant in variants:
+        typer.echo(f"  {variant.id:<30} {variant.label}")
+    typer.echo("\nExample:")
+    typer.echo("  echelon benchmark run tiny-notes --variant baseline")
+    typer.echo("\nBaseline snapshot:")
+    typer.echo("  --baseline-ref is optional; omitted runs commit the current workspace first.")
+    typer.echo("\nPrint saved scores:")
+    typer.echo("  echelon benchmark show")
+    typer.echo("\nFor an existing spec, use: echelon delivery run <spec-id>")
 
 
 @benchmark_app.command("show", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1933,13 +2042,56 @@ def benchmark_show(
     ),
 ) -> None:
     """Print saved benchmark scores."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import latest_summary_path, load_saved_scorecard, load_summary
+    from echelon.ui import banner
 
-    args = ["show"]
-    if target is not None:
-        args.append(target)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_benchmark(args, project_root=Path.cwd())
+    if ctx.args:
+        typer.echo("✗ Usage: echelon benchmark show [latest|<summary-path-or-run-dir>]", err=True)
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+    selected = target or "latest"
+    latest_path = latest_summary_path(project_root)
+    summary_path = latest_path if selected == "latest" else Path(selected)
+    if summary_path is None:
+        typer.echo("✗ No benchmark summaries found under runs/benchmarks/.", err=True)
+        raise typer.Exit(code=1)
+    summary = (
+        load_saved_scorecard(project_root)
+        if selected == "latest"
+        else load_summary(summary_path)
+    )
+    if not summary:
+        typer.echo(f"✗ Could not read benchmark summary: {summary_path}", err=True)
+        raise typer.Exit(code=1)
+
+    banner(
+        "BENCHMARK SUMMARY",
+        [("summary", str(summary_path)), ("best_variant", str(summary.get("best_variant")))],
+        subtitle="Saved benchmark scores",
+    )
+    typer.echo(
+        "| Variant | Render | Status | Spec | Delivery | Gaps | Verify Failures | "
+        "Blocks | Retries | Dispatches | Context Bytes | Context Tokens | "
+        "Context Reduction | Seconds |"
+    )
+    typer.echo("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    records = summary.get("variants")
+    if isinstance(records, dict):
+        for variant_id, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            typer.echo(
+                f"| {variant_id} | {record.get('context_render') or '-'} | "
+                f"{record.get('status', '')} | {record.get('spec_id') or '-'} | "
+                f"{record.get('delivery_run_id') or '-'} | {record.get('fulfillment_gaps', 0)} | "
+                f"{record.get('verification_failures', 0)} | {record.get('blocked_states', 0)} | "
+                f"{record.get('retries', 0)} | {record.get('build_dispatches', 0)} | "
+                f"{record.get('context_prompt_bytes', 0)} | "
+                f"{record.get('context_prompt_tokens_estimate', 0)} | "
+                f"{record.get('context_reduction_pct', 0)} | "
+                f"{float(record.get('elapsed_seconds') or 0.0):.1f} |"
+            )
 
 
 @benchmark_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1965,18 +2117,93 @@ def benchmark_run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print planned commands without running them."),
 ) -> None:
     """Run or print an artifact-quality benchmark variant."""
-    legacy_cli = _legacy_cli()
+    from echelon.benchmark import (
+        CONTEXT_RENDER_MODES,
+        baseline_snapshot_commands,
+        format_variant_execution_commands,
+        list_fixtures,
+        list_variants,
+        plan_variant_commands,
+        run_benchmark_variant,
+    )
+    from echelon.ui import banner
 
-    args = ["run", fixture_id]
-    _extend_option(args, "--variant", variant)
-    _extend_option(args, "--baseline-ref", baseline_ref)
-    _extend_option(args, "--context-render", context_render)
-    if artifact_only:
-        args.append("--artifact-only")
+    if ctx.args:
+        typer.echo(f"✗ Unknown benchmark argument: {ctx.args[0]}", err=True)
+        raise typer.Exit(code=1)
+    if context_render not in CONTEXT_RENDER_MODES:
+        typer.echo(f"✗ Unknown context render mode: {context_render}", err=True)
+        raise typer.Exit(code=1)
+
+    variant_id = variant or "baseline"
+    fixture_ids = {fixture.id for fixture in list_fixtures()}
+    variant_ids = {item.id for item in list_variants()}
+    try:
+        plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
+    except ValueError as exc:
+        if variant_id in fixture_ids and variant_id not in variant_ids:
+            typer.echo(
+                f"✗ {variant_id} is a fixture id, not a variant id.\n"
+                "  Use --variant baseline, constitution, constitution-tasks, "
+                "or constitution-tasks-adrs.",
+                err=True,
+            )
+        elif variant_id.startswith("variant:"):
+            typer.echo(
+                f"✗ Use --variant {variant_id.removeprefix('variant:')}, "
+                f"not --variant {variant_id}.",
+                err=True,
+            )
+        else:
+            typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
     if dry_run:
-        args.append("--dry-run")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_benchmark(args, project_root=Path.cwd())
+        baseline_marker = baseline_ref or "BENCHMARK_BASELINE_SNAPSHOT"
+        render_modes = (
+            ("legacy", "bounded") if context_render == "both" else (context_render,)
+        )
+        commands = (() if baseline_ref else baseline_snapshot_commands()) + tuple(
+            formatted_command
+            for render_mode in render_modes
+            for formatted_command in format_variant_execution_commands(
+                plan,
+                baseline_marker,
+                context_render=render_mode,
+            )
+        )
+        banner(
+            "BENCHMARK DRY RUN",
+            [
+                ("fixture", plan.fixture_id),
+                ("variant", plan.variant_id),
+                ("context_render", context_render),
+                ("mode", "artifact-only" if artifact_only else "full"),
+            ],
+            subtitle="Commands that would run",
+        )
+        for command in commands:
+            typer.echo(command if isinstance(command, str) else " ".join(command))
+        return
+
+    output_dir = run_benchmark_variant(
+        Path.cwd(),
+        fixture_id,
+        variant_id,
+        baseline_ref=baseline_ref,
+        artifact_only=artifact_only,
+        context_render=context_render,
+    )
+    banner(
+        "BENCHMARK COMPLETE",
+        [
+            ("fixture", fixture_id),
+            ("variant", variant_id),
+            ("context_render", context_render),
+            ("mode", "artifact-only" if artifact_only else "full"),
+            ("output", str(output_dir)),
+        ],
+    )
 
 
 @stack_app.command("list", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1985,13 +2212,31 @@ def stack_list(
     json_output: bool = typer.Option(False, "--json", help="Print stack definitions as JSON."),
 ) -> None:
     """List available Echelon stacks."""
-    legacy_cli = _legacy_cli()
+    from echelon.stack_service import load_stack_catalog, stack_definition_to_dict
 
-    args = ["list"]
+    if ctx.args:
+        typer.echo(f"echelon stack list: unknown argument '{ctx.args[0]}'", err=True)
+        raise typer.Exit(code=1)
+    definitions = load_stack_catalog(Path.cwd())
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "stacks": [
+                        stack_definition_to_dict(definitions[stack_id])
+                        for stack_id in sorted(definitions)
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return
+
+    typer.echo("Available Echelon stacks:")
+    for stack_id in sorted(definitions):
+        stack = definitions[stack_id]
+        archetypes = ", ".join(stack.applies_to_archetypes)
+        typer.echo(f"- {stack.id} ({stack.kind}; {archetypes}) {stack.name}")
 
 
 @stack_app.command("detect", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2012,18 +2257,56 @@ def stack_detect(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Detect source/artifact stack evidence."""
-    legacy_cli = _legacy_cli()
+    from harness.stacks import detection_report_to_yaml, render_detection_markdown
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import detect_stack_candidates
 
-    args = ["detect"]
-    _extend_option(args, "--target", target)
-    _extend_repeated_option(args, "--artifacts", artifacts)
-    if write:
-        args.append("--write")
-    _extend_option(args, "--format", output_format)
-    if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    if ctx.args:
+        typer.echo(f"echelon stack detect: unknown argument '{ctx.args[0]}'", err=True)
+        raise typer.Exit(code=1)
+
+    selected_format = "json" if json_output else (output_format or "text")
+    if selected_format not in {"text", "yaml", "json"}:
+        typer.echo("echelon stack detect: --format must be text or yaml", err=True)
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+
+    def resolve_path(value: str) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else project_root / path
+
+    try:
+        outcome = detect_stack_candidates(
+            project_root,
+            target=resolve_path(target) if target else project_root,
+            artifact_roots=[resolve_path(value) for value in artifacts or []],
+            write_report=write,
+        )
+    except (StackError, FileNotFoundError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if selected_format == "json":
+        typer.echo(json.dumps(outcome.report.to_dict(), indent=2))
+    elif selected_format == "yaml":
+        typer.echo(detection_report_to_yaml(outcome.report).rstrip())
+    else:
+        typer.echo(render_detection_markdown(outcome.report).rstrip())
+        if outcome.written is not None:
+            try:
+                yaml_path = outcome.written.yaml_path.resolve().relative_to(
+                    project_root.resolve()
+                )
+                markdown_path = outcome.written.markdown_path.resolve().relative_to(
+                    project_root.resolve()
+                )
+            except ValueError:
+                yaml_path = outcome.written.yaml_path
+                markdown_path = outcome.written.markdown_path
+            typer.echo()
+            typer.echo(f"Wrote detection report: {yaml_path}")
+            typer.echo(f"Wrote detection summary: {markdown_path}")
 
 
 @stack_app.command("preflight", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2053,19 +2336,82 @@ def stack_preflight(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Check selected stack commands, registries, and tool probes."""
-    legacy_cli = _legacy_cli()
+    import os
 
-    args = ["preflight"]
-    _extend_repeated_option(args, "--stack", stack)
-    _extend_repeated_option(args, "--target-archetype", target_archetype)
-    _extend_option(args, "--from-detect", from_detect)
-    _extend_option(args, "--target", target)
-    if probe_tools:
-        args.append("--probe-tools")
+    from harness.stacks import (
+        preflight_to_dict,
+        render_preflight_markdown,
+        resolved_to_dict,
+    )
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import preflight_stacks
+
+    if ctx.args:
+        typer.echo(
+            f"echelon stack preflight: unknown argument '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+
+    def resolve_path(value: str | None) -> Path | None:
+        if value is None:
+            return None
+        path = Path(value)
+        return path if path.is_absolute() else project_root / path
+
+    try:
+        outcome = preflight_stacks(
+            project_root,
+            selected=stack or [],
+            target_archetypes=target_archetype or [],
+            from_detection=resolve_path(from_detect),
+            target_root=resolve_path(target),
+            probe_tools=probe_tools,
+            environment=os.environ,
+        )
+    except StackError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if outcome.message is not None:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "message": outcome.message,
+                        "selected": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(outcome.message)
+        return
+
+    assert outcome.resolved is not None
+    assert outcome.result is not None
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "resolved": resolved_to_dict(outcome.resolved),
+                    "preflight": preflight_to_dict(outcome.result),
+                },
+                indent=2,
+            )
+        )
+    else:
+        typer.echo("Resolved Echelon stacks:")
+        for stack_id in outcome.resolved.resolved_ids:
+            typer.echo(f"- {stack_id}")
+        typer.echo()
+        typer.echo(render_preflight_markdown(outcome.result).rstrip())
+
+    if outcome.result.has_errors:
+        raise typer.Exit(code=1)
 
 
 @stack_app.command("provision", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -2085,17 +2431,95 @@ def stack_provision(
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
     """Render verification provisioning files without starting Docker."""
-    legacy_cli = _legacy_cli()
+    import os
 
-    args = ["provision"]
-    _extend_repeated_option(args, "--stack", stack)
-    _extend_option(args, "--target", target)
-    if force:
-        args.append("--force")
+    from harness.stacks import ProvisioningError
+    from harness.stacks.errors import StackError
+    from echelon.stack_service import provision_stacks
+
+    if ctx.args:
+        typer.echo(
+            f"echelon stack provision: unknown argument '{ctx.args[0]}'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    project_root = Path.cwd()
+    target_root = Path(target) if target else project_root
+    if not target_root.is_absolute():
+        target_root = project_root / target_root
+    try:
+        outcome = provision_stacks(
+            project_root,
+            selected=stack or [],
+            target_root=target_root,
+            force=force,
+            environment=os.environ,
+        )
+    except (StackError, ProvisioningError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if outcome.message is not None:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "target": str(outcome.target_root),
+                        "generated": [],
+                        "message": outcome.message,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(outcome.message)
+        return
+
     if json_output:
-        args.append("--json")
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(
+            json.dumps(
+                {
+                    "target": str(outcome.target_root),
+                    "generated": [str(path) for path in outcome.generated],
+                    "provisioners": [
+                        {
+                            "id": status.provisioner_id,
+                            "stack_id": status.owner_stack_id,
+                            "state": status.state,
+                            "message": status.message,
+                            "path": str(status.path) if status.path is not None else None,
+                        }
+                        for status in outcome.statuses
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    assert outcome.resolved is not None
+    if not outcome.resolved.provisioners:
+        typer.echo("Selected stacks declare no verification provisioners.")
+        return
+    if outcome.generated:
+        typer.echo("Generated verification provisioning files:")
+        for path in outcome.generated:
+            typer.echo(f"- {path}")
+    else:
+        typer.echo("No verification provisioning files were generated.")
+    typer.echo("Echelon did not start Docker. Review the files, then run:")
+    typer.echo("  docker compose -f docker-compose.echelon-verify.yml up -d")
+    typer.echo("  export DATABASE_URL='postgresql://<user>:<password>@<host>/<database>'")
+    typer.echo(
+        "  docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "pg_isready -U echelon -d echelon_verify"
+    )
+    typer.echo(
+        "  docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "psql -U echelon -d echelon_verify"
+    )
+    typer.echo("  docker compose -f docker-compose.echelon-verify.yml down -v")
 
 
 @stack_app.command("enable")
@@ -2104,11 +2528,7 @@ def stack_enable(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Add stacks to the committed project selection."""
-    legacy_cli = _legacy_cli()
-    args = ["enable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("enable", stack_ids, dry_run=dry_run)
 
 
 @stack_app.command("disable")
@@ -2117,11 +2537,7 @@ def stack_disable(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Remove explicitly selected stacks from the committed project config."""
-    legacy_cli = _legacy_cli()
-    args = ["disable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("disable", stack_ids, dry_run=dry_run)
 
 
 @stack_app.command("select")
@@ -2133,11 +2549,7 @@ def stack_select(
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
 ) -> None:
     """Replace the committed project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["select", *(stack_ids or [])]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+    _change_stack_selection("select", stack_ids or [], dry_run=dry_run)
 
 
 @stack_app.command("selected")
@@ -2145,125 +2557,65 @@ def stack_selected(
     json_output: bool = typer.Option(False, "--json", help="Print selection as JSON."),
 ) -> None:
     """Show explicit, effective, and implied project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["selected"]
+    from harness.stacks.errors import StackError
+    from echelon.stack_selection import StackSelectionError
+    from echelon.stack_service import read_selected_stacks
+
+    try:
+        selection = read_selected_stacks(Path.cwd())
+    except (StackError, StackSelectionError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     if json_output:
-        args.append("--json")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+        typer.echo(json.dumps(selection.__dict__, indent=2))
+        return
+    typer.echo(f"Explicit stacks: {', '.join(selection.explicit) or 'none'}")
+    typer.echo(f"Effective stacks: {', '.join(selection.effective) or 'none'}")
+    typer.echo(f"Resolved stacks: {', '.join(selection.resolved) or 'none'}")
+    if selection.local_override:
+        typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
-def _option_pairs(**values: object) -> list[str]:
-    pairs: list[str] = []
-    for key, value in values.items():
-        if value is None:
-            continue
-        if isinstance(value, bool):
-            pairs.append(f"{key}={'true' if value else 'false'}")
-        else:
-            pairs.append(f"{key}={value}")
-    return pairs
-
-
-def _merge_run_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
+def _change_stack_selection(
+    operation: str,
+    stack_ids: list[str],
     *,
-    mode: str | None,
-    strategy: str | None,
-    max_outer: int | None,
-    max_inner: int | None,
-    token_budget: int | None,
-    auto_merge: bool | None,
-    kill_losers: bool,
-    reset: bool,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    args.extend(
-        _option_pairs(
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
+    dry_run: bool,
+) -> None:
+    import yaml
+
+    from harness.stacks.errors import StackError
+    from echelon.stack_selection import StackSelectionError
+    from echelon.stack_service import change_selected_stacks
+
+    try:
+        selection = change_selected_stacks(
+            Path.cwd(),
+            stack_ids,
+            operation=operation,
+            dry_run=dry_run,
         )
-    )
-    if kill_losers:
-        args.append("kill_losers=true")
-    if reset:
-        args.append("--reset")
-    return args
+    except (StackError, StackSelectionError) as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
-
-def _display_run_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    mode: str | None,
-    strategy: str | None,
-    max_outer: int | None,
-    max_inner: int | None,
-    token_budget: int | None,
-    auto_merge: bool | None,
-    kill_losers: bool,
-    reset: bool,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    if mode is not None:
-        args.append(f"--mode={mode}")
-    if strategy is not None:
-        args.append(f"--strategy={strategy}")
-    if max_outer is not None:
-        args.append(f"--max-outer={max_outer}")
-    if max_inner is not None:
-        args.append(f"--max-inner={max_inner}")
-    if token_budget is not None:
-        args.append(f"--token-budget={token_budget}")
-    if auto_merge is not None:
-        args.append("--auto-merge" if auto_merge else "--no-auto-merge")
-    if kill_losers:
-        args.append("--kill-losers")
-    if reset:
-        args.append("--reset")
-    return args
-
-
-def _merge_resume_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    mode: str | None,
-    strategy: str | None,
-) -> list[str]:
-    return [
-        spec_id,
-        *(legacy_args or []),
-        *_option_pairs(mode=mode, strategy=strategy),
+    prefix = "Dry run: " if dry_run else ""
+    label = {"enable": "Enabled", "disable": "Disabled", "select": "Selected"}[
+        operation
     ]
-
-
-def _merge_land_args(
-    spec_id: str,
-    legacy_args: list[str] | None,
-    *,
-    continue_: bool,
-    prepare_only: bool,
-    no_autoresolve: bool,
-    allow_fulfillment_gaps: bool,
-    strategy: str | None,
-) -> list[str]:
-    args = [spec_id, *(legacy_args or [])]
-    if continue_:
-        args.append("--continue")
-    if prepare_only:
-        args.append("--prepare-only")
-    if no_autoresolve:
-        args.append("--no-autoresolve")
-    if allow_fulfillment_gaps:
-        args.append("--allow-fulfillment-gaps")
-    if strategy is not None:
-        args.extend(["--strategy", strategy])
-    return args
+    values = ", ".join(
+        stack_ids if operation == "disable" else selection.explicit
+    ) or "none"
+    typer.echo(f"{prefix}{label} stacks: {values}")
+    if dry_run:
+        typer.echo(
+            yaml.safe_dump(
+                {"stacks": {"selected": selection.explicit}},
+                sort_keys=False,
+            ).rstrip()
+        )
+    if selection.local_override:
+        typer.echo("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
 @spec_app.command(
@@ -2303,32 +2655,24 @@ def spec_run(
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Run Phase A squad spec authoring."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRunRequest, run_spec
 
-    args: list[str] = []
-    if description is not None:
-        args.append(description)
-    args.extend(list(ctx.args))
-    _extend_option(args, "--mode", mode)
-    if reset:
-        args.append("--reset")
-    if perfectionist:
-        args.append("--perfectionist")
-    if init:
-        args.append("--init")
-    _extend_option(args, "--message", message)
-    _extend_option(args, "--next-phase", next_phase)
-    _extend_repeated_option(args, "--target", target)
-    _extend_repeated_option(args, "--input", input_values)
-    if ignore_re:
-        args.append("--ignore-re")
-    if stash:
-        args.append("--stash")
-    if discard:
-        args.append("--discard")
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_spec_run(args)
+    run_spec(Path.cwd(), SpecRunRequest(
+        description=description,
+        extra_args=tuple(ctx.args),
+        mode=mode,
+        reset=reset,
+        perfectionist=perfectionist,
+        init=init,
+        message=message,
+        next_phase=next_phase,
+        targets=tuple(target or ()),
+        input_values=tuple(input_values or ()),
+        ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("retarget")
@@ -2347,22 +2691,21 @@ def spec_retarget(
     ),
 ) -> None:
     """Destructively replace the active spec's complete target set."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import SpecRetargetRequest, retarget_spec
 
-    args = [spec_id]
-    _extend_repeated_option(args, "--target", target)
-    args.extend("--confirm" for _ in range(confirm))
-    legacy_cli._cmd_spec_retarget(args)
+    retarget_spec(Path.cwd(), SpecRetargetRequest(
+        spec_id=spec_id,
+        targets=tuple(target),
+        confirm_count=confirm,
+    ))
 
 
 @spec_app.command("status")
 def spec_status() -> None:
     """Show current spec run state and next action."""
-    from pathlib import Path
+    from echelon.spec_service import show_status
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_status(Path.cwd())
+    show_status(Path.cwd())
 
 
 @spec_app.command(
@@ -2378,11 +2721,9 @@ def spec_continue(
     ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import continue_spec
 
-    args = list(ctx.args)
-    _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
+    continue_spec(Path.cwd(), mode=mode, extra_args=tuple(ctx.args))
 
 
 @spec_app.command(
@@ -2397,13 +2738,9 @@ def spec_resume(
     ),
 ) -> None:
     """Answer escalation questions from a blocked run."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import resume_spec
 
-    args: list[str] = []
-    if answer is not None:
-        args.append(answer)
-    args.extend(list(ctx.args))
-    legacy_cli._cmd_spec_resume(args)
+    resume_spec(Path.cwd(), answer=answer, extra_args=tuple(ctx.args))
 
 
 @spec_app.command("add-input")
@@ -2418,11 +2755,9 @@ def spec_add_input(
     ),
 ) -> None:
     """Add declared evidence to a parked investigation access checkpoint."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import add_input
 
-    args: list[str] = []
-    _extend_repeated_option(args, "--input", input_values)
-    legacy_cli._cmd_spec_add_input(args)
+    add_input(Path.cwd(), input_values=tuple(input_values or ()))
 
 
 @spec_app.command(
@@ -2435,20 +2770,14 @@ def spec_resolve(
     decision: Optional[str] = typer.Argument(None, help="Explicit project decision for this issue."),
 ) -> None:
     """Record one issue decision and dispatch its targeted WHAT repair."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import resolve_issue
 
-    project_root = Path.cwd()
-    args = [issue_id]
-    if decision is not None:
-        args.append(decision)
-    args.extend(list(ctx.args))
-    ext_dir = legacy_cli._installed_extension_or_exit(project_root)
-    legacy_cli._require_provider_capability(
-        "echelon spec resolve",
-        legacy_cli.ProviderCapability.ARTIFACT,
-        project_dir=project_root,
+    resolve_issue(
+        Path.cwd(),
+        issue_id=issue_id,
+        decision=decision,
+        extra_args=tuple(ctx.args),
     )
-    legacy_cli._cmd_spec_resolve(args, project_root=project_root, ext_dir=ext_dir)
 
 
 @spec_app.command(
@@ -2471,16 +2800,15 @@ def spec_rewind(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
-    from pathlib import Path
+    from echelon.spec_service import SpecRewindRequest, rewind_spec
 
-    from echelon import cli as legacy_cli
-
-    args = [phase_id, *list(ctx.args)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_rewind(args, project_root=Path.cwd())
+    rewind_spec(Path.cwd(), SpecRewindRequest(
+        phase_id=phase_id,
+        extra_args=tuple(ctx.args),
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=checkpoint_next_phase,
+        confirm=confirm,
+    ))
 
 
 @spec_app.command("repair-traceability")
@@ -2488,13 +2816,9 @@ def spec_repair_traceability(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the safe traceability repair."),
 ) -> None:
     """Repair safely-prunable product-input task mappings and resume finalization."""
-    from pathlib import Path
+    from echelon.spec_service import repair_traceability
 
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_repair_traceability(
-        ["--confirm"] if confirm else [], project_root=Path.cwd()
-    )
+    repair_traceability(Path.cwd(), confirm=confirm)
 
 
 @spec_app.command("switch")
@@ -2600,12 +2924,14 @@ def spec_drop_target(
     confirm: bool = typer.Option(False, "--confirm", help="Apply the target removal."),
 ) -> None:
     """Remove an unused target and re-run task planning for the remaining targets."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import drop_target
 
-    args = [spec_id, target]
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_drop_target(args, project_root=Path.cwd())
+    drop_target(
+        Path.cwd(),
+        spec_id=spec_id,
+        target=target,
+        confirm=confirm,
+    )
 
 
 @spec_checkpoint_app.command(
@@ -3611,12 +3937,10 @@ def spec_target(
     init: bool = typer.Option(False, "--init", help="Create or prepare target Git repo(s)."),
 ) -> None:
     """Set implementation targets in spec metadata."""
-    from echelon import cli as legacy_cli
+    del ctx, spec_id, repo, init
+    from echelon.spec_service import reject_target_mutation
 
-    args = [spec_id, *repo, *list(ctx.args)]
-    if init:
-        args.append("--init")
-    legacy_cli._cmd_spec_target(args)
+    reject_target_mutation()
 
 
 @spec_app.command("targets")
@@ -3624,9 +3948,9 @@ def spec_targets(
     spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to inspect."),
 ) -> None:
     """Display every task grouped by delivery target."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import show_targets
 
-    legacy_cli._cmd_spec_targets([spec_id])
+    show_targets(Path.cwd(), spec_id=spec_id)
 
 
 @spec_app.command(
@@ -3638,9 +3962,9 @@ def spec_artifacts(
     spec_id: str = typer.Argument(..., help="Spec id to index."),
 ) -> None:
     """Generate specs/<id>/ARTIFACTS.md."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import write_artifacts
 
-    legacy_cli._cmd_artifacts([spec_id, *list(ctx.args)])
+    write_artifacts(Path.cwd(), spec_id=spec_id, extra_args=tuple(ctx.args))
 
 
 @spec_app.command(
@@ -3837,13 +4161,13 @@ def spec_reopen(
     ),
 ) -> None:
     """Reopen spec from fulfillment gaps."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
     args = [spec_id]
     if report is not None:
         args.append(report)
     args.extend(list(ctx.args))
-    legacy_cli._dispatch_skill_command("reopen", args)
+    dispatch_skill("reopen", args, project_root=Path.cwd())
 
 
 @spec_app.command("defer")
@@ -4014,9 +4338,13 @@ def spec_bugfix(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
 ) -> None:
     """Diagnose and plan a bugfix."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
-    legacy_cli._dispatch_skill_command("bugfix", [spec_id, description, *list(ctx.args)])
+    dispatch_skill(
+        "bugfix",
+        [spec_id, description, *list(ctx.args)],
+        project_root=Path.cwd(),
+    )
 
 
 @spec_app.command(
@@ -4029,9 +4357,13 @@ def spec_change(
     description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
 ) -> None:
     """Plan a scope change."""
-    from echelon import cli as legacy_cli
+    from echelon.skill_command_service import dispatch_skill
 
-    legacy_cli._dispatch_skill_command("change", [spec_id, description, *list(ctx.args)])
+    dispatch_skill(
+        "change",
+        [spec_id, description, *list(ctx.args)],
+        project_root=Path.cwd(),
+    )
 
 
 @spec_app.command(
@@ -4050,13 +4382,16 @@ def spec_amend(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview baseline and inputs without mutation."),
 ) -> None:
     """Prepare an isolated amendment for an unbuilt spec."""
-    from echelon import cli as legacy_cli
+    from echelon.spec_service import prepare_amendment
 
-    args = [spec_id, description, *list(ctx.args)]
-    _extend_repeated_option(args, "--input", input_values)
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_spec_amend(args)
+    prepare_amendment(
+        Path.cwd(),
+        spec_id=spec_id,
+        description=description,
+        input_values=tuple(input_values or ()),
+        dry_run=dry_run,
+        extra_args=tuple(ctx.args),
+    )
 
 
 @delivery_app.command(
@@ -4065,26 +4400,25 @@ def spec_amend(
 )
 def delivery_init(ctx: typer.Context) -> None:
     """Initialize delivery environment: sandbox, mirror, verify."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import initialize_delivery
 
-    legacy_cli._cmd_harness_init(
-        list(ctx.args),
-        command_prefix="echelon delivery init",
+    initialize_delivery(
+        Path.cwd(),
+        extra_args=tuple(ctx.args),
     )
 
 
 @delivery_app.command("target")
 def delivery_target(spec_id: str) -> None:
     """Prepare delivery metadata for a spec's declared target repo."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import prepare_target
 
-    legacy_cli._cmd_delivery_target([spec_id])
+    prepare_target(Path.cwd(), spec_id=spec_id)
 
 
 @delivery_app.command("status")
 def delivery_status(
     spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to inspect."),
-    strategy: Optional[str] = typer.Option(None, "--strategy", help="Delivery strategy id."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show current Phase B delivery/Ralph state."""
@@ -4092,7 +4426,6 @@ def delivery_status(
 
     command(
         spec_id=spec_id or "",
-        strategy=strategy or "",
         json_output=json_output,
     )
 
@@ -4122,15 +4455,18 @@ def delivery_verify_local(
     ),
 ) -> None:
     """Explicit macOS verification; it never changes delivery landing authority."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import LocalVerificationRequest, verify_local
 
     try:
-        legacy_cli._cmd_delivery_verify_local(
-            spec_id,
-            target_id=target,
-            engine=engine,
-            assume_yes=assume_yes,
-            keep_on_failure=keep_on_failure,
+        verify_local(
+            Path.cwd(),
+            LocalVerificationRequest(
+                spec_id=spec_id,
+                target_id=target,
+                engine=engine,
+                assume_yes=assume_yes,
+                keep_on_failure=keep_on_failure,
+            ),
         )
     except ValueError as exc:
         typer.echo(f"✗ {exc}", err=True)
@@ -4142,10 +4478,10 @@ def delivery_cleanup_local(
     local_run_id: str = typer.Argument(..., metavar="LOCAL_RUN_ID", help="Journal-bound run id to recover."),
 ) -> None:
     """Clean one interrupted local verification using its ownership journal."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import cleanup_local
 
     try:
-        legacy_cli._cmd_delivery_cleanup_local(local_run_id)
+        cleanup_local(Path.cwd(), local_run_id=local_run_id)
     except ValueError as exc:
         typer.echo(f"✗ {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -4153,7 +4489,7 @@ def delivery_cleanup_local(
 
 @delivery_app.command(
     "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_run(
     ctx: typer.Context,
@@ -4162,11 +4498,6 @@ def delivery_run(
         None,
         "--mode",
         help="Autonomy mode: semi, banzai, or guided.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Build strategy (default recommended; SOAR/codegen is disabled).",
     ),
     max_outer: Optional[int] = typer.Option(
         None,
@@ -4188,11 +4519,6 @@ def delivery_run(
         "--auto-merge/--no-auto-merge",
         help="Enable or disable automatic landing after convergence.",
     ),
-    kill_losers: bool = typer.Option(
-        False,
-        "--kill-losers",
-        help="Cancel peer strategies after the first convergence.",
-    ),
     reset: bool = typer.Option(
         False,
         "--reset",
@@ -4200,32 +4526,18 @@ def delivery_run(
     ),
 ) -> None:
     """Run build, verification, review, and PR loop for a spec."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRunRequest, run_delivery
 
-    legacy_cli._cmd_harness_run(
-        _merge_run_args(
+    run_delivery(
+        Path.cwd(),
+        DeliveryRunRequest(
             spec_id,
-            list(ctx.args),
+            extra_args=tuple(ctx.args),
             mode=mode,
-            strategy=strategy,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
             auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-        command_prefix="echelon delivery run",
-        display_args=_display_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
             reset=reset,
         ),
     )
@@ -4233,52 +4545,53 @@ def delivery_run(
 
 @delivery_app.command(
     "resume",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_resume(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., metavar="SPEC_ID"),
     answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for blocker escalation."),
     mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """Resume a blocked delivery run with a human answer."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRecoveryRequest, resume_delivery
 
-    legacy_args: list[str] = []
-    if answer is not None:
-        legacy_args.append(answer)
-    legacy_args.extend(list(ctx.args))
-    legacy_cli._cmd_harness_resume(
-        _merge_resume_args(
-            spec_id,
-            legacy_args,
+    resume_delivery(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id=spec_id,
+            extra_args=tuple(ctx.args),
+            answer=answer,
             mode=mode,
-            strategy=strategy,
-        )
+        ),
     )
 
 
 @delivery_app.command(
     "continue",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_continue(
     ctx: typer.Context,
     spec_id: str,
     mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
+    token_budget: Optional[int] = typer.Option(None, "--token-budget"),
+    max_outer: Optional[int] = typer.Option(None, "--max-outer"),
+    auto_merge: Optional[bool] = typer.Option(None, "--auto-merge/--no-auto-merge"),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
 
-    legacy_cli._cmd_harness_continue(
-        _merge_resume_args(
-            spec_id,
-            list(ctx.args),
+    continue_delivery(
+        Path.cwd(),
+        DeliveryRecoveryRequest(
+            spec_id=spec_id,
+            extra_args=tuple(ctx.args),
             mode=mode,
-            strategy=strategy,
-        )
+            token_budget=token_budget,
+            max_outer=max_outer,
+            auto_merge=auto_merge,
+        ),
     )
 
 
@@ -4316,46 +4629,47 @@ def delivery_land(
     ),
 ) -> None:
     """Land a spec by merging PR/branch and cleaning up."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import DeliveryLandRequest, land_delivery
 
-    legacy_cli._cmd_land(
-        _merge_land_args(
+    land_delivery(
+        Path.cwd(),
+        DeliveryLandRequest(
             spec_id,
-            list(ctx.args),
-            continue_=continue_,
+            extra_args=tuple(ctx.args),
+            continue_existing=continue_,
             prepare_only=prepare_only,
-            no_autoresolve=no_autoresolve,
+            autoresolve=not no_autoresolve,
             allow_fulfillment_gaps=allow_fulfillment_gaps,
             strategy=strategy,
-        )
+        ),
     )
 
 
 @delivery_checkpoint_app.command(
     "list",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def delivery_checkpoint_list(
     ctx: typer.Context,
     spec_id: str,
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
     """List delivery checkpoint and recovery commits for a spec."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_service import list_checkpoints
 
-    args = ["list", spec_id]
-    if strategy is not None:
-        args.extend(["--strategy", strategy])
-    args.extend(list(ctx.args))
-    legacy_cli._cmd_delivery_checkpoint(args)
+    list_checkpoints(
+        Path.cwd(),
+        spec_id=spec_id,
+        extra_args=tuple(ctx.args),
+    )
 
 
 def run(argv: list[str] | None = None) -> int | None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
     args, quiet = _extract_quiet_option(argv)
     if args in (["-v"], ["--version"], ["version"]):
-        legacy_cli = _legacy_cli()
-        typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+        from echelon.version import CLI_VERSION
+
+        typer.echo(f"echelon {CLI_VERSION}")
         return
     from echelon.wiki import service as wiki_service
 

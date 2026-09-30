@@ -69,7 +69,7 @@ def assert_closed_strategy_binding(case, package):
 def assert_strategy_handoff(case, package, provider):
     from harness.squad_provider import SquadAgentResult
     from tests.unit.test_discovery_completion import controller, drain
-    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
     from harness.squad_publication import PreparedSquadPublication
     from harness.element_identity_store import IdentityStore
     from harness.squad_state import StateAdvanceError
@@ -85,7 +85,7 @@ def assert_strategy_handoff(case, package, provider):
             snapshot = store.capture_routing_snapshot(expected_phase=node.id)
             for destination in ("phase3-specialists", "done", "phase2-feasibility-structural", "phase1-what"):
                 with pytest.raises(StateAdvanceError):
-                    ctrl._prepare_controller_completion(from_phase=node.id, to_phase=destination,
+                    ctrl._prepare_spec_step_effects(from_phase=node.id, to_phase=destination,
                         snapshot=snapshot, manual_phase_run=False, conditional_skip=False, record_completion=True,
                         publication_marker=package.publication.marker.to_dict(), completion_id="9" * 32,
                         managed_discovery_request=encode_publication_request(package.request))
@@ -94,7 +94,7 @@ def assert_strategy_handoff(case, package, provider):
                 raw_output="", duration_ms=0, timed_out=False)
             prepared_result = ctrl._prepare_phase_result(node, result, snapshot)
             routing = ctrl._construct_routing_decision_or_block(node, prepared_result, snapshot,
-                additional_state_updates={PENDING_EXTERNAL_PUBLICATION_KEY: package.publication.marker.to_dict()},
+                additional_state_updates={SPEC_STEP_PUBLICATION_PLAN_KEY: package.publication.marker.to_dict()},
                 managed_discovery_request=encode_publication_request(package.request), completion_id="9" * 32,
                 token_usage_delta=21)
             assert routing is not None, store.load()
@@ -104,12 +104,14 @@ def assert_strategy_handoff(case, package, provider):
                 patch.setattr(PreparedSquadPublication, "_promote", before_promotion)
                 with pytest.raises(Interrupted):
                     ctrl._advance_prepared_result_or_block(node, routing.decision, prepared_publication=package.publication)
-    assert store.load()["last_dispatch"]["post_dispatch_complete"] is False
+    pending = store.load()
+    assert pending["last_dispatch"] == before["last_dispatch"]
+    assert "pending_spec_step" in pending
     assert {p.name: p.read_bytes() for p in (root / "specs/game").iterdir() if p.is_file()} == documents
     from harness.discovery_completion import authenticate
-    from harness.squad_completion import load_prepared_controller_completion
-    pending = store.load()
-    completion = load_prepared_controller_completion(root, store.squad_dir, pending["pending_controller_completion"])
+    from tests.unit.test_discovery_completion import pending_spec_companion
+    actual_pending = store.load()
+    pending, completion, _ = pending_spec_companion(ctrl)
     for key in ("iteration", "max_iterations", "feasibility_structural_attempts", "feasibility_verdict", "structural_action"):
         changed = deepcopy(pending)
         changed[key] = changed[key] + 1 if type(changed[key]) is int else "forged"
@@ -118,7 +120,7 @@ def assert_strategy_handoff(case, package, provider):
         changed = deepcopy(pending)
         changed[key] = float(changed[key])
         with pytest.raises(CompletionError): authenticate(root, store.squad_dir, changed, completion)
-    assert store.load() == pending
+    assert store.load() == actual_pending
     interruptions = []
     def after_one_promotion(*args, **kwargs):
         def interrupt(position):

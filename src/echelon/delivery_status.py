@@ -5,45 +5,35 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness.provider_capability import ProviderCapability
+from echelon.ui import banner as _banner
 
 
 def command(
     *,
     spec_id: str = "",
-    strategy: str = "",
     json_output: bool = False,
     project_root: Path | None = None,
 ) -> None:
     """Render Phase B status from values already validated by Typer."""
-    from echelon.cli import (
-        _banner,
+    from echelon.delivery_service import (
         _delivery_status_fields,
         _delivery_status_summary,
-        _iter_harness_build_states,
-        _require_provider_capability,
+        _iter_delivery_states,
+        _require_delivery_capability,
     )
 
     root = project_root or Path.cwd()
-    _require_provider_capability(
+    _require_delivery_capability(
         "echelon delivery status",
-        ProviderCapability.BUILD,
-        project_dir=root,
+        root,
     )
-    states = _iter_harness_build_states(root)
+    states = _iter_delivery_states(root)
     if spec_id:
         states = [
             state
             for state in states
             if str(state.get("spec_id") or "") == spec_id
         ]
-    if strategy:
-        states = [
-            state
-            for state in states
-            if str(state.get("strategy_id") or "") == strategy
-        ]
-
     summaries = [
         _delivery_status_summary(state, project_root=root) for state in states
     ]
@@ -52,7 +42,6 @@ def command(
             "status": summaries[0]["status"] if summaries else "none",
             "spec_id": spec_id
             or (summaries[0].get("spec_id") if summaries else ""),
-            "strategy": strategy,
             "latest": summaries[0] if summaries else None,
             "states": summaries[:10],
         }

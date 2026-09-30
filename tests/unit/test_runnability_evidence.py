@@ -30,7 +30,6 @@ def _write_report(
         evidence_dir=root,
         spec_id="003-browser-game",
         target_id="browser-game",
-        strategy_id="default",
         build_id="build-1",
         candidate_commit=candidate_commit,
         candidate_fingerprint=candidate_fingerprint,
@@ -64,6 +63,15 @@ def _write_report(
         sensitive_environment=sensitive_environment or {},
         user_commands={"start": ("pnpm start:local",), "stop": ("pnpm stop:local",)},
     )
+
+
+@pytest.mark.unit
+def test_runnability_receipt_has_no_strategy_identity(tmp_path: Path) -> None:
+    ref = _write_report(tmp_path)
+
+    payload = json.loads(ref.path.read_text(encoding="utf-8"))
+    assert "strategy_id" not in payload
+    assert payload["build_id"] == "build-1"
 
 
 @pytest.mark.unit
@@ -131,7 +139,6 @@ def test_runnable_report_requires_every_required_stage_to_pass(tmp_path: Path) -
             evidence_dir=tmp_path,
             spec_id="003",
             target_id="game",
-            strategy_id="default",
             build_id="build-1",
             candidate_commit="a" * 40,
             candidate_fingerprint="product-1",
@@ -165,7 +172,6 @@ def test_report_preserves_separate_unverified_local_journey(tmp_path: Path) -> N
         evidence_dir=tmp_path,
         spec_id="003",
         target_id="game",
-        strategy_id="default",
         build_id="build-1",
         candidate_commit="a" * 40,
         candidate_fingerprint="product-1",

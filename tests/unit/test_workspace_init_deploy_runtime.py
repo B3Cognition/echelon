@@ -6,7 +6,12 @@ import sys
 import pytest
 import yaml
 
-from echelon import cli
+from echelon import workspace_service as cli
+
+
+def _initialize_workspace(project_root, **kwargs) -> None:
+    cli.initialize_workspace(project_root, **kwargs)
+    cli.bootstrap_workspace_git(project_root)
 
 
 def _write_workspace_config(project_dir, deploy_block: str) -> None:
@@ -97,7 +102,7 @@ def test_workspace_init_continues_when_http_deploy_runtime_unavailable(
     monkeypatch.setattr(cli, "_preflight_deploy_runtime", lambda _deploy: False)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
@@ -120,7 +125,7 @@ def test_workspace_init_skips_deploy_when_disabled(tmp_path, monkeypatch, capsys
     )
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
@@ -143,7 +148,7 @@ def test_workspace_init_seeds_config_without_spec_kit(
     monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     captured = capsys.readouterr()
     assert "Prosaic prose deployed" in captured.out
@@ -162,7 +167,7 @@ def test_workspace_init_deploys_proportional_why2_controller_contract(
     )
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     runtime = tmp_path / ".echelon" / "runtime"
     why2_instructions = (runtime / "workflow/phases/phase1-why2.md").read_text(
@@ -196,7 +201,7 @@ def test_workspace_init_prefers_echelon_runtime_config_over_reference_template(
     monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
     assert config["source"] == "echelon"
@@ -217,9 +222,7 @@ def test_workspace_init_bootstraps_git_without_spec_kit(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
-    monkeypatch.setattr(cli, "_wants_unsafe_host_execution_interactively", lambda: False)
-
-    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+    _initialize_workspace(tmp_path, allow_unsafe_host_execution=False)
 
     assert (tmp_path / ".git").exists()
     gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
@@ -235,7 +238,7 @@ def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, ca
     monkeypatch.setenv("ECHELON_LLM", "codex")
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
@@ -260,7 +263,11 @@ def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--llm", "codex", "--no-unsafe-host-execution"])
+    _initialize_workspace(
+        tmp_path,
+        llm_cli="codex",
+        allow_unsafe_host_execution=False,
+    )
 
     captured = capsys.readouterr()
     assert "LLM provider configured: codex" in captured.out
@@ -286,21 +293,14 @@ def test_workspace_init_persists_openai_compatible_endpoint_config(tmp_path, mon
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(
-        [
-            "init",
-            "--llm",
-            "openai-compatible",
-            "--openai-base-url",
-            "http://127.0.0.1:8000/v1",
-            "--openai-model",
-            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
-            "--openai-api-key-file",
-            "~/.omlx_token",
-            "--openai-api-key-env",
-            "OMLX_API_KEY",
-            "--no-unsafe-host-execution",
-        ]
+    _initialize_workspace(
+        tmp_path,
+        llm_cli="openai-compatible",
+        openai_base_url="http://127.0.0.1:8000/v1",
+        openai_model="ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+        openai_api_key_file="~/.omlx_token",
+        openai_api_key_env="OMLX_API_KEY",
+        allow_unsafe_host_execution=False,
     )
 
     captured = capsys.readouterr()
@@ -328,7 +328,7 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+    _initialize_workspace(tmp_path, allow_unsafe_host_execution=False)
 
     captured = capsys.readouterr()
     assert "workspace Git initialized" in captured.out
@@ -375,21 +375,6 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     assert staged == []
 
 
-def test_workspace_init_bootstraps_git_without_inspecting_speckit_git(
-    tmp_path, monkeypatch
-) -> None:
-    calls: list[str] = []
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "_cmd_init", lambda *_args, **_kwargs: calls.append("config"))
-    monkeypatch.setattr(
-        cli, "_maybe_bootstrap_workspace_git", lambda _root: calls.append("git")
-    )
-
-    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
-
-    assert calls == ["config", "git"]
-
-
 def test_workspace_init_rerun_repairs_missing_sources_scaffold(
     tmp_path,
     monkeypatch,
@@ -425,7 +410,7 @@ def test_workspace_init_rerun_repairs_missing_sources_scaffold(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+    _initialize_workspace(tmp_path, allow_unsafe_host_execution=False)
 
     captured = capsys.readouterr()
     assert "source roots scaffolded" in captured.out
@@ -455,7 +440,7 @@ def test_workspace_init_rejects_invalid_llm_option(tmp_path, monkeypatch, capsys
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_workspace(["init", "--llm", "kubernetes"])
+        cli.initialize_workspace(tmp_path, llm_cli="kubernetes")
 
     captured = capsys.readouterr()
     assert exc.value.code == 1
@@ -471,7 +456,7 @@ def test_workspace_init_persists_additional_llm_providers(tmp_path, monkeypatch,
     monkeypatch.setenv("ECHELON_LLM", llm_cli)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path)
+    cli.initialize_workspace(tmp_path)
 
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
@@ -491,7 +476,7 @@ def test_workspace_init_flag_writes_local_unsafe_host_execution_policy(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--allow-unsafe-host-execution"])
+    _initialize_workspace(tmp_path, allow_unsafe_host_execution=True)
 
     captured = capsys.readouterr()
     assert "host tool execution approval written" in captured.out
@@ -517,7 +502,10 @@ def test_workspace_init_interactive_yes_writes_local_unsafe_host_execution_polic
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
-    cli._cmd_workspace(["init"])
+    _initialize_workspace(
+        tmp_path,
+        allow_unsafe_host_execution=cli.wants_unsafe_host_execution_interactively(),
+    )
 
     captured = capsys.readouterr()
     assert "host tool execution approval written" in captured.out

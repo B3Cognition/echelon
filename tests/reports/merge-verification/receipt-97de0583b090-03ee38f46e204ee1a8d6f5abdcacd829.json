@@ -1,0 +1,43 @@
+{
+  "plan": {
+    "base_commit": "7af823a935e0d21f52d8f86859f39782f85d12ac",
+    "candidate_commit": "97de0583b0908c440efb312388b4157ed607ddd1",
+    "candidate_tree": "ae22820d10245e38bba87b7e9f92053023fec167",
+    "changed_paths": [
+      "AGENTS.md",
+      "README.md",
+      "docs/simplification-control.md",
+      "docs/superpowers/plans/2026-09-23-ralph-durable-step-decomposition.md",
+      "src/harness/delivery_controller.py",
+      "src/harness/ralph.py",
+      "tests/reports/merge-verification/receipt-e76c937cdfbc-fa239e6dbc824858826ec7d401d73f61.json",
+      "tests/unit/test_delivery_controller.py"
+    ],
+    "commands": [
+      [
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ]
+    ],
+    "requires_full_suite": true,
+    "scope": "full-unit"
+  },
+  "results": [
+    {
+      "command": [
+        "/Users/michalbachorik/work/echelon_r/echelon/.worktrees/ralph-durable-steps/../../.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-m",
+        "unit"
+      ],
+      "duration_ms": 2087770,
+      "exit_code": 0
+    }
+  ],
+  "schema_version": 1,
+  "status": "passed"
+}

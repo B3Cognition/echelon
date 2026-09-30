@@ -18,6 +18,8 @@ from harness.controller_state_contract_requirements import (
 )
 import harness.phase_graph as phase_graph_module
 from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
+from harness.phase_a_provider_assignments import runtime_provider_assignment
+from harness.provider_output_publication import ProviderArtifactContractError
 
 PROSAIC_RUNTIME_DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
@@ -121,7 +123,8 @@ def test_workspace_graph_prefers_deployed_prosaic_runtime(tmp_path: Path) -> Non
     (runtime / "workflow").mkdir(parents=True)
     prose.mkdir(parents=True)
     (runtime / "workflow/definition.yaml").write_text(
-        "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n",
+        "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n"
+        "    artifact_contract:\n      mode: result_only\n",
         encoding="utf-8",
     )
     (prose / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
@@ -1003,6 +1006,8 @@ phases:
   - id: phase1-discover
     type: agent
     agent: echelon.scout
+    artifact_contract:
+      mode: result_only
     outputs:
       - spec.md
     allowed_state_updates:
@@ -1059,6 +1064,8 @@ def _write_controller_boundary_graph(
     phase: dict[str, object] = {
         "id": "start",
         "type": "agent",
+        "agent": "echelon.start",
+        "artifact_contract": {"mode": "result_only"},
         "allowed_state_updates": [],
         "controller_state_contract": "spec_lexicon",
         "transitions": [{"to": "DONE", "condition": "always"}],
@@ -1067,9 +1074,15 @@ def _write_controller_boundary_graph(
         phase["allowed_state_updates"] = allowlist
     else:
         phase["type"] = "staged_parallel"
-        phase[nested_field] = [
-            {"id": "nested", "allowed_state_updates": allowlist}
-        ]
+        phase.pop("agent")
+        phase.pop("artifact_contract")
+        nested: dict[str, object] = {
+            "id": "nested",
+            "allowed_state_updates": allowlist,
+        }
+        if nested_field == "agents":
+            nested["artifact_contract"] = {"mode": "result_only"}
+        phase[nested_field] = [nested]
     definition = tmp_path / "definition.yaml"
     definition.write_text(
         yaml.safe_dump(
@@ -1887,3 +1900,152 @@ def test_early_phase_graph_context_uses_durable_spec_paths() -> None:
     assert "{staging_dir}/user-clarifications.md" in graph.get(
         "phase1-what"
     ).context_pack
+
+
+def _write_provider_assignment_graph(tmp_path: Path, phases: list[dict]) -> Path:
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump({"phases": phases}, sort_keys=False),
+        encoding="utf-8",
+    )
+    return definition
+
+
+def _publish_contract(path: str) -> dict:
+    return {
+        "mode": "publish",
+        "artifacts": [
+            {
+                "root": "active_spec",
+                "path": path,
+                "kind": "file",
+                "requirement": "required",
+            }
+        ],
+    }
+
+
+def test_provider_assignment_requires_artifact_contract(tmp_path: Path) -> None:
+    definition = _write_provider_assignment_graph(
+        tmp_path,
+        [{"id": "author", "type": "agent", "agent": "echelon.author"}],
+    )
+
+    with pytest.raises(ProviderArtifactContractError, match="author"):
+        PhaseGraph(definition)
+
+
+def test_deterministic_node_rejects_provider_artifact_contract(tmp_path: Path) -> None:
+    definition = _write_provider_assignment_graph(
+        tmp_path,
+        [
+            {
+                "id": "deterministic",
+                "type": "terminal",
+                "artifact_contract": _publish_contract("spec.md"),
+            }
+        ],
+    )
+
+    with pytest.raises(ProviderArtifactContractError, match="deterministic"):
+        PhaseGraph(definition)
+
+
+def test_nested_provider_assignments_have_distinct_stable_ids(tmp_path: Path) -> None:
+    definition = _write_provider_assignment_graph(
+        tmp_path,
+        [
+            {
+                "id": "review",
+                "type": "staged_parallel",
+                "agents": [
+                    {
+                        "id": "echelon.reviewer",
+                        "mode": "WHY3",
+                        "stage": 1,
+                        "artifact_contract": _publish_contract("issues.md"),
+                    },
+                    {
+                        "id": "echelon.reviewer",
+                        "mode": "ASSESS2",
+                        "stage": 2,
+                        "artifact_contract": _publish_contract(
+                            "implementability-report.md"
+                        ),
+                    },
+                ],
+            }
+        ],
+    )
+
+    node = PhaseGraph(definition).get("review")
+
+    first = node.provider_assignment(collection="agents", index=0)
+    second = node.provider_assignment(collection="agents", index=1)
+    assert first.assignment_id == "review/agents/0/echelon.reviewer:WHY3"
+    assert second.assignment_id == "review/agents/1/echelon.reviewer:ASSESS2"
+    assert first.assignment_id != second.assignment_id
+
+
+def test_parallel_mutable_provider_assignments_reject_overlap(
+    tmp_path: Path,
+) -> None:
+    definition = _write_provider_assignment_graph(
+        tmp_path,
+        [
+            {
+                "id": "parallel",
+                "type": "staged_parallel",
+                "agents": [
+                    {
+                        "id": "echelon.one",
+                        "stage": 1,
+                        "artifact_contract": _publish_contract("issues.md"),
+                    },
+                    {
+                        "id": "echelon.two",
+                        "stage": 1,
+                        "artifact_contract": _publish_contract("issues.md"),
+                    },
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(ProviderArtifactContractError, match="overlap"):
+        PhaseGraph(definition)
+
+
+def test_checked_in_provider_assignments_all_compile() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    assignments = graph.provider_assignments()
+    assert assignments
+    assert all(assignment.contract is not None for assignment in assignments)
+    assert graph.get("phase1-what").provider_assignment().assignment_id == (
+        "phase1-what"
+    )
+    assert graph.get("phase3-consensus").provider_assignment(
+        collection="agents", index=0
+    ).mode == "WHY3"
+
+
+@pytest.mark.parametrize(
+    ("assignment_id", "mode"),
+    [
+        ("phase3-consensus/sage-work-assessment", "result_only"),
+        ("phase3-consensus/sage-decision-proposal", "publish"),
+        ("commander/routing-judgment", "result_only"),
+        ("commander/human-resolution", "result_only"),
+        ("provider/echelon-result-repair", "result_only"),
+    ],
+)
+def test_runtime_assignment_registry_is_explicit(
+    assignment_id: str, mode: str
+) -> None:
+    assignment = runtime_provider_assignment(assignment_id)
+    assert assignment.assignment_id == assignment_id
+    assert assignment.contract.mode == mode

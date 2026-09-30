@@ -19,7 +19,7 @@ class DeliveryTasksComplete(DeliverySliceError):
 
 
 STEP_VERDICTS = {
-    "implementer": frozenset({"DONE", "BLOCKED", "NEEDS_CONTEXT"}),
+    "implementer": frozenset({"DONE", "BLOCKED", "NEEDS_CONTEXT", "BROWSER_EVIDENCE_REQUIRED"}),
     "spec_guard": frozenset({"PASS", "FAIL"}),
     "code_reviewer": frozenset({"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}),
     "test_guardian": frozenset({"PASS", "FAIL"}),
@@ -112,7 +112,15 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
     except (ValueError, TypeError) as exc:
         raise DeliverySliceError("delivery result must be JSON") from exc
     identity = assignment.identity()
-    if not isinstance(payload, dict) or set(payload) != set(identity) | {"verdict", "summary", "findings"}:
+    if not isinstance(payload, dict):
+        raise DeliverySliceError("invalid delivery result fields")
+    browser_request = payload.get("verdict") == "BROWSER_EVIDENCE_REQUIRED"
+    expected_fields = set(identity) | {"verdict", "summary", "findings"}
+    if browser_request:
+        expected_fields.add("browser_evidence_request")
+    if assignment.step in {"spec_guard", "test_guardian"} and "reviewed_test_paths" in payload:
+        expected_fields.add("reviewed_test_paths")
+    if set(payload) != expected_fields:
         raise DeliverySliceError("invalid delivery result fields")
     if type(payload["schema_version"]) is not int or any(payload[key] != value for key, value in identity.items()):
         raise DeliverySliceError("delivery result identity mismatch")
@@ -131,4 +139,61 @@ def validate_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[s
         raise DeliverySliceError("passing result cannot contain unresolved findings")
     if verdict in {"FAIL", "CHANGES_REQUESTED"} and not findings:
         raise DeliverySliceError("failed review must identify findings")
+    if "reviewed_test_paths" in payload:
+        paths = payload["reviewed_test_paths"]
+        if (not isinstance(paths, list) or len(paths) > 500
+                or any(not _valid_review_test_path(path) for path in paths)
+                or len(set(paths)) != len(paths)):
+            raise DeliverySliceError("invalid reviewed test paths")
+    if browser_request:
+        if findings or payload["browser_evidence_request"] != {"purpose": "baseline_capture"}:
+            raise DeliverySliceError("invalid browser evidence request")
     return payload
+
+
+def bind_delivery_result(raw: str, assignment: DeliveryAssignment) -> dict[str, object]:
+    """Bind controller-owned fingerprints after strict transport identity validation.
+
+    Providers must still return the complete result envelope.  The dispatch,
+    step, task, and schema fields prove which call produced the response.  The
+    two long content fingerprints are controller observations, so their raw
+    echoes are retained for diagnosis but never made authoritative by a model.
+    """
+    if len(raw.encode("utf-8")) > 100_000:
+        raise DeliverySliceError("delivery result exceeds size limit")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        raise DeliverySliceError("delivery result must be JSON") from exc
+    identity = assignment.identity()
+    if not isinstance(payload, dict):
+        raise DeliverySliceError("invalid delivery result fields")
+    expected_fields = set(identity) | {"verdict", "summary", "findings"}
+    if payload.get("verdict") == "BROWSER_EVIDENCE_REQUIRED":
+        expected_fields.add("browser_evidence_request")
+    if assignment.step in {"spec_guard", "test_guardian"} and "reviewed_test_paths" in payload:
+        expected_fields.add("reviewed_test_paths")
+    if set(payload) != expected_fields:
+        raise DeliverySliceError("invalid delivery result fields")
+    for key in ("schema_version", "dispatch_id", "step", "task_id"):
+        if type(payload[key]) is not type(identity[key]) or payload[key] != identity[key]:
+            raise DeliverySliceError("delivery result identity mismatch")
+    for key in ("candidate_fingerprint", "input_fingerprint"):
+        if not isinstance(payload[key], str) or not payload[key] or len(payload[key]) > 128:
+            raise DeliverySliceError("invalid delivery result fingerprint echo")
+    bound = dict(payload)
+    bound["candidate_fingerprint"] = assignment.candidate_fingerprint
+    bound["input_fingerprint"] = assignment.input_fingerprint
+    return validate_delivery_result(json.dumps(bound), assignment)
+
+
+def _valid_review_test_path(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not value.startswith("/")
+        and not re.match(r"^[A-Za-z]:", value)
+        and "\\" not in value
+        and not any(ord(char) < 32 for char in value)
+        and all(part not in {"", ".", ".."} for part in value.split("/"))
+    )

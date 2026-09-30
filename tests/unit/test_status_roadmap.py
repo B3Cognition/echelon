@@ -9,7 +9,11 @@ import pytest
 import yaml
 from pathlib import Path
 
-from echelon.cli import _derive_roadmap_phases, _print_roadmap, _ROADMAP_PHASES
+from echelon.spec_service import (
+    _derive_roadmap_phases,
+    _print_roadmap,
+    _ROADMAP_PHASES,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]

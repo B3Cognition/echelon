@@ -87,7 +87,7 @@ def test_synthesis_context_traces_to_original_input_without_rewriting_live_sourc
     assert store.load() == state and identity.identity_history(spec_id="game") == history
     assert {path: path.read_bytes() for path in retained} == retained
     assert state["token_usage"] == 42 and len(executor.calls) == 6
-    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+    assert not list((store.squad_dir / ".spec-step-effects").iterdir())
 
 
 @pytest.mark.parametrize("damage", ["missing_proof", "legacy_without_proof", "receipt_hash", "foreign_completion"])

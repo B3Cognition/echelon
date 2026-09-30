@@ -34,13 +34,13 @@ from harness.echelon_result_schema import (
 from harness.phase_graph import PhaseNode
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
-    PENDING_CONTROLLER_COMPLETION_KEY,
+    SPEC_STEP_EFFECT_PLAN_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
     TRUSTED_ROUTING_REMOVAL_KEYS,
     store_owned_update_keys,
-    validate_pending_controller_completion,
+    validate_spec_step_effect_plan,
 )
 
 
@@ -205,6 +205,7 @@ class _CanonicalSquadAgentResult:
     provider_limit_message: str
     quarantined_state_updates: dict[str, Any]
     stderr: str
+    provider_attempts: tuple[dict[str, Any], ...]
 
 
 def _type_violation(field_name: str) -> ControllerStateContractViolation:
@@ -292,6 +293,41 @@ def _canonicalize_squad_agent_result(
     )
     if type(quarantined) is not dict:
         raise _type_violation("quarantined_state_updates")
+    provider_attempts = _bounded_detach_untrusted(
+        _exact_field(result, "provider_attempts", tuple),
+        root_path="$.provider_attempts",
+    )
+    if type(provider_attempts) is not tuple:
+        raise _type_violation("provider_attempts")
+    attempt_fields = {
+        "attempt_id",
+        "kind",
+        "provider",
+        "model",
+        "started_at",
+        "ended_at",
+        "outcome",
+        "response_sha256",
+    }
+    for index, attempt in enumerate(provider_attempts):
+        if type(attempt) is not dict or set(attempt) != attempt_fields:
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}]",
+                validator="type",
+            )
+        if any(type(value) is not str for value in attempt.values()):
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}]",
+                validator="type",
+            )
+        digest = attempt["response_sha256"]
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise _detachment_violation(
+                json_path=f"$.provider_attempts[{index}].response_sha256",
+                validator="pattern",
+            )
 
     exit_code = _exact_field(result, "exit_code", int)
     raw_output = _exact_field(result, "raw_output", str)
@@ -378,6 +414,7 @@ def _canonicalize_squad_agent_result(
         ),
         quarantined_state_updates=quarantined,
         stderr=_exact_field(result, "stderr", str),
+        provider_attempts=provider_attempts,
     )
 
 
@@ -442,6 +479,7 @@ def _reconstruct_squad_agent_result(
             result.quarantined_state_updates
         ),
         stderr=result.stderr,
+        provider_attempts=_clone_canonical(result.provider_attempts),
     )
 
 
@@ -540,6 +578,7 @@ class PreparedRoutingDecision:
     checkpoint_policy: str
     record_completion: bool
     token_usage_delta: int
+    cost_usd_delta: float
     judgment_payload_sha256: tuple[str, ...]
     _queued_state_updates: dict[str, Any] = field(repr=False)
     _transaction_state_updates: dict[str, Any] = field(repr=False)
@@ -714,6 +753,7 @@ def _canonical_result_facts(
             result.quarantined_state_updates
         ),
         "stderr": _attestable_value(result.stderr),
+        "provider_attempts": _attestable_value(result.provider_attempts),
     }
 
 
@@ -906,6 +946,7 @@ def _routing_attestation_facts(
     checkpoint_policy: object,
     record_completion: object,
     token_usage_delta: object,
+    cost_usd_delta: object,
     judgment_payload_sha256: object,
     queued_state_updates: object,
     transaction_state_updates: object,
@@ -939,6 +980,7 @@ def _routing_attestation_facts(
         "checkpoint_policy": _attestable_value(checkpoint_policy),
         "record_completion": _attestable_value(record_completion),
         "token_usage_delta": _attestable_value(token_usage_delta),
+        "cost_usd_delta": _attestable_value(cost_usd_delta),
         "judgment_payload_sha256": _attestable_value(
             judgment_payload_sha256
         ),
@@ -974,6 +1016,7 @@ def _create_routing_attestation(
     checkpoint_policy: str,
     record_completion: bool,
     token_usage_delta: int,
+    cost_usd_delta: float,
     judgment_payload_sha256: tuple[str, ...],
     queued_state_updates: dict[str, Any],
     transaction_state_updates: dict[str, Any],
@@ -996,6 +1039,7 @@ def _create_routing_attestation(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=judgment_payload_sha256,
         queued_state_updates=queued_state_updates,
         transaction_state_updates=transaction_state_updates,
@@ -1040,6 +1084,7 @@ def prepare_routing_decision(
     checkpoint_policy: str = "none",
     record_completion: bool = True,
     token_usage_delta: int = 0,
+    cost_usd_delta: float = 0.0,
     transaction_state_updates: Mapping[str, Any] | None = None,
     transaction_state_removals: object = (),
 ) -> PreparedRoutingDecision:
@@ -1101,6 +1146,16 @@ def prepare_routing_decision(
         raise PreparedPhaseResultAttestationError(
             "routing decision token usage delta is invalid"
         )
+    if (
+        type(cost_usd_delta) not in (int, float)
+        or not math.isfinite(float(cost_usd_delta))
+        or float(cost_usd_delta) < 0
+        or float(cost_usd_delta) > 1_000_000_000
+    ):
+        raise PreparedPhaseResultAttestationError(
+            "routing decision cost delta is invalid"
+        )
+    cost_usd_delta = float(cost_usd_delta)
     if checkpoint_policy not in {"required", "none"}:
         raise PreparedPhaseResultAttestationError(
             "routing decision checkpoint policy is invalid"
@@ -1161,15 +1216,15 @@ def prepare_routing_decision(
             validator="ownership",
         )
     if (
-        PENDING_CONTROLLER_COMPLETION_KEY
+        SPEC_STEP_EFFECT_PLAN_KEY
         in detached_transaction_updates
     ):
         try:
             detached_transaction_updates[
-                PENDING_CONTROLLER_COMPLETION_KEY
-            ] = validate_pending_controller_completion(
+                SPEC_STEP_EFFECT_PLAN_KEY
+            ] = validate_spec_step_effect_plan(
                 detached_transaction_updates[
-                    PENDING_CONTROLLER_COMPLETION_KEY
+                    SPEC_STEP_EFFECT_PLAN_KEY
                 ]
             )
         except ValueError as exc:
@@ -1178,12 +1233,12 @@ def prepare_routing_decision(
                 contract="routing",
                 json_path=(
                     "$.transaction_state_updates."
-                    f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                    f"{SPEC_STEP_EFFECT_PLAN_KEY}"
                 ),
                 validator="type",
             ) from exc
         completion_marker = detached_transaction_updates[
-            PENDING_CONTROLLER_COMPLETION_KEY
+            SPEC_STEP_EFFECT_PLAN_KEY
         ]
         if (
             completion_marker["origin"] != "routed"
@@ -1194,7 +1249,7 @@ def prepare_routing_decision(
                 contract="routing",
                 json_path=(
                     "$.transaction_state_updates."
-                    f"{PENDING_CONTROLLER_COMPLETION_KEY}.completion_id"
+                    f"{SPEC_STEP_EFFECT_PLAN_KEY}.completion_id"
                 ),
                 validator="completion_binding",
             )
@@ -1271,6 +1326,7 @@ def prepare_routing_decision(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=sealed_digests,
         queued_state_updates=detached_updates,
         transaction_state_updates=detached_transaction_updates,
@@ -1293,6 +1349,7 @@ def prepare_routing_decision(
         checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
+        cost_usd_delta=cost_usd_delta,
         judgment_payload_sha256=sealed_digests,
         _queued_state_updates=detached_updates,
         _transaction_state_updates=detached_transaction_updates,
@@ -1334,6 +1391,7 @@ def verify_prepared_routing_decision_attestation(
         checkpoint_policy=decision.checkpoint_policy,
         record_completion=decision.record_completion,
         token_usage_delta=decision.token_usage_delta,
+        cost_usd_delta=decision.cost_usd_delta,
         judgment_payload_sha256=decision.judgment_payload_sha256,
         queued_state_updates=decision._queued_state_updates,
         transaction_state_updates=decision._transaction_state_updates,

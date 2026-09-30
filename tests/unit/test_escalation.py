@@ -48,12 +48,11 @@ class TestEscalationFileCreation:
     def test_creates_file_at_correct_path(self, handler: EscalationHandler) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="3 identical failures in inner loop",
         )
         assert Path(filepath).exists()
-        assert "012-default-" in filepath
+        assert Path(filepath).name.startswith("delivery-escalation-")
         assert filepath.endswith(".md")
 
     def test_file_contains_all_required_fields(
@@ -61,8 +60,7 @@ class TestEscalationFileCreation:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="aggressive",
-            category="infra_failure",
+                        category="infra_failure",
             context="Docker daemon not responding",
             question="Should we retry or abort?",
             options_considered=["Retry after 30s", "Abort and notify"],
@@ -73,7 +71,7 @@ class TestEscalationFileCreation:
 
         assert "# Escalation: infra_failure" in content
         assert "**Spec:** 012" in content
-        assert "**Strategy:** aggressive" in content
+        assert "**Strategy:**" not in content
         assert "**Category:** infra_failure" in content
         assert "**Timestamp:**" in content
         assert "## Question" in content
@@ -94,8 +92,7 @@ class TestEscalationFileCreation:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="aggressive",
-            category="infra_failure",
+                        category="infra_failure",
             context="Docker daemon not responding",
             question="Should we retry or abort?",
             options_considered=["Retry after 30s", "Abort and notify"],
@@ -115,8 +112,7 @@ class TestEscalationFileCreation:
     ) -> None:
         filepath = handler.escalate(
             spec_id="906",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="Same fulfillment gap repeated.",
             last_verify_result={
                 "passed": False,
@@ -150,8 +146,7 @@ class TestEscalationFileCreation:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="no_progress",
+                        category="no_progress",
             context="No file changes after repeated build iterations.",
         )
         content = Path(filepath).read_text(encoding="utf-8")
@@ -166,8 +161,7 @@ class TestEscalationFileCreation:
     ) -> None:
         handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="Repeated failure",
         )
         captured = capsys.readouterr()
@@ -185,8 +179,7 @@ class TestEscalationFileCreation:
         for category in VALID_CATEGORIES:
             filepath = handler.escalate(
                 spec_id="012",
-                strategy_id="default",
-                category=category,
+                                category=category,
                 context=f"Test context for {category}",
             )
             assert Path(filepath).exists()
@@ -200,8 +193,7 @@ class TestInvalidCategory:
         with pytest.raises(InvalidCategoryError, match="Invalid escalation category"):
             handler.escalate(
                 spec_id="012",
-                strategy_id="default",
-                category="invalid_category",
+                                category="invalid_category",
                 context="test",
             )
 
@@ -209,8 +201,7 @@ class TestInvalidCategory:
         with pytest.raises(InvalidCategoryError):
             handler.escalate(
                 spec_id="012",
-                strategy_id="default",
-                category="",
+                                category="",
                 context="test",
             )
 
@@ -224,8 +215,7 @@ class TestCheckResume:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         assert handler.check_resume(filepath) is None
@@ -235,8 +225,7 @@ class TestCheckResume:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         # Simulate user adding answer
@@ -258,8 +247,7 @@ class TestCheckResume:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         content = Path(filepath).read_text(encoding="utf-8")
@@ -276,8 +264,7 @@ class TestResume:
     def test_resume_appends_answer(self, handler: EscalationHandler) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         handler.resume(filepath, "Use retry with exponential backoff")
@@ -292,8 +279,7 @@ class TestResume:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         handler.resume(filepath, "Switch to mock provider")
@@ -307,8 +293,7 @@ class TestResume:
     ) -> None:
         filepath = handler.escalate(
             spec_id="012",
-            strategy_id="default",
-            category="same_failure_repeat",
+                        category="same_failure_repeat",
             context="test",
         )
         handler.resume(filepath, "Switch to mock provider")

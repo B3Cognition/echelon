@@ -14,7 +14,7 @@ SRC = Path(__file__).resolve().parent.parent.parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from echelon import cli
+from echelon import spec_service as cli
 
 
 pytestmark = pytest.mark.unit

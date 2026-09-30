@@ -63,6 +63,7 @@ class VisualResult:
     tokens_used: int
     final_verify: VerifyResult | None
     evidence: VisualEvidenceRef | None = None
+    semantic_evidence: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         _validate_result(

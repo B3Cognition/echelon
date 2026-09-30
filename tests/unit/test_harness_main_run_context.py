@@ -78,11 +78,10 @@ def test_legacy_resume_renders_invalid_orchestration_context(
     marker.write_text(build_id, encoding="utf-8")
     state_dir = build_dir(tmp_path, build_id) / "state"
     state_dir.mkdir(parents=True)
-    (state_dir / "default.json").write_text(
+    (state_dir / "delivery.json").write_text(
         json.dumps(
             {
                 "spec_id": spec_id,
-                "strategy_id": "default",
                 "status": "blocked",
                 "mode": "semi",
                 "termination_reason": "blocker_escalation",
@@ -98,7 +97,7 @@ def test_legacy_resume_renders_invalid_orchestration_context(
          ):
         with pytest.raises(SystemExit) as exc:
             resume(
-                "resume spec 042 strategy default answer: use option A",
+                "resume spec 042 answer: use option A",
                 provider=MagicMock(),
                 gitops=MagicMock(),
                 base_dir=str(tmp_path),

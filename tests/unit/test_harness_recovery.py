@@ -87,8 +87,7 @@ def test_recover_blocked_run_cherry_picks_last_strategy_commit_from_mirror(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
     )
 
@@ -113,7 +112,7 @@ def test_recover_blocked_run_fast_forwards_complete_checkpoint_chain(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -122,26 +121,25 @@ def test_recover_blocked_run_fast_forwards_complete_checkpoint_chain(
         worktree,
         "src/generated.txt",
         "first\n",
-        "harness-checkpoint: 001-feature/default iter-0 build verification-deferred",
+        "harness-checkpoint: 001-feature/build-test iter-0 build verification-deferred",
     )
     second = _commit_file(
         worktree,
         "src/generated.txt",
         "second\n",
-        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+        "harness-checkpoint: 001-feature/build-test iter-0 fix verification-deferred",
     )
     recovered = _commit_file(
         worktree,
         "src/generated.txt",
         "verified\n",
-        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+        "harness-checkpoint: 001-feature/build-test iter-0 fix verification-deferred",
     )
 
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "checkpoint_commits": [
                 {"commit": first, "task_ids": ["verification-deferred"]},
@@ -171,7 +169,7 @@ def test_recover_blocked_run_aborts_conflicted_cherry_pick_before_reporting_erro
     _git(project, "checkout", "-b", "001-feature")
     _commit_file(project, "src/shared.txt", "base\n", "spec scaffold")
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -182,15 +180,14 @@ def test_recover_blocked_run_aborts_conflicted_cherry_pick_before_reporting_erro
         worktree,
         "src/shared.txt",
         "recovered\n",
-        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+        "harness-checkpoint: 001-feature/build-test iter-0 fix verification-deferred",
     )
 
     with pytest.raises(HarnessRecoveryError, match="Could not cherry-pick recovered commit"):
         recover_blocked_run(
             project_dir=project,
             spec_id="001-feature",
-            strategy_id="default",
-            state={
+                        state={
                 "termination_reason": "build_incomplete",
                 "checkpoint_commits": [
                     {"commit": recovered, "task_ids": ["verification-deferred"]},
@@ -247,8 +244,7 @@ def test_recover_blocked_run_uses_ordinary_delivery_commit_from_mirror(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
     )
 
@@ -284,8 +280,7 @@ def test_recover_blocked_run_reports_existing_ordinary_delivery_branch_head(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
     )
 
@@ -301,13 +296,13 @@ def test_recover_blocked_run_uses_state_harness_branch_when_no_feature_branch(
     project = tmp_path / "project"
     _init_repo(project)
     _commit_file(project, "README.md", "base\n", "base")
-    harness_branch = "harness/905-import-prose/default/iter-0"
+    harness_branch = "harness/905-import-prose/build-test/iter-0"
     _git(project, "checkout", "-b", harness_branch)
     recovered = _commit_file(
         project,
         "src/import.ts",
         "export const importDone = true;\n",
-        "harness: 905-import-prose/default iter-0",
+        "harness: 905-import-prose/build-test iter-0",
     )
 
     mirror = project / "runs" / "mirror.git"
@@ -318,8 +313,7 @@ def test_recover_blocked_run_uses_state_harness_branch_when_no_feature_branch(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="905-import-prose",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "publish_failed",
             "branch": harness_branch,
         },
@@ -340,13 +334,13 @@ def test_recover_blocked_run_discovers_legacy_harness_branch_without_state_branc
     project = tmp_path / "project"
     _init_repo(project)
     _commit_file(project, "README.md", "base\n", "base")
-    harness_branch = "harness/905-import-prose/default/iter-0"
+    harness_branch = "harness/905-import-prose/build-test/iter-0"
     _git(project, "checkout", "-b", harness_branch)
     recovered = _commit_file(
         project,
         "src/import.ts",
         "export const importDone = true;\n",
-        "harness: 905-import-prose/default iter-0",
+        "harness: 905-import-prose/build-test iter-0",
     )
 
     mirror = project / "runs" / "mirror.git"
@@ -357,8 +351,7 @@ def test_recover_blocked_run_discovers_legacy_harness_branch_without_state_branc
     result = recover_blocked_run(
         project_dir=project,
         spec_id="905-import-prose",
-        strategy_id="default",
-        state={"termination_reason": "publish_failed"},
+                state={"termination_reason": "publish_failed"},
         gitops=_make_gitops(project),
     )
 
@@ -383,7 +376,7 @@ def test_recover_blocked_run_prefers_preserved_worktree(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -399,8 +392,7 @@ def test_recover_blocked_run_prefers_preserved_worktree(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "publish_failed"},
+                state={"termination_reason": "publish_failed"},
         gitops=_make_gitops(project),
         build_id="build-test",
     )
@@ -427,15 +419,14 @@ def test_recover_blocked_run_accepts_plain_committed_preserved_worktree_head(
         "feat: implement generated work",
     )
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "checkout", "001-feature")
 
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
         build_id="build-test",
     )
@@ -459,7 +450,7 @@ def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -475,8 +466,7 @@ def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "salvage_commit": recovered,
             "salvage_branch": "001-feature",
@@ -505,7 +495,7 @@ def test_recover_blocked_run_uses_salvage_commit_despite_later_generated_dirt(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -514,7 +504,7 @@ def test_recover_blocked_run_uses_salvage_commit_despite_later_generated_dirt(
         worktree,
         "docs/perf/perf-metrics.json",
         '{"throughput_fps": 1000.0}\n',
-        "harness-salvage: 001-feature default iter-0",
+        "harness-salvage: 001-feature/build-test iter-0",
     )
     (worktree / "docs" / "perf" / "perf-metrics.json").write_text(
         '{"throughput_fps": 1001.0}\n',
@@ -525,8 +515,7 @@ def test_recover_blocked_run_uses_salvage_commit_despite_later_generated_dirt(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "salvage_commit": recovered,
             "salvage_branch": "001-feature",
@@ -557,7 +546,7 @@ def test_recover_blocked_run_clears_identical_untracked_collision(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -566,7 +555,7 @@ def test_recover_blocked_run_clears_identical_untracked_collision(
         worktree,
         "specs/001-feature/spec.md",
         "same spec\n",
-        "harness-salvage: 001-feature default iter-0",
+        "harness-salvage: 001-feature/build-test iter-0",
     )
 
     (project / "specs" / "001-feature").mkdir(parents=True)
@@ -579,8 +568,7 @@ def test_recover_blocked_run_clears_identical_untracked_collision(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "salvage_commit": recovered,
             "salvage_branch": "001-feature",
@@ -609,7 +597,7 @@ def test_recover_blocked_run_backs_up_differing_untracked_collision(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -619,7 +607,7 @@ def test_recover_blocked_run_backs_up_differing_untracked_collision(
         worktree,
         relpath,
         '{"runs":["salvage"]}\n',
-        "harness-salvage: 001-feature default iter-0",
+        "harness-salvage: 001-feature/build-test iter-0",
     )
 
     (project / "specs" / "001-feature").mkdir(parents=True)
@@ -629,8 +617,7 @@ def test_recover_blocked_run_backs_up_differing_untracked_collision(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "salvage_commit": recovered,
             "salvage_branch": "001-feature",
@@ -661,7 +648,7 @@ def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -670,21 +657,20 @@ def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
         worktree,
         "src/checkpoint.txt",
         "checkpoint\n",
-        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+        "harness-checkpoint: 001-feature/build-test iter-0 build T-001",
     )
     salvage = _commit_file(
         worktree,
         "src/salvage.txt",
         "salvage\n",
-        "harness-salvage: 001-feature default iter-0",
+        "harness-salvage: 001-feature/build-test iter-0",
     )
 
     _git(project, "checkout", "001-feature")
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
             "salvage_commit": salvage,
@@ -715,7 +701,7 @@ def test_recover_blocked_run_prefers_documentation_head_over_task_checkpoint(
     mirror.parent.mkdir()
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
-    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree = project / "runs" / "build-test" / "worktrees" / "iter-0"
     _git(tmp_path, "clone", str(project), str(worktree))
     _git(worktree, "config", "user.email", "test@example.com")
     _git(worktree, "config", "user.name", "Test User")
@@ -724,7 +710,7 @@ def test_recover_blocked_run_prefers_documentation_head_over_task_checkpoint(
         worktree,
         "src/feature.txt",
         "feature\n",
-        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+        "harness-checkpoint: 001-feature/build-test iter-0 build T-001",
     )
     docs_head = _commit_file(
         worktree,
@@ -737,8 +723,7 @@ def test_recover_blocked_run_prefers_documentation_head_over_task_checkpoint(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "blocker_escalation",
             "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
             "documentation_evidence": {
@@ -775,7 +760,7 @@ def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_tar
         project,
         "src/checkpoint.txt",
         "checkpoint\n",
-        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+        "harness-checkpoint: 001-feature/build-test iter-0 build T-001",
     )
 
     mirror = project / "runs" / "mirror.git"
@@ -791,8 +776,7 @@ def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_tar
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "branch": "001-feature",
             "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
@@ -848,8 +832,7 @@ def test_recover_blocked_run_treats_empty_cherry_pick_as_already_applied(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
     )
 
@@ -894,7 +877,7 @@ def test_recover_blocked_run_auto_resolves_only_build_status_marker_conflict(
         encoding="utf-8",
     )
     _git(producer, "add", "src/generated.txt", ".harness-build-status.json")
-    _git(producer, "commit", "-m", "harness-salvage: 001-feature default iter-0")
+    _git(producer, "commit", "-m", "harness-salvage: 001-feature/build-test iter-0")
     recovered = _git(producer, "rev-parse", "HEAD")
     _git(producer, "push", "origin", "001-feature")
 
@@ -902,8 +885,7 @@ def test_recover_blocked_run_auto_resolves_only_build_status_marker_conflict(
     result = recover_blocked_run(
         project_dir=project,
         spec_id="001-feature",
-        strategy_id="default",
-        state={"termination_reason": "build_incomplete"},
+                state={"termination_reason": "build_incomplete"},
         gitops=_make_gitops(project),
     )
 
@@ -937,8 +919,7 @@ def test_recover_blocked_run_reports_existing_target_repo_commit(
     result = recover_blocked_run(
         project_dir=wrapper,
         spec_id="001-opta-points-perf-fix",
-        strategy_id="default",
-        state={
+                state={
             "termination_reason": "build_incomplete",
             "target_repo_path": str(target),
             "target_branch": "001-opta-points-perf-fix",

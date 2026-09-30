@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import stat
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Iterable
 
 _MAX_FILE_BYTES = 1024 * 1024
@@ -17,6 +17,10 @@ _MAX_DIRECTORY_ENTRIES = 500
 
 class InspectionReadError(ValueError):
     """Raised when a host-serviced inspection read is invalid or unsafe."""
+
+
+class InspectionReadBoundsError(InspectionReadError):
+    """Raised for a well-formed file read whose requested bounds are invalid."""
 
 
 class BoundedReadChannel:
@@ -82,41 +86,16 @@ class BoundedReadChannel:
         """Validate and service one closed-schema read request."""
         if not self._roots:
             raise InspectionReadError("review read channel is not open")
-        if type(value) is not dict:
-            raise InspectionReadError("review read request must be an object")
-        operation = value.get("op")
-        expected = (
-            {"op", "root", "path", "start_line", "line_count"}
-            if operation == "read_file"
-            else {"op", "root", "path"}
-            if operation == "list_directory"
-            else None
-        )
-        if expected is None or set(value) != expected:
-            raise InspectionReadError("review read request has an invalid schema")
-        root = value.get("root")
-        path = value.get("path")
-        if type(root) is not str or root not in self._roots:
-            raise InspectionReadError("review read request has an invalid root")
-        components = _request_components(path)
+        operation, root, components = validate_inspection_read_request(value, self._roots)
         candidate = self._paths[root].joinpath(*components)
         if self._is_denied(candidate):
             raise InspectionReadError("inspection read path is denied")
         if operation == "read_file":
-            start_line = value.get("start_line")
-            line_count = value.get("line_count")
-            if (
-                type(start_line) is not int
-                or type(line_count) is not int
-                or start_line < 1
-                or not 1 <= line_count <= _MAX_LINES
-            ):
-                raise InspectionReadError("review file read has invalid line bounds")
             return _read_file(
                 self._roots[root],
                 components,
-                start_line=start_line,
-                line_count=line_count,
+                start_line=value["start_line"],
+                line_count=value["line_count"],
             )
         parent = _policy_parts(candidate)
         denied_names = {parts[-1] for parts in self._denied_parts if parts[:-1] == parent}
@@ -127,6 +106,42 @@ class BoundedReadChannel:
                 if identity == denied_identity and denied_suffix and denied_suffix[:-1] == suffix
             )
         return _list_directory(self._roots[root], components, denied_names=frozenset(denied_names))
+
+
+def validate_inspection_read_request(value: object, roots: Collection[str]) -> tuple[str, str, tuple[str, ...]]:
+    """Check a read's closed schema and bounds without servicing filesystem I/O."""
+    if type(value) is not dict:
+        raise InspectionReadError("review read request must be an object")
+    operation = value.get("op")
+    expected = (
+        {"op", "root", "path", "start_line", "line_count"}
+        if operation == "read_file"
+        else {"op", "root", "path"}
+        if operation == "list_directory"
+        else None
+    )
+    if expected is None or set(value) != expected:
+        raise InspectionReadError("review read request has an invalid schema")
+    root = value.get("root")
+    path = value.get("path")
+    if type(root) is not str or root not in roots:
+        raise InspectionReadError("review read request has an invalid root")
+    components = _request_components(path)
+    if operation == "read_file":
+        start_line = value.get("start_line")
+        line_count = value.get("line_count")
+        if (
+            type(start_line) is not int
+            or type(line_count) is not int
+            or start_line < 1
+            or not 1 <= line_count <= _MAX_LINES
+        ):
+            raise InspectionReadBoundsError(
+                "review file read has invalid line bounds"
+            )
+        if not components:
+            raise InspectionReadError("review file path must name a file")
+    return operation, root, components
 
 
 def _policy_locations(path: Path) -> tuple[tuple[tuple[int, int], tuple[str, ...]], ...]:

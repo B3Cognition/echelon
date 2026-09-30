@@ -349,7 +349,7 @@ def _prepare_gate_publication(root, state_store, *, completion_id, max_iteration
         and state["max_iterations"] > 0 and state["max_iterations"] == max_iterations
         and type(state.get(prefix + "_attempts", 0)) is int
         and state.get(prefix + "_attempts", 0) >= 0
-        and not any(key in state for key in ("pending_controller_completion", "pending_external_publication", "product_input_mutation", "governance")))
+        and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan", "product_input_mutation", "governance")))
     selection = bootstrap_from_state(state)["selection"]
     source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     if alignment:
@@ -382,7 +382,13 @@ def _prepare_gate_publication(root, state_store, *, completion_id, max_iteration
         projected = _inspect(provisional, before, writes, modes)
         graph = _graph(projected, history, selection)
         writes[spec.path + "/spec-artifact-graph.json"] = graph
-        publication = _seal(root, run, writes, modes)
+        publication = _seal(
+            root,
+            run,
+            writes,
+            modes,
+            transaction_id=completion_id,
+        )
         sources = _inspect(publication, before, writes, modes)
         baseline = PublicationSourcesSnapshot(sources.publication, (identity_spec_tree(spec),), ())
         recovery = dict(version=(37 if parent.recovery["version"] == 36 else 39) if alignment

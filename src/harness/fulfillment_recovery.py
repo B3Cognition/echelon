@@ -7,10 +7,19 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 
 from harness.durable_json import write_json_atomic, write_text_atomic
-from harness.fulfillment_semantics import FulfillmentAssignment, validate_semantic_result
+from harness.fulfillment_semantics import (
+    CORRECTABLE_ASSIGNED_DIGEST_ECHO,
+    CORRECTABLE_DISPATCH_ECHO,
+    FulfillmentAssignment,
+    bind_semantic_reply,
+    is_correctable_assigned_digest_echo,
+    is_correctable_dispatch_echo,
+    validate_semantic_result,
+)
 from harness.inspection_io import _open_root_directory
 
 
@@ -41,6 +50,20 @@ def _load(path: Path):
 
 def _save(path: Path, value) -> None:
     write_json_atomic(path, {"payload": value, "sha256": _hash(value)}, trusted_root=path.parent)
+
+
+def _validate_final_validation(value) -> None:
+    if value is None or value == {"status": "accepted"}:
+        return
+    if (
+        type(value) is dict
+        and set(value) == {"status", "reason"}
+        and value.get("status") == "rejected"
+        and type(value.get("reason")) is str
+        and value["reason"]
+    ):
+        return
+    raise ValueError("invalid recovered final validation")
 
 
 class FulfillmentRecovery:
@@ -94,7 +117,7 @@ class FulfillmentRecovery:
 
 def _validate(data):
     fields = {"schema_version", "binding", "phase", "inputs", "budget_limit", "steps", "outputs"}
-    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 1:
+    if type(data) is not dict or set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 4:
         raise ValueError("invalid fulfillment recovery schema")
     if data["phase"] not in {"preparing", "prepared", "staged"}:
         raise ValueError("invalid fulfillment recovery phase")
@@ -106,7 +129,9 @@ def _validate(data):
     if budget is not None and (type(budget) not in {int, float} or not math.isfinite(budget) or budget < 0):
         raise ValueError("invalid recovered fulfillment budget")
     steps = data["steps"]
-    if type(steps) is not dict or not set(steps) <= {"mapper", "judge"} or type(data["outputs"]) is not dict:
+    if (type(steps) is not dict
+            or any(re.fullmatch(r"(?:mapper|judge)(?:-[0-9]{4})?", name) is None for name in steps)
+            or type(data["outputs"]) is not dict):
         raise ValueError("invalid fulfillment recovery steps")
     for name, step in steps.items():
         if type(step) is not dict or set(step) != {"assignment", "deadline", "records"}:
@@ -115,35 +140,82 @@ def _validate(data):
         if type(identity) is not dict or identity.get("schema_version") != 1:
             raise ValueError("invalid recovered assignment")
         assignment = FulfillmentAssignment(**{key: value for key, value in identity.items() if key != "schema_version"})
-        if assignment.identity() != identity or assignment.step != name:
+        if assignment.identity() != identity or assignment.step != name.split("-", 1)[0]:
             raise ValueError("invalid recovered assignment binding")
         if type(step["deadline"]) not in {int, float} or not math.isfinite(step["deadline"]):
             raise ValueError("invalid recovered deadline")
         records = step["records"]
-        if type(records) is not list or len(records) > 33:
+        if type(records) is not list or len(records) > 35:
             raise ValueError("invalid recovered turn count")
         terminal = False
+        rejected_finals = 0
+        echo_corrections = 0
         for record in records:
-            if terminal or type(record) is not dict or set(record) != {"reply", "read", "token_usage", "error"}:
+            if terminal or type(record) is not dict or set(record) != {
+                "reply", "read", "raw_stdout", "token_usage", "error", "final_validation"
+            }:
                 raise ValueError("invalid fulfillment turn receipt")
+            raw_stdout = record["raw_stdout"]
+            if raw_stdout is not None and (
+                type(raw_stdout) is not str
+                or len(raw_stdout.encode("utf-8")) > 256 * 1024
+            ):
+                raise ValueError("invalid recovered fulfillment provider output")
             usage = record["token_usage"]
             if usage is not None and (type(usage) is not int or usage < 0):
                 raise ValueError("invalid recovered fulfillment usage")
             if record["error"] is not None and (type(record["error"]) is not str or not record["error"]):
                 raise ValueError("invalid recovered fulfillment error")
+            validation = record["final_validation"]
+            _validate_final_validation(validation)
+            if record["error"] in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO} and record["reply"] is not None:
+                raise ValueError("invalid recovered read echo correction")
             if record["reply"] is not None:
                 reply = validate_semantic_result(record["reply"], assignment)
+                if (
+                    raw_stdout is None
+                    or bind_semantic_reply(raw_stdout, assignment) != reply
+                ):
+                    raise ValueError("recovered fulfillment reply is not provider-bound")
                 if reply["action"] == "read":
+                    if validation is not None:
+                        raise ValueError("unexpected validation on recovered read")
                     if record["read"] is not None and (type(record["read"]) is not dict
                             or set(record["read"]) != {"request", "response"}
                             or record["read"]["request"] != reply["request"]):
                         raise ValueError("invalid recovered read receipt")
                 elif record["read"] is not None:
                     raise ValueError("unexpected recovered read")
-                terminal = reply["action"] != "read"
+                if reply["action"] == "final":
+                    if validation is not None and validation["status"] == "rejected":
+                        rejected_finals += 1
+                        if rejected_finals > 2 or (rejected_finals > 1 and record["error"] is None):
+                            raise ValueError("invalid recovered grounding correction")
+                        terminal = record["error"] is not None
+                    else:
+                        terminal = True
+                else:
+                    if validation is not None:
+                        raise ValueError("unexpected recovered final validation")
+                    terminal = reply["action"] != "read"
             else:
-                terminal = True
-            terminal = terminal or record["error"] is not None
+                if validation is not None:
+                    raise ValueError("validation without recovered reply")
+                if record["error"] in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO}:
+                    echo_corrections += 1
+                    correctable = (
+                        is_correctable_assigned_digest_echo(raw_stdout, assignment)
+                        if record["error"] == CORRECTABLE_ASSIGNED_DIGEST_ECHO
+                        else is_correctable_dispatch_echo(raw_stdout, assignment)
+                    ) if raw_stdout is not None else False
+                    if echo_corrections > 1 or rejected_finals or record["read"] is not None or not correctable:
+                        raise ValueError("invalid recovered read echo correction")
+                else:
+                    terminal = True
+            terminal = terminal or (
+                record["error"] is not None
+                and record["error"] not in {CORRECTABLE_ASSIGNED_DIGEST_ECHO, CORRECTABLE_DISPATCH_ECHO}
+            )
 
 
 def publish_fulfillment_outputs(run_dir: Path, spec_dir: Path, outputs: dict[str, str]) -> None:

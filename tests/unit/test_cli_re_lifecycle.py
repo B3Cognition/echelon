@@ -602,20 +602,29 @@ def test_re_lifecycle_banner_explains_workspace_synthesis_contradiction(
 @pytest.mark.unit
 def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import (
+        ReContinueRequest,
+        ReRefreshRequest,
+        ReResumeRequest,
+        ReRunRequest,
+    )
 
-    calls: list[tuple[str, list[str]]] = []
+    calls: list[tuple[str, object]] = []
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_run", lambda args: calls.append(("run", args))
+        "echelon.re_service.run_re",
+        lambda request: calls.append(("run", request)),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_continue", lambda args: calls.append(("continue", args))
+        "echelon.re_service.continue_re",
+        lambda request: calls.append(("continue", request)),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_resume", lambda args: calls.append(("resume", args))
+        "echelon.re_service.resume_re",
+        lambda request: calls.append(("resume", request)),
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_knowledge_refresh",
-        lambda args: calls.append(("refresh", args)),
+        "echelon.re_service.refresh_re",
+        lambda request: calls.append(("refresh", request)),
     )
     runner = CliRunner()
 
@@ -651,23 +660,27 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
     assert runner.invoke(app, ["re", "refresh", "--source", "api"]).exit_code == 0
 
     assert calls == [
-        ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
+        (
+            "run",
+            ReRunRequest(re_policy="refresh-all", re_max_inner=9, reset=True),
+        ),
         (
             "continue",
-            [
-                "--re-max-inner",
-                "10",
-                "--re-token-limit",
-                "6000000",
-                "--re-time-limit-minutes",
-                "240",
-            ],
+            ReContinueRequest(
+                re_max_inner=10,
+                re_token_limit=6000000,
+                re_time_limit_minutes=240,
+            ),
         ),
         (
             "resume",
-            ["Use v2", "--re-max-inner", "11", "--re-token-limit", "7000000"],
+            ReResumeRequest(
+                answer="Use v2",
+                re_max_inner=11,
+                re_token_limit=7000000,
+            ),
         ),
-        ("refresh", ["--source", "api"]),
+        ("refresh", ReRefreshRequest(sources=("api",))),
     ]
 
 
@@ -792,9 +805,10 @@ def test_re_run_routes_profile_and_hard_limit_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReRunRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+    calls: list[ReRunRequest] = []
+    monkeypatch.setattr("echelon.re_service.run_re", calls.append)
 
     result = CliRunner().invoke(
         app,
@@ -811,16 +825,13 @@ def test_re_run_routes_profile_and_hard_limit_overrides(
     )
 
     assert result.exit_code == 0
-    assert calls == [[
-        "--re-policy",
-        "changed",
-        "--profile",
-        "fast",
-        "--re-token-limit",
-        "2000000",
-        "--re-time-limit-minutes",
-        "90",
-    ]]
+    assert calls == [
+        ReRunRequest(
+            profile="fast",
+            re_token_limit=2000000,
+            re_time_limit_minutes=90,
+        )
+    ]
 
 
 @pytest.mark.unit
@@ -836,16 +847,20 @@ def test_spec_run_help_moves_re_options_and_exposes_ignore_re() -> None:
 
 
 @pytest.mark.unit
-def test_spec_run_ignore_re_routes_to_legacy_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_spec_run_ignore_re_routes_to_spec_service(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli_app import app
+    from echelon.spec_service import SpecRunRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_spec_run", lambda args: calls.append(args))
+    calls: list[SpecRunRequest] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.run_spec",
+        lambda _root, request: calls.append(request),
+    )
 
     result = CliRunner().invoke(app, ["spec", "run", "Build dashboards", "--ignore-re"])
 
     assert result.exit_code == 0
-    assert calls == [["Build dashboards", "--ignore-re"]]
+    assert calls == [SpecRunRequest(description="Build dashboards", ignore_re=True)]
 
 
 @pytest.mark.unit
@@ -856,10 +871,13 @@ def test_legacy_spec_parser_rejects_moved_re_options(
     capsys: pytest.CaptureFixture[str],
     flag: str,
 ) -> None:
-    from echelon.cli import _cmd_run
+    from echelon.spec_service import _cmd_run
 
-    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *a, **k: None)
-    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "echelon.spec_service._workspace_git_preflight",
+        lambda *a, **k: None,
+    )
     value = "changed" if flag == "--re-policy" else "9"
 
     with pytest.raises(SystemExit) as exc:
@@ -875,7 +893,7 @@ def test_spec_continue_rejects_moved_re_budget(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_continue
+    from echelon.spec_service import _cmd_continue
 
 
     with pytest.raises(SystemExit) as exc:

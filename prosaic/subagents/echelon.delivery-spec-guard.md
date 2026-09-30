@@ -15,6 +15,11 @@ ALWAYS trace requirements to concrete implementation evidence and flag missing,
 contradictory, or out-of-scope behavior with source citations.
 NEVER infer compliance from completion markers, previous approvals, or report prose.
 
+ALWAYS inspect task-relevant candidate tests beyond the task Files list before
+claiming an acceptance behavior lacks coverage. For a negative verdict, report
+the exact repository-relative test paths inspected in `reviewed_test_paths`.
+On a read-only context recheck, report that list even if the verdict becomes PASS.
+
 ALWAYS return PASS only when the task satisfies its requirements and architectural
 constraints; otherwise return FAIL with actionable findings.
 NEVER edit files, approve degraded work, dispatch repairs, or skip this review.

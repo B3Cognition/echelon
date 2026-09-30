@@ -1,4 +1,5 @@
-"""The opt-in must reach real Ralph consumers without legacy gate shortcuts."""
+"""Controlled delivery must reach real Ralph consumers without legacy shortcuts."""
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,8 +11,8 @@ from harness.mode import ModeController
 from harness.ralph import RalphController
 from harness.state import StateStore
 from harness.verify_result import VerifyResult
-from tests.unit.test_coordinator import MockProvider
-from tests.unit.test_coordinator import _initialize_git_worktree
+from tests.unit.test_delivery_controller import MockProvider
+from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor, _steps
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 
@@ -20,17 +21,16 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
     project, spec, _ = fixture
     config = HarnessConfig()
     config.llm.enabled = True
-    config.llm.features["delivery_gate_controller"] = True
     gitops = MagicMock()
     gitops.base_dir = str(project)
     gitops.create_worktree.return_value = str(project)
-    store = StateStore(tmp_path / "state", "001", "default")
+    store = StateStore(tmp_path / "state", "001")
     store.initialize("test-run", mode)
     store.transition("running")
     controller = RalphController(
         provider=MockProvider(), gitops=gitops, state_store=store,
         mode_controller=ModeController(mode), escalation_handler=EscalationHandler(str(tmp_path / "escalation")),
-        spec_id="001", strategy_id="default", config=config, llm_provider=executor,
+        spec_id="001", config=config, llm_provider=executor,
     )
     return controller, store
 
@@ -53,6 +53,130 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert {call[0]["task_id"] for call in executor.calls} == {"T-001"}
 
 
+def test_ralph_passes_persisted_semantic_gate_handoff_to_task_reviews(
+    slice_project, tmp_path,
+):
+    executor = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, executor)
+    state = store.read()
+    state["semantic_visual_gate_required"] = True
+    store.write(state)
+
+    result = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] is True
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert all(
+        "Deferred semantic visual verdict" in prompt
+        for assignment, _, prompt in executor.calls
+        if assignment["step"] != "implementer"
+    )
+
+
+def test_ralph_replays_pending_slice_after_explicit_budget_extension(slice_project, tmp_path):
+    first = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, first, "banzai")
+    controller._controlled_slice_budget = 7
+    blocked = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+    assert not blocked["passed"] and "budget_exhausted" in blocked["build_reason"]
+    assert _steps(first) == ["implementer"]
+
+    state = store.read()
+    state["token_budget"] = 100
+    state["delivery_slice_operation"]["budget_extension_limit"] = 95
+    store.write(state)
+    resumed = ScriptedExecutor()
+    other = _reconstruct(controller, store, resumed)
+    other._controlled_slice_budget = 95 - state["tokens_used"]
+    result = other._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert _steps(resumed) == ["spec_guard", "code_reviewer", "test_guardian"]
+    assert store.read()["tokens_used"] == 28
+
+
+def test_ralph_supplies_isolated_browser_capture_to_requested_slice(
+    slice_project, tmp_path, monkeypatch,
+):
+    from harness.product_inventory import product_evidence_fingerprint
+    from harness.visual_ralph import BrowserBaselineCapture, VisualRalphController
+
+    requested = False
+
+    def request_once(assignment, payload, root):
+        nonlocal requested
+        if assignment["step"] == "implementer" and not requested:
+            requested = True
+            payload.update(
+                verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need pinned baseline",
+                browser_evidence_request={"purpose": "baseline_capture"},
+            )
+
+    captures = []
+
+    def capture(self, worktree):
+        captures.append((self._provider, worktree))
+        return BrowserBaselineCapture(
+            candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
+            verification=VerifyResult(passed=False),
+            images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
+        )
+
+    monkeypatch.setattr(VisualRalphController, "capture_baselines", capture)
+    executor = ScriptedExecutor(request_once)
+    controller, _ = _controller(slice_project, tmp_path, executor)
+    result = controller._exec_build(
+        None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build",
+    )
+
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert captures == [(controller._provider, str(slice_project[0].resolve()))]
+    assert _steps(executor) == [
+        "implementer", "implementer", "spec_guard", "code_reviewer", "test_guardian",
+    ]
+
+
+def test_ralph_passes_persisted_target_path_projection_to_slice(slice_project, tmp_path):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none "
+        "target=sources/demo\n"
+        "\n"
+        "  **Files:**\n"
+        "  - `sources/demo/app.py` - Implement the greeting.\n",
+        encoding="utf-8",
+    )
+    executor = ScriptedExecutor()
+    controller, store = _controller(slice_project, tmp_path, executor)
+    state = store.read()
+    state["implementation_target"] = "sources/demo"
+    state["declared_targets"] = ["sources/demo", "sources/web"]
+    state["target_task_ids"] = ["T-001"]
+    store.write(state)
+
+    result = controller._exec_build(
+        None,
+        "echelon build",
+        "",
+        worktree_path=str(project),
+        prompt="banzai mode",
+    )
+
+    assert result["passed"], result
+    assert all(
+        '"canonical_prefix": "sources/demo/"' in prompt
+        and '"sources/demo/app.py": "app.py"' in prompt
+        and '"declared_targets": ["sources/demo", "sources/web"]' in prompt
+        for _, _, prompt in executor.calls
+    )
+
+
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
 def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode):
     def reject(assignment, payload, root):
@@ -63,7 +187,8 @@ def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode)
     result = controller._exec_build(None, "echelon build", "", worktree_path=str(slice_project[0]), prompt="build")
     assert result["passed"] is False and result["build_status"] == "blocked"
     assert result["task_ids"] == []
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 4
     assert "delivery_slice_task_id" not in store.read()
 
 
@@ -87,33 +212,31 @@ def test_feedback_without_accepted_task_never_selects_next_open_task(slice_proje
     assert not result["passed"] and not executor.calls
 
 
-@pytest.mark.parametrize("flag", ["true", "false", 1, 0, None, [], {}])
-def test_feature_flag_is_boolean_not_a_silent_fallback(flag):
-    with pytest.raises(ValidationError, match="delivery_gate_controller"):
-        _parse_config({"provider": "docker", "llm": {"features": {"delivery_gate_controller": flag}}})
+def test_retired_feature_key_has_only_generic_scalar_parsing():
+    config = _parse_config({
+        "provider": "docker",
+        "llm": {"features": {"delivery_gate_controller": "retired"}},
+    })
+    assert config.llm.features["delivery_gate_controller"] == "retired"
 
 
-def test_feature_default_does_not_enable_controller():
-    assert _parse_config({"provider": "docker"}).llm.features.get("delivery_gate_controller", False) is False
-
-
-def test_coordinator_trial_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):
-    from harness.coordinator import StrategyCoordinator
+def test_delivery_controller_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):
+    from harness.delivery_controller import DeliveryController
     from harness.run_intent import RunIntent
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     # The fixture intentionally has only subagent profiles, no echelon.build command.
-    coordinator = StrategyCoordinator(
+    delivery = DeliveryController(
         provider=controller._provider, gitops=controller._gitops,
         config=controller._config, base_dir=str(slice_project[0]),
     )
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: ScriptedExecutor())
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: ScriptedExecutor())
     captured = []
     def stop_before_build(self, **kwargs):
         from harness.delivery_results import ImplementationResult
         captured.append(kwargs["build_prompt"])
         return ImplementationResult("blocked", "test_stop", 0, 0, None, 0, None)
-    monkeypatch.setattr("harness.coordinator.RalphController.run_loop", stop_before_build)
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1, mode="banzai"))[0]
+    monkeypatch.setattr("harness.delivery_controller.RalphController.run_loop", stop_before_build)
+    result = delivery.run(RunIntent(spec_id="001", max_outer=1, max_inner=1, mode="banzai"))
     assert result.termination_reason == "test_stop"
     assert captured and "banzai mode" in captured[0]
     assert "You are MANAGER" not in captured[0]
@@ -129,8 +252,9 @@ def test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice(slice_projec
     result = controller.run_loop(max_outer=1, max_inner=1, build_prompt="banzai mode")
     assert result.status == "blocked", result
     assert result.termination_reason == "build_blocked"
-    assert result.tokens_used == 42
-    assert _steps(executor) == ["implementer", "spec_guard"] * 3
+    assert result.tokens_used == 112
+    chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert _steps(executor) == chain * 4
     assert "- [ ] T-001" in (slice_project[1] / "tasks.md").read_text()
     assert store.read().get("build", {}).get("completed_tasks", 0) == 0
     assert "repair_limit" in store.read()["build_reason"]
@@ -147,6 +271,8 @@ def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project,
     config.llm.cli = cli
     provider = AICodingCliProvider(config)
     class ExternalBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
+
         def run_agent(self, request):
             return script.run_agent_result(request.cwd, request.prompt, request_metadata=request.metadata)
     provider._backend = ExternalBackend()
@@ -163,10 +289,10 @@ def test_real_provider_facade_preserves_step_and_read_only_policy(slice_project,
 def _reconstruct(controller, store, executor):
     return RalphController(
         provider=controller._provider, gitops=controller._gitops,
-        state_store=StateStore(store.state_dir, "001", "default"),
+        state_store=StateStore(store.state_dir, "001"),
         mode_controller=ModeController(store.read()["mode"]),
         escalation_handler=EscalationHandler(str(store.state_dir / "escalation")),
-        spec_id="001", strategy_id="default", config=controller._config, llm_provider=executor,
+        spec_id="001", config=controller._config, llm_provider=executor,
     )
 
 
@@ -198,7 +324,7 @@ def test_downstream_repair_uses_current_durable_budget(
     result = controller.run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
         verify_result=VerifyResult(False), build_command="echelon build",
-        strategy_context="", build_prompt="build", phase="visual",
+        delivery_context="", build_prompt="build", phase="visual",
     )
 
     assert not result["passed"], result
@@ -210,7 +336,7 @@ def test_downstream_repair_uses_current_durable_budget(
     again = _reconstruct(controller, store, resumed).run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
         verify_result=VerifyResult(False), build_command="echelon build",
-        strategy_context="", build_prompt="build", phase="visual",
+        delivery_context="", build_prompt="build", phase="visual",
     )
     assert not again["passed"] and not resumed.calls
     assert store.read()["tokens_used"] == 95
@@ -290,6 +416,27 @@ def test_ralph_restart_preserves_feedback_operation_not_next_task(slice_project,
     assert _steps(resumed) == ["code_reviewer", "test_guardian"]
 
 
+def test_ralph_restart_ignores_controller_owned_harness_history(
+    slice_project, tmp_path, monkeypatch,
+):
+    controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
+    with monkeypatch.context() as patch:
+        _crash_after_receipt(patch, 2)
+        with pytest.raises(ProcessLost):
+            _build(controller, slice_project)
+
+    (slice_project[1] / "harness-run-history.json").write_text(
+        json.dumps({"runs": [{"status": "blocked"}]}),
+        encoding="utf-8",
+    )
+
+    resumed = ScriptedExecutor()
+    result = _build(_reconstruct(controller, store, resumed), slice_project)
+
+    assert result["passed"] and result["task_ids"] == ["T-001"], result
+    assert _steps(resumed) == ["code_reviewer", "test_guardian"]
+
+
 @pytest.mark.parametrize("missing", [False, True])
 def test_full_loop_reuses_pending_worktree_without_creation_or_sync(slice_project, tmp_path, monkeypatch, missing):
     _initialize_git_worktree(slice_project[0])
@@ -320,7 +467,7 @@ def test_full_loop_reuses_pending_worktree_without_creation_or_sync(slice_projec
         assert "hello 1" in (slice_project[0] / "app.py").read_text()
 
 
-def test_disabling_feature_with_pending_operation_cannot_fall_back(slice_project, tmp_path, monkeypatch):
+def test_retired_feature_value_cannot_interrupt_pending_operation(slice_project, tmp_path, monkeypatch):
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     with monkeypatch.context() as patch:
         _crash_after_receipt(patch, 2)
@@ -329,8 +476,8 @@ def test_disabling_feature_with_pending_operation_cannot_fall_back(slice_project
     controller._config.llm.features["delivery_gate_controller"] = False
     resumed = ScriptedExecutor()
     result = _build(_reconstruct(controller, store, resumed), slice_project)
-    assert not result["passed"] and not resumed.calls
-    assert "pending" in result["build_reason"]
+    assert result["passed"]
+    assert _steps(resumed) == ["code_reviewer", "test_guardian"]
 
 
 @pytest.mark.parametrize("after_progress", [False, True])
@@ -382,7 +529,7 @@ def test_full_loop_crash_after_progress_state_preserves_accepted_candidate(slice
 
 def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, tmp_path, monkeypatch):
     import shutil
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
     from harness.run_intent import RunIntent
     from harness.visual_ralph import VisualRalphController
@@ -397,7 +544,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
     gitops.base_dir = str(slice_project[0])
     gitops.get_latest_worktree.return_value = str(slice_project[0])
     executor = ScriptedExecutor()
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: executor)
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: executor)
 
     def implementation(self, **kwargs):
         result = _build(self, slice_project)
@@ -415,8 +562,8 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
     monkeypatch.setattr(RalphController, "run_loop", implementation)
     monkeypatch.setattr(VisualRalphController, "run_loop", visual)
-    coordinator = StrategyCoordinator(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1, token_budget=50))[0]
+    coordinator = DeliveryController(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
+    result = coordinator.run(RunIntent(spec_id="001", max_outer=1, max_inner=1, token_budget=50))
     assert result.status == "blocked", result
     assert result.tokens_used == 48
     assert len(executor.calls) == 4  # Initial build only; 28 + 20 exceeds 95% of 50.
@@ -424,7 +571,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
 def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tmp_path, monkeypatch):
     import shutil
-    from harness.coordinator import StrategyCoordinator
+    from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
     from harness.run_intent import RunIntent
     from harness.visual_ralph import VisualRalphController
@@ -439,7 +586,7 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
     gitops.base_dir = str(slice_project[0])
     gitops.get_latest_worktree.return_value = str(slice_project[0])
     executor = ScriptedExecutor()
-    monkeypatch.setattr("harness.coordinator.AICodingCliProvider", lambda config: executor)
+    monkeypatch.setattr("harness.delivery_controller.AICodingCliProvider", lambda config: executor)
     implementations = []
     def implementation(self, **kwargs):
         implementations.append(self)
@@ -458,13 +605,13 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
             return VisualResult("passed", "converged", 1, 0, None)
         result = implementations[-1].run_downstream_feedback(
             handle=None, worktree_path=str(slice_project[0]), verify_result=VerifyResult(False),
-            build_command="echelon build", strategy_context="", build_prompt="build", phase="visual")
+            build_command="echelon build", delivery_context="", build_prompt="build", phase="visual")
         assert result["passed"] and result["tokens"] == 28, result
         return VisualResult("fix_applied", "fix_applied", 1, result["tokens"], None)
     monkeypatch.setattr(RalphController, "run_loop", implementation)
     monkeypatch.setattr(VisualRalphController, "run_loop", visual)
-    coordinator = StrategyCoordinator(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
-    result = coordinator.start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
+    coordinator = DeliveryController(provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path))
+    result = coordinator.run(RunIntent(spec_id="001", max_outer=1, max_inner=1))
     assert result.status == "converged", result
     assert result.tokens_used == 61  # 28 initial + 28 repair + 5 verification.
     assert len(executor.calls) == 8

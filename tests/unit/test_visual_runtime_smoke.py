@@ -90,8 +90,7 @@ def test_command_app_visual_runtime_smoke_order(tmp_path: Path) -> None:
         provider=provider,
         config=config,
         spec_id="001",
-        strategy_id="default",
-        base_dir=str(tmp_path),
+                base_dir=str(tmp_path),
         build_id="build-1",
     )
     screenshot = tmp_path / "journey.png"

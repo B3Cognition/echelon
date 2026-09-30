@@ -29,8 +29,7 @@ def _receipt(root: Path, *, sequence: int = 1):
     return write_verification_receipt(
         evidence_dir=root,
         spec_id="003-demo",
-        strategy_id="default",
-        build_id="build-1",
+                build_id="build-1",
         candidate_commit=_COMMIT,
         fingerprint_before=_FINGERPRINT,
         fingerprint_after=_FINGERPRINT,

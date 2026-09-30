@@ -304,7 +304,7 @@ def test_restoration_context_projection_uses_the_native_context_receipt(tmp_path
     from harness.discovery_restoration_completion import pending_tree_projector
     from harness.discovery_publication import _seal
     from harness.squad_completion import (prepare_or_load_completion_context, install_or_verify_completion_context,
-        load_prepared_controller_completion)
+        load_prepared_spec_step_effects)
     from tests.unit.test_squad_completion import (_prepare_context_completion, _completion_context_generator,
         _COMPLETION_CONTEXT_NAMES)
     root, run, completion = _prepare_context_completion(tmp_path)
@@ -321,7 +321,7 @@ def test_restoration_context_projection_uses_the_native_context_receipt(tmp_path
     original = capture()
     prepare_or_load_completion_context(completion, project_root=root, source_state_revision=1,
         prepared_at="2026-07-23T10:11:12Z", generator=_completion_context_generator([]))
-    completion = load_prepared_controller_completion(root, run, completion.marker)
+    completion = load_prepared_spec_step_effects(root, run, completion.marker)
     if stage == "partial":
         def interrupt(point):
             raise RuntimeError("interrupted")

@@ -122,7 +122,7 @@ def prepare_repair(state, selection):
     dispatch = state.get("last_dispatch")
     _require(type(dispatch) is dict and dispatch.get("post_dispatch_complete") is True
         and all(dispatch.get(key) == selected["source"][key] for key in _SOURCE_FIELDS)
-        and not any(key in state for key in ("pending_controller_completion", "pending_external_publication")))
+        and not any(key in state for key in ("_spec_step_effect_plan", "_spec_step_publication_plan")))
     for previous in retained["units"].values():
         attempts = previous["attempts"]
         _require(attempts and attempts[-1]["result"] is not None

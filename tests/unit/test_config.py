@@ -603,6 +603,26 @@ def test_llm_timeout_ms_set():
     assert config.llm.timeout_ms == 600_000
 
 
+def test_verification_command_timeout_defaults_to_ten_minutes() -> None:
+    config = _parse_config(MINIMAL)
+
+    assert config.verification.command_timeout_ms == 600_000
+
+
+def test_verification_command_timeout_accepts_explicit_long_suite() -> None:
+    config = _parse_config({**MINIMAL, "verification": {"command_timeout_ms": 1_800_000}})
+
+    assert config.verification.command_timeout_ms == 1_800_000
+
+
+@pytest.mark.parametrize("value", [True, "1800000", 59_999, 3_600_001])
+def test_verification_command_timeout_rejects_invalid_value(value: object) -> None:
+    with pytest.raises(ValidationError) as error:
+        _parse_config({**MINIMAL, "verification": {"command_timeout_ms": value}})
+
+    assert error.value.field_path == "verification.command_timeout_ms"
+
+
 def test_llm_openai_compatible_config_parsed() -> None:
     config = _parse_config({
         "provider": "docker",

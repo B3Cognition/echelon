@@ -124,9 +124,10 @@ def test_deepen_routes_l3_semantic_authorization_without_provider_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReDeepenRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_deepen", lambda args: calls.append(args))
+    calls: list[ReDeepenRequest] = []
+    monkeypatch.setattr("echelon.re_service.deepen_re", calls.append)
 
     result = CliRunner().invoke(
         app,
@@ -154,25 +155,19 @@ def test_deepen_routes_l3_semantic_authorization_without_provider_controls(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [[
-        "--to",
-        "L3",
-        "--source",
-        "api",
-        "--domain",
-        "orders",
-        "--from-run",
-        "re-l2-parent",
-        "--token-limit",
-        "5000000",
-        "--active-ms-limit",
-        "7200000",
-        "--semantic-token-limit",
-        "1000000",
-        "--semantic-active-ms-limit",
-        "1800000",
-        "--new-audit-epoch",
-    ]]
+    assert calls == [
+        ReDeepenRequest(
+            target_layer="L3",
+            sources=("api",),
+            domains=("orders",),
+            from_run="re-l2-parent",
+            token_limit=5000000,
+            active_ms_limit=7200000,
+            semantic_token_limit=1000000,
+            semantic_active_ms_limit=1800000,
+            new_audit_epoch=True,
+        )
+    ]
 
 
 @pytest.mark.unit
@@ -674,9 +669,10 @@ def test_typer_continue_forwards_semantic_authorization_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli_app import app
+    from echelon.re_service import ReContinueRequest
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_re_continue", calls.append)
+    calls: list[ReContinueRequest] = []
+    monkeypatch.setattr("echelon.re_service.continue_re", calls.append)
 
     result = CliRunner().invoke(
         app,
@@ -691,12 +687,12 @@ def test_typer_continue_forwards_semantic_authorization_flags(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [[
-        "--re-semantic-token-limit",
-        "1000000",
-        "--re-semantic-time-limit-minutes",
-        "30",
-    ]]
+    assert calls == [
+        ReContinueRequest(
+            re_semantic_token_limit=1000000,
+            re_semantic_time_limit_minutes=30,
+        )
+    ]
 
 
 @pytest.mark.unit
