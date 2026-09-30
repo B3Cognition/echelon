@@ -4587,7 +4587,7 @@ def delivery_continue(
     reconcile_unknown_dispatch: bool = typer.Option(
         False,
         "--reconcile-unknown-dispatch",
-        help="After confirming the provider stopped, reconcile the first unknown implementer dispatch and rerun every gate.",
+        help="After confirming the provider stopped, reconcile an unknown initial implementer or read-only reviewer dispatch; all acceptance gates remain required.",
     ),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""

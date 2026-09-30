@@ -1,4 +1,5 @@
-"""Resume a known failed reviewer without replaying implementation or losing receipts."""
+"""Recover failed or interrupted reviews without losing implementation history."""
+import json
 import pytest
 
 from harness.ai_cli_backend import CliRunResult
@@ -9,7 +10,7 @@ from tests.unit.test_delivery_unknown_dispatch_recovery import _build
 from tests.unit.test_delivery_slice_recovery import ProcessLost
 
 
-def _failed_review(fixture, tmp_path, step, usage=7):
+def _failed_review(fixture, tmp_path, step, usage=7, *, unknown=False):
     rounds = 0
 
     def script(assignment, payload, root):
@@ -20,10 +21,16 @@ def _failed_review(fixture, tmp_path, step, usage=7):
             payload.update(verdict="CHANGES_REQUESTED", summary="Repair the current defect",
                            findings=["app.py:1 returns incorrect greeting"])
         if rounds == 2 and assignment["step"] == step:
+            if unknown:
+                raise ProcessLost()
             return CliRunResult(1, "Selected model is at capacity", "", token_usage=usage)
 
     controller, store = _controller(fixture, tmp_path, ScriptedExecutor(script))
-    assert _build(controller, fixture)["build_reason"] == "delivery_provider_failed"
+    if unknown:
+        with pytest.raises(ProcessLost):
+            _build(controller, fixture)
+    else:
+        assert _build(controller, fixture)["build_reason"] == "delivery_provider_failed"
     journal = DeliverySliceJournal(controller._delivery_operation_evidence_root(),
                                    store.read()["delivery_slice_operation"]["id"])
     with journal:
@@ -36,13 +43,14 @@ def _failed_review(fixture, tmp_path, step, usage=7):
     ("code_reviewer", ["code_reviewer", "test_guardian"]),
     ("test_guardian", ["test_guardian"]),
 ])
-@pytest.mark.parametrize("usage", [7, None])
-def test_resume_preserves_completed_round_and_retries_only_failed_review(slice_project, tmp_path, step, remaining, usage):
-    controller, store, parent, original = _failed_review(slice_project, tmp_path, step, usage)
+@pytest.mark.parametrize("usage,unknown", [(7, False), (None, False), (None, True)])
+def test_resume_preserves_completed_round_and_retries_only_failed_review(slice_project, tmp_path, step, remaining, usage, unknown):
+    controller, store, parent, original = _failed_review(slice_project, tmp_path, step, usage, unknown=unknown)
     previous_tokens = store.read()["tokens_used"]
     executor = ScriptedExecutor()
     resumed = _reconstruct(controller, store, executor)
-    resumed._retry_failed_dispatch = True
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown
     result = _build(resumed, slice_project)
     assert result["passed"], result
     assert _steps(executor) == remaining
@@ -58,24 +66,62 @@ def test_resume_preserves_completed_round_and_retries_only_failed_review(slice_p
     with parent:
         sealed = parent.load(required=True)
     assert sealed["records"][:-1] == original["records"][:-1]
-    assert sealed["records"][-1]["raw_result"] == "Selected model is at capacity"
-    assert sealed["records"][-1]["error"] == "delivery_provider_failure_superseded:" + operation["id"]
+    assert sealed["records"][-1]["raw_result"] == (None if unknown else "Selected model is at capacity")
+    seal = "delivery_dispatch_outcome_unknown_superseded:" if unknown else "delivery_provider_failure_superseded:"
+    assert sealed["records"][-1]["error"] == seal + operation["id"]
     executor.calls.clear()
     assert _build(_reconstruct(controller, store, executor), slice_project)["tokens"] == 0
     assert not executor.calls
     assert store.read()["tokens_used"] == state["tokens_used"]
 
 
-def test_failed_review_cannot_authorize_changed_candidate(slice_project, tmp_path):
-    controller, store, _, _ = _failed_review(slice_project, tmp_path, "spec_guard")
+@pytest.mark.parametrize("unknown", [False, True])
+def test_failed_review_cannot_authorize_changed_candidate(slice_project, tmp_path, unknown):
+    controller, store, _, _ = _failed_review(slice_project, tmp_path, "spec_guard", unknown=unknown)
     (slice_project[0] / "app.py").write_text("unreviewed replacement")
     executor = ScriptedExecutor()
     resumed = _reconstruct(controller, store, executor)
-    resumed._retry_failed_dispatch = True
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown
     result = _build(resumed, slice_project)
     assert not result["passed"]
     assert "candidate changed" in result["build_reason"]
     assert not executor.calls
+
+
+@pytest.mark.parametrize("damage", ["ordinary_continue", "spec", "binding", "raw_result", "candidate_after", "token_usage", "later_implementer", "budget"])
+def test_unknown_review_recovery_remains_explicit_and_fail_closed(slice_project, tmp_path, damage):
+    step = "implementer" if damage == "later_implementer" else "code_reviewer"
+    controller, store, parent, _ = _failed_review(slice_project, tmp_path, step, unknown=True)
+    if damage == "spec":
+        (slice_project[1] / "spec.md").write_text("changed specification")
+    elif damage == "binding":
+        state = store.read()
+        state["delivery_slice_operation"]["feedback"] = "different assignment"
+        store.write(state)
+    elif damage in {"raw_result", "candidate_after", "token_usage", "budget"}:
+        with parent:
+            data = parent.load(required=True)
+            if damage == "budget":
+                data["budget_limit"] = 42  # Six retained receipts exhaust this limit.
+            else:
+                data["records"][-1][damage] = 7 if damage == "token_usage" else "partial result"
+            if damage == "budget":
+                parent.save(data)
+            else:
+                # Simulate a corrupt/partial on-disk receipt; normal save rejects it.
+                parent.path.write_text(json.dumps(data))
+    original_operation = store.read()["delivery_slice_operation"]
+    original_journal = parent.path.read_bytes()
+    executor = ScriptedExecutor()
+    resumed = _reconstruct(controller, store, executor)
+    resumed._retry_failed_dispatch = True  # Ordinary continue must not infer permission.
+    resumed._reconcile_unknown_dispatch = damage != "ordinary_continue"
+    result = _build(resumed, slice_project)
+    assert not result["passed"]
+    assert not executor.calls
+    assert store.read()["delivery_slice_operation"]["id"] == original_operation["id"]
+    assert parent.path.read_bytes() == original_journal
 
 
 def test_review_retry_does_not_reset_consumed_budget(slice_project, tmp_path):
@@ -142,8 +188,9 @@ def test_successor_cannot_drop_retained_review_rounds(slice_project, tmp_path):
 
 
 @pytest.mark.parametrize("boundary", ["successor", "seal", "state"])
-def test_review_recovery_handover_survives_crash_without_double_charging(slice_project, tmp_path, monkeypatch, boundary):
-    controller, store, parent, original = _failed_review(slice_project, tmp_path, "spec_guard", None)
+@pytest.mark.parametrize("unknown", [False, True])
+def test_review_recovery_handover_survives_crash_without_double_charging(slice_project, tmp_path, monkeypatch, boundary, unknown):
+    controller, store, parent, original = _failed_review(slice_project, tmp_path, "spec_guard", None, unknown=unknown)
     old_id = store.read()["delivery_slice_operation"]["id"]
     save, write = DeliverySliceJournal.save, store.write
 
@@ -161,7 +208,8 @@ def test_review_recovery_handover_survives_crash_without_double_charging(slice_p
 
     executor = ScriptedExecutor()
     resumed = _reconstruct(controller, store, executor)
-    resumed._retry_failed_dispatch = True
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown
     with monkeypatch.context() as patch:
         if boundary == "state":
             patch.setattr(resumed._state_store, "write", write_and_crash)
@@ -171,7 +219,8 @@ def test_review_recovery_handover_survives_crash_without_double_charging(slice_p
             _build(resumed, slice_project)
     assert not executor.calls
     resumed = _reconstruct(controller, store, executor)
-    resumed._retry_failed_dispatch = True
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown and boundary != "state"
     result = _build(resumed, slice_project)
     assert result["passed"], result
     assert _steps(executor) == ["spec_guard", "code_reviewer", "test_guardian"]
@@ -180,7 +229,8 @@ def test_review_recovery_handover_survives_crash_without_double_charging(slice_p
 
 
 @pytest.mark.parametrize("later_round", [False, True])
-def test_reviewer_retry_keeps_browser_receipt_bound_to_original_operation(slice_project, tmp_path, monkeypatch, later_round):
+@pytest.mark.parametrize("unknown", [False, True])
+def test_reviewer_retry_keeps_browser_receipt_bound_to_original_operation(slice_project, tmp_path, monkeypatch, later_round, unknown):
     from pathlib import Path
     from harness.product_inventory import product_evidence_fingerprint
     from harness.verify_result import VerifyResult
@@ -198,6 +248,8 @@ def test_reviewer_retry_keeps_browser_receipt_bound_to_original_operation(slice_
         if later_round and requests == 2 and assignment["step"] == "code_reviewer":
             payload.update(verdict="CHANGES_REQUESTED", findings=["app.py:1 wrong greeting"])
         if assignment["step"] == "spec_guard" and (not later_round or requests == 3):
+            if unknown:
+                raise ProcessLost()
             return CliRunResult(1, "provider unavailable", "", token_usage=7)
 
     captures = []
@@ -210,10 +262,15 @@ def test_reviewer_retry_keeps_browser_receipt_bound_to_original_operation(slice_
         )
     monkeypatch.setattr(VisualRalphController, "capture_baselines", capture)
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor(script))
-    assert _build(controller, slice_project)["build_reason"] == "delivery_provider_failed"
+    if unknown:
+        with pytest.raises(ProcessLost):
+            _build(controller, slice_project)
+    else:
+        assert _build(controller, slice_project)["build_reason"] == "delivery_provider_failed"
     executor = ScriptedExecutor()
     resumed = _reconstruct(controller, store, executor)
-    resumed._retry_failed_dispatch = True
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown
     result = _build(resumed, slice_project)
     assert result["passed"], result
     assert _steps(executor) == ["spec_guard", "code_reviewer", "test_guardian"]

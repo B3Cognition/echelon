@@ -9,6 +9,11 @@ from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecuto
 
 
 def _lost(fixture, tmp_path, *, repair=False, known=False, step="implementer", external=False):
+    if repair:
+        tasks = fixture[1] / "tasks.md"
+        tasks.write_text(tasks.read_text().replace(
+            "  **Acceptance Criteria:**", "  **Test Tasks:**\n  - Implement `UT-GREETING-001`.\n  **Acceptance Criteria:**", 1,
+        ))
     controller, store = _controller(fixture, tmp_path, ScriptedExecutor())
     root = str(fixture[0])
     if external:
@@ -30,8 +35,9 @@ def _lost(fixture, tmp_path, *, repair=False, known=False, step="implementer", e
     controller._llm_provider = ScriptedExecutor(lose)
     def dispatch():
         if repair:
-            from harness.verify_result import VerifyResult
-            return controller._exec_feedback(None, VerifyResult(passed=False), "echelon build", "", worktree_path=root, prompt="build")
+            from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+            failure = VerifyResult(False, [FailureEntry(FailureCategory.TEST, "UT-GREETING-001", "wrong greeting")])
+            return controller._exec_feedback(None, failure, "echelon build", "", worktree_path=root, prompt="build")
         return _build(controller, fixture)
     if known:
         assert dispatch()["build_reason"] == "delivery_provider_failed"
@@ -127,9 +133,9 @@ def test_recovery_does_not_reset_saved_slice_budget(slice_project, tmp_path):
     assert store.read()["tokens_used"] == 21
 
 
-@pytest.mark.parametrize("damage", ["binding", "protected", "missing", "reviewer"])
+@pytest.mark.parametrize("damage", ["binding", "protected", "missing", "reviewer_candidate"])
 def test_recovery_cannot_bypass_binding_or_restart_consumed_reviews(slice_project, tmp_path, damage):
-    controller, store, journal = _lost(slice_project, tmp_path, step="spec_guard" if damage == "reviewer" else "implementer")
+    controller, store, journal = _lost(slice_project, tmp_path, step="spec_guard" if damage == "reviewer_candidate" else "implementer")
     if damage == "binding":
         state = store.read()
         state["delivery_slice_operation"]["feedback"] = "changed assignment"
@@ -138,6 +144,8 @@ def test_recovery_cannot_bypass_binding_or_restart_consumed_reviews(slice_projec
         (slice_project[1] / "spec.md").write_text("changed spec")
     elif damage == "missing":
         journal.path.unlink()
+    elif damage == "reviewer_candidate":
+        (slice_project[0] / "app.py").write_text("unreviewed replacement")
     before = store.read()["delivery_slice_operation"]["id"]
     executor = ScriptedExecutor()
     resumed = _reconstruct(controller, store, executor)

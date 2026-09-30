@@ -87,10 +87,11 @@ def _validate_superseded_dispatches(root: Path, operation_id: str, references: l
 def _supersede_failed_dispatch(*, stack, journal, data, operation_id, evidence_root,
                                candidate, reconcile_unknown, retry_failed,
                                token_budget, budget_extension_limit):
-    """Replace an initial implementer or a known failed read-only review.
+    """Replace an initial implementer or an interrupted read-only review.
 
     Reviews retain the entire successful prefix, including rejected rounds.
-    Unknown or later mutating dispatches still require reconciliation.
+    Unknown outcomes require explicit reconciliation; later mutating
+    dispatches are never superseded here.
 
     Successor journal -> explicit parent seal -> controller state handover.
     The deterministic successor makes the first two writes crash-replayable;
@@ -102,13 +103,13 @@ def _supersede_failed_dispatch(*, stack, journal, data, operation_id, evidence_r
                and record["repair_attempt"] == 0)
     reviewer = record["assignment"]["step"] in {"spec_guard", "code_reviewer", "test_guardian"}
     if record["result"] is not None or not (initial or reviewer):
-        raise DeliverySliceError("delivery_reconciliation_required: recovery requires the first implementer dispatch")
+        raise DeliverySliceError("delivery_reconciliation_required: recovery requires the first implementer dispatch or a read-only review")
     successor_id = _digest({"operation_id": operation_id, "dispatch_id": record["assignment"]["dispatch_id"]})
     unknown_seal = "delivery_dispatch_outcome_unknown_superseded:" + successor_id
     failed_seal = "delivery_provider_failure_superseded:" + successor_id
     unknown = record["error"] in {None, unknown_seal}
     if not (
-        initial and unknown and reconcile_unknown
+        unknown and reconcile_unknown
         and all(record[key] is None for key in ("raw_result", "candidate_after", "token_usage"))
         or not unknown and retry_failed and record["error"] in {"delivery_provider_failed", failed_seal}
     ):
