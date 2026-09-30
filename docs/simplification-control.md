@@ -31,8 +31,15 @@ durable capture intents, failed owner rechecks consuming existing repair rounds,
 and linked refresh/return journals preserving source allowances and bytes.
 Focused gate: 204 passed, including 26 new checkpoint/continuation cases.
 Two in-memory mutations (counter-validation bypass and false passing recheck)
-made the intended regressions fail. Native Ralph handoff is not wired yet;
-live routing remains unchanged. Next: Task 3's owner/return operation selection.
+made the intended regressions fail.
+Task 3 wires native Ralph owner/return selection and exactly-once accounting:
+241 focused tests passed, with four separately reproduced pre-existing
+round-count assertions deselected. Those are the three modes of
+`test_gate_failure_cannot_be_promoted_by_ralph` and
+`test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice`; they expect
+four rounds although the existing limit is five. No gate or limit was changed.
+Live Delivery is still stopped. Next: Task 4 interruption tests, current v2
+workspace refresh integration, independent review, then native observation.
 No new milestone or S6/S7 work is opened.
 
 ## Status

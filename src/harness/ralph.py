@@ -2330,6 +2330,207 @@ class RalphController:
         self, worktree_path: str, prompt: str, *, repair: bool,
         documentation: bool = False,
     ) -> Dict[str, Any]:
+        """Advance one active operation at a time; owner success stays private."""
+        from harness.delivery_slice import DeliverySliceError
+        before = self._state_store.read().get("tokens_used", 0)
+        budget = self._controlled_slice_budget
+        try:
+            while True:
+                current = self._state_store.read()
+                if budget is not None:
+                    self._controlled_slice_budget = max(0, budget - (current.get("tokens_used", 0) - before))
+                result = self._exec_controlled_slice_once(
+                    worktree_path, prompt, repair=repair, documentation=documentation,
+                )
+                request = result.pop("_browser_repair_request", None)
+                operation = self._state_store.read().get("delivery_slice_operation", {})
+                worktree = Path(worktree_path)
+                spec_dir = self._find_existing_spec_dir(worktree)
+                if request is not None:
+                    self._select_browser_repair_operation(
+                        request, worktree=worktree, spec_dir=spec_dir,
+                        scope=self._browser_operation_scope(),
+                    )
+                    continue
+                if result["passed"] and operation.get("browser_handoff", {}).get("phase") == "owner":
+                    self._select_browser_return_operation(worktree=worktree, spec_dir=spec_dir)
+                    continue
+                result["tokens"] = self._state_store.read().get("tokens_used", 0) - before or result.get("tokens")
+                return result
+        except (DeliverySliceError, OSError, ValueError, TypeError, KeyError) as exc:
+            return {"exit_code": 1, "passed": False, "build_status": "blocked",
+                    "completion_marker_explicit": True, "build_reason": str(exc),
+                    "duration_s": 0, "tokens": self._state_store.read().get("tokens_used", 0) - before,
+                    "task_ids": [], "stdout": "", "stderr": ""}
+        finally:
+            self._controlled_slice_budget = budget
+
+    def _browser_operation_scope(self):
+        from harness.delivery_slice import DeliverySliceError
+        state = self._state_store.read()
+        raw = state.get("target_task_ids", [])
+        if (state.get("implementation_target") or state.get("declared_targets")
+                or state.get("target_repo") or state.get("target_path") or raw):
+            if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+                raise DeliverySliceError("invalid persisted delivery task scope")
+            return set(raw)
+        return self._target_task_ids()
+
+    def _browser_task_options(self, worktree, spec_dir, operation):
+        from harness.delivery_browser_handoff import resolve_browser_repair
+        from harness.delivery_slice_runner import _digest, _spec_inputs
+        from harness.product_inventory import product_evidence_fingerprint
+        from harness.visual_ralph import VisualRalphController
+        state = self._state_store.read()
+        def capture(candidate):
+            visual = VisualRalphController(
+                provider=self._provider, config=self._config, spec_id=self._spec_id,
+                base_dir=str(self._orchestration_root(worktree)), build_id=self._build_id or operation["id"],
+                sandbox_spec_factory=lambda path: self._build_sandbox_spec(path, 0),
+            )
+            return visual.capture_baselines(candidate)
+        def resolve(request):
+            return resolve_browser_repair(
+                request, evidence_root=self._delivery_operation_evidence_root(), spec_dir=spec_dir,
+                candidate_fingerprint=product_evidence_fingerprint(worktree),
+                input_fingerprint=_digest(_spec_inputs(spec_dir, self._orchestration_root(worktree))),
+                allowed_task_ids=self._browser_operation_scope(),
+            )
+        return dict(
+            repair_task_id=operation.get("repair_task_id"),
+            semantic_visual_gate_required=state.get("semantic_visual_gate_required") is True,
+            browser_baseline_capture=capture, resolve_browser_owner=resolve,
+            implementation_target=state.get("implementation_target"), declared_targets=state.get("declared_targets"),
+            continuation=operation.get("continuation"),
+            require_browser_recheck=operation.get("browser_handoff", {}).get("phase") == "owner",
+        )
+
+    def _prepare_browser_operation(self, operation, *, worktree, spec_dir):
+        """Prepare journal, select state, then return without executing a provider."""
+        from harness.delivery_slice import DeliverySliceError
+        from harness.delivery_slice_runner import DeliverySliceRunner
+        from harness.delivery_slice_journal import DeliverySliceJournal
+        root = self._delivery_operation_evidence_root()
+        existing = DeliverySliceJournal(root, operation["id"]).load()
+        if existing is not None and (existing["records"] or existing.get("browser_checks")):
+            raise DeliverySliceError("browser successor already contains unselected work")
+        selected = False
+        def select():
+            nonlocal selected
+            current = self._state_store.read()
+            current["delivery_slice_operation"] = operation
+            self._state_store.write(current)
+            selected = True
+        result = DeliverySliceRunner(self._llm_provider, self._orchestration_root(worktree)).run(
+            worktree=worktree, spec_dir=spec_dir, evidence_root=root,
+            allowed_task_ids=self._browser_operation_scope(), **self._browser_task_options(worktree, spec_dir, operation),
+            feedback=operation["feedback"], operation_id=operation["id"], journal_required=existing is not None,
+            token_budget=operation["continuation"]["allowance"]["token_limit"],
+            containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
+            stop_requested=lambda: True, on_journal_ready=select,
+        )
+        if not selected:
+            raise DeliverySliceError(result.reason)
+        return operation
+
+    def _validate_browser_operation_context(self, operation, data, *, worktree, spec_dir,
+                                            allow_candidate_transition=False):
+        from harness.delivery_slice import DeliverySliceError
+        from harness.delivery_slice_runner import (
+            delivery_role_inputs, delivery_slice_binding, _candidate_fingerprint,
+            _digest, _spec_inputs, _durable_protected_fingerprint,
+        )
+        state = self._state_store.read()
+        binding = delivery_slice_binding(
+            worktree=worktree.resolve(), spec_dir=spec_dir,
+            roles=delivery_role_inputs(self._orchestration_root(worktree)),
+            allowed_task_ids=self._browser_operation_scope(), repair_task_id=operation.get("repair_task_id"),
+            feedback=operation["feedback"], implementation_target=state.get("implementation_target"),
+            declared_targets=state.get("declared_targets"),
+            semantic_visual_gate_required=state.get("semantic_visual_gate_required") is True,
+            continuation=operation.get("continuation"),
+            require_browser_recheck=operation.get("browser_handoff", {}).get("phase") == "owner",
+        )
+        if (binding != data["binding"]
+                or _digest(_spec_inputs(spec_dir, self._orchestration_root(worktree))) != data["input_fingerprint"]
+                or _durable_protected_fingerprint(worktree, spec_dir) != data["protected_fingerprint"]):
+            raise DeliverySliceError("delivery_reconciliation_required: browser predecessor context changed")
+        candidate = data["records"][-1]["candidate_after"] if data["records"] else data["candidate_fingerprint"]
+        if not allow_candidate_transition and candidate != _candidate_fingerprint(worktree, spec_dir):
+            raise DeliverySliceError("delivery_reconciliation_required: browser predecessor candidate changed")
+
+    def _select_browser_repair_operation(self, request, *, worktree, spec_dir, scope):
+        from copy import deepcopy
+        from harness.delivery_browser_handoff import (
+            handoff_operation_id, load_browser_predecessor, prepare_browser_continuation, resolve_browser_repair,
+        )
+        from harness.delivery_slice import DeliverySliceError, select_delivery_repair_task
+        from harness.delivery_slice_runner import _candidate_fingerprint, _digest, _spec_inputs
+        from harness.browser_baseline_evidence import read_browser_baseline_observation
+        from harness.product_inventory import product_evidence_fingerprint
+        source_operation = self._state_store.read()["delivery_slice_operation"]
+        if source_operation["id"] != request.source.operation_id or source_operation.get("browser_handoff"):
+            raise DeliverySliceError("delivery_browser_repair_nested_handoff")
+        root = self._delivery_operation_evidence_root()
+        fingerprint = _digest(_spec_inputs(spec_dir, self._orchestration_root(worktree)))
+        product = product_evidence_fingerprint(worktree)
+        owner = resolve_browser_repair(request, evidence_root=root, spec_dir=spec_dir,
+            candidate_fingerprint=product, input_fingerprint=fingerprint, allowed_task_ids=scope)
+        source = load_browser_predecessor(request.source, root)
+        self._validate_browser_operation_context(source_operation, source, worktree=worktree, spec_dir=spec_dir)
+        if owner == source["task_id"]:
+            raise DeliverySliceError("browser handoff requires a foreign owner")
+        observation = read_browser_baseline_observation(request.receipt,
+            operation_id=source_operation["id"], task_id=source["task_id"],
+            candidate_fingerprint=product, input_fingerprint=fingerprint)
+        feedback = {"feedback_kind": "controlled_source_repair_v1", "failures": observation.verification_failures}
+        feedback["repair_selection"] = select_delivery_repair_task(spec_dir, feedback, scope)
+        entry = prepare_browser_continuation(kind="owner_retry", predecessors=[request.source],
+            evidence_root=root, candidate_fingerprint=_candidate_fingerprint(worktree, spec_dir),
+            input_fingerprint=fingerprint, token_limit=source["budget_limit"])
+        operation = {key: deepcopy(value) for key, value in source_operation.items()
+                     if key in {"worktree_path", "source_binding", "outer_iter"}}
+        operation.update(id=handoff_operation_id(request, "owner"), repair_task_id=owner,
+            feedback=json.dumps(feedback, sort_keys=True), accounted_tokens=0, progress_applied=False,
+            continuation=entry, browser_handoff={"source_operation": deepcopy(source_operation),
+                "source_journal": request.source.as_mapping(), "trigger": request.as_mapping(), "phase": "owner"})
+        return self._prepare_browser_operation(operation, worktree=worktree, spec_dir=spec_dir)
+
+    def _select_browser_return_operation(self, *, worktree, spec_dir):
+        from copy import deepcopy
+        from harness.delivery_browser_handoff import (
+            BrowserRepairRequest, JournalRef, handoff_operation_id, journal_sha256,
+            prepare_browser_continuation,
+        )
+        from harness.delivery_slice_journal import DeliverySliceJournal
+        from harness.delivery_slice_runner import _candidate_fingerprint, _digest, _spec_inputs
+        owner = self._state_store.read()["delivery_slice_operation"]
+        handoff = owner["browser_handoff"]
+        root = self._delivery_operation_evidence_root()
+        data = DeliverySliceJournal(root, owner["id"]).load(required=True)
+        self._validate_browser_operation_context(owner, data, worktree=worktree, spec_dir=spec_dir)
+        owner_ref = JournalRef(owner["id"], journal_sha256(data))
+        request = BrowserRepairRequest.from_mapping(handoff["trigger"])
+        from harness.delivery_browser_handoff import load_browser_predecessor
+        self._validate_browser_operation_context(
+            handoff["source_operation"], load_browser_predecessor(request.source, root),
+            worktree=worktree, spec_dir=spec_dir, allow_candidate_transition=True,
+        )
+        entry = prepare_browser_continuation(kind="return", predecessors=[request.source, owner_ref],
+            evidence_root=root, candidate_fingerprint=_candidate_fingerprint(worktree, spec_dir),
+            input_fingerprint=_digest(_spec_inputs(spec_dir, self._orchestration_root(worktree))),
+            token_limit=data["budget_limit"])
+        operation = {key: deepcopy(value) for key, value in handoff["source_operation"].items()
+                     if key in {"worktree_path", "source_binding", "outer_iter", "feedback", "repair_task_id"}}
+        operation.update(id=handoff_operation_id(request, "return"), accounted_tokens=0, progress_applied=False,
+            continuation=entry, browser_handoff={**deepcopy(handoff), "phase": "return",
+                "owner_journal": owner_ref.as_mapping(), "owner_recheck": data["browser_checks"][-1]["receipt"]})
+        return self._prepare_browser_operation(operation, worktree=worktree, spec_dir=spec_dir)
+
+    def _exec_controlled_slice_once(
+        self, worktree_path: str, prompt: str, *, repair: bool,
+        documentation: bool = False,
+    ) -> Dict[str, Any]:
         """Adapt the delivery controller to Ralph's existing result boundary."""
         from harness.delivery_slice_runner import DeliverySliceRunner
         from harness.delivery_slice_runner import _digest, _spec_inputs
@@ -2342,14 +2543,7 @@ class RalphController:
             if spec_dir is None:
                 raise DeliverySliceError("controlled delivery requires a canonical spec directory")
             state = self._state_store.read()
-            raw_scope = state.get("target_task_ids", [])
-            if (state.get("implementation_target") or state.get("declared_targets")
-                    or state.get("target_repo") or state.get("target_path") or raw_scope):
-                if not isinstance(raw_scope, list) or any(not isinstance(item, str) for item in raw_scope):
-                    raise DeliverySliceError("invalid persisted delivery task scope")
-                scope = set(raw_scope)
-            else:
-                scope = self._target_task_ids()
+            scope = self._browser_operation_scope()
             repair_task_id = None
             repair_selection = None
             operation = state.get("delivery_slice_operation")
@@ -2484,36 +2678,19 @@ class RalphController:
                     superseded_dispatches=operation.get("superseded_dispatches"),
                     on_dispatch_superseded=remember_supersession,
                 )
-                runner_options["repair_task_id"] = repair_task_id
-                runner_options["semantic_visual_gate_required"] = (
-                    state.get("semantic_visual_gate_required") is True
-                )
-                def capture_browser_baselines(candidate: str):
-                    from harness.visual_ralph import VisualRalphController
-
-                    visual = VisualRalphController(
-                        provider=self._provider, config=self._config,
-                        spec_id=self._spec_id,
-                        base_dir=str(self._orchestration_root(worktree)),
-                        build_id=self._build_id or operation["id"],
-                        sandbox_spec_factory=lambda path: self._build_sandbox_spec(path, 0),
-                    )
-                    return visual.capture_baselines(candidate)
-
-                runner_options["browser_baseline_capture"] = capture_browser_baselines
                 implementation_target = state.get("implementation_target")
                 if implementation_target is not None and not isinstance(
                     implementation_target, str
                 ):
                     raise DeliverySliceError("invalid persisted implementation target")
-                runner_options["implementation_target"] = implementation_target
                 declared_targets = state.get("declared_targets")
                 if declared_targets is not None and (
                     not isinstance(declared_targets, list)
                     or any(not isinstance(target, str) for target in declared_targets)
                 ):
                     raise DeliverySliceError("invalid persisted declared targets")
-                runner_options["declared_targets"] = declared_targets
+                runner_options.update(self._browser_task_options(worktree, spec_dir, operation))
+            carried_tokens = operation.get("continuation", {}).get("allowance", {}).get("tokens_consumed", 0)
             result = runner(
                 self._llm_provider, self._orchestration_root(worktree),
             ).run(
@@ -2522,7 +2699,7 @@ class RalphController:
                 allowed_task_ids=scope, **runner_options,
                 feedback=prompt, stop_requested=lambda: self._interrupted or self.check_cancel(),
                 containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
-                token_budget=(self._controlled_slice_budget + operation["accounted_tokens"]
+                token_budget=(self._controlled_slice_budget + operation["accounted_tokens"] + carried_tokens
                               if self._controlled_slice_budget is not None else None),
                 budget_extension_limit=operation.get("budget_extension_limit"),
                 operation_id=operation["id"],
@@ -2542,7 +2719,7 @@ class RalphController:
                 # receipts. No canonical task progress belongs to this operation.
                 operation["progress_applied"] = True
                 operation["runnability_reviewed"] = result.provider_invocation.get("runnability_reviewed") is True
-            elif result.succeeded and result.task_ids:
+            elif result.succeeded and result.task_ids and operation.get("browser_handoff", {}).get("phase") != "owner":
                 current["delivery_slice_task_id"] = result.task_ids[0]
                 operation["accepted_task_id"] = result.task_ids[0]
             elif result.succeeded and not resuming:
@@ -2567,6 +2744,8 @@ class RalphController:
             }
             if documentation and result.succeeded:
                 adapted = _DocumentationBuildResult(adapted, documentation_operation_id=operation["id"])
+            if result.browser_repair_request is not None:
+                adapted["_browser_repair_request"] = result.browser_repair_request
             return adapted
         except (DeliverySliceError, OSError) as exc:
             return {"exit_code": 1, "passed": False, "build_status": "blocked",

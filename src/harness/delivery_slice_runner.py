@@ -51,6 +51,40 @@ _MAX_REVIEW_PATHS = 200
 _MAX_REVIEW_AUDIT_PATHS = 200
 
 
+def delivery_role_inputs(project_dir: Path) -> dict:
+    loader = ProsaicPromptLoader(project_dir)
+    roles = {}
+    for step, name in _ROLES.items():
+        artifact = loader.load_subagent(name)
+        if artifact is None or artifact.frontmatter.get("name") != name or not artifact.body.strip():
+            raise DeliverySliceError(f"missing or invalid delivery role: {name}")
+        roles[step] = artifact
+    return roles
+
+
+def delivery_slice_binding(*, worktree, spec_dir, roles, allowed_task_ids, repair_task_id,
+                           feedback, implementation_target, declared_targets,
+                           semantic_visual_gate_required=False, continuation=None,
+                           require_browser_recheck=False):
+    """Shared operation identity for dispatch and read-only handoff admission."""
+    binding = {
+        "worktree": str(worktree), "spec_dir": str(spec_dir.resolve()),
+        "scope": sorted(allowed_task_ids) if allowed_task_ids is not None else None,
+        "repair_task_id": repair_task_id, "feedback": feedback,
+        "implementation_target": implementation_target,
+        "declared_targets": _normalize_declared_targets(declared_targets),
+        "nested_target_fingerprint": _nested_target_fingerprint(worktree, _nested_target_prefix(implementation_target)),
+        "roles": {step: {"body": role.body, "metadata": role.frontmatter} for step, role in roles.items()},
+    }
+    if semantic_visual_gate_required:
+        binding["semantic_visual_gate_required"] = True
+    if require_browser_recheck:
+        binding["require_browser_recheck"] = True
+    if continuation is not None:
+        binding["continuation"] = continuation
+    return _digest(binding)
+
+
 def _validate_superseded_dispatches(root: Path, operation_id: str, references: list[dict] | None,
                                    successor: dict | None) -> dict[str, str]:
     """Retained parent receipts remain authority on every successor replay."""
@@ -293,13 +327,7 @@ class DeliverySliceRunner:
             protected_fingerprint = _durable_protected_fingerprint(
                 worktree, spec_dir,
             )
-            loader = ProsaicPromptLoader(self._project_dir)
-            roles = {}
-            for step, name in _ROLES.items():
-                artifact = loader.load_subagent(name)
-                if artifact is None or artifact.frontmatter.get("name") != name or not artifact.body.strip():
-                    raise DeliverySliceError(f"missing or invalid delivery role: {name}")
-                roles[step] = artifact
+            roles = delivery_role_inputs(self._project_dir)
 
             journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id))
             data = journal.load(required=journal_required)
@@ -319,29 +347,19 @@ class DeliverySliceRunner:
             nested_target_fingerprint = _nested_target_fingerprint(
                 worktree, nested_target_prefix,
             )
-            binding_inputs = {
-                "worktree": str(worktree), "spec_dir": str(spec_dir.resolve()),
-                "scope": sorted(allowed_task_ids) if allowed_task_ids is not None else None,
-                "repair_task_id": repair_task_id, "feedback": feedback,
-                "implementation_target": implementation_target,
-                "declared_targets": normalized_declared_targets,
-                "nested_target_fingerprint": nested_target_fingerprint,
-                "roles": {step: {"body": role.body, "metadata": role.frontmatter}
-                          for step, role in roles.items()},
-            }
-            if semantic_visual_gate_required:
-                binding_inputs["semantic_visual_gate_required"] = True
-            if require_browser_recheck:
-                binding_inputs["require_browser_recheck"] = True
             if continuation is not None:
-                binding_inputs["continuation"] = continuation
                 validate_browser_continuation(
                     continuation, evidence_root=evidence_root,
                     candidate_fingerprint=(data["candidate_fingerprint"] if data else
                                            _candidate_fingerprint(worktree, spec_dir)),
                     input_fingerprint=input_fingerprint,
                 )
-            binding = _digest(binding_inputs)
+            binding = delivery_slice_binding(
+                worktree=worktree, spec_dir=spec_dir, roles=roles, allowed_task_ids=allowed_task_ids,
+                repair_task_id=repair_task_id, feedback=feedback, implementation_target=implementation_target,
+                declared_targets=declared_targets, semantic_visual_gate_required=semantic_visual_gate_required,
+                continuation=continuation, require_browser_recheck=require_browser_recheck,
+            )
             if data is None:
                 try:
                     task_id = select_delivery_task(spec_dir, allowed_task_ids, repair_task_id)

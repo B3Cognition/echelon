@@ -121,6 +121,7 @@ def test_ralph_supplies_isolated_browser_capture_to_requested_slice(
     from harness.product_inventory import product_evidence_fingerprint
     from harness.visual_ralph import BrowserBaselineCapture, VisualRalphController
 
+    _declare_repair_case(slice_project)
     requested = False
 
     def request_once(assignment, payload, root):
@@ -138,7 +139,7 @@ def test_ralph_supplies_isolated_browser_capture_to_requested_slice(
         captures.append((self._provider, worktree))
         return BrowserBaselineCapture(
             candidate_fingerprint=product_evidence_fingerprint(Path(worktree)),
-            verification=VerifyResult(passed=False),
+            verification=_repair_failure(),
             images={"tests/e2e/demo.spec.ts-snapshots/pitch-chromium.png": b"proposal"},
         )
 
