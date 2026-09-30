@@ -10,6 +10,8 @@ from harness.task_progress import summarize_task_progress
 from kernel.task_contract import parse_task_rows
 from harness.coverage_evidence import task_owned_coverage_case_ids
 from harness.coverage_contract import is_coverage_case_id
+from harness.runnability_contract import CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH
+from harness.task_targets import task_declares_file
 
 
 class DeliverySliceError(ValueError):
@@ -94,6 +96,42 @@ def select_delivery_repair_task(
     Other failure formats retain strict single-owner resolution.
     """
     failures = feedback.get("failures")
+    if (isinstance(failures, list) and len(failures) == 1
+            and isinstance(failures[0], dict)
+            and failures[0].get("id") in {
+                "user-runnability-contract-missing",
+                "user-runnability-contract-invalid",
+                "user-runnability-contract-disabled",
+            }):
+        details = failures[0].get("details")
+        if (not isinstance(details, dict)
+                or details.get("contract") != RUNNABILITY_CONTRACT_PATH.as_posix()
+                or details.get("unidentified_test_failures", 0) != 0
+                or "failed_test_case_ids" in details):
+            raise DeliverySliceError("delivery_repair_ownership_required: invalid runnability contract identity")
+        text = (spec_dir / "tasks.md").read_text(encoding="utf-8")
+        owner_rows = [row for row in parse_task_rows(text)
+                      if task_declares_file(
+                          text, row.task_id,
+                          (Path(row.target or ".") / RUNNABILITY_CONTRACT_PATH).as_posix(),
+                      )]
+        owners_by_target: dict[str, list[str]] = {}
+        for row in owner_rows:
+            owners_by_target.setdefault(row.target or ".", []).append(row.task_id)
+        if any(len(owners) != 1 for owners in owners_by_target.values()):
+            raise DeliverySliceError("delivery_repair_ownership_required: runnability contract has "
+                                     "multiple declared task owners for one target")
+        owners = [row.task_id for row in owner_rows
+                  if allowed_task_ids is None or row.task_id in allowed_task_ids]
+        if len(owners) != 1:
+            raise DeliverySliceError("delivery_repair_ownership_required: runnability contract has "
+                                     f"{len(owners)} declared task owners in the permitted target scope")
+        task_id = owners[0]
+        summary = summarize_task_progress(text)
+        if not summary.valid or summary.task_statuses.get(task_id) not in {"DONE", "DONE_WITH_CONCERNS"}:
+            raise DeliverySliceError(f"delivery_repair_ownership_required: {task_id} is not an accepted task eligible for repair")
+        return {"task_id": task_id, "failed_test_case_ids": [],
+                "reason": "unique_runnability_contract_owner"}
     coverage_only = isinstance(failures, list) and bool(failures) and all(
         isinstance(failure, dict) and failure.get("id") == "coverage-observation-gaps"
         and isinstance(failure.get("details"), dict)

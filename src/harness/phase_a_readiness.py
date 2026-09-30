@@ -17,7 +17,7 @@ from harness.coverage_evidence import (
 )
 from harness.deferred_scope import DeferredScopeError, active_entries
 from harness.spec_frontmatter import read_canonical_target_entries
-from harness.task_targets import analyze_task_targets, task_files_section_for, validate_task_targets
+from harness.task_targets import analyze_task_targets, task_declares_file, validate_task_targets
 from harness.runnability_contract import CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH
 from harness.runnability_disposition import RunnabilityDispositionError, read_runnability_disposition
 from kernel.task_contract import parse_task_rows
@@ -270,9 +270,7 @@ def verification_capability_blockers(
                         owner_scope = canonical_task_ids if not entries else target_tasks.get(target, ())
                         owners = [task_id for task_id in owner_scope
                                   if task_id in canonical_task_ids
-                                  if any(match.group("path") == contract for match in re.finditer(
-                                      r"(?m)^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)",
-                                      task_files_section_for(markdown, task_id) or ""))]
+                                  if task_declares_file(markdown, task_id, contract)]
                         if not owners:
                             blockers.append(f"{target}: runnability_contract_owner_required: "
                                             f"one task must declare `{contract}` in Files")

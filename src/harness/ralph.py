@@ -2711,11 +2711,14 @@ class RalphController:
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)
                 if repair_selection is not None:
-                    print(
-                        f"Repair task {repair_task_id}: owns failed cases "
-                        + ", ".join(repair_selection["failed_test_case_ids"]),
-                        file=sys.stderr,
-                    )
+                    if repair_selection["reason"] == "unique_runnability_contract_owner":
+                        print(f"Repair task {repair_task_id}: owns runnability contract", file=sys.stderr)
+                    else:
+                        print(
+                            f"Repair task {repair_task_id}: owns failed cases "
+                            + ", ".join(repair_selection["failed_test_case_ids"]),
+                            file=sys.stderr,
+                        )
 
             def remember_supersession(successor_id, reference, previous_usage, unknown_usage, retained_usage):
                 current = self._state_store.read()

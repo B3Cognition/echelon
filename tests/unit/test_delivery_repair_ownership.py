@@ -14,6 +14,7 @@ from tests.unit.test_candidate_evidence_timeout import RecordingProvider, _resul
 from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_controller_integration import _controller
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
+from tests.unit.test_ralph_outer import _required_browser_runnability
 
 
 def _failure_output():
@@ -252,6 +253,111 @@ def _coverage_gaps(*case_ids):
                                 "reason": "no executed tagged test matches the planned case"}
                         for case in case_ids}},
     )])
+
+
+def _runnability_contract_gap(contract=".echelon/runnability.yml", failure_id="user-runnability-contract-missing"):
+    return VerifyResult(False, [FailureEntry(
+        FailureCategory.OTHER, failure_id,
+        "Selected stacks require a composed user-runnability journey.",
+        {"contract": contract, "required_repair": "Add the project-owned runnability contract and real journey."},
+    )])
+
+
+@pytest.mark.parametrize("failure_id", [
+    "user-runnability-contract-missing",
+    "user-runnability-contract-invalid",
+    "user-runnability-contract-disabled",
+])
+def test_runnability_contract_failure_repairs_declared_accepted_owner(slice_project, tmp_path, failure_id, capsys):
+    controller, store, executor = _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `.echelon/runnability.yml` - composed journey\n")
+    result = controller._exec_feedback(
+        None, _runnability_contract_gap(failure_id=failure_id), "echelon build", "",
+        worktree_path=str(slice_project[0]),
+    )
+    assert result["passed"] and result["task_ids"] == ["T-012"], result
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-012"] * 4
+    operation = store.read()["delivery_slice_operation"]
+    saved = json.loads(operation["feedback"])
+    assert saved["failures"][0]["id"] == failure_id
+    assert saved["failures"][0]["details"]["contract"] == ".echelon/runnability.yml"
+    assert saved["repair_selection"]["task_id"] == "T-012"
+    assert "Repair task T-012: owns runnability contract" in capsys.readouterr().err
+
+
+def test_real_missing_contract_gate_routes_to_declared_owner(slice_project, tmp_path):
+    controller, store, executor = _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "  **Files:**\n  - `.echelon/runnability.yml` - composed journey\n")
+    controller._config.resolved_runnability = _required_browser_runnability()
+    root = slice_project[0]
+    verification = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True), str(root), candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "runnability-evidence",
+    )
+    assert not verification.passed
+    assert verification.failures[0].id == "user-runnability-contract-missing"
+    result = controller._exec_feedback(
+        None, verification, "echelon build", "", worktree_path=str(root),
+    )
+    assert result["passed"] and result["task_ids"] == ["T-012"], result
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-012"] * 4
+    saved = json.loads(store.read()["delivery_slice_operation"]["feedback"])
+    assert saved["failures"][0]["details"]["contract"] == ".echelon/runnability.yml"
+
+
+@pytest.mark.parametrize("problem", ["unowned", "duplicate", "unaccepted", "wrong_contract", "mixed", "outside_scope"])
+def test_runnability_contract_repair_fails_closed_without_unique_authority(slice_project, tmp_path, problem):
+    controller, store, executor = _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    if problem != "unowned":
+        tasks.write_text(tasks.read_text() +
+            "  **Files:**\n  - `.echelon/runnability.yml` - composed journey\n")
+    if problem == "duplicate":
+        tasks.write_text(tasks.read_text().replace(
+            "  **Test Tasks:**\n  - [x] Implement `E2E-START-002`",
+            "  **Files:**\n  - `.echelon/runnability.yml` - competing owner\n"
+            "  **Test Tasks:**\n  - [x] Implement `E2E-START-002`",
+        ))
+    if problem == "unaccepted":
+        tasks.write_text(tasks.read_text().replace("- [x] T-012", "- [ ] T-012")
+                         .replace("**Status:** DONE\n  **Test Tasks:**\n  - [x] Implement `CT-NET-001`",
+                                  "**Status:** PENDING\n  **Test Tasks:**\n  - [x] Implement `CT-NET-001`"))
+    failure = _runnability_contract_gap("other.yml" if problem == "wrong_contract" else ".echelon/runnability.yml")
+    if problem == "mixed":
+        failure.failures.append(_coverage_gaps("CT-NET-001").failures[0])
+    if problem == "outside_scope":
+        state = store.read()
+        state["target_task_ids"] = ["T-011"]
+        store.write(state)
+    result = controller._exec_feedback(None, failure, "echelon build", "",
+                                       worktree_path=str(slice_project[0]))
+    assert not result["passed"], result
+    assert "delivery_repair_ownership_required" in result["build_reason"]
+    assert executor.calls == []
+
+
+def test_runnability_contract_repair_selects_only_the_active_target_owner(slice_project, tmp_path):
+    from harness.delivery_slice import DeliverySliceError, select_delivery_repair_task
+
+    _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    text = tasks.read_text().replace("depends=none\n", "depends=none target=sources/front\n")
+    text = text.replace("depends=T-011\n", "depends=T-011 target=sources/back\n")
+    text = text.replace("  **Test Tasks:**\n  - [x] Implement `E2E-START-002`",
+                        "  **Files:**\n  - `sources/front/.echelon/runnability.yml` - front journey\n"
+                        "  **Test Tasks:**\n  - [x] Implement `E2E-START-002`")
+    text += "  **Files:**\n  - `sources/back/.echelon/runnability.yml` - back journey\n"
+    tasks.write_text(text)
+    failure = _runnability_contract_gap().failures[0]
+    feedback = {"failures": [{"id": failure.id, "details": failure.details}]}
+
+    assert select_delivery_repair_task(slice_project[1], feedback, {"T-012"})["task_id"] == "T-012"
+    with pytest.raises(DeliverySliceError, match="runnability contract"):
+        select_delivery_repair_task(slice_project[1], feedback, None)
 
 
 def test_multi_owner_coverage_repairs_one_task_then_uses_fresh_remaining_debt(slice_project, tmp_path):

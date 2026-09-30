@@ -271,9 +271,20 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   Targeted red-to-green tests cover each edge and the actual Delivery service
   admission boundary. The preserved demo is now correctly reported as missing
   a declared owner. This increment does not add one to the published spec or
-  create the candidate contract. Pending next: connect contract-failure repair
-  to an explicitly declared owner through the existing controlled slice, then
-  verify a native candidate repair. Final affected gate: 272 passed. Bundle
+  create the candidate contract. The next bounded increment connects the three
+  exact candidate contract failures (missing, invalid, disabled) to one accepted
+  Files-declared owner in the active target scope through the existing controlled
+  four-role repair operation. It retains the full failure in the durable feedback,
+  rejects unowned, duplicate, unaccepted, out-of-scope and mixed failures, and
+  does not route unrelated runtime failures. Eleven direct cases, including the
+  real missing-contract gate into four-role dispatch, and 85 surrounding tests
+  pass; independent read-only review found no issue in the increment. The
+  repository fail-fast stopped after 96 passing tests at the pre-existing
+  `test_converges_within_3_outer_iterations` canonical-spec fixture failure.
+  The preserved Delivery state and published spec/task hashes remain unchanged.
+  It has not repaired a native candidate. The preserved published demo plan still
+  lacks an owner, so native Spec planning must supply one before live Delivery.
+  First-increment affected gate: 272 passed. Bundle
   dry-run: nine checks passed. Repository fail-fast: 96 passed, then the known
   `test_converges_within_3_outer_iterations` fixture failure. Review identified
   and regression-tested native basename disposition, canonical T-S01 and fenced

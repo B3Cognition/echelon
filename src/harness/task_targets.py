@@ -150,6 +150,15 @@ def task_files_section_for(markdown: str, task_id: str) -> str | None:
     return None
 
 
+def task_declares_file(markdown: str, task_id: str, path: str) -> bool:
+    """Recognize an exact Files bullet in a canonical task block."""
+    section = task_files_section_for(markdown, task_id)
+    return section is not None and any(
+        match.group("path") == path
+        for match in re.finditer(r"(?m)^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)", section)
+    )
+
+
 def _task_blocks(markdown: str) -> list[tuple[str, str]]:
     lines = markdown.splitlines()
     starts: list[tuple[int, str]] = []
