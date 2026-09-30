@@ -19,9 +19,12 @@ still stops at the known `test_converges_within_3_outer_iterations` fixture's
 missing canonical spec directory.
 
 The live run remains stopped on unfinished T-011. Cross-task repair/return is
-not implemented. Next: review the
-[browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md),
-then approve its implementation plan. No new milestone or S6/S7 work is opened.
+not implemented. The
+[browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
+is approved. Next: review the four-task
+[implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md),
+then execute Task 1 natively and report its functional result before advancing.
+No new milestone or S6/S7 work is opened.
 
 ## Status
 

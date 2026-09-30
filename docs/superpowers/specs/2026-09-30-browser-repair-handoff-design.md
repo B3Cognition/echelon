@@ -1,6 +1,8 @@
 # Delivery browser-failure repair handoff
 
-Status: proposed design; implementation not started.
+Status: design approved by user instruction to proceed; implementation not started.
+
+Implementation plan: [browser repair handoff](../plans/2026-09-30-browser-repair-handoff.md).
 
 Parent milestone: STAB-1. S6 and S7 remain parked.
 
@@ -199,7 +201,7 @@ claim a green suite or expand this repair into a stale-test cleanup.
 
 - [x] Structured failure receipts and feedback: `20e88b0d`; 209 focused tests;
   isolated Docker evidence-to-owner probe; independent review approved.
-- [ ] Written handoff design approved.
+- [x] Written handoff design approved.
 - [ ] Implementation plan approved and execution method selected.
 - [ ] Handoff and recovery implemented, functionally verified, and reviewed.
 - [ ] Existing workspace demonstrates owner repair and return without manual
