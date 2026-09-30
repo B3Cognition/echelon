@@ -21,12 +21,18 @@ missing canonical spec directory.
 The live run remains stopped on unfinished T-011. Cross-task repair/return is
 not implemented. The
 [browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
-is approved. Next: review the four-task
-[implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md),
+and four-task
+[implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md) are approved.
 Task 1's read-only handoff contract is implemented: real journal/receipt tests
 resolve T-012 without dispatch or evidence writes, preserve same-task repair,
 and retain consumed allowances. Focused plus adjacent verification: 173 passed.
-Live routing is still unchanged. Next: Task 2's bounded controller checkpoints.
+Task 2's bounded runner checkpoints are implemented: typed foreign-owner yield,
+durable capture intents, failed owner rechecks consuming existing repair rounds,
+and linked refresh/return journals preserving source allowances and bytes.
+Focused gate: 204 passed, including 26 new checkpoint/continuation cases.
+Two in-memory mutations (counter-validation bypass and false passing recheck)
+made the intended regressions fail. Native Ralph handoff is not wired yet;
+live routing remains unchanged. Next: Task 3's owner/return operation selection.
 No new milestone or S6/S7 work is opened.
 
 ## Status

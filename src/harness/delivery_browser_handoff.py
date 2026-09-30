@@ -1,7 +1,7 @@
 """Read-only authority checks for a task-bound browser repair handoff."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import hmac
 import json
@@ -10,12 +10,14 @@ from pathlib import Path
 import re
 
 from harness.browser_baseline_evidence import (
-    BrowserBaselineEvidenceRef, read_browser_baseline_observation,
+    BrowserBaselineEvidenceRef, read_browser_baseline_observation, validate_historical_browser_baseline,
 )
 from harness.delivery_slice import (
     DeliverySliceError, resolve_delivery_failure_owner, select_delivery_repair_task,
 )
-from harness.delivery_slice_journal import DeliverySliceJournal, delivery_journal_position
+from harness.delivery_slice_journal import (
+    DeliverySliceJournal, delivery_journal_position, browser_checkpoint_observation,
+)
 
 
 def _digest_valid(value: object) -> bool:
@@ -114,13 +116,23 @@ def resolve_browser_repair(
             raise DeliverySliceError("unsafe browser handoff evidence root")
         data = journal.load(required=True)
         if (not hmac.compare_digest(journal_sha256(data), request.source.journal_sha256)
-                or data["input_fingerprint"] != input_fingerprint or not data["records"]):
+                or data["input_fingerprint"] != input_fingerprint):
             raise DeliverySliceError("browser handoff journal binding mismatch")
-        record = data["records"][-1]
-        if (record["assignment"]["dispatch_id"] != request.dispatch_id
+        record = data["records"][-1] if data["records"] else None
+        checks = data.get("browser_checks", [])
+        checkpoint = (checks[-1] if checks and checks[-1]["after_dispatch_id"] == request.dispatch_id
+                      and checks[-1]["receipt"] == request.as_mapping()["receipt"] else None)
+        continuation = data.get("continuation")
+        if continuation is not None:
+            validate_browser_continuation(continuation, evidence_root=root,
+                candidate_fingerprint=data["candidate_fingerprint"], input_fingerprint=data["input_fingerprint"])
+        entry_capture = (record is None and continuation is not None and checkpoint is not None
+                         and checkpoint["after_dispatch_id"] == continuation["anchor_dispatch_id"])
+        if not entry_capture and (record is None or record["assignment"]["dispatch_id"] != request.dispatch_id
                 or record["error"] is not None or record["result"] is None
-                or record["result"]["verdict"] != "BROWSER_EVIDENCE_REQUIRED"
-                or record.get("browser_evidence") != request.as_mapping()["receipt"]):
+                or (checkpoint is None and (
+                    record["result"]["verdict"] != "BROWSER_EVIDENCE_REQUIRED"
+                    or record.get("browser_evidence") != request.as_mapping()["receipt"]))):
             raise DeliverySliceError("browser handoff requires the current completed capture")
         path = request.receipt.path
         relative = path.relative_to(root.resolve(strict=True))
@@ -152,8 +164,111 @@ def continuation_allowance(journal: dict, *, token_limit: float | None) -> Conti
         raise DeliverySliceError("invalid browser continuation budget")
     limit = min(limits) if limits else None
     known = all(record["token_usage"] is not None for record in journal["records"])
+    carried = journal.get("continuation")
+    consumed = sum(record["token_usage"] or 0 for record in journal["records"])
+    if carried is not None:
+        known = known and carried["allowance"]["usage_known"]
+        consumed += carried["allowance"]["tokens_consumed"]
+        if carried["allowance"]["token_limit"] is not None:
+            limit = min(limit, carried["allowance"]["token_limit"]) if limit is not None else carried["allowance"]["token_limit"]
     if limit is not None and not known:
         raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
-    return ContinuationAllowance(repair, requests,
-                                 sum(record["token_usage"] or 0 for record in journal["records"]),
-                                 known, limit)
+    return ContinuationAllowance(repair, requests, consumed, known, limit)
+
+
+def load_browser_predecessor(reference: JournalRef, evidence_root: Path) -> dict:
+    journal = DeliverySliceJournal(Path(evidence_root), reference.operation_id)
+    if Path(evidence_root).is_symlink() or journal.root.is_symlink():
+        raise DeliverySliceError("unsafe browser predecessor directory")
+    data = journal.load(required=True)
+    if journal_sha256(data) != reference.journal_sha256:
+        raise DeliverySliceError("browser predecessor digest changed")
+    return data
+
+
+def prepare_browser_continuation(*, kind: str, predecessors: list[JournalRef], evidence_root: Path,
+                                 candidate_fingerprint: str, input_fingerprint: str,
+                                 token_limit: float | None, _depth: int = 0) -> dict:
+    """Derive an immutable entry checkpoint; no selection or dispatch happens here."""
+    if (_depth > 3 or kind not in {"refresh", "owner_retry", "return"}
+            or len(predecessors) != (2 if kind == "return" else 1)):
+        raise DeliverySliceError("invalid browser continuation lineage")
+    source = load_browser_predecessor(predecessors[0], evidence_root)
+    source_entry = source.get("continuation")
+    if source_entry is not None:
+        if kind == "refresh" or source_entry["kind"] != "refresh":
+            raise DeliverySliceError("browser continuation cannot nest owner repair")
+        validate_browser_continuation(source_entry, evidence_root=evidence_root,
+            candidate_fingerprint=source["candidate_fingerprint"],
+            input_fingerprint=source["input_fingerprint"], _depth=_depth + 1)
+    records = source["records"]
+    source_checks = source.get("browser_checks", [])
+    if records:
+        last = records[-1]
+        if (last["error"] is not None or last["result"] is None
+                or last["result"]["verdict"] != "BROWSER_EVIDENCE_REQUIRED"):
+            raise DeliverySliceError("browser continuation requires a completed request")
+        source_candidate = last["candidate_after"]
+        anchor = last["assignment"]["dispatch_id"]
+    elif source_entry is not None and source_checks and source_checks[-1]["receipt"] is not None:
+        source_candidate = source["candidate_fingerprint"]
+        anchor = source_checks[-1]["after_dispatch_id"]
+    else:
+        raise DeliverySliceError("browser continuation requires completed capture evidence")
+    if (source["input_fingerprint"] != input_fingerprint
+            or kind != "return" and source_candidate != candidate_fingerprint):
+        raise DeliverySliceError("browser continuation requires an unchanged completed request")
+    if kind == "refresh":
+        retained = next((row for row in reversed(records) if row.get("browser_evidence") is not None), None)
+        if retained is None or retained["candidate_after"] != source_candidate:
+            raise DeliverySliceError("browser continuation missing current evidence")
+        reference = retained["browser_evidence"]
+        path = Path(reference["path"])
+        root = Path(evidence_root).resolve(strict=True)
+        relative = path.relative_to(root)
+        if any((root / Path(*relative.parts[:i])).is_symlink() for i in range(1, len(relative.parts) + 1)):
+            raise DeliverySliceError("unsafe browser continuation evidence")
+        validate_historical_browser_baseline(
+            BrowserBaselineEvidenceRef(path, reference["receipt_sha256"]),
+            operation_id=predecessors[0].operation_id, task_id=source["task_id"],
+            input_fingerprint=input_fingerprint,
+        )
+        if json.loads(path.read_text())["schema_version"] != 2:
+            raise DeliverySliceError("browser continuation refresh requires old evidence")
+    allowance = continuation_allowance(source, token_limit=token_limit)
+    if kind == "owner_retry":
+        allowance = replace(allowance, repair_attempt=0, browser_requests_in_round=0)
+    elif kind == "return":
+        owner = load_browser_predecessor(predecessors[1], evidence_root)
+        owner_entry = owner.get("continuation")
+        if (owner_entry is None or owner_entry["kind"] != "owner_retry"
+                or owner_entry["predecessors"] != [predecessors[0].as_mapping()]
+                or not owner["records"] or owner["records"][-1]["candidate_after"] != candidate_fingerprint
+                or owner["input_fingerprint"] != input_fingerprint or not owner["require_browser_recheck"]
+                or not owner["browser_checks"] or owner["browser_checks"][-1]["receipt"] is None
+                or owner["browser_checks"][-1]["purpose"] != "owner_recheck"
+                or owner["browser_checks"][-1]["after_dispatch_id"] != owner["records"][-1]["assignment"]["dispatch_id"]
+                or not browser_checkpoint_observation(owner, owner["browser_checks"][-1]).verification_passed):
+            raise DeliverySliceError("browser continuation requires an accepted owner recheck")
+        validate_browser_continuation(owner_entry, evidence_root=evidence_root,
+            candidate_fingerprint=owner["candidate_fingerprint"], input_fingerprint=input_fingerprint,
+            _depth=_depth + 1)
+        owner_allowance = continuation_allowance(owner, token_limit=allowance.token_limit)
+        allowance = replace(owner_allowance, repair_attempt=allowance.repair_attempt,
+                            browser_requests_in_round=allowance.browser_requests_in_round)
+    return {"kind": kind, "predecessors": [ref.as_mapping() for ref in predecessors],
+            "anchor_dispatch_id": anchor,
+            "source_task_id": source["task_id"], "entry_candidate_fingerprint": candidate_fingerprint,
+            "entry_input_fingerprint": input_fingerprint, "allowance": asdict(allowance)}
+
+
+def validate_browser_continuation(value: dict, *, evidence_root: Path,
+                                  candidate_fingerprint: str, input_fingerprint: str, _depth: int = 0) -> None:
+    expected = prepare_browser_continuation(
+        kind=value["kind"], predecessors=[JournalRef.from_mapping(ref) for ref in value["predecessors"]],
+        evidence_root=evidence_root, candidate_fingerprint=candidate_fingerprint,
+        input_fingerprint=input_fingerprint, token_limit=value["allowance"]["token_limit"],
+        _depth=_depth,
+    )
+    if value != expected:
+        raise DeliverySliceError("browser continuation allowance or binding changed")

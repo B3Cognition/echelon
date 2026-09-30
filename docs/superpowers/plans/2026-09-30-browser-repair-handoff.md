@@ -289,6 +289,6 @@ Do not use `--reconcile-unknown-dispatch` for the two completed browser requests
 - [x] Native execution preserved from the user's earlier choice.
 - [x] User reviewed this implementation plan.
 - [x] Task 1 complete and its functional result reported: 173 focused/adjacent tests passed; live routing unchanged.
-- [ ] Task 2 complete.
+- [x] Task 2 complete: 204 focused tests passed, including 26 checkpoint/continuation cases; mutation checks failed as intended. Native Ralph routing not wired yet.
 - [ ] Task 3 complete.
 - [ ] Task 4 complete; actual workspace outcome recorded.

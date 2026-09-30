@@ -13,6 +13,9 @@ from typing import Callable
 from uuid import uuid4
 
 from harness.build_result import BuildResult
+from harness.delivery_browser_handoff import (
+    BrowserRepairRequest, JournalRef, journal_sha256, validate_browser_continuation,
+)
 from harness.browser_baseline_evidence import (
     BrowserBaselineEvidenceRef, read_browser_baseline_observation,
     write_browser_baseline_receipt, validate_historical_browser_baseline,
@@ -24,6 +27,7 @@ from harness.delivery_slice import (
 from harness.durable_json import write_json_atomic
 from harness.delivery_slice_journal import (
     DeliverySliceJournal, MAX_GATE_ROUNDS, browser_request_limit,
+    delivery_journal_position, browser_checkpoint_id, browser_checkpoint_observation,
 )
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
 from harness.delivery_containment import containment_policy_env
@@ -170,6 +174,9 @@ class DeliverySliceRunner:
         retry_failed_dispatch: bool = False,
         superseded_dispatches: list[dict] | None = None,
         on_dispatch_superseded: Callable[[str, dict, int, bool, int], None] | None = None,
+        resolve_browser_owner: Callable[[BrowserRepairRequest], str] | None = None,
+        continuation: dict[str, object] | None = None,
+        require_browser_recheck: bool = False,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -196,6 +203,63 @@ class DeliverySliceRunner:
                                      "token_usage": total if known else None},
             )
 
+        def browser_repair(observation, reference, dispatch_id):
+            if observation.verification_passed or resolve_browser_owner is None:
+                return None
+            request = BrowserRepairRequest(
+                JournalRef(operation_id, journal_sha256(data)), dispatch_id,
+                BrowserBaselineEvidenceRef(Path(reference["path"]), reference["receipt_sha256"]),
+            )
+            owner = resolve_browser_owner(request)
+            if owner == task_id:
+                return None
+            if require_browser_recheck:
+                raise DeliverySliceError("delivery_browser_repair_third_owner: " + owner)
+            result = outcome("delivery_browser_repair_required")
+            result.status = "browser_repair_required"
+            result.browser_repair_request = request
+            return result
+
+        def capture_checkpoint(purpose, dispatch_id, repair):
+            checks = data["browser_checks"]
+            matching = [check for check in checks if check["purpose"] == purpose
+                        and check["after_dispatch_id"] == dispatch_id]
+            if matching and matching[-1]["receipt"] is not None:
+                check = matching[-1]
+                return browser_checkpoint_observation(data, check), check["receipt"]
+            if stop_requested and stop_requested():
+                raise DeliverySliceError("delivery_slice_cancelled")
+            if browser_baseline_capture is None:
+                raise DeliverySliceError("delivery_browser_evidence_requested: baseline_capture")
+            position, consumed = delivery_journal_position(data)
+            # The provider's completed request already reserves the first
+            # ordinal. Only an unresolved controller intent consumes another.
+            ordinal = consumed if purpose == "requested" and not matching else consumed + 1
+            if position != repair or ordinal > browser_request_limit(repair):
+                raise DeliverySliceError("delivery_browser_capture_limit")
+            candidate_before = _candidate_fingerprint(worktree, spec_dir)
+            check = {
+                "checkpoint_id": browser_checkpoint_id(operation_id, purpose, dispatch_id, ordinal),
+                "purpose": purpose, "after_dispatch_id": dispatch_id,
+                "candidate_fingerprint": product_evidence_fingerprint(worktree),
+                "input_fingerprint": input_fingerprint, "repair_attempt": repair,
+                "request_ordinal": ordinal, "receipt": None,
+            }
+            checks.append(check)
+            journal.save(data)  # A lost capture consumes its ordinal, even without a receipt.
+            capture = browser_baseline_capture(str(worktree))
+            if (candidate_before != _candidate_fingerprint(worktree, spec_dir)
+                    or capture.candidate_fingerprint != check["candidate_fingerprint"]
+                    or input_fingerprint != _digest(_spec_inputs(spec_dir, self._project_dir))):
+                raise DeliverySliceError("delivery_reconciliation_required: stale browser capture")
+            ref = write_browser_baseline_receipt(
+                evidence_root=evidence_root, operation_id=operation_id, task_id=task_id,
+                input_fingerprint=input_fingerprint, capture=capture,
+            )
+            check["receipt"] = {"path": str(ref.path), "receipt_sha256": ref.receipt_sha256}
+            journal.save(data)
+            return browser_checkpoint_observation(data, check), check["receipt"]
+
         try:
             if budget_extension_limit is not None and (
                 type(budget_extension_limit) not in (int, float)
@@ -207,6 +271,8 @@ class DeliverySliceRunner:
                 raise DeliverySliceError("unsupported_read_only_boundary")
             if type(semantic_visual_gate_required) is not bool:
                 raise DeliverySliceError("invalid semantic visual gate assignment")
+            if type(require_browser_recheck) is not bool:
+                raise DeliverySliceError("invalid browser continuation assignment")
             worktree = Path(worktree).resolve(strict=True)
             spec_dir = Path(spec_dir)
             evidence_root = Path(evidence_root)
@@ -265,6 +331,16 @@ class DeliverySliceRunner:
             }
             if semantic_visual_gate_required:
                 binding_inputs["semantic_visual_gate_required"] = True
+            if require_browser_recheck:
+                binding_inputs["require_browser_recheck"] = True
+            if continuation is not None:
+                binding_inputs["continuation"] = continuation
+                validate_browser_continuation(
+                    continuation, evidence_root=evidence_root,
+                    candidate_fingerprint=(data["candidate_fingerprint"] if data else
+                                           _candidate_fingerprint(worktree, spec_dir)),
+                    input_fingerprint=input_fingerprint,
+                )
             binding = _digest(binding_inputs)
             if data is None:
                 try:
@@ -288,6 +364,9 @@ class DeliverySliceRunner:
                     ),
                     "budget_limit": token_budget, "records": [],
                 }
+                if require_browser_recheck or continuation is not None or resolve_browser_owner is not None:
+                    data.update(schema_version=3, run_id=operation_id, continuation=continuation,
+                                browser_checks=[], require_browser_recheck=require_browser_recheck)
                 journal.save(data)
             if data["binding"] != binding:
                 raise DeliverySliceError(
@@ -313,6 +392,11 @@ class DeliverySliceRunner:
             tokens = sum(record["token_usage"] or 0 for record in records)
             usage_known = all(record["token_usage"] is not None for record in records)
             accepted = _latest_review_round_accepted(records)
+            if accepted and require_browser_recheck:
+                checks = data["browser_checks"]
+                accepted = bool(checks and checks[-1]["receipt"] is not None
+                                and checks[-1]["after_dispatch_id"] == records[-1]["assignment"]["dispatch_id"]
+                                and browser_checkpoint_observation(data, checks[-1]).verification_passed)
             allowed_inputs = {(data["input_fingerprint"], data["protected_fingerprint"])}
             if accepted:
                 allowed_inputs.add((data["progress_input_fingerprint"], data["progress_protected_fingerprint"]))
@@ -356,6 +440,36 @@ class DeliverySliceRunner:
                 journal.save(data)
 
             repair_context = feedback
+            entry_browser_paths = None
+            initial_repair = 0
+            initial_requests = 0
+            if continuation is not None:
+                carried = continuation["allowance"]
+                initial_repair = carried["repair_attempt"]
+                initial_requests = carried["browser_requests_in_round"]
+                limits = [value for value in (token_budget, carried["token_limit"]) if value is not None]
+                if limits:
+                    if not carried["usage_known"]:
+                        raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
+                    token_budget = min(limits) - carried["tokens_consumed"]
+                    if tokens >= token_budget:
+                        raise DeliverySliceError("delivery_slice_budget_exhausted")
+                if continuation["kind"] != "owner_retry":
+                    purpose = "refresh" if continuation["kind"] == "refresh" else "return_capture"
+                    observation, reference = capture_checkpoint(
+                        purpose, continuation["anchor_dispatch_id"], initial_repair,
+                    )
+                    initial_requests = max(check["request_ordinal"] for check in data["browser_checks"]
+                                           if check["purpose"] == purpose)
+                    if not records:
+                        handoff = browser_repair(observation, reference, continuation["anchor_dispatch_id"])
+                        if handoff is not None:
+                            return handoff
+                    repair_context = json.dumps({"original_feedback": feedback,
+                        "browser_baseline_proposal": {name: str(path) for name, path in observation.images.items()},
+                        "browser_verification": {"passed": observation.verification_passed,
+                            "diagnostic": observation.diagnostic, "failures": observation.verification_failures}})
+                    entry_browser_paths = observation.images
             cursor = 0
             browser_requests = 0
             browser_duplicate_corrections = 0
@@ -365,12 +479,14 @@ class DeliverySliceRunner:
             last_browser_capture_passed = False
             last_browser_reference: dict[str, str] | None = None
             replay_round = records[-1]["repair_attempt"] if records else 0
-            for repair in range(MAX_GATE_ROUNDS):
-                browser_requests_in_round = 0
+            for repair in range(initial_repair, MAX_GATE_ROUNDS):
+                browser_requests_in_round = initial_requests if repair == initial_repair else 0
                 rejected = False
                 review_failures: list[dict[str, object]] = []
                 for step, artifact in roles.items():
-                    browser_paths: dict[str, Path] | None = None
+                    browser_paths: dict[str, Path] | None = (
+                        entry_browser_paths if step == "implementer" and repair == initial_repair else None
+                    )
                     context_before_browser = repair_context
                     recheck_feedback: str | None = None
                     review_rechecks = 0
@@ -439,6 +555,11 @@ class DeliverySliceRunner:
                             review_rechecks += 1
                             continue
                         if result["verdict"] != "BROWSER_EVIDENCE_REQUIRED":
+                            if (entry_browser_paths is not None and not browser_requests
+                                    and step == "implementer" and repair == initial_repair
+                                    and result["verdict"] in PASSING_VERDICTS
+                                    and record["candidate_after"] != data["candidate_fingerprint"]):
+                                raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             if (browser_duplicate_corrections
                                     and result["verdict"] in PASSING_VERDICTS
                                     and record["candidate_after"] != last_browser_candidate_after):
@@ -483,7 +604,12 @@ class DeliverySliceRunner:
                         if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
                             raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
                         reference = record.get("browser_evidence")
-                        if reference is None:
+                        if reference is None and data["schema_version"] == 3:
+                            _, reference = capture_checkpoint("requested", assignment.dispatch_id, repair)
+                            record["browser_evidence"] = reference
+                            journal.save(data)
+                            browser_requests_in_round = delivery_journal_position(data)[1]
+                        elif reference is None:
                             capture = browser_baseline_capture(str(worktree))
                             if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
                                 raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
@@ -505,6 +631,9 @@ class DeliverySliceRunner:
                             candidate_fingerprint=product_evidence_fingerprint(worktree),
                             input_fingerprint=input_fingerprint,
                         )
+                        handoff = browser_repair(observation, reference, assignment.dispatch_id)
+                        if handoff is not None:
+                            return handoff
                         browser_paths = observation.images
                         last_browser_candidate_after = record["candidate_after"]
                         last_browser_capture_passed = observation.verification_passed
@@ -577,6 +706,19 @@ class DeliverySliceRunner:
                             break
                         review_failures.append(failure)
                 if not rejected:
+                    if require_browser_recheck:
+                        observation, reference = capture_checkpoint(
+                            "owner_recheck", records[cursor - 1]["assignment"]["dispatch_id"], repair,
+                        )
+                        if not observation.verification_passed:
+                            if repair >= replay_round:
+                                browser_repair(observation, reference, records[cursor - 1]["assignment"]["dispatch_id"])
+                            repair_context = _repair_context(feedback, [{
+                                "step": "browser_recheck", "verdict": "REJECTED",
+                                "summary": observation.diagnostic,
+                                "findings": observation.verification_failures,
+                            }])
+                            continue
                     if (_candidate_fingerprint(worktree, spec_dir) != records[-1]["candidate_after"]
                             or _digest(_spec_inputs(spec_dir, self._project_dir)) != input_fingerprint
                             or _durable_protected_fingerprint(

@@ -77,12 +77,29 @@ def delivery_journal_position(data: dict) -> tuple[int, int]:
     return _validate(data)
 
 
+def browser_checkpoint_id(operation_id: str, purpose: str, dispatch_id: str, ordinal: int) -> str:
+    return hashlib.sha256(json.dumps([operation_id, purpose, dispatch_id, ordinal]).encode()).hexdigest()
+
+
+def browser_checkpoint_observation(data: dict, check: dict):
+    from harness.browser_baseline_evidence import BrowserBaselineEvidenceRef, read_browser_baseline_observation
+    ref = check["receipt"]
+    return read_browser_baseline_observation(
+        BrowserBaselineEvidenceRef(Path(ref["path"]), ref["receipt_sha256"]),
+        operation_id=data["run_id"], task_id=data["task_id"],
+        candidate_fingerprint=check["candidate_fingerprint"],
+        input_fingerprint=check["input_fingerprint"],
+    )
+
+
 def _validate(data):
     fields = {"schema_version", "run_id", "binding", "task_id", "input_fingerprint",
               "protected_fingerprint", "candidate_fingerprint", "progress_input_fingerprint",
               "progress_protected_fingerprint", "budget_limit", "records"}
-    if (not isinstance(data, dict) or set(data) != fields
-            or type(data["schema_version"]) is not int or data["schema_version"] != 2):
+    current = isinstance(data, dict) and data.get("schema_version") == 3
+    extra = {"continuation", "browser_checks", "require_browser_recheck"} if current else set()
+    if (not isinstance(data, dict) or set(data) != fields | extra
+            or type(data["schema_version"]) is not int or data["schema_version"] not in {2, 3}):
         raise DeliverySliceError("invalid delivery journal schema")
     if any(not isinstance(data[key], str) or not data[key] for key in fields - {"schema_version", "budget_limit", "records"}):
         raise DeliverySliceError("invalid delivery journal identity")
@@ -95,6 +112,50 @@ def _validate(data):
     # context rechecks in addition to the four ordinary role receipts.
     if not isinstance(records, list) or len(records) > MAX_GATE_ROUNDS * 12:
         raise DeliverySliceError("invalid delivery journal receipts")
+    checks = data.get("browser_checks", [])
+    continuation = data.get("continuation")
+    if current:
+        if (type(data["require_browser_recheck"]) is not bool
+                or not isinstance(checks, list) or len(checks) > MAX_GATE_ROUNDS * MAX_BROWSER_REQUESTS):
+            raise DeliverySliceError("invalid browser checkpoint envelope")
+        if continuation is not None:
+            if (not isinstance(continuation, dict) or set(continuation) != {
+                    "kind", "predecessors", "source_task_id", "anchor_dispatch_id",
+                    "entry_candidate_fingerprint", "entry_input_fingerprint", "allowance"}
+                    or continuation["kind"] not in {"refresh", "owner_retry", "return"}
+                    or (continuation["kind"] != "owner_retry" and continuation["source_task_id"] != data["task_id"])
+                    or (continuation["kind"] == "owner_retry" and (not data["require_browser_recheck"]
+                        or continuation["source_task_id"] == data["task_id"]))
+                    or continuation["entry_candidate_fingerprint"] != data["candidate_fingerprint"]
+                    or continuation["entry_input_fingerprint"] != data["input_fingerprint"]):
+                raise DeliverySliceError("invalid browser continuation")
+            allowance = continuation["allowance"]
+            if (not isinstance(allowance, dict) or set(allowance) != {
+                    "repair_attempt", "browser_requests_in_round", "tokens_consumed", "usage_known", "token_limit"}
+                    or any(type(allowance[key]) is not int or allowance[key] < 0 for key in (
+                        "repair_attempt", "browser_requests_in_round", "tokens_consumed"))
+                    or type(allowance["usage_known"]) is not bool):
+                raise DeliverySliceError("invalid browser continuation allowance")
+        for check in checks:
+            check_fields = {"checkpoint_id", "purpose", "after_dispatch_id", "candidate_fingerprint",
+                            "input_fingerprint", "repair_attempt", "request_ordinal", "receipt"}
+            if (not isinstance(check, dict) or set(check) != check_fields
+                    or check["purpose"] not in {"owner_recheck", "refresh", "requested", "return_capture"}
+                    or (check["purpose"] == "owner_recheck" and not data["require_browser_recheck"])
+                    or (check["purpose"] in {"refresh", "return_capture"} and continuation is None)
+                    or any(not isinstance(check[key], str) or not check[key]
+                           for key in ("after_dispatch_id", "candidate_fingerprint", "input_fingerprint"))
+                    or check["input_fingerprint"] != data["input_fingerprint"]
+                    or type(check["repair_attempt"]) is not int
+                    or type(check["request_ordinal"]) is not int
+                    or check["checkpoint_id"] != browser_checkpoint_id(
+                        data["run_id"], check["purpose"], check["after_dispatch_id"], check["request_ordinal"])):
+                raise DeliverySliceError("invalid browser checkpoint")
+            ref = check["receipt"]
+            if ref is not None and (not isinstance(ref, dict) or set(ref) != {"path", "receipt_sha256"}
+                                    or any(not isinstance(v, str) or not v for v in ref.values())):
+                raise DeliverySliceError("invalid browser checkpoint receipt")
+    check_cursor = 0
     step_index, repair = 0, 0
     candidate = data["candidate_fingerprint"]
     seen = set()
@@ -103,6 +164,26 @@ def _validate(data):
     rechecks_for_step = 0
     recheck_audit_paths = None
     browser_requests_in_round = 0
+    if continuation is not None:
+        repair = continuation["allowance"]["repair_attempt"]
+        browser_requests_in_round = continuation["allowance"]["browser_requests_in_round"]
+        if continuation["kind"] != "owner_retry":
+            purpose = "refresh" if continuation["kind"] == "refresh" else "return_capture"
+            completed = None
+            for check in checks:
+                if check["purpose"] != purpose:
+                    break
+                if (completed is not None or check["repair_attempt"] != repair
+                        or check["after_dispatch_id"] != continuation["anchor_dispatch_id"]
+                        or check["request_ordinal"] != browser_requests_in_round + 1
+                        or check["request_ordinal"] > browser_request_limit(repair)):
+                    raise DeliverySliceError("invalid browser continuation checkpoint sequence")
+                browser_requests_in_round += 1
+                check_cursor += 1
+                if check["receipt"] is not None:
+                    completed = browser_checkpoint_observation(data, check)
+            if records and completed is None:
+                raise DeliverySliceError("browser continuation capture incomplete")
     last_browser_evidence = None
     last_browser_candidate = None
     browser_correction_used = False
@@ -208,6 +289,25 @@ def _validate(data):
                     last_browser_evidence = evidence
                     last_browser_candidate = after
                     browser_correction_used = False
+                    if current:
+                        completed = None
+                        ordinal = browser_requests_in_round
+                        while check_cursor < len(checks):
+                            check = checks[check_cursor]
+                            if check["after_dispatch_id"] != assignment.dispatch_id:
+                                break
+                            if (check["purpose"] != "requested" or completed is not None
+                                    or check["repair_attempt"] != repair or check["request_ordinal"] != ordinal
+                                    or ordinal > browser_request_limit(repair)):
+                                raise DeliverySliceError("invalid requested browser checkpoint sequence")
+                            browser_requests_in_round = ordinal
+                            ordinal += 1
+                            check_cursor += 1
+                            if check["receipt"] is not None:
+                                browser_checkpoint_observation(data, check)
+                                completed = check["receipt"]
+                        if evidence is not None and evidence != completed:
+                            raise DeliverySliceError("requested browser checkpoint receipt mismatch")
                 if browser_requests_in_round > browser_request_limit(repair):
                     terminal = True
                 elif index < len(records) - 1 and evidence is None:
@@ -237,4 +337,25 @@ def _validate(data):
                         review_rejected = False
                     else:
                         terminal = True
+                        if current and data["require_browser_recheck"]:
+                            completed = None
+                            while check_cursor < len(checks):
+                                check = checks[check_cursor]
+                                if check["after_dispatch_id"] != assignment.dispatch_id:
+                                    break
+                                if (completed is not None or check["repair_attempt"] != repair
+                                        or check["request_ordinal"] != browser_requests_in_round + 1
+                                        or check["request_ordinal"] > browser_request_limit(repair)):
+                                    raise DeliverySliceError("invalid browser checkpoint sequence")
+                                browser_requests_in_round += 1
+                                check_cursor += 1
+                                if check["receipt"] is not None:
+                                    completed = browser_checkpoint_observation(data, check)
+                            if completed is not None and not completed.verification_passed:
+                                repair += 1
+                                browser_requests_in_round = 0
+                                step_index = 0
+                                terminal = False
+    if check_cursor != len(checks):
+        raise DeliverySliceError("unanchored browser checkpoint")
     return repair, browser_requests_in_round
