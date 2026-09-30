@@ -361,6 +361,9 @@ class DeliverySliceRunner:
                 continuation=continuation, require_browser_recheck=require_browser_recheck,
             )
             if data is None:
+                if continuation is not None and continuation["allowance"]["token_limit"] is not None:
+                    carried_limit = continuation["allowance"]["token_limit"]
+                    token_budget = min(token_budget, carried_limit) if token_budget is not None else carried_limit
                 try:
                     task_id = select_delivery_task(spec_dir, allowed_task_ids, repair_task_id)
                 except DeliveryTasksComplete:
@@ -465,7 +468,10 @@ class DeliverySliceRunner:
                 carried = continuation["allowance"]
                 initial_repair = carried["repair_attempt"]
                 initial_requests = carried["browser_requests_in_round"]
-                limits = [value for value in (token_budget, carried["token_limit"]) if value is not None]
+                # Entry allowance initializes the saved cap. Subsequent explicit
+                # admission extensions use the existing journal budget mechanism;
+                # the immutable entry is history, not a second mutable policy.
+                limits = [value for value in (token_budget,) if value is not None]
                 if limits:
                     if not carried["usage_known"]:
                         raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")

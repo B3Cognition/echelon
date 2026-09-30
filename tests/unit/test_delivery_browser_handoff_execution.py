@@ -36,7 +36,8 @@ def _handoff_project(fixture, tmp_path, monkeypatch, *, recheck="pass"):
         candidate_at_capture = (Path(worktree) / "app.py").read_bytes()
         operation = store.read()["delivery_slice_operation"]
         captures.append(operation["repair_task_id"])
-        if len(captures) == 1 or len(captures) == 2 and recheck != "pass":
+        if (len(captures) == 1 or (operation.get("continuation") or {}).get("kind") == "refresh"
+                or len(captures) == 2 and recheck != "pass"):
             title = "[echelon:E2E-START-002] startup" if len(captures) == 2 and recheck == "third" else "[echelon:CT-NET-001] network"
             return _capture(product_evidence_fingerprint(Path(worktree)), title=title)
         return _passing_capture(worktree)
@@ -158,3 +159,158 @@ def test_handoff_never_renews_token_allowance(slice_project, tmp_path, monkeypat
     assert not again["passed"] and "budget_exhausted" in again["build_reason"], again
     assert len(executor.calls) == expected_calls
     assert store.read()["tokens_used"] == 7 * expected_calls
+
+
+@pytest.mark.parametrize("boundary", [
+    "before_owner_selection", "after_owner_selection", "after_owner_provider_receipt",
+    "after_owner_accounting", "after_recheck_intent", "after_recheck_receipt",
+    "before_return_selection", "after_return_selection", "after_return_capture_receipt",
+    "after_source_acceptance",
+])
+def test_handoff_reconstructs_at_durable_boundaries(slice_project, tmp_path, monkeypatch, boundary):
+    from harness.state import StateStore
+    from tests.unit.test_delivery_slice_recovery import ProcessLost
+    from tests.unit.test_delivery_controller_integration import _reconstruct
+    controller, store, executor, captures, retained = _handoff_project(slice_project, tmp_path, monkeypatch)
+    saved = DeliverySliceJournal.save
+    written = StateStore.write
+    crashed = False
+    def interrupt():
+        nonlocal crashed
+        crashed = True
+        raise ProcessLost()
+    def write(current_store, state):
+        operation = state.get("delivery_slice_operation", {})
+        phase = operation.get("browser_handoff", {}).get("phase")
+        selecting = phase and current_store.read().get("delivery_slice_operation", {}).get("id") != operation.get("id")
+        if not crashed and selecting and boundary == f"before_{phase}_selection":
+            interrupt()
+        written(current_store, state)
+        if not crashed and (
+                selecting and boundary == f"after_{phase}_selection"
+                or phase == "owner" and boundary == "after_owner_accounting" and operation["accounted_tokens"] > 0
+                or phase == "return" and boundary == "after_source_acceptance" and operation.get("accepted_task_id")):
+            interrupt()
+    def save(journal, data):
+        saved(journal, data)
+        kind = (data.get("continuation") or {}).get("kind")
+        checks = data.get("browser_checks", [])
+        if not crashed and (
+                kind == "owner_retry" and boundary == "after_owner_provider_receipt"
+                and data["records"] and data["records"][-1]["result"] is not None
+                or kind == "owner_retry" and checks and checks[-1]["purpose"] == "owner_recheck"
+                and ((boundary == "after_recheck_intent" and checks[-1]["receipt"] is None)
+                     or (boundary == "after_recheck_receipt" and checks[-1]["receipt"] is not None))
+                or kind == "return" and boundary == "after_return_capture_receipt"
+                and checks and checks[-1]["receipt"] is not None):
+            interrupt()
+    monkeypatch.setattr(StateStore, "write", write)
+    monkeypatch.setattr(DeliverySliceJournal, "save", save)
+    with pytest.raises(ProcessLost):
+        _drive(controller, slice_project)
+    resumed = _reconstruct(controller, store, executor)
+    result = _drive(resumed, slice_project)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert len(executor.calls) == 9 and store.read()["tokens_used"] == 63
+    assert [a["task_id"] for a, _, _ in executor.calls] == ["T-011"] + ["T-012"] * 4 + ["T-011"] * 4
+    assert captures == ["T-011", "T-012", "T-011"]
+    assert all(path.read_bytes() == content for path, content in retained.items())
+    operation = store.read()["delivery_slice_operation"]
+    owner_id = operation["browser_handoff"]["owner_journal"]["operation_id"]
+    owner = DeliverySliceJournal(controller._delivery_operation_evidence_root(), owner_id).load(required=True)
+    assert [row["request_ordinal"] for row in owner["browser_checks"]] == (
+        [1, 2] if boundary == "after_recheck_intent" else [1])
+
+
+def _stopped_v2(controller, store, fixture, monkeypatch):
+    from copy import deepcopy
+    from harness.browser_baseline_evidence import BrowserBaselineEvidenceRef
+    from tests.unit.test_browser_capture_failures import _rewrite_receipt
+    from tests.unit.test_delivery_slice_recovery import ProcessLost
+    def stop(*args, **kwargs):
+        raise ProcessLost()
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "_select_browser_repair_operation", stop)
+        with pytest.raises(ProcessLost):
+            _drive(controller, fixture)
+    operation = store.read()["delivery_slice_operation"]
+    journal = DeliverySliceJournal(controller._delivery_operation_evidence_root(), operation["id"])
+    data = journal.load(required=True)
+    reference = data["records"][-1]["browser_evidence"]
+    payload = json.loads(Path(reference["path"]).read_text())
+    payload.pop("verification_failures")
+    payload["schema_version"] = 2
+    ref = _rewrite_receipt(BrowserBaselineEvidenceRef(Path(reference["path"]), reference["receipt_sha256"]), payload)
+    reference["receipt_sha256"] = ref.receipt_sha256
+    duplicate = deepcopy(data["records"][-1])
+    duplicate.pop("browser_evidence")
+    duplicate["assignment"]["dispatch_id"] = "completed-v2-duplicate"
+    duplicate["assignment"]["candidate_fingerprint"] = duplicate["candidate_after"]
+    duplicate["result"].update(duplicate["assignment"])
+    duplicate["raw_result"] = json.dumps(duplicate["result"])
+    data["records"].append(duplicate)
+    data["schema_version"] = 2
+    for key in ("continuation", "browser_checks", "require_browser_recheck"):
+        data.pop(key)
+    journal.save(data)
+    return journal, data, ref
+
+
+@pytest.mark.parametrize("damage", [None, "candidate", "input", "tokens"])
+def test_native_ralph_refreshes_stopped_v2_boundary_without_rewriting(slice_project, tmp_path, monkeypatch, damage):
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    journal, data, ref = _stopped_v2(controller, store, slice_project, monkeypatch)
+    if damage == "candidate":
+        (slice_project[0] / "app.py").write_text("changed outside delivery\n")
+    elif damage == "input":
+        (slice_project[1] / "spec.md").write_text("changed contract\n")
+    elif damage == "tokens":
+        data["budget_limit"] = 14
+        journal.save(data)
+    before = journal.path.read_bytes(), ref.path.read_bytes()
+    result = _drive(controller, slice_project)
+    assert (journal.path.read_bytes(), ref.path.read_bytes()) == before
+    if damage:
+        assert not result["passed"] and len(executor.calls) == 1 and captures == ["T-011"], result
+        return
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert len(executor.calls) == 9 and store.read()["tokens_used"] == 70
+    assert captures == ["T-011", "T-011", "T-012", "T-011"]
+    journals = [json.loads(path.read_text()) for path in controller._delivery_operation_evidence_root().rglob("journal.json")]
+    refreshed = next(row for row in journals if (row.get("continuation") or {}).get("kind") == "refresh")
+    returned = next(row for row in journals if (row.get("continuation") or {}).get("kind") == "return")
+    assert refreshed["browser_checks"][0]["request_ordinal"] == 3
+    assert returned["browser_checks"][0]["request_ordinal"] == 4
+
+
+@pytest.mark.parametrize("task", ["T-011", "T-012"])
+def test_unknown_provider_usage_blocks_finite_handoff_budget(slice_project, tmp_path, monkeypatch, task):
+    from harness.ai_cli_backend import CliRunResult
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    controller._controlled_slice_budget = 100
+    script = executor.script
+    def unknown(assignment, payload, root):
+        script(assignment, payload, root)
+        if assignment["task_id"] == task:
+            return CliRunResult(0, json.dumps(payload), "", token_usage=None)
+    executor.script = unknown
+    result = _drive(controller, slice_project)
+    assert not result["passed"] and "usage_unknown" in result["build_reason"], result
+    assert len(executor.calls) == (1 if task == "T-011" else 2)
+    assert captures == ([] if task == "T-011" else ["T-011"])
+
+
+def test_explicit_existing_budget_extension_can_resume_owner_without_rewriting_parent(slice_project, tmp_path, monkeypatch):
+    controller, store, executor, _, retained = _handoff_project(slice_project, tmp_path, monkeypatch)
+    controller._controlled_slice_budget = 14
+    blocked = _drive(controller, slice_project)
+    assert not blocked["passed"] and len(executor.calls) == 2
+    state = store.read()
+    state["token_budget"] = 100
+    state["delivery_slice_operation"]["budget_extension_limit"] = 95
+    store.write(state)
+    controller._controlled_slice_budget = 95 - state["tokens_used"]
+    result = _drive(controller, slice_project)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert store.read()["tokens_used"] == 63 and len(executor.calls) == 9
+    assert all(path.read_bytes() == content for path, content in retained.items())

@@ -373,3 +373,26 @@ def test_refresh_requires_authenticated_old_completed_evidence(slice_project, da
             evidence_root=slice_project[2], candidate_fingerprint=_candidate_fingerprint(*slice_project[:2]),
             input_fingerprint=parent["input_fingerprint"], token_limit=100,
         )
+
+
+def test_unknown_capture_intents_exhaust_without_reset_or_free_retry(slice_project, monkeypatch):
+    from harness.delivery_slice_journal import DeliverySliceJournal
+    _tasks(slice_project[1])
+    original = DeliverySliceJournal.save
+    def save(journal, data):
+        original(journal, data)
+        checks = data.get("browser_checks", [])
+        if checks and checks[-1]["receipt"] is None:
+            raise ProcessLost()
+    monkeypatch.setattr(DeliverySliceJournal, "save", save)
+    executor = ScriptedExecutor()
+    for _ in range(4):
+        with pytest.raises(ProcessLost):
+            _run(slice_project, executor, repair_task_id="T-012", require_browser_recheck=True,
+                 browser_baseline_capture=lambda _: pytest.fail("crash precedes external capture"))
+    result = _run(slice_project, executor, repair_task_id="T-012", require_browser_recheck=True,
+                  browser_baseline_capture=lambda _: pytest.fail("capture allowance exhausted"))
+    assert result.reason == "delivery_browser_capture_limit" and not result.succeeded
+    assert len(executor.calls) == 4 and result.token_usage == 28
+    data = DeliverySliceJournal(slice_project[2], "active").load(required=True)
+    assert [check["request_ordinal"] for check in data["browser_checks"]] == [1, 2, 3, 4]

@@ -169,8 +169,6 @@ def continuation_allowance(journal: dict, *, token_limit: float | None) -> Conti
     if carried is not None:
         known = known and carried["allowance"]["usage_known"]
         consumed += carried["allowance"]["tokens_consumed"]
-        if carried["allowance"]["token_limit"] is not None:
-            limit = min(limit, carried["allowance"]["token_limit"]) if limit is not None else carried["allowance"]["token_limit"]
     if limit is not None and not known:
         raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
     return ContinuationAllowance(repair, requests, consumed, known, limit)
@@ -253,7 +251,7 @@ def prepare_browser_continuation(*, kind: str, predecessors: list[JournalRef], e
         validate_browser_continuation(owner_entry, evidence_root=evidence_root,
             candidate_fingerprint=owner["candidate_fingerprint"], input_fingerprint=input_fingerprint,
             _depth=_depth + 1)
-        owner_allowance = continuation_allowance(owner, token_limit=allowance.token_limit)
+        owner_allowance = continuation_allowance(owner, token_limit=token_limit)
         allowance = replace(owner_allowance, repair_attempt=allowance.repair_attempt,
                             browser_requests_in_round=allowance.browser_requests_in_round)
     return {"kind": kind, "predecessors": [ref.as_mapping() for ref in predecessors],

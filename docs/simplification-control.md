@@ -40,6 +40,12 @@ round-count assertions deselected. Those are the three modes of
 four rounds although the existing limit is five. No gate or limit was changed.
 Live Delivery is still stopped. Next: Task 4 interruption tests, current v2
 workspace refresh integration, independent review, then native observation.
+Task 4 pre-review checkpoint: 328 focused tests passed (four known stale
+round-count assertions excluded). Ten crash boundaries preserve dispatches and
+accounting. Real Ralph refreshes the stopped v2 two-request shape without
+rewriting it. The repository gate still stops after 96 passing tests at the
+known convergence fixture. Independent review and live continuation remain
+pending; no workspace-acceptance claim is made.
 No new milestone or S6/S7 work is opened.
 
 ## Status

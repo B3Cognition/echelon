@@ -2339,6 +2339,8 @@ class RalphController:
                 current = self._state_store.read()
                 if budget is not None:
                     self._controlled_slice_budget = max(0, budget - (current.get("tokens_used", 0) - before))
+                if not documentation and self._select_browser_refresh_if_needed(Path(worktree_path)):
+                    continue
                 result = self._exec_controlled_slice_once(
                     worktree_path, prompt, repair=repair, documentation=documentation,
                 )
@@ -2375,6 +2377,51 @@ class RalphController:
                 raise DeliverySliceError("invalid persisted delivery task scope")
             return set(raw)
         return self._target_task_ids()
+
+    def _select_browser_refresh_if_needed(self, worktree):
+        """Refresh only authenticated old evidence; never rewrite its journal."""
+        from copy import deepcopy
+        from harness.delivery_browser_handoff import (
+            BrowserRepairRequest, JournalRef, handoff_operation_id, journal_sha256, prepare_browser_continuation,
+        )
+        from harness.browser_baseline_evidence import BrowserBaselineEvidenceRef
+        from harness.delivery_slice_journal import DeliverySliceJournal
+        from harness.delivery_slice_runner import _candidate_fingerprint
+        current = self._state_store.read()
+        operation = current.get("delivery_slice_operation")
+        if (not isinstance(operation, dict) or operation.get("kind", "task") != "task"
+                or operation.get("continuation") is not None or operation.get("progress_applied")):
+            return False
+        root = self._delivery_operation_evidence_root()
+        data = DeliverySliceJournal(root, operation["id"]).load(required=True)
+        records = data["records"]
+        if (data["schema_version"] != 2 or not records or records[-1]["result"] is None
+                or records[-1]["error"] is not None or records[-1]["result"]["verdict"] != "BROWSER_EVIDENCE_REQUIRED"):
+            return False
+        retained = next((row.get("browser_evidence") for row in reversed(records) if row.get("browser_evidence")), None)
+        if retained is None or json.loads(Path(retained["path"]).read_text())["schema_version"] != 2:
+            return False
+        spec_dir = self._find_existing_spec_dir(worktree)
+        self._validate_browser_operation_context(operation, data, worktree=worktree, spec_dir=spec_dir)
+        reference = JournalRef(operation["id"], journal_sha256(data))
+        entry = prepare_browser_continuation(kind="refresh", predecessors=[reference], evidence_root=root,
+            candidate_fingerprint=_candidate_fingerprint(worktree, spec_dir),
+            input_fingerprint=data["input_fingerprint"], token_limit=data["budget_limit"])
+        # The last completed provider receipt may have preceded a process loss
+        # before accounting. Settle it before selecting a zero-provider refresh.
+        known_tokens = sum(row["token_usage"] or 0 for row in records)
+        current["tokens_used"] = current.get("tokens_used", 0) + max(0, known_tokens - operation["accounted_tokens"])
+        operation["accounted_tokens"] = max(operation["accounted_tokens"], known_tokens)
+        current["delivery_slice_operation"] = operation
+        self._state_store.write(current)
+        trigger = BrowserRepairRequest(reference, records[-1]["assignment"]["dispatch_id"],
+            BrowserBaselineEvidenceRef(Path(retained["path"]), retained["receipt_sha256"]))
+        successor = {key: deepcopy(value) for key, value in operation.items()
+                     if key in {"worktree_path", "source_binding", "outer_iter", "feedback", "repair_task_id"}}
+        successor.update(id=handoff_operation_id(trigger, "refresh"), accounted_tokens=0, progress_applied=False,
+            continuation=entry, browser_refresh={"source_operation": deepcopy(operation), "source_journal": reference.as_mapping()})
+        self._prepare_browser_operation(successor, worktree=worktree, spec_dir=spec_dir)
+        return True
 
     def _browser_task_options(self, worktree, spec_dir, operation):
         from harness.delivery_browser_handoff import resolve_browser_repair
@@ -2421,6 +2468,9 @@ class RalphController:
             current["delivery_slice_operation"] = operation
             self._state_store.write(current)
             selected = True
+            phase = operation.get("browser_handoff", {}).get("phase", "refresh")
+            print(f"Browser {phase} operation selected for {operation['repair_task_id']} ({operation['id'][:12]})",
+                  file=sys.stderr)
         result = DeliverySliceRunner(self._llm_provider, self._orchestration_root(worktree)).run(
             worktree=worktree, spec_dir=spec_dir, evidence_root=root,
             allowed_task_ids=self._browser_operation_scope(), **self._browser_task_options(worktree, spec_dir, operation),
