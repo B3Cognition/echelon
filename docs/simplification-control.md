@@ -102,9 +102,68 @@ Repository fail-fast remains **96 passed, 1 known failure in 37.00s**:
 No green full-suite or live acceptance claim. Detailed command output is retained
 in `.superpowers/sdd/2026-09-30-browser-repair-handoff/baseline-installation-{focused,repository}.log`.
 
-Next live step remains open: determine a native, evidence-preserving continuation
-for the already-completed old dispatch without inventing a pre-dispatch intent
-after the fact. Do not resume blindly or mark Task 4/STAB-1 complete.
+The subsequent native run `build-20260930-171628-219713` preserved candidate
+`3b51c6550391c8c349a75967431a5cbd611a362d` without reset or reimplementing all
+tasks. Ordinary verification passed (127 Vitest tests and 165 Playwright
+executions, without snapshot updates). Fulfillment then received no structured
+coverage observation because no stack was selected, classified all 54 planned
+requirements as deferred coverage, and repair stopped at
+`delivery_repair_ownership_required: missing failed test identity for fulfillment-gaps`.
+The run and observation heartbeat are stopped; this is not live acceptance.
+
+### Evidence-flow closure, one fix at a time (2026-09-30)
+
+- [x] Stack-prerequisite Task 1: explicit owner stack selection before new Spec
+  allocation/dispatch; capability-free `generic` discovery policy. Approved
+  policy-only schema relaxation retains strict non-policy/scoped-policy rules.
+  Disposable real controller/provider-boundary and Git allocation probes pass;
+  admission tests distinguish empty, generic, concrete, invalid and source-local
+  empty selections. Commit `284c5d3f`; 129 focused tests passed.
+- [x] Stack-prerequisite Task 2: static target-scoped capability readiness;
+  generic-only rejection, required observer/runtime/visual checks, owner deferrals,
+  shared-case ownership and explicit non-runnable disposition. 183 focused tests
+  passed. Additional controller suite has four repair-count expectation failures;
+  repository fail-fast still has the known canonical-spec convergence fixture.
+  The four repair-count fixtures were corrected to the existing five-chain
+  policy in Task 3; production limits are unchanged.
+- [x] Stack-prerequisite Task 3: capability-aware publication, service/direct
+  Delivery admission, current-owner prompt context, and new-dispatch guards.
+  Sealed Spec/Delivery receipts and publication/review effects recover first;
+  incompatible current contracts block subsequent work without rewriting saved
+  identity or sending capability gaps to product repair. Independent review
+  findings reproduced and fixed. Verification: 699 expanded checks, 394 adjacent
+  checks, and 295 final current-tree named checks passed (overlapping suites).
+  Final repository fail-fast: 96 passed, one known convergence-fixture failure;
+  dry-run passed all nine bundle checks. See the
+  [stack prerequisite plan](superpowers/plans/2026-09-30-stack-verification-prerequisites.md).
+  No install, push, live demo edits or Delivery restart; STAB-1 is still open.
+- [x] Detect missing required observer capability before fulfillment, even when
+  stack selection is empty. Preserve the explicit `coverage_observer_unavailable`
+  blocker through Ralph without dispatching candidate-source repairs or charging
+  meaningful attempts. No-map/no-observer verification and intermediate tasks
+  without coverage obligations remain supported.
+- [ ] Wire compatible structured observers and verify actual execution evidence
+  reaches fulfillment for the preserved candidate. Do not blindly select a
+  React/pnpm stack for this npm/Three.js candidate or rewrite the planning map.
+- [ ] Correct semantic visual gate ordering, then test its phase handoff.
+- [ ] Address requirement-level fulfillment repair routing separately, with
+  evidence-bound ownership and no fallback to the last executed task.
+- [ ] Continue native Delivery on the preserved candidate, then complete fresh
+  workspace end-to-end acceptance. Do not mark Task 4/STAB-1 complete yet.
+
+First-fix verification: four regressions failed before implementation; the
+focused gate passed **221 tests in 14.66s**, including capability blocking,
+outer/inner loop handling, configured observer evidence, source/receipt binding,
+and coverage classification. A read-only production-gate probe against the live
+candidate reported missing `contract`, `e2e`, `integration`, and `unit` observers;
+it created no evidence and left run state, coverage plan, and fulfillment report
+unchanged. Repository fail-fast: **96 passed, 1 known failure in 41.90s** at
+`tests/e2e/test_ralph_convergence.py::TestRalphConvergence::test_converges_within_3_outer_iterations`
+(fixture lacks a canonical spec directory). No demo edits, restart, stack
+selection, review weakening, or green full-suite claim.
+Independent read-only review found no blocking or minor defects in this bounded
+change. Observer configuration, live recovery, visual ordering, general repair
+routing, and the known fixture failure remain outside this first fix.
 
 ## Status
 

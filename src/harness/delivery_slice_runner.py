@@ -224,6 +224,7 @@ class DeliverySliceRunner:
         resolve_browser_owner: Callable[[BrowserRepairRequest], str] | None = None,
         continuation: dict[str, object] | None = None,
         require_browser_recheck: bool = False,
+        dispatch_admission: Callable[[], str | None] | None = None,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -274,6 +275,8 @@ class DeliverySliceRunner:
             if matching and matching[-1]["receipt"] is not None:
                 check = matching[-1]
                 return browser_checkpoint_observation(data, check), check["receipt"]
+            if dispatch_admission is not None and (reason := dispatch_admission()):
+                raise DeliverySliceError(reason)
             if stop_requested and stop_requested():
                 raise DeliverySliceError("delivery_slice_cancelled")
             if browser_baseline_capture is None:
@@ -563,6 +566,8 @@ class DeliverySliceRunner:
                             if assignment.step != step or record["repair_attempt"] != repair:
                                 raise DeliverySliceError("invalid delivery replay sequence")
                         else:
+                            if dispatch_admission is not None and (reason := dispatch_admission()):
+                                raise DeliverySliceError(reason)
                             assignment = DeliveryAssignment(
                                 uuid4().hex, step, task_id, _candidate_fingerprint(worktree, spec_dir), data["input_fingerprint"],
                             )

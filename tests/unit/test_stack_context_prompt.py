@@ -212,6 +212,10 @@ def test_controller_passes_resolved_stack_context_to_controlled_delivery(
 
     captured: dict[str, str] = {}
     coord = _coordinator_with_stacks(["statsperform-stark-webapp"], tmp_path)
+    from tests.unit.test_verification_capability_preflight import custom_stack, select, spec
+    custom_stack(tmp_path)
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path)
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         mock_ralph = MagicMock()
@@ -235,9 +239,9 @@ def test_controller_passes_resolved_stack_context_to_controlled_delivery(
         mock_ralph.return_value = mock_controller
         monkeypatch.setattr("harness.delivery_controller.RalphController", mock_ralph)
 
-        coord.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+        coord.run(RunIntent(spec_id=directory.name, max_outer=1, max_inner=1))
 
     assert "# Resolved Echelon Stacks" in captured["stack_context"]
-    assert "statsperform-playbook" in captured["stack_context"]
-    assert "statsperform-stark-webapp" in captured["stack_context"]
+    assert "Custom verification" in captured["stack_context"]
+    assert "statsperform-stark-webapp" not in captured["stack_context"]
     assert captured["stack_context"] in captured["build_prompt"]

@@ -104,8 +104,13 @@ class TestCoordinatorReviewReentry:
                 RunIntent(spec_id="005", max_outer=1, max_inner=1),
                 budget=None,
             )
-            assert result.status == "converged", result
-            captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
+            # Saved effects settle under their original ownership. The current
+            # incomplete spec must not receive a fresh acceptance verdict.
+            assert result.status == "blocked", result
+            assert result.termination_reason.startswith("verification_prerequisite:")
+            assert store.read()["pending_review_reentry"] is None
+            finalize.assert_not_called()
+            captured["declared_targets"] = store.read()["declared_targets"]
 
         assert captured["declared_targets"] == ["persisted-target"]
         assert store.read()["implementation_target"] == "persisted-target"
@@ -286,6 +291,7 @@ class TestCoordinatorReviewReentry:
             pending_reentry=pending,
         )
         assert state_store.transitions == [
+            ("reviewing", None),
             ("running", None),
             ("verified", {"pending_review_reentry": None}),
         ]
@@ -295,6 +301,7 @@ class TestCoordinatorReviewReentry:
 
     def test_reentry_run_loop_receives_review_content(self, tmp_path):
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
+        from tests.unit.test_verification_capability_preflight import custom_stack, select, spec
         workspace = tmp_path / "workspace"
         harness_root = workspace / "runs" / "targets" / "api"
         worktree = harness_root / "runs" / "build-1" / "worktrees" / "iter-0"
@@ -303,7 +310,9 @@ class TestCoordinatorReviewReentry:
         config.llm.enabled = True
 
         spec_dir = workspace / "specs" / "005-my-spec"
-        spec_dir.mkdir(parents=True)
+        custom_stack(workspace)
+        select(workspace, ["custom"])
+        spec(workspace).rename(spec_dir)
         (spec_dir / "review-fix-1.md").write_text(
             "# Review Fix 1\nFix the z-index.\n",
             encoding="utf-8",
@@ -392,7 +401,7 @@ class TestCoordinatorReviewReentry:
             # State store: preserve each transition so the durable handoff can
             # move from queued -> Phase 1 verified -> side-effect completion.
             state_instance = MagicMock()
-            state_data = {"status": "initialized"}
+            state_data = {}
 
             def read_state():
                 return dict(state_data)

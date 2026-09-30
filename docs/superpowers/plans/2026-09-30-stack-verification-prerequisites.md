@@ -88,7 +88,7 @@ def require_spec_stack_selection(
 All selections are validated before provider dispatch. Existing resolver errors
 for malformed IDs/conflicts propagate without turning into candidate repair.
 
-- [ ] Write failing tests using temporary owner configuration and the real loader/resolver. Pin empty selection, generic, concrete, unknown IDs, conflicts, and source-local empty override. The direct empty-selection regression starts with:
+- [x] Write failing tests using temporary owner configuration and the real loader/resolver. Pin empty selection, generic, concrete, unknown IDs, conflicts, and source-local empty override. The direct empty-selection regression starts with:
 
 ```python
 def test_empty_spec_selection_is_actionable(tmp_path):
@@ -96,13 +96,13 @@ def test_empty_spec_selection_is_actionable(tmp_path):
         require_spec_stack_selection(tmp_path)
 ```
 
-- [ ] Add service and `SquadController.run`/`run_single_phase` boundary cases: empty selection produces no provider invocation; generic reaches the existing first dispatch. Use the repository's recording squad-provider fixtures; mock only provider execution, not admission.
-- [ ] Run `.venv/bin/python -m pytest tests/unit/test_spec_stack_prerequisites.py -q`; confirm behavioral failures, not fixture/import mistakes, before implementing the guard.
-- [ ] Add the helper and generic stack. Use schema 1.4, `stack.id: generic`, `kind: policy`, `owner: echelon`, empty `provides`, no observers/provisioners/requirements, and context explaining discovery-only authority. Do not add generic to configuration defaults or auto-detection recommendations.
-- [ ] Wire the helper into new-run Spec admission before run allocation/provider dispatch and into direct controller entry before new work. Known targets use existing owner precedence. Pending recovery is not a new-run entry: do not mutate or reject sealed-effect replay here.
-- [ ] Add the context message: generic leaves framework/package-manager choice open but requires concrete verification capabilities before readiness. Remove no-stack inference advice only from execution-facing paths now requiring explicit selection; read-only stack detection stays available.
-- [ ] Run the new tests plus `test_verification_stack_runtime.py`, `test_stacks_schema.py`, `test_stacks_resolver.py`, `test_stack_context_prompt.py`, `test_spec_service_boundary.py`. Exercise a disposable service/controller run with a recording provider to show empty selection makes zero calls and generic admits discovery. Do not use the live acceptance workspace.
-- [ ] Update `docs/simplification-control.md` with actual results; commit only this increment as `fix(spec): require explicit stack intent before dispatch`. Report failures and stop before Task 2 if the admission probe fails.
+- [x] Add service and `SquadController.run`/`run_single_phase` boundary cases: empty selection produces no provider invocation; generic reaches the existing first dispatch. Use the repository's recording squad-provider fixtures; mock only provider execution, not admission.
+- [x] Run `.venv/bin/python -m pytest tests/unit/test_spec_stack_prerequisites.py -q`; confirm behavioral failures, not fixture/import mistakes, before implementing the guard.
+- [x] Add the helper and generic stack. Use schema 1.4, `stack.id: generic`, `kind: policy`, `owner: echelon`, empty `provides`, no observers/provisioners/requirements, and context explaining discovery-only authority. Do not add generic to configuration defaults or auto-detection recommendations.
+- [x] Wire the helper into new-run Spec admission before run allocation/provider dispatch and into direct controller entry before new work. Known targets use existing owner precedence. Pending recovery is not a new-run entry: do not mutate or reject sealed-effect replay here.
+- [x] Add the context message: generic leaves framework/package-manager choice open but requires concrete verification capabilities before readiness. Remove no-stack inference advice only from execution-facing paths now requiring explicit selection; read-only stack detection stays available.
+- [x] Run the new tests plus `test_verification_stack_runtime.py`, `test_stacks_schema.py`, `test_stacks_resolver.py`, `test_stack_context_prompt.py`, `test_spec_service_boundary.py`. Exercise a disposable service/controller run with a recording provider to show empty selection makes zero calls and generic admits discovery. Do not use the live acceptance workspace.
+- [x] Update `docs/simplification-control.md` with actual results; commit only this increment as `fix(spec): require explicit stack intent before dispatch`. Report failures and stop before Task 2 if the admission probe fails.
 
 ## Task 2: Capability-complete target-aware build readiness
 
@@ -189,7 +189,7 @@ This is the interface declaration; the integration sequence is specified below.
 Keep the original structural helper unchanged for artifact-only inspection;
 production readiness callers move in Task 3.
 
-- [ ] Write literal pure-function tests. For example:
+- [x] Write literal pure-function tests. For example:
 
 ```python
 def test_generic_without_obligations_is_not_build_ready():
@@ -205,16 +205,43 @@ def test_generic_without_obligations_is_not_build_ready():
     assert "stack_capabilities_unresolved" in {finding.code for finding in findings}
 ```
 
-- [ ] Cover generic plus concrete observers, optional-only observers, unmapped/malformed coverage, owner deferrals, supported custom npm/browser capability contracts with no product files, missing visual availability, and unsupported runners. Assert capabilities, not particular framework names.
-- [ ] Add full readiness tests using the existing valid Phase A artifact fixtures. Two targets with different test types must each pass with only their own observer. Missing task ownership must block; a case owned by tasks on both targets must be checked on both.
-- [ ] Run `.venv/bin/python -m pytest tests/unit/test_verification_capability_preflight.py -q` and verify the expected red cases.
-- [ ] Implement pure findings with existing `StackPreflightFinding` objects. Parse active canonical obligations with `parse_coverage_map_obligations` and `active_entries`; reject invalid maps before type selection. For each canonical target, use `validate_task_targets` and `task_owned_coverage_case_ids` to project case IDs. Require every active case to have declared target ownership. Shared cases apply to every owner target. For a true single-repository spec without target declarations, all active obligations apply to the project root.
-- [ ] Move the existing published browser/semantic-gate parsing into `coverage_evidence.py` as `published_browser_gate_required(spec_dir)` and `published_semantic_visual_gate_required(spec_dir)`. Preserve existing parsing semantics and reuse it from Delivery and readiness. Apply those obligations to declared browser/visual task owners, not unrelated backend siblings; ambiguous ownership is a blocker. Browser e2e obligations also require the supported browser runtime. Do not create a second Markdown parser or infer UI modality from filenames.
-- [ ] Implement `validate_phase_a_build_readiness`: retain structural failure unchanged; resolve every canonical target through `resolve_verification_stacks`; evaluate scoped capabilities; return target-qualified findings while preserving missing-artifact diagnostics. Treat missing authoritative context as an error; never infer it from a candidate worktree or a spec parent-directory guess.
-- [ ] Run new tests plus `test_phase_a_readiness.py`, `test_stacks_preflight.py`, `test_coverage_evidence.py`, `test_task_targets.py`, and `test_verification_stack_runtime.py`. Probe temporary valid Spec artifacts with generic-only versus concrete-capable owner configuration: the former cannot become ready and the latter can, before code exists.
-- [ ] Record results and commit as `fix(spec): validate target verification capabilities for readiness`. Stop on failed functional readiness probe.
+- [x] Cover generic plus concrete observers, optional-only observers, unmapped/malformed coverage, owner deferrals, supported custom npm/browser capability contracts with no product files, missing visual availability, and unsupported runners. Assert capabilities, not particular framework names.
+- [x] Add full readiness tests using the existing valid Phase A artifact fixtures. Two targets with different test types must each pass with only their own observer. Missing task ownership must block; a case owned by tasks on both targets must be checked on both.
+- [x] Run `.venv/bin/python -m pytest tests/unit/test_verification_capability_preflight.py -q` and verify the expected red cases.
+- [x] Implement pure findings with existing `StackPreflightFinding` objects. Parse active canonical obligations with `parse_coverage_map_obligations` and `active_entries`; reject invalid maps before type selection. For each canonical target, use `validate_task_targets` and `task_owned_coverage_case_ids` to project case IDs. Require every active case to have declared target ownership. Shared cases apply to every owner target. For a true single-repository spec without target declarations, all active obligations apply to the project root.
+- [x] Move the existing published browser/semantic-gate parsing into `coverage_evidence.py` as `published_browser_gate_required(spec_dir)` and `published_semantic_visual_gate_required(spec_dir)`. Preserve existing parsing semantics and reuse it from Delivery and readiness. Apply those obligations to declared browser/visual task owners, not unrelated backend siblings; ambiguous ownership is a blocker. Browser e2e obligations also require the supported browser runtime. Do not create a second Markdown parser or infer UI modality from filenames.
+- [x] Implement `validate_phase_a_build_readiness`: retain structural failure unchanged; resolve every canonical target through `resolve_verification_stacks`; evaluate scoped capabilities; return target-qualified findings while preserving missing-artifact diagnostics. Treat missing authoritative context as an error; never infer it from a candidate worktree or a spec parent-directory guess.
+- [x] Run new tests plus `test_phase_a_readiness.py`, `test_stacks_preflight.py`, `test_coverage_evidence.py`, `test_task_targets.py`, and `test_verification_stack_runtime.py`. Probe temporary valid Spec artifacts with generic-only versus concrete-capable owner configuration: the former cannot become ready and the latter can, before code exists.
+- [x] Record results and commit as `fix(spec): validate target verification capabilities for readiness`. Stop on failed functional readiness probe.
 
 ## Task 3: Publication, Delivery admission and recovery integration
+
+Completed 2026-09-30, locally verified; not installed, pushed, or live-accepted.
+Current-tree named gate: 295 passed in 35.15s. Expanded admission/recovery gate:
+699 passed in 206.14s; adjacent retarget/readiness/prompt/review gate: 394 passed
+in 19.68s. Counts overlap; do not sum them as unique tests. Final repository
+fail-fast: 96 passed, one known convergence-fixture failure in 39.55s. Dry-run:
+156 RE modules import and all nine bundle checks pass.
+
+One independent review found three Important issues (continuation forwarding,
+effects-only recovery ordering, per-phase Spec admission) and a prompt archetype
+regression regraded Important. All were reproduced and corrected. Functional
+probes use real state stores, receipt journals, dispatch/finalization and temporary
+Git repositories; external providers are recorded, not executed. Saved publication
+and review effects settle despite current contract drift, then new work blocks.
+Review effects now restore the saved review phase through existing valid state
+transitions. Source-owner prompt context uses orchestration-owned custom stack
+definitions, including in target-specific harness directories.
+
+The prior missing-coverage guard is separately committed as `1466833f`. The
+accidental test salvage commit is retained on `backup/accidental-salvage-88033cd9`;
+legitimate changes were recovered with explicit user approval. Test artifacts and
+command logs remain in `.superpowers/sdd/2026-09-30-stack-verification-prerequisites/`.
+No generated demo source, Delivery state, caps, or review gates were changed.
+
+Follow-ups remain: compatible npm/Three.js observers with real evidence,
+semantic visual ordering, requirement-level repair routing, preserved-candidate
+Delivery acceptance and fresh-workspace acceptance. This plan does not close STAB-1.
 
 **Interfaces**
 
@@ -228,7 +255,7 @@ Keep `validate_phase_a_readiness` for explicitly structural inspection only.
 Production publication/admission, readiness summaries, retarget completion and
 review-reentry readiness must use the same capability-aware result.
 
-- [ ] Add failing tests to `test_stack_admission_flow.py`, using existing real state stores/controllers and recording external providers. Pin the outcomes:
+- [x] Add failing tests to `test_stack_admission_flow.py`, using existing real state stores/controllers and recording external providers. Pin the outcomes:
 
 ```python
 assert result.ready is False
@@ -243,17 +270,17 @@ case, assert the exact saved assignment and input digest, then no subsequent
 dispatch under incompatible current config. Also assert that supported concrete
 selection reaches implementation rather than only asserting rejection.
 
-- [ ] Add a multi-target service test where target A is valid and target B lacks a required observer. Assert zero child launches, no task-progress mutation, and a target-B diagnostic. Swap target ordering to prove this is not a first-target shortcut.
-- [ ] Add drift cases: changed stack selection, changed observer definition under the same ID, and source-local empty override. Existing passing evidence must not be reused under a different contract hash; pending effects must not be rewritten.
-- [ ] Run `.venv/bin/python -m pytest tests/unit/test_stack_admission_flow.py -q`; confirm failures at real readiness/dispatch boundaries.
-- [ ] Wire full readiness into Squad publication preparation before effects are sealed. Keep replay of already sealed effects under the existing pending-step contract; revalidate before the next new dispatch and before reporting current readiness. Update Spec status/continue/readiness service consumers to render the same result, without a second recovery policy.
-- [ ] Wire shared admission into `DeliveryController` after authoritative context resolution and before new implementer dispatch. For multi-target service dispatch, evaluate all targets before launching the first child. Services only forward context/render findings. Direct-controller entry must enforce the same check; no Typer-wrapper-only validation.
-- [ ] Reuse existing persisted stack snapshots and receipt fingerprints. If current owner inputs differ while an operation is pending, preserve/recover that operation under its saved identity; do not fabricate a new snapshot or update sealed dispatch fields. Block any new dispatch requiring an unsupported current contract. Keep prerequisite failures out of product repair and meaningful-attempt accounting.
-- [ ] Update readiness fixtures intentionally: give positive fixtures an explicit owner contract; keep dedicated negative empty-selection tests. Do not loosen production gates or silently default every test to generic.
-- [ ] Run `test_stack_admission_flow.py`, `test_spec_service_boundary.py`, `test_delivery_service_boundary.py`, `test_squad_publication.py`, `test_squad_publication_inspection.py`, `test_delivery_controller_integration.py`, `test_phase_a_readiness.py`, `test_coverage_capability_gate.py`, and existing current-state recovery tests selected by touched call sites.
-- [ ] Run a disposable admission flow: generic admits Spec discovery; generic-only cannot publish ready; compatible custom capabilities permit readiness and first Delivery dispatch; missing sibling capability yields zero target launches. Use retained controller/provider traces, not generated product edits or status-text matching.
-- [ ] Run `.venv/bin/python -m pytest -x -q` and `bash scripts/bash/dry-run.sh`. Record exact failures, including the known fixture if still present. A stopped fail-fast run is not a full-suite pass.
-- [ ] Update `docs/simplification-control.md` with completed/pending items, functional receipts and verification results. Request one independent read-only branch review under the native execution method. Fix important findings and rerun affected functional checks before committing this increment as `fix(delivery): enforce capability-ready admission across entry points`.
+- [x] Add a multi-target service test where target A is valid and target B lacks a required observer. Assert zero child launches, no task-progress mutation, and a target-B diagnostic. Swap target ordering to prove this is not a first-target shortcut.
+- [x] Add drift cases: changed stack selection, changed observer definition under the same ID, and source-local empty override. Existing passing evidence must not be reused under a different contract hash; pending effects must not be rewritten.
+- [x] Run `.venv/bin/python -m pytest tests/unit/test_stack_admission_flow.py -q`; confirm failures at real readiness/dispatch boundaries.
+- [x] Wire full readiness into Squad publication preparation before effects are sealed. Keep replay of already sealed effects under the existing pending-step contract; revalidate before the next new dispatch and before reporting current readiness. Update Spec status/continue/readiness service consumers to render the same result, without a second recovery policy.
+- [x] Wire shared admission into `DeliveryController` after authoritative context resolution and before new implementer dispatch. For multi-target service dispatch, evaluate all targets before launching the first child. Services only forward context/render findings. Direct-controller entry must enforce the same check; no Typer-wrapper-only validation.
+- [x] Reuse existing persisted stack snapshots and receipt fingerprints. If current owner inputs differ while an operation is pending, preserve/recover that operation under its saved identity; do not fabricate a new snapshot or update sealed dispatch fields. Block any new dispatch requiring an unsupported current contract. Keep prerequisite failures out of product repair and meaningful-attempt accounting.
+- [x] Update readiness fixtures intentionally: give positive fixtures an explicit owner contract; keep dedicated negative empty-selection tests. Do not loosen production gates or silently default every test to generic.
+- [x] Run `test_stack_admission_flow.py`, `test_spec_service_boundary.py`, `test_delivery_service_boundary.py`, `test_squad_publication.py`, `test_squad_publication_inspection.py`, `test_delivery_controller_integration.py`, `test_phase_a_readiness.py`, `test_coverage_capability_gate.py`, and existing current-state recovery tests selected by touched call sites.
+- [x] Run a disposable admission flow: generic admits Spec discovery; generic-only cannot publish ready; compatible custom capabilities permit readiness and first Delivery dispatch; missing sibling capability yields zero target launches. Use retained controller/provider traces, not generated product edits or status-text matching.
+- [x] Run `.venv/bin/python -m pytest -x -q` and `bash scripts/bash/dry-run.sh`. Record exact failures, including the known fixture if still present. A stopped fail-fast run is not a full-suite pass.
+- [x] Update `docs/simplification-control.md` with completed/pending items, functional receipts and verification results. Request one independent read-only branch review under the native execution method. Fix important findings and rerun affected functional checks before committing this increment as `fix(delivery): enforce capability-ready admission across entry points`.
 
 ## Stop and handoff
 

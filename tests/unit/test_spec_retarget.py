@@ -79,7 +79,7 @@ def test_done_status_without_canonical_readiness_is_not_projected_ready(
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# incomplete\n", encoding="utf-8")
 
-    assert spec_retarget._baseline_ready_to_build({"status": "done"}, spec_dir) is False
+    assert spec_retarget._baseline_ready_to_build({"status": "done"}, spec_dir, project_root=tmp_path) is False
 
 
 def eligible_evidence(tmp_path: Path) -> RetargetEvidence:

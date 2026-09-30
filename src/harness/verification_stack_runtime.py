@@ -43,12 +43,7 @@ def resolve_verification_stacks(
     compatibility with existing workspaces.
     """
     project = Path(project_root).resolve()
-    target = Path(target_root).resolve()
-    target_config = target / ".echelon"
-    target_owned = target != project and any(
-        (target_config / name).is_file() for name in ("config.yml", "local.yml")
-    )
-    config_root = target if target_owned else project
+    config_root = verification_owner_root(project, target_root)
     raw = get_full_resolved_config(config_root)
     stacks = raw.get("stacks") or {}
     if not isinstance(stacks, Mapping):
@@ -76,6 +71,17 @@ def resolve_verification_stacks(
         definitions,
         target_archetypes=set(archetypes) or None,
     )
+
+
+def verification_owner_root(project_root: Path, target_root: Path) -> Path:
+    """Use the same owner precedence for selection, prompts and execution policy."""
+    project = Path(project_root).resolve()
+    target = Path(target_root).resolve()
+    target_config = target / ".echelon"
+    target_owned = target != project and any(
+        (target_config / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    return target if target_owned else project
 
 
 def apply_verification_stacks(

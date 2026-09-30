@@ -17,6 +17,30 @@ from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecuto
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 
 
+def _admit_delivery_fixture(fixture, owner_root=None):
+    from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+    from tests.unit.test_verification_capability_preflight import custom_stack, select
+
+    project, directory, _ = fixture
+    owner_root = owner_root or project
+    custom_stack(owner_root)
+    select(owner_root, ["custom"])
+    for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+        path = directory / name
+        if not path.exists():
+            path.write_text(f"# {name}\n")
+    (directory / "plan-conformance.json").write_text(json.dumps({
+        "status": "pass", "findings": [], "sources": ["spec.md", "tasks.md"]}))
+    (directory / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-1 | UT-GREETING-001 | unit | planned | planned | tests | implement |\n"
+        "| FR-2 | UT-SECOND-001 | unit | planned | planned | tests | implement |\n")
+    if owner_root != project:
+        import shutil
+        shutil.copytree(directory, owner_root / "specs" / directory.name)
+
+
 def _declare_repair_case(fixture):
     tasks = fixture[1] / "tasks.md"
     text = tasks.read_text()
@@ -203,7 +227,7 @@ def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode)
     assert result["passed"] is False and result["build_status"] == "blocked"
     assert result["task_ids"] == []
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain * 4
+    assert _steps(executor) == chain * 5
     assert "delivery_slice_task_id" not in store.read()
 
 
@@ -238,6 +262,7 @@ def test_retired_feature_key_has_only_generic_scalar_parsing():
 def test_delivery_controller_does_not_load_legacy_manager_command(slice_project, tmp_path, monkeypatch):
     from harness.delivery_controller import DeliveryController
     from harness.run_intent import RunIntent
+    _admit_delivery_fixture(slice_project)
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     # The fixture intentionally has only subagent profiles, no echelon.build command.
     delivery = DeliveryController(
@@ -267,9 +292,9 @@ def test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice(slice_projec
     result = controller.run_loop(max_outer=1, max_inner=1, build_prompt="banzai mode")
     assert result.status == "blocked", result
     assert result.termination_reason == "build_blocked"
-    assert result.tokens_used == 112
+    assert result.tokens_used == 140
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain * 4
+    assert _steps(executor) == chain * 5
     assert "- [ ] T-001" in (slice_project[1] / "tasks.md").read_text()
     assert store.read().get("build", {}).get("completed_tasks", 0) == 0
     assert "repair_limit" in store.read()["build_reason"]
@@ -554,6 +579,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
     _initialize_git_worktree(slice_project[0])
     shutil.copytree(slice_project[0] / ".echelon", tmp_path / ".echelon")
+    _admit_delivery_fixture(slice_project, tmp_path)
     config = HarnessConfig()
     config.llm.enabled = True
     config.llm.features["delivery_gate_controller"] = True
@@ -596,6 +622,7 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
     from harness.visual_ralph import VisualRalphController
     _initialize_git_worktree(slice_project[0])
     shutil.copytree(slice_project[0] / ".echelon", tmp_path / ".echelon")
+    _admit_delivery_fixture(slice_project, tmp_path)
     config = HarnessConfig()
     config.llm.enabled = True
     config.llm.features["delivery_gate_controller"] = True

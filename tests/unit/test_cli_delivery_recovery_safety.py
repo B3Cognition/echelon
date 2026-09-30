@@ -17,13 +17,19 @@ UNKNOWN_REASON = "delivery_reconciliation_required: dispatch completion is unkno
 
 
 @pytest.mark.parametrize("verify_command", ["pytest", None])
+@pytest.mark.parametrize("stack_drift", [False, True])
+@pytest.mark.parametrize("prerequisite", [False, True])
 @pytest.mark.parametrize("damage", [None, "missing_operation", "applied", "wrong_phase", "unknown", "other_blocker"])
-def test_continue_defers_pending_browser_recovery_to_harness(tmp_path, monkeypatch, verify_command, damage):
+def test_continue_defers_pending_browser_recovery_to_harness(tmp_path, monkeypatch, verify_command, damage, stack_drift, prerequisite):
     from echelon.cli_app import app
     from echelon.delivery_service import _delivery_status_next_step
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
     _make_echelon_yml(tmp_path, verify_command=verify_command)
+    if stack_drift:
+        config = tmp_path / ".echelon/config.yml"
+        with config.open("a") as stream:
+            stream.write("\nstacks:\n  selected: [no-longer-installed]\n")
     _make_phase_a_spec(tmp_path)
     state_dir = _setup_build(tmp_path, "001")
     state = {
@@ -33,6 +39,9 @@ def test_continue_defers_pending_browser_recovery_to_harness(tmp_path, monkeypat
         "delivery_slice_operation": {"id": "pending", "progress_applied": False,
                                      "worktree_path": str(tmp_path / "candidate")},
     }
+    if prerequisite:
+        state.update(termination_reason="verification_prerequisite",
+                     build_reason="verification_prerequisite: owner contract changed")
     if damage == "missing_operation":
         state.pop("delivery_slice_operation")
     elif damage == "applied":

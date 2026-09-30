@@ -13,7 +13,7 @@ from harness.stacks.preflight import (
     run_stack_preflight,
 )
 from harness.stacks.renderer import render_resolved_markdown
-from harness.stacks.resolver import resolve_stacks
+from harness.stacks.resolver import ResolvedStacks, resolve_stacks
 
 
 def build_stack_context(
@@ -22,6 +22,7 @@ def build_stack_context(
     selected_stacks: Iterable[str],
     target_archetypes: Iterable[str] = (),
     spec_dir: Path | None = None,
+    resolved: ResolvedStacks | None = None,
 ) -> str:
     """Render selected stacks as a binding constraint for agent prompts.
 
@@ -30,7 +31,7 @@ def build_stack_context(
     implementation.  Spec frontmatter may refine the configured archetypes
     once a spec exists.
     """
-    selected = [
+    selected = list(resolved.selected_ids) if resolved is not None else [
         str(stack).strip()
         for stack in selected_stacks
         if str(stack).strip()
@@ -43,7 +44,7 @@ def build_stack_context(
         extension_root=find_stack_extension_root(project_root),
         project_root=project_root,
     )
-    resolved = resolve_stacks(
+    resolved = resolved if resolved is not None else resolve_stacks(
         selected,
         definitions,
         target_archetypes=archetypes or None,

@@ -92,6 +92,13 @@ def _make_echelon_yml(
 
 def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical_tasks: bool = True) -> Path:
     """Create minimal published Phase A build inputs for harness preflight."""
+    from tests.unit.test_verification_capability_preflight import custom_stack
+    import yaml
+    custom_stack(base)
+    config_path = base / ".echelon/config.yml"
+    config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    config.setdefault("stacks", {"selected": ["custom"]})
+    config_path.write_text(yaml.safe_dump(config))
     spec_dir = base / "specs" / spec_dir_name
     spec_dir.mkdir(parents=True, exist_ok=True)
     for name in (
@@ -133,7 +140,8 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
         )
         (spec_dir / name).write_text(content, encoding="utf-8")
     tasks = (
-        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target=.\n"
+        "  **Named Test Ownership:** UT-001\n"
         if canonical_tasks
         else "- [ ] implement the thing\n"
     )

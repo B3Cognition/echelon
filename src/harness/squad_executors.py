@@ -615,9 +615,9 @@ def _render_product_input_context(state: dict) -> str:
     return "\n".join(lines)
 
 
-def _render_controller_owned_prompt_context(state: dict) -> str:
+def _render_controller_owned_prompt_context(state: dict, *, include_stack_contract: bool = True) -> str:
     """Render immutable run inputs shared by every provider dispatch."""
-    stack_context = render_stack_contract(state.get("stack_contract"))
+    stack_context = render_stack_contract(state.get("stack_contract")) if include_stack_contract else ""
     staging_dir = state.get("staging_dir")
     if not isinstance(staging_dir, str) or not staging_dir:
         return stack_context
@@ -2112,20 +2112,31 @@ class PhaseExecutor(ABC):
             "- Use only explicit `.echelon/runtime/...` paths for deployed runtime assets.\n\n"
         )
 
-    def _stack_context(self, spec_dir_ref: str) -> str:
-        """Resolve explicit project stacks before every Phase A agent dispatch."""
-        from harness.config import load_config
+    def _stack_context(self, spec_dir_ref: str, state: dict | None = None) -> str:
+        """Render the same authoritative owner selections used by admission."""
+        from harness.config import get_full_resolved_config
+        from harness.spec_frontmatter import read_targets
+        from harness.verification_stack_runtime import resolve_verification_stacks, verification_owner_root
 
-        config = load_config(self._project_root, squad_only=True)
         spec_dir = Path(spec_dir_ref) if spec_dir_ref else None
         if spec_dir is not None and not spec_dir.is_absolute():
             spec_dir = self._project_root / spec_dir
-        return build_stack_context(
-            self._project_root,
-            selected_stacks=config.stacks.selected,
-            target_archetypes=config.stacks.target_archetypes,
-            spec_dir=spec_dir,
+        targets = (state or {}).get("implementation_targets") or (
+            read_targets(spec_dir) if spec_dir is not None else []
         )
+        contexts = []
+        for target in targets or ["."]:
+            target_root = self._project_root / target
+            resolved = resolve_verification_stacks(self._project_root, target_root)
+            owner_config = get_full_resolved_config(verification_owner_root(self._project_root, target_root))
+            archetypes = (owner_config.get("stacks") or {}).get("target_archetypes") or []
+            context = build_stack_context(
+                self._project_root, selected_stacks=resolved.selected_ids,
+                target_archetypes=archetypes, spec_dir=spec_dir, resolved=resolved,
+            )
+            if context:
+                contexts.append(f"## Stack owner: {target}\n\n{context}")
+        return "\n\n".join(contexts)
 
     def _render_context_pack_item(
         self,
@@ -2323,8 +2334,8 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
-            f"{self._stack_context(spec_dir_ref)}"
-            f"{_render_controller_owned_prompt_context(state)}"
+            f"{self._stack_context(spec_dir_ref, state)}"
+            f"{_render_controller_owned_prompt_context(state, include_stack_contract=False)}"
             f"{_render_banzai_evidence_reassessment_context(state, node.id)}"
             f"{_render_phase3_planning_mode_context(node.id)}"
             f"{_workspace_source_roots_context(self._project_root)}"
@@ -2510,7 +2521,7 @@ class PhaseExecutor(ABC):
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
-            + self._stack_context(spec_dir_ref)
+            + self._stack_context(spec_dir_ref, state)
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
@@ -3128,7 +3139,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     content[str(candidate.resolve())] = (hashlib.sha256(candidate.read_bytes()).hexdigest()
                                                          if candidate.exists() else None)
         context = (_render_product_input_context(state) + _render_implementation_target_context(state)
-                   + self._stack_context(str(spec_dir)) + render_quality_gate_context(self._quality_gate_thresholds())
+                   + self._stack_context(str(spec_dir), state) + render_quality_gate_context(self._quality_gate_thresholds())
                    + _workspace_source_roots_context(self._project_root)
                    + _render_active_spec_roots_context(str(spec_dir), state, self._project_root)
                    + _render_certified_understanding_context(state, "WHY3")
@@ -3866,7 +3877,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
-            f"{self._stack_context(spec_dir_ref)}"
+            f"{self._stack_context(spec_dir_ref, state)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"

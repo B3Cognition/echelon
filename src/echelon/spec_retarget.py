@@ -348,6 +348,7 @@ def _preview_result(preview: RetargetPreview) -> RetargetCommandResult:
         baseline_ready_to_build=_baseline_ready_to_build(
             baseline_state,
             preview.spec_dir,
+            project_root=preview.project_root,
         ),
     )
 
@@ -1113,13 +1114,14 @@ def _baseline_state(preview: RetargetPreview) -> dict[str, Any]:
 def _baseline_ready_to_build(
     state: Mapping[str, object],
     spec_dir: Path,
+    *, project_root: Path,
 ) -> bool:
     if state.get("status") != "done":
         return False
-    from harness.phase_a_readiness import validate_phase_a_readiness
+    from harness.phase_a_readiness import validate_configured_phase_a_build_readiness
 
     try:
-        return validate_phase_a_readiness(dict(state), [Path(spec_dir)]).ready
+        return validate_configured_phase_a_build_readiness(dict(state), [Path(spec_dir)], project_root=project_root).ready
     except (OSError, TypeError, ValueError):
         return False
 
@@ -1140,7 +1142,7 @@ def append_prepared_revision_from_preview(preview: RetargetPreview) -> RetargetR
         spec_status=str(read_frontmatter(preview.spec_dir).get("status") or "planned"),
         completed_phases=tuple(completed),
         implementation_targets=preview.old_targets,
-        ready_to_build=_baseline_ready_to_build(state, preview.spec_dir),
+        ready_to_build=_baseline_ready_to_build(state, preview.spec_dir, project_root=preview.project_root),
     )
     return append_prepared_revision(
         preview.spec_dir,

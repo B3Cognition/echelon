@@ -20,6 +20,27 @@ _SPEC_FILES = ("spec.md", "tasks.md", "coverage-map.md", "test-strategy.md")
 _ROLE = "echelon.delivery-visual-validator"
 
 
+def semantic_visual_execution_available(project_root: Path, *, config=None, executor=None) -> bool:
+    """Static availability for a required gate (which enables Delivery's visual phase)."""
+    from harness.config import load_config
+    from harness.llm_provider import AICodingCliProvider
+    from harness.prosaic_prompt_loader import ProsaicPromptLoadError
+
+    try:
+        # Delivery's executor is configured by the orchestration workspace;
+        # source-local ownership overrides stack selection, not provider policy.
+        config = config if config is not None else load_config(project_root, squad_only=True)
+        if not config.llm.enabled:
+            return False
+        executor = executor if executor is not None else AICodingCliProvider(config)
+        return (
+            getattr(executor, "supports_read_only_review", False) is True
+            and ProsaicPromptLoader(project_root).load_subagent(_ROLE) is not None
+        )
+    except (ValueError, OSError, RuntimeError, ProsaicPromptLoadError):
+        return False
+
+
 def semantic_spec_digest(spec_dir: Path) -> str:
     """Hash the published functional inputs, excluding mutable spec lifecycle metadata."""
     root = Path(spec_dir)

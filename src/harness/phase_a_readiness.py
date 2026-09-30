@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from harness.canonical_requirements import extract_canonical_requirements
 from harness.coverage_contract import CoverageContractError
@@ -157,7 +157,7 @@ def validate_phase_a_readiness(
 
 def validate_phase_a_build_readiness(
     state: dict, candidate_spec_dirs: list[Path], *, project_root: Path,
-    visual_execution_available: bool,
+    visual_execution_available: bool | Callable[[Path], bool],
     allow_pending_retarget_finalization: bool = False,
 ) -> PhaseAReadinessResult:
     """Structural readiness plus current authoritative verification capability."""
@@ -178,7 +178,8 @@ def validate_phase_a_build_readiness(
 
 
 def verification_capability_blockers(
-    spec_dir: Path, *, project_root: Path, visual_execution_available: bool,
+    spec_dir: Path, *, project_root: Path,
+    visual_execution_available: bool | Callable[[Path], bool],
 ) -> list[str]:
     """Evaluate each owner's static contract, without host execution or writes."""
     from harness.stacks.errors import StackError
@@ -253,7 +254,10 @@ def verification_capability_blockers(
                 )
                 findings = verification_capability_findings(
                     resolved, coverage_test_types=types, browser_required=browser,
-                    semantic_visual_required=visual, visual_execution_available=visual_execution_available,
+                    semantic_visual_required=visual, visual_execution_available=(
+                        visual_execution_available(project_root / target)
+                        if visual and callable(visual_execution_available) else bool(visual_execution_available)
+                    ),
                 )
                 blockers.extend(f"{target}: {item.code}: {item.message}" for item in findings if item.severity == "error")
             except (StackError, ValueError) as exc:
@@ -261,6 +265,23 @@ def verification_capability_blockers(
         return blockers
     except (CoverageContractError, DeferredScopeError, OSError, ValueError) as exc:
         return [f"verification_contract_invalid: {exc}"]
+
+
+def validate_configured_phase_a_build_readiness(
+    state: dict, candidate_spec_dirs: list[Path], *, project_root: Path,
+    allow_pending_retarget_finalization: bool = False,
+    execution_config=None,
+) -> PhaseAReadinessResult:
+    """Production entry: resolve visual executor availability only for its owners."""
+    from harness.semantic_visual_validator import semantic_visual_execution_available
+
+    return validate_phase_a_build_readiness(
+        state, candidate_spec_dirs, project_root=project_root,
+        visual_execution_available=lambda target: semantic_visual_execution_available(
+            project_root, config=execution_config,
+        ),
+        allow_pending_retarget_finalization=allow_pending_retarget_finalization,
+    )
 
 
 def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> list[str]:

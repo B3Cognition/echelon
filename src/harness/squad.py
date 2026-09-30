@@ -96,7 +96,7 @@ from harness.checkpoint_policy import (
 from harness.phase_a_readiness import (
     PhaseAReadinessResult,
     unresolved_constitution_template_markers,
-    validate_phase_a_readiness,
+    validate_configured_phase_a_build_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.spec_frontmatter import write_text_atomic
@@ -2863,23 +2863,9 @@ class SquadController:
                         # Admission may permit finishing an already-sealed WHY2
                         # completion. It never grants an answer or a new dispatch.
                         return self._unresolved_human_input_result(settled)
-                    from harness.stacks.errors import StackError
-                    from harness.verification_stack_runtime import (
-                        VerificationStackResolutionError,
-                        require_spec_stack_selection,
-                    )
-
-                    targets = settled.get("implementation_targets") or self._implementation_targets
-                    try:
-                        require_spec_stack_selection(
-                            self._project_root,
-                            target_roots=tuple(self._project_root / target for target in targets),
-                        )
-                    except (VerificationStackResolutionError, StackError) as exc:
-                        return SquadResult(
-                            status="blocked", phase=str(settled.get("phase") or "unknown"),
-                            run_id=self._squad_dir.name, summary=str(exc),
-                        )
+                    admission = self._verification_dispatch_admission(settled)
+                    if admission is not None:
+                        return admission
                     return execute()
         except SpecLifecycleLocked as exc:
             state = self._state_store.load()
@@ -2891,6 +2877,39 @@ class SquadController:
                 flush=True,
             )
             return SquadResult(status="busy", phase=phase, run_id=run_id)
+
+    def _verification_dispatch_admission(self, state: dict) -> SquadResult | None:
+        """Check current owner intent only after the previous step has settled."""
+        from harness.phase_a_readiness import validate_phase_a_readiness
+        from harness.stacks.errors import StackError
+        from harness.verification_stack_runtime import (
+            VerificationStackResolutionError,
+            require_spec_stack_selection,
+        )
+
+        targets = state.get("implementation_targets") or self._implementation_targets
+        reason = None
+        try:
+            require_spec_stack_selection(
+                self._project_root,
+                target_roots=tuple(self._project_root / target for target in targets),
+            )
+        except (VerificationStackResolutionError, StackError) as exc:
+            reason = str(exc)
+        if reason is None:
+            # Generic admits discovery, not publication of an unverifiable plan.
+            candidates = self._phase_a_readiness_candidate_dirs(state)
+            structural = validate_phase_a_readiness({"status": "done"}, candidates)
+            if structural.ready:
+                readiness = self._build_readiness({"status": "done"}, candidates)
+                if not readiness.ready:
+                    reason = "; ".join(readiness.blockers)
+        if reason is not None:
+            return SquadResult(
+                status="blocked", phase=str(state.get("phase") or "unknown"),
+                run_id=self._squad_dir.name, summary=reason,
+            )
+        return None
 
     def _discard_publication_without_authority(
         self,
@@ -8270,6 +8289,10 @@ class SquadController:
         if self._skip_phase_if_condition_false(node):
             return None
 
+        admission = self._verification_dispatch_admission(self._state_store.load())
+        if admission is not None:
+            return admission
+
         self._start_declared_phase_timing(node)
 
         # Per-phase dispatch cap — prevents runaway loops on any phase.
@@ -10080,7 +10103,7 @@ class SquadController:
         if active_spec_dir is None or not active_spec_dir.exists():
             return (
                 0,
-                validate_phase_a_readiness(
+                self._build_readiness(
                     detached_state,
                     self._phase_a_readiness_candidate_dirs(detached_state),
                     allow_pending_retarget_finalization=self._active_retarget(
@@ -10215,7 +10238,7 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(
             published_spec_dir
         )
-        readiness = validate_phase_a_readiness(
+        readiness = self._build_readiness(
             updated,
             [virtual_spec_dir],
             allow_pending_retarget_finalization=self._active_retarget(updated),
@@ -10567,7 +10590,7 @@ class SquadController:
                 state.get("published_spec_dir") or ""
             ).strip()
             if published_ref:
-                return validate_phase_a_readiness(
+                return self._build_readiness(
                     state,
                     [self._absolute_project_path(published_ref)],
                 )
@@ -10712,7 +10735,7 @@ class SquadController:
                 ready_spec_dir=None,
             )
         published_spec_dir = self._absolute_project_path(published_ref)
-        return validate_phase_a_readiness(
+        return self._build_readiness(
             self._state_store.load(),
             [published_spec_dir],
         )
@@ -10787,7 +10810,7 @@ class SquadController:
         self._materialize_implementation_targets(state)
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
-            return validate_phase_a_readiness(
+            return self._build_readiness(
                 state,
                 self._phase_a_readiness_candidate_dirs(state),
             )
@@ -10824,7 +10847,13 @@ class SquadController:
         updated = deepcopy(state)
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._phase_a_published_this_run = True
-        return validate_phase_a_readiness(updated, [published_spec_dir])
+        return self._build_readiness(updated, [published_spec_dir])
+
+    def _build_readiness(self, state, candidate_spec_dirs, *, allow_pending_retarget_finalization=False):
+        return validate_configured_phase_a_build_readiness(
+            state, candidate_spec_dirs, project_root=self._project_root,
+            allow_pending_retarget_finalization=allow_pending_retarget_finalization,
+        )
 
     def _publish_product_input_evidence(
         self,

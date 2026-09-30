@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
-from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase_a_readiness import validate_configured_phase_a_build_readiness
 from harness.provider_capability import ProviderCapability
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.state import state_lock_owner_is_alive
@@ -2850,7 +2850,7 @@ def _prepare_delivery_build_state(
                     project_root=project_root,
                     spec_dir=spec_dir,
                 )
-                _block_if_harness_phase_a_not_ready(spec_dir, spec_id)
+                _block_if_harness_phase_a_not_ready(spec_dir, spec_id, project_root=project_root)
                 build_id = make_build_id()
                 _write_delivery_preparation_state(
                     build_dir(harness_base_dir, build_id) / "state.json",
@@ -3004,6 +3004,7 @@ def _run_delivery(
             sys.exit(1)
         targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel and not target_env:
+            _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id, project_root=spec_search_root)
             _block_if_spec_task_targets_mismatch(
                 spec_dir,
                 targets_rel,
@@ -3048,7 +3049,7 @@ def _run_delivery(
                 # canonical task ownership and serializes cross-target dependency
                 # order so shared progress writes cannot race.
                 targets = validate_targets(targets_rel, polyrepo_root)
-                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
+                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id, project_root=polyrepo_root)
                 source_ids: dict[str, str] = {}
                 source_git_roles: dict[str, str] = {}
                 for target in targets:
@@ -3115,7 +3116,7 @@ def _run_delivery(
             )
             sys.exit(1)
     if spec_dir is not None:
-        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name, project_root=spec_search_root)
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
@@ -3260,9 +3261,9 @@ def _delivery_outcome_exit_code(outcome: object) -> int:
     return 0 if any(result.status == "converged" for result in outcome.results) else 1
 
 
-def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
+def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str, *, project_root: Path) -> None:
     """Fail before build LLM dispatch when published Phase A inputs are invalid."""
-    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    readiness = validate_configured_phase_a_build_readiness({"status": "done"}, [spec_dir], project_root=project_root)
     if readiness.ready:
         return
 
@@ -3376,7 +3377,7 @@ def _harness_error_resume_blockers(*, project_root: Path, spec_id: str, spec_dir
     if task_count <= 0 and not any("tasks.md" in blocker for blocker in blockers):
         blockers.append("tasks.md has no canonical task rows")
 
-    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    readiness = validate_configured_phase_a_build_readiness({"status": "done"}, [spec_dir], project_root=project_root)
     if not readiness.ready:
         blockers.extend(readiness.blockers or ["Phase A build inputs are not ready"])
     return blockers
@@ -3691,17 +3692,6 @@ def _run_delivery_resume(
             spec_id=spec_id,
         )
 
-    _resolve_delivery_verification_services(
-        config,
-        project_root=config_root,
-        target_root=Path(config.target_repo),
-    )
-    if config.verification.execution == "host":
-        _block_if_delivery_provisioning_incomplete(
-            project_root=config_root,
-            target_root=Path(config.target_repo),
-        )
-
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
     marker = current_build_marker(harness_base_dir, spec_id)
@@ -3803,7 +3793,9 @@ def _run_delivery_resume(
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
     pending_slice_resume = _pending_slice_resume_supported(state)
-    if pending_slice_resume or reconcile_unknown_dispatch:
+    if pending_slice_resume:
+        continuation_reasons.add(termination_reason)
+    if reconcile_unknown_dispatch:
         continuation_reasons.add("build_blocked")
     from harness.delivery_controller import pending_slice_budget_exhausted as _pending_slice_budget_exhausted
 

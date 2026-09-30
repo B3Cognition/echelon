@@ -90,7 +90,7 @@ from harness.runnability_evidence import (
     runnability_product_fingerprint,
 )
 from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
-from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase_a_readiness import validate_configured_phase_a_build_readiness
 from harness.secret_scan import scan_git_staged
 from harness.spec_frontmatter import find_spec_dir
 from harness.state import StateStore
@@ -142,6 +142,7 @@ _NON_CHARGEABLE_INFRASTRUCTURE_REASONS = {
     "user_runnability_sandbox_prerequisite",
     "verification_infrastructure",
     "coverage_observer_unavailable",
+    "verification_prerequisite",
     "verify_command_needed",
 }
 _BANZAI_MILESTONE_DEFER_REASON = (
@@ -172,6 +173,8 @@ def _verification_prerequisite_reason(result: VerifyResult) -> str | None:
         return "user_runnability_sandbox_prerequisite"
     if any(failure.id == "coverage-observer-unavailable" for failure in result.failures):
         return "coverage_observer_unavailable"
+    if any(failure.id == "verification_prerequisite" for failure in result.failures):
+        return "verification_prerequisite"
     return None
 
 
@@ -432,6 +435,7 @@ class RalphController:
         resume_worktree_path: Optional[str] = None,
         reconcile_unknown_dispatch: bool = False,
         retry_failed_dispatch: bool = False,
+        verification_admission=None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -455,6 +459,7 @@ class RalphController:
         self._resume_worktree_path = resume_worktree_path
         self._reconcile_unknown_dispatch = reconcile_unknown_dispatch
         self._retry_failed_dispatch = retry_failed_dispatch
+        self._verification_admission = verification_admission
         self._candidate_evidence_runner = CandidateEvidenceRunner(
             provider=self._provider,
             config=lambda: self._config,
@@ -1289,6 +1294,15 @@ class RalphController:
                     # marker was missing/unreadable, while other statuses (for
                     # example "impasse") are explicit build outcomes.
                     if not build_result.get("passed", True):
+                        if str(build_result.get("build_reason", "")).startswith("verification_prerequisite:"):
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked", reason="verification_prerequisite",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url, tokens_used=tokens_used, final_verify=None,
+                                extra_state={"build_status": "blocked", "build_reason": build_result["build_reason"]},
+                            )
                         if _is_verification_environment_deferral(build_result):
                             try:
                                 deferred_commit = (
@@ -2444,6 +2458,9 @@ class RalphController:
         from harness.visual_ralph import VisualRalphController
         state = self._state_store.read()
         def capture(candidate):
+            from harness.delivery_slice import DeliverySliceError
+            if self._verification_admission is not None and (reason := self._verification_admission()):
+                raise DeliverySliceError(reason)
             visual = VisualRalphController(
                 provider=self._provider, config=self._config, spec_id=self._spec_id,
                 base_dir=str(self._orchestration_root(worktree)), build_id=self._build_id or operation["id"],
@@ -2471,6 +2488,8 @@ class RalphController:
         from harness.delivery_slice import DeliverySliceError
         from harness.delivery_slice_runner import DeliverySliceRunner
         from harness.delivery_slice_journal import DeliverySliceJournal
+        if self._verification_admission is not None and (reason := self._verification_admission()):
+            raise DeliverySliceError(reason)
         root = self._delivery_operation_evidence_root()
         existing = DeliverySliceJournal(root, operation["id"]).load()
         if existing is not None and (existing["records"] or existing.get("browser_checks")):
@@ -2664,6 +2683,8 @@ class RalphController:
                             "delivery_reconciliation_required: legacy source repair feedback"
                         )
             else:
+                if self._verification_admission is not None and (reason := self._verification_admission()):
+                    raise DeliverySliceError(reason)
                 if repair and not documentation:
                     try:
                         feedback = json.loads(prompt)
@@ -2719,6 +2740,8 @@ class RalphController:
             self._prepare_delivery_context(worktree_path)
             runner = DeliveryDocumentationRunner if documentation else DeliverySliceRunner
             runner_options = {}
+            if not documentation:
+                runner_options["dispatch_admission"] = self._verification_admission
             if documentation:
                 # The writer changes README/CHANGELOG itself. Replay the input
                 # inventory while the runner checks actual candidate/source bytes.
@@ -2731,6 +2754,7 @@ class RalphController:
                     raise DeliverySliceError("invalid pending documentation change inventory")
                 runnability_ref, runnability_required = self._controlled_documentation_runnability(worktree)
                 runner_options = {
+                    "dispatch_admission": self._verification_admission,
                     "changed_files": operation["changed_files"],
                     "runnability_report": runnability_ref,
                     "runnability_required": runnability_required,
@@ -2840,6 +2864,10 @@ class RalphController:
 
         Returns parsed VerifyResult.
         """
+        if self._verification_admission is not None and (reason := self._verification_admission()):
+            return VerifyResult(passed=False, failures=[FailureEntry(
+                category=FailureCategory.INFRA, id="verification_prerequisite", error=reason,
+            )])
         if self._llm_provider is not None and worktree_path and self._config.verification.execution == "host":
             return self._exec_verify_locally(worktree_path)
         return self._candidate_evidence_runner.run_standard(
@@ -3501,13 +3529,21 @@ class RalphController:
 
         policy = getattr(self._config, "resolved_runnability", None)
         required = str(getattr(policy, "policy", "not_applicable")) == "required"
-        raw = self._state_store.read().get("user_runnability")
+        state = self._state_store.read()
+        snapshot = state.get("delivery_stack_snapshot")
+        if snapshot is not None:
+            if (not isinstance(snapshot, dict) or not isinstance(snapshot.get("resolved"), dict)
+                    or not isinstance(snapshot["resolved"].get("runnability"), dict)):
+                raise DeliverySliceError("documentation_runnability_evidence_invalid: saved stack contract")
+            required = snapshot["resolved"]["runnability"].get("policy") == "required"
+        raw = state.get("user_runnability")
         if not isinstance(raw, dict) or raw.get("status") != "runnable":
             return None, required
         try:
             ref = load_runnability_evidence_ref(str(raw.get("report") or ""))
             resolved = self._config.resolved_stacks
-            stack_hash = resolved_stack_contract_sha256(resolved) if resolved is not None else ""
+            stack_hash = (snapshot["resolved_stack_hash"] if snapshot is not None
+                          else resolved_stack_contract_sha256(resolved) if resolved is not None else "")
             contract = load_runnability_contract(worktree)
             validation = validate_runnability_report(
                 ref, candidate_commit=_current_git_commit(worktree) or "",
@@ -6241,7 +6277,9 @@ class RalphController:
             target_constitution.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_constitution, target_constitution)
 
-        readiness = validate_phase_a_readiness({"status": "done"}, [dest])
+        readiness = validate_configured_phase_a_build_readiness(
+            {"status": "done"}, [dest], project_root=orchestration_root,
+        )
         if readiness.ready:
             return []
         return readiness.blockers or ["Phase A build inputs are not ready"]

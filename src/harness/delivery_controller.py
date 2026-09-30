@@ -197,10 +197,14 @@ def pending_slice_resume_supported(state: dict[str, Any]) -> bool:
     operation = state.get("delivery_slice_operation")
     return (
         state.get("status") == "blocked"
-        and state.get("termination_reason") == "build_blocked"
+        and (
+            (state.get("termination_reason") == "build_blocked"
+             and state.get("build_reason") == "delivery_browser_evidence_request_repeated")
+            or (state.get("termination_reason") == "verification_prerequisite"
+                and str(state.get("build_reason", "")).startswith("verification_prerequisite:"))
+        )
         and state.get("blocked_phase") == "implementation"
         and state.get("build_status") == "blocked"
-        and state.get("build_reason") == "delivery_browser_evidence_request_repeated"
         and isinstance(operation, dict)
         and isinstance(operation.get("id"), str) and bool(operation["id"].strip())
         and operation.get("kind", "task") == "task"
@@ -1419,6 +1423,10 @@ class DeliveryController:
         spec_file = context.spec_file
         tasks_file = context.tasks_file
 
+        if not state_store.read():
+            reason = self._verification_admission(context, state_store)
+            if reason:
+                raise DeliveryConfigurationError(reason)
         try:
             existing = state_store.read()
             if (
@@ -1462,6 +1470,22 @@ class DeliveryController:
             should_resume_verified_publication = (
                 resume_plan.resume_verified_publication
             )
+            pending_operation = existing.get("delivery_slice_operation")
+            recovering_operation = (
+                isinstance(pending_operation, dict)
+                and pending_operation.get("progress_applied") is not True
+            )
+            recovering_effects = (
+                recovering_operation
+                or pending_effects_only_resume
+                or should_resume_verified_publication
+            )
+            # The existing resume plan owns effects-only eligibility. Settle
+            # sealed effects first; new work still passes the dispatch guard.
+            if not recovering_effects:
+                reason = self._verification_admission(context, state_store)
+                if reason:
+                    raise DeliveryConfigurationError(reason)
             if (
                 should_resume_blocked
                 and (
@@ -1652,7 +1676,10 @@ class DeliveryController:
                     repair_task_id=self._fresh_repair_task_id,
                 )
 
-            stack_context = self._build_stack_context(spec_dir)
+            stack_context = "" if recovering_effects else self._build_stack_context(
+                spec_dir, project_root=context.spec_search_root,
+                target_root=Path(state_store.read().get("source_root") or source_root),
+            )
             delivery_context = stack_context
 
             if llm_provider is None:
@@ -1714,6 +1741,7 @@ class DeliveryController:
                 resume_worktree_path=resume_repaired_worktree,
                 reconcile_unknown_dispatch=intent.reconcile_unknown_dispatch,
                 retry_failed_dispatch=intent.resume,
+                verification_admission=lambda: self._verification_admission(context, state_store),
             )
 
             publication_implementation = self._dispatch_verified_publication(
@@ -1777,6 +1805,15 @@ class DeliveryController:
                     )
             else:
                 implementation_result = self._implementation_from_state(state_store.read())
+            if implementation_result.status == "verified":
+                reason = self._verification_admission(context, state_store)
+                if reason:
+                    return self._persist_phase_block(
+                        state_store, phase=current_phase, reason=reason,
+                        implementation=implementation_result,
+                        outer_iterations=implementation_result.outer_iterations,
+                        tokens_used=implementation_result.tokens_used,
+                    )
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
             if (
@@ -2372,6 +2409,44 @@ class DeliveryController:
                 diagnostic=str(exc),
             )
 
+    def _verification_admission(self, context: DeliveryRunContext, state_store: StateStore) -> str | None:
+        """Current owner capabilities; saved contracts never change during recovery."""
+        from harness.phase_a_readiness import validate_configured_phase_a_build_readiness
+        from harness.verification_stack_runtime import resolve_verification_stacks
+        from harness.stacks.errors import StackError
+
+        if context.spec_dir is None:
+            return "verification_prerequisite: canonical spec directory is required"
+        root = context.spec_search_root.resolve()
+        readiness = validate_configured_phase_a_build_readiness(
+            {"status": "done"}, [context.spec_dir], project_root=root,
+            execution_config=self._config,
+        )
+        if not readiness.ready:
+            return "verification_prerequisite: " + "; ".join(readiness.blockers)
+        state = state_store.read()
+        target = Path(state.get("source_root") or context.source_root)
+        if context.declared_targets and target.resolve() not in {
+            (root / path).resolve() for path in context.declared_targets
+        }:
+            return "verification_prerequisite: source root is not bound to a declared target"
+        try:
+            resolved = resolve_verification_stacks(root, target)
+        except (StackError, ValueError) as exc:
+            return f"verification_prerequisite: {exc}"
+        saved = state.get("delivery_stack_snapshot")
+        current = _delivery_stack_snapshot(resolved)
+        if state and not isinstance(saved, dict):
+            return "verification_prerequisite: retained run has no verification contract; start a new run"
+        if saved is not None and any(saved.get(key) != current[key] for key in (
+            "resolved_stack_hash", "observer_plan_hash",
+        )):
+            return "verification_prerequisite: owner stack contract changed; retained evidence cannot be reused"
+        self._config.resolved_stacks = resolved
+        self._config.resolved_runnability = resolved.runnability
+        self._config.verification_services = list(resolved.services)
+        return None
+
     def _run_delivery(
         self,
         intent: RunIntent,
@@ -2413,13 +2488,25 @@ class DeliveryController:
             raise
         finally:
             state_store.release_lock()
-    def _build_stack_context(self, spec_dir: Path | None = None) -> str:
+    def _build_stack_context(
+        self, spec_dir: Path | None = None, *,
+        project_root: Path | None = None, target_root: Path | None = None,
+    ) -> str:
         """Render resolved Echelon stack context for selected project stacks."""
+        from harness.config import get_full_resolved_config
+        from harness.verification_stack_runtime import verification_owner_root
+
+        root = project_root or self._orchestration_root or Path(self._base_dir)
+        archetypes = self._config.stacks.target_archetypes
+        if target_root is not None:
+            owner = get_full_resolved_config(verification_owner_root(root, target_root))
+            archetypes = (owner.get("stacks") or {}).get("target_archetypes") or []
         return build_stack_context(
-            Path(self._base_dir),
+            root,
             selected_stacks=self._config.stacks.selected,
-            target_archetypes=self._config.stacks.target_archetypes,
+            target_archetypes=archetypes,
             spec_dir=spec_dir,
+            resolved=getattr(self._config, "resolved_stacks", None),
         )
 
     def _build_reentry_prompt(
@@ -2553,6 +2640,16 @@ class DeliveryController:
         # iteration, then atomically clear the completed handoff.
         status = state_store.read().get("status")
         if status == "blocked":
+            status = {
+                "implementation": "running",
+                "review": "reviewing",
+            }.get(state_store.read().get("blocked_phase"))
+            if status is None:
+                return False
+            state_store.transition(status)
+        if status == "reviewing":
+            # Resume the saved review phase before restoring its already
+            # verified implementation checkpoint. No implementation dispatch.
             state_store.transition("running")
             status = "running"
         if status not in {"running", "verified"}:

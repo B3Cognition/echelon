@@ -1305,7 +1305,10 @@ def test_continue_routes_to_constitution_without_phase_provenance(tmp_path: Path
 
 
 def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path) -> None:
+    from tests.unit.test_verification_capability_preflight import custom_stack, select
     _write_real_constitution(tmp_path)
+    custom_stack(tmp_path)
+    select(tmp_path, ["custom"])
     _write_run_state(
         tmp_path,
         {
@@ -1677,7 +1680,10 @@ def test_continue_does_not_apply_retired_re_generation_recovery(
 def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     tmp_path: Path,
 ) -> None:
+    from tests.unit.test_verification_capability_preflight import custom_stack, select
     _write_real_constitution(tmp_path)
+    custom_stack(tmp_path)
+    select(tmp_path, ["custom"])
     _write_run_state(
         tmp_path,
         {

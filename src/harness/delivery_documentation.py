@@ -143,7 +143,7 @@ class DeliveryDocumentationRunner:
             containment_policy_file: str | None = None, token_budget: float | None = None,
             budget_extension_limit: float | None = None,
             operation_id: str = "active", journal_required: bool = False, on_journal_ready=None, stop_requested=None,
-            runnability_checkpoint=None) -> BuildResult:
+            runnability_checkpoint=None, dispatch_admission=None) -> BuildResult:
         start, data, dispatches = time.monotonic(), None, 0
         stack = ExitStack()
         def outcome(reason, success=False):
@@ -277,6 +277,8 @@ class DeliveryDocumentationRunner:
                         record = records[cursor]
                     else:
                         guard()
+                        if dispatch_admission is not None and (reason := dispatch_admission()):
+                            raise DeliverySliceError(reason)
                         baseline = []
                         review_context = {}
                         if step == "docs_verifier":

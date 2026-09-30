@@ -29,7 +29,7 @@ from harness.issue_identity import (
 )
 from harness.provider_capability import ProviderCapability
 from harness.phase1_quality import has_current_phase1_quality_prerequisite
-from harness.phase_a_readiness import coverage_contract_error, validate_phase_a_readiness
+from harness.phase_a_readiness import coverage_contract_error, validate_configured_phase_a_build_readiness
 from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
@@ -4367,7 +4367,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     readiness_state["status"] = result_status
     if run_state.get("blocked_reason"):
         readiness_state["blocked_reason"] = run_state.get("blocked_reason")
-    readiness = validate_phase_a_readiness(
+    readiness = validate_configured_phase_a_build_readiness(
         readiness_state,
         _phase_a_readiness_candidate_dirs(
             project_root,
@@ -4376,6 +4376,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             active_spec_dir=active_spec_dir,
             published_spec_dir=published_spec_dir,
         ),
+        project_root=project_root,
     )
     for blocker in readiness.blockers:
         if blocker not in blockers:
@@ -5867,7 +5868,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if current_state.get("status") == "done" and not _phase_a_ready_to_build(project_root, current_state):
         return _done_phase_a_repair_phase(project_root, current_state)
 
-    readiness = validate_phase_a_readiness(
+    readiness = validate_configured_phase_a_build_readiness(
         current_state,
         _phase_a_readiness_candidate_dirs(
             project_root,
@@ -5876,6 +5877,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             active_spec_dir=active_spec_dir,
             published_spec_dir=_published_continue_spec_dir(project_root, current_state),
         ),
+        project_root=project_root,
     )
     if not readiness.ready:
         if any(
@@ -5898,7 +5900,7 @@ def _done_phase_a_repair_phase(project_root: Path, state: dict) -> str:
     """Route a completed run to the owner of its invalid build artifact."""
     spec_dir = _build_target_continue_spec_dir(project_root, state)
     if spec_dir is not None:
-        readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+        readiness = validate_configured_phase_a_build_readiness({"status": "done"}, [spec_dir], project_root=project_root)
         if any(
             blocker.startswith("coverage-map.md invalid:")
             for blocker in readiness.blockers
@@ -5930,7 +5932,7 @@ def _explicit_run_local_spec_needs_publication(
         explicit_spec_dir.relative_to(project_root / "runs")
     except ValueError:
         return False
-    if not validate_phase_a_readiness(current_state, [explicit_spec_dir]).ready:
+    if not validate_configured_phase_a_build_readiness(current_state, [explicit_spec_dir], project_root=project_root).ready:
         return False
     return _spec_tree_differs(explicit_spec_dir, published_spec_dir)
 
@@ -6012,9 +6014,10 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     published_spec_dir = _build_target_continue_spec_dir(project_root, current_state)
     if published_spec_dir is None:
         return False
-    return validate_phase_a_readiness(
+    return validate_configured_phase_a_build_readiness(
         current_state,
         [published_spec_dir],
+        project_root=project_root,
     ).ready
 
 
