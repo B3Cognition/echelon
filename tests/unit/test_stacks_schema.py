@@ -84,6 +84,43 @@ def test_parse_valid_stack_definition() -> None:
     assert stack.tools["example_cli"].commands["list"].output == "json"
 
 
+def test_capability_free_policy_is_neutral_for_any_target() -> None:
+    from harness.stacks.resolver import resolve_stacks
+
+    raw = deepcopy(VALID_STACK)
+    raw.update(schema_version="1.4", provides={}, applies_to={"archetypes": []},
+               requires={}, tools={})
+    raw["stack"]["kind"] = "policy"
+    stack = parse_stack_definition(raw, Path("stack.yml"))
+    resolved = resolve_stacks([stack.id], {stack.id: stack}, {"custom_product"})
+    assert resolved.capabilities == {}
+    assert resolved.coverage_observers == []
+    assert resolved.runnability.sources == ()
+    assert resolved.required_commands == []
+
+
+@pytest.mark.parametrize("kind", ["archetype", "capability", "resource"])
+@pytest.mark.parametrize("empty_field", ["provides", "applies_to"])
+def test_empty_policy_exception_does_not_weaken_other_stack_kinds(kind, empty_field):
+    raw = deepcopy(VALID_STACK)
+    raw["stack"]["kind"] = kind
+    raw[empty_field] = {} if empty_field == "provides" else {"archetypes": []}
+    with pytest.raises(StackValidationError, match=empty_field):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+def test_scoped_policy_still_rejects_incompatible_target():
+    from harness.stacks.errors import StackResolutionError
+    from harness.stacks.resolver import resolve_stacks
+
+    raw = deepcopy(VALID_STACK)
+    raw["stack"]["kind"] = "policy"
+    raw["provides"] = {}
+    stack = parse_stack_definition(raw, Path("stack.yml"))
+    with pytest.raises(StackResolutionError):
+        resolve_stacks([stack.id], {stack.id: stack}, {"custom_product"})
+
+
 @pytest.mark.unit
 def test_stack_schema_parses_required_linux_runnability() -> None:
     raw = {

@@ -2863,6 +2863,23 @@ class SquadController:
                         # Admission may permit finishing an already-sealed WHY2
                         # completion. It never grants an answer or a new dispatch.
                         return self._unresolved_human_input_result(settled)
+                    from harness.stacks.errors import StackError
+                    from harness.verification_stack_runtime import (
+                        VerificationStackResolutionError,
+                        require_spec_stack_selection,
+                    )
+
+                    targets = settled.get("implementation_targets") or self._implementation_targets
+                    try:
+                        require_spec_stack_selection(
+                            self._project_root,
+                            target_roots=tuple(self._project_root / target for target in targets),
+                        )
+                    except (VerificationStackResolutionError, StackError) as exc:
+                        return SquadResult(
+                            status="blocked", phase=str(settled.get("phase") or "unknown"),
+                            run_id=self._squad_dir.name, summary=str(exc),
+                        )
                     return execute()
         except SpecLifecycleLocked as exc:
             state = self._state_store.load()

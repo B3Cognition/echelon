@@ -1,0 +1,14 @@
+schema_version: "1.4"
+stack:
+  id: generic
+  name: Generic discovery
+  version: "1.0.0"
+  kind: policy
+  owner: echelon
+  description: Explicitly undecided technology; discovery only, not verification authority.
+applies_to:
+  archetypes: []
+provides: {}
+context:
+  files:
+    - context.md

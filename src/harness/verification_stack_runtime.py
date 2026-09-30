@@ -17,6 +17,21 @@ class VerificationStackResolutionError(ValueError):
     """Raised when a target's verification stack selection is malformed."""
 
 
+def require_spec_stack_selection(
+    project_root: Path, *, target_roots: tuple[Path, ...] = (),
+) -> tuple[ResolvedStacks, ...]:
+    """Admit discovery only with explicit, owner-controlled stack intent."""
+    roots = target_roots or (project_root,)
+    selections = tuple(resolve_verification_stacks(project_root, root) for root in roots)
+    for root, resolved in zip(roots, selections, strict=True):
+        if not resolved.selected_ids:
+            raise VerificationStackResolutionError(
+                f"stack_selection_required: {root}: explicitly select a concrete "
+                "stack or generic for discovery using echelon stack select"
+            )
+    return selections
+
+
 def resolve_verification_stacks(
     project_root: Path,
     target_root: Path,

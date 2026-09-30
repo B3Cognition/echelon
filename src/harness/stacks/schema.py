@@ -245,7 +245,7 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
     archetypes = _string_list(
         applies_to.get("archetypes"), source_path, "applies_to.archetypes"
     )
-    if not archetypes:
+    if not archetypes and kind != "policy":
         raise StackValidationError(
             "applies_to.archetypes must contain at least one archetype",
             path=source_path,
@@ -271,7 +271,7 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         provides[capability] = _non_empty_str(
             value, source_path, f"provides.{capability}"
         )
-    if not provides:
+    if not provides and kind != "policy":
         raise StackValidationError(
             "provides must contain at least one capability",
             path=source_path,

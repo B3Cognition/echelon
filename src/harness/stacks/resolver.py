@@ -474,6 +474,8 @@ def _validate_archetypes(
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
         applies_to = set(stack.applies_to_archetypes)
+        if stack.kind == "policy" and not applies_to:
+            continue
         if applies_to.intersection(target_archetypes):
             continue
         applies_display = ", ".join(stack.applies_to_archetypes) or "none"

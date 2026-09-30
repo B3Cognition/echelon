@@ -1,6 +1,6 @@
 # Stack and verification prerequisites
 
-Status: proposed written design; direction approved, implementation not started.
+Status: design and implementation plan approved; implementation in progress.
 
 ## Outcome and boundaries
 
@@ -126,7 +126,13 @@ worktrees and provider output cannot select, disable or replace owner observers.
 The owner can use the existing project-local stack mechanism for a custom stack;
 supporting npm/Three.js must not force React or pnpm just to obtain observers.
 
-No stack schema extension is planned. A compatible npm/Three.js observer bundle
+Approved schema adjustment: policy stacks may declare empty capability and
+archetype lists. An empty policy archetype list means unrestricted applicability,
+not an inferred application type. Other stack kinds retain non-empty requirements;
+explicitly scoped policies still enforce their declared archetypes. No new schema
+fields or synthetic capabilities are introduced.
+
+A compatible npm/Three.js observer bundle
 is separate follow-up work, tested against the preserved candidate before use.
 This prerequisite change does not claim to solve visual gate ordering or
 requirement-level fulfillment repair routing; both remain explicit work items.

@@ -4768,6 +4768,7 @@ def _select_squad_dir(
     configured_default_branch: str = "",
     dirty_action: str = "refuse",
     confirm_discard: bool = False,
+    target_roots: tuple[Path, ...] = (),
 ) -> tuple[Path, bool]:
     """Return (squad_dir, is_fresh_start).
 
@@ -4777,9 +4778,21 @@ def _select_squad_dir(
     import json as _json
     from harness.paths import make_spec_run_id
 
+    def require_new_run_selection() -> None:
+        from harness.verification_stack_runtime import (
+            VerificationStackResolutionError, require_spec_stack_selection,
+        )
+
+        try:
+            require_spec_stack_selection(project_root, target_roots=target_roots)
+        except (VerificationStackResolutionError, StackError) as exc:
+            print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+
     def start_fresh() -> tuple[Path, bool]:
         from echelon.phase_a_start import PhaseAStartError, start_phase_a_spec
 
+        require_new_run_selection()
         run_id = make_spec_run_id()
         runs_gitignore = project_root / "runs" / ".gitignore"
         runs_gitignore.parent.mkdir(exist_ok=True)
@@ -4825,6 +4838,7 @@ def _select_squad_dir(
         return start_fresh()
 
     if state.get("status") == "preparing" and user_message == state.get("user_message"):
+        require_new_run_selection()
         return existing_dir, True
 
     status = state.get("status")
@@ -5297,6 +5311,7 @@ def _cmd_run(
         configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
         dirty_action=dirty_action,
         confirm_discard=confirm_discard,
+        target_roots=tuple(project_root / target for target in implementation_targets),
     )
     if reset:
         print("[squad] state reset — starting fresh", flush=True)
