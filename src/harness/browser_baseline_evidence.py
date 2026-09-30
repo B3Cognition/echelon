@@ -112,6 +112,33 @@ def read_browser_baseline_observation(
     candidate_fingerprint: str, input_fingerprint: str,
 ) -> BrowserBaselineObservation:
     """Validate every binding and byte before exposing retained proposal paths."""
+    if not isinstance(candidate_fingerprint, str) or not candidate_fingerprint:
+        raise BrowserBaselineEvidenceError("browser receipt requires a current candidate")
+    return _read_browser_baseline_observation(
+        ref, operation_id=operation_id, task_id=task_id,
+        candidate_fingerprint=candidate_fingerprint, input_fingerprint=input_fingerprint,
+    )
+
+
+def validate_historical_browser_baseline(
+    ref: BrowserBaselineEvidenceRef, *, operation_id: str, task_id: str,
+    input_fingerprint: str,
+) -> None:
+    """Authenticate archived evidence without offering it for a current candidate.
+
+    The journal's receipt digest binds the historical candidate identity. Its
+    bytes still require validation, but no current proposal paths are returned.
+    """
+    _read_browser_baseline_observation(
+        ref, operation_id=operation_id, task_id=task_id,
+        candidate_fingerprint=None, input_fingerprint=input_fingerprint,
+    )
+
+
+def _read_browser_baseline_observation(
+    ref: BrowserBaselineEvidenceRef, *, operation_id: str, task_id: str,
+    candidate_fingerprint: str | None, input_fingerprint: str,
+) -> BrowserBaselineObservation:
     try:
         path = ref.path
         if not path.is_absolute() or path.is_symlink() or path.name != "receipt.json":
@@ -139,7 +166,10 @@ def read_browser_baseline_observation(
                 or payload["authority"] != "browser-baseline-proposal"
                 or payload["operation_id"] != operation_id
                 or payload["task_id"] != task_id
-                or payload["candidate_fingerprint"] != candidate_fingerprint
+                or not isinstance(payload["candidate_fingerprint"], str)
+                or not payload["candidate_fingerprint"]
+                or (candidate_fingerprint is not None
+                    and payload["candidate_fingerprint"] != candidate_fingerprint)
                 or payload["input_fingerprint"] != input_fingerprint
                 or type(payload["verification_passed"]) is not bool
                 or not isinstance(payload["verification_diagnostic"], str)

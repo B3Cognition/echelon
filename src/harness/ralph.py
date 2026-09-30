@@ -2412,7 +2412,7 @@ class RalphController:
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)
 
-            def remember_supersession(successor_id, reference, previous_usage, unknown_usage):
+            def remember_supersession(successor_id, reference, previous_usage, unknown_usage, retained_usage):
                 current = self._state_store.read()
                 current["tokens_used"] = current.get("tokens_used", 0) + max(
                     0, previous_usage - operation["accounted_tokens"],
@@ -2424,7 +2424,8 @@ class RalphController:
                 operation["superseded_dispatches"] = [
                     *operation.get("superseded_dispatches", []), reference,
                 ]
-                operation.update(id=successor_id, accounted_tokens=0)
+                # Retained receipts are replayed, not billed a second time.
+                operation.update(id=successor_id, accounted_tokens=retained_usage)
                 operation.pop("budget_extension_limit", None)
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)

@@ -15,7 +15,7 @@ from uuid import uuid4
 from harness.build_result import BuildResult
 from harness.browser_baseline_evidence import (
     BrowserBaselineEvidenceRef, read_browser_baseline_observation,
-    write_browser_baseline_receipt,
+    write_browser_baseline_receipt, validate_historical_browser_baseline,
 )
 from harness.delivery_slice import (
     DeliveryAssignment, DeliverySliceError, DeliveryTasksComplete, PASSING_VERDICTS, STEP_VERDICTS,
@@ -47,10 +47,12 @@ _MAX_REVIEW_PATHS = 200
 _MAX_REVIEW_AUDIT_PATHS = 200
 
 
-def _validate_superseded_dispatches(root: Path, operation_id: str, references: list[dict] | None) -> None:
+def _validate_superseded_dispatches(root: Path, operation_id: str, references: list[dict] | None,
+                                   successor: dict | None) -> dict[str, str]:
     """Retained parent receipts remain authority on every successor replay."""
+    browser_owners = {}
     if references is None:
-        return
+        return browser_owners
     if not isinstance(references, list) or not references:
         raise DeliverySliceError("invalid delivery supersession history")
     seen = {operation_id}
@@ -70,44 +72,65 @@ def _validate_superseded_dispatches(root: Path, operation_id: str, references: l
                     "delivery_provider_failure_superseded:" + operation_id,
                 }):
             raise DeliverySliceError("delivery_reconciliation_required: superseded receipt changed")
+        retained = data["records"][:-1]
+        if successor is None or successor["records"][:len(retained)] != retained:
+            raise DeliverySliceError("delivery_reconciliation_required: retained review history changed")
+        for record in retained:
+            if "browser_evidence" in record:
+                browser_owners[record["assignment"]["dispatch_id"]] = reference["operation_id"]
+        successor = data
         operation_id = reference["operation_id"]
         seen.add(operation_id)
+    return browser_owners
 
 
-def _supersede_initial_dispatch(*, stack, journal, data, operation_id, evidence_root,
+def _supersede_failed_dispatch(*, stack, journal, data, operation_id, evidence_root,
                                candidate, reconcile_unknown, retry_failed,
                                token_budget, budget_extension_limit):
-    """Replace only a first implementer attempt, before any review history exists.
+    """Replace an initial implementer or a known failed read-only review.
+
+    Reviews retain the entire successful prefix, including rejected rounds.
+    Unknown or later mutating dispatches still require reconciliation.
 
     Successor journal -> explicit parent seal -> controller state handover.
     The deterministic successor makes the first two writes crash-replayable;
     the caller must persist the handover before any provider can be dispatched.
     """
     records = data["records"]
-    if (len(records) != 1 or records[0]["assignment"]["step"] != "implementer"
-            or records[0]["repair_attempt"] != 0 or records[0]["result"] is not None):
+    record = records[-1]
+    initial = (len(records) == 1 and record["assignment"]["step"] == "implementer"
+               and record["repair_attempt"] == 0)
+    reviewer = record["assignment"]["step"] in {"spec_guard", "code_reviewer", "test_guardian"}
+    if record["result"] is not None or not (initial or reviewer):
         raise DeliverySliceError("delivery_reconciliation_required: recovery requires the first implementer dispatch")
-    record = records[0]
     successor_id = _digest({"operation_id": operation_id, "dispatch_id": record["assignment"]["dispatch_id"]})
     unknown_seal = "delivery_dispatch_outcome_unknown_superseded:" + successor_id
     failed_seal = "delivery_provider_failure_superseded:" + successor_id
     unknown = record["error"] in {None, unknown_seal}
     if not (
-        unknown and reconcile_unknown
+        initial and unknown and reconcile_unknown
         and all(record[key] is None for key in ("raw_result", "candidate_after", "token_usage"))
         or not unknown and retry_failed and record["error"] in {"delivery_provider_failed", failed_seal}
     ):
         raise DeliverySliceError("delivery_reconciliation_required: dispatch is not eligible for recovery")
-    previous_usage = record["token_usage"] or 0
+    if reviewer and candidate != record["assignment"]["candidate_fingerprint"]:
+        raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
+    retained = records[:-1]
+    retained_usage = sum(row["token_usage"] or 0 for row in retained)
+    if any(row["token_usage"] is None for row in retained):
+        raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
+    failed_usage = record["token_usage"] or 0
+    previous_usage = retained_usage + failed_usage
     saved_budget = data["budget_limit"]
     if saved_budget is not None and budget_extension_limit is not None:
         saved_budget = max(saved_budget, budget_extension_limit)
     limits = [limit for limit in (saved_budget, token_budget) if limit is not None]
-    remaining = min(limits) - previous_usage if limits else None
-    if remaining is not None and remaining <= 0:
+    remaining = min(limits) - failed_usage if limits else None
+    if remaining is not None and remaining <= retained_usage:
         raise DeliverySliceError("delivery_slice_budget_exhausted")
-    replacement = {**data, "run_id": successor_id, "candidate_fingerprint": candidate,
-                   "budget_limit": remaining, "records": []}
+    replacement = {**data, "run_id": successor_id,
+                   "candidate_fingerprint": data["candidate_fingerprint"] if retained else candidate,
+                   "budget_limit": remaining, "records": retained}
     successor = stack.enter_context(DeliverySliceJournal(evidence_root, successor_id))
     existing = successor.load(required=record["error"] in {unknown_seal, failed_seal})
     if existing is not None and existing != replacement:
@@ -118,7 +141,8 @@ def _supersede_initial_dispatch(*, stack, journal, data, operation_id, evidence_
     journal.save(data)
     reference = {"operation_id": operation_id, "dispatch_id": record["assignment"]["dispatch_id"],
                  "journal_sha256": _digest(data), "successor_id": successor_id}
-    return successor, replacement, successor_id, reference, previous_usage, record["token_usage"] is None
+    return (successor, replacement, successor_id, reference, previous_usage,
+            record["token_usage"] is None, retained_usage)
 
 
 class DeliverySliceRunner:
@@ -144,7 +168,7 @@ class DeliverySliceRunner:
         reconcile_unknown_dispatch: bool = False,
         retry_failed_dispatch: bool = False,
         superseded_dispatches: list[dict] | None = None,
-        on_dispatch_superseded: Callable[[str, dict, int, bool], None] | None = None,
+        on_dispatch_superseded: Callable[[str, dict, int, bool, int], None] | None = None,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -212,7 +236,9 @@ class DeliverySliceRunner:
 
             journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id))
             data = journal.load(required=journal_required)
-            _validate_superseded_dispatches(evidence_root, operation_id, superseded_dispatches)
+            browser_owners = _validate_superseded_dispatches(
+                evidence_root, operation_id, superseded_dispatches, data,
+            )
             normalized_declared_targets = _normalize_declared_targets(declared_targets)
             nested_target_prefix = _nested_target_prefix(implementation_target)
             if (
@@ -300,16 +326,19 @@ class DeliverySliceRunner:
             ):
                 if on_dispatch_superseded is None:
                     raise DeliverySliceError("delivery recovery requires a durable operation handover")
-                journal, data, operation_id, reference, previous_usage, unknown_usage = _supersede_initial_dispatch(
+                journal, data, operation_id, reference, previous_usage, unknown_usage, retained_usage = _supersede_failed_dispatch(
                     stack=stack, journal=journal, data=data, operation_id=operation_id,
                     evidence_root=evidence_root, candidate=_candidate_fingerprint(worktree, spec_dir),
                     reconcile_unknown=reconcile_unknown_dispatch,
                     retry_failed=retry_failed_dispatch, token_budget=token_budget,
                     budget_extension_limit=budget_extension_limit,
                 )
-                on_dispatch_superseded(operation_id, reference, previous_usage, unknown_usage)
+                on_dispatch_superseded(operation_id, reference, previous_usage, unknown_usage, retained_usage)
                 run_id, records = data["run_id"], data["records"]
-                tokens, usage_known = 0, True
+                for record in records:
+                    if "browser_evidence" in record:
+                        browser_owners.setdefault(record["assignment"]["dispatch_id"], reference["operation_id"])
+                tokens, usage_known = retained_usage, True
                 token_budget = data["budget_limit"]
                 budget_extension_limit = None
             if records and records[-1]["result"] is None and records[-1]["error"] is None:
@@ -334,6 +363,7 @@ class DeliverySliceRunner:
             last_browser_candidate_after: str | None = None
             last_browser_capture_passed = False
             last_browser_reference: dict[str, str] | None = None
+            replay_round = records[-1]["repair_attempt"] if records else 0
             for repair in range(MAX_GATE_ROUNDS):
                 browser_requests_in_round = 0
                 rejected = False
@@ -382,6 +412,7 @@ class DeliverySliceRunner:
                             tokens = sum(item["token_usage"] or 0 for item in records)
                             usage_known = all(item["token_usage"] is not None for item in records)
                         cursor += 1
+                        historical = cached and repair < replay_round
                         if record["error"]:
                             raise DeliverySliceError(record["error"])
                         if token_budget is not None and not usage_known:
@@ -392,6 +423,11 @@ class DeliverySliceRunner:
                         if review_evidence is not None and review_evidence["incomplete"]:
                             if review_rechecks:
                                 raise DeliverySliceError(f"delivery_review_context_unresolved:{step}")
+                            if historical:
+                                # The next completed receipt already consumed this
+                                # recheck. Do not inspect an old candidate again.
+                                review_rechecks += 1
+                                continue
                             if _candidate_fingerprint(worktree, spec_dir) != record["candidate_after"]:
                                 raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
                             recheck_feedback = _review_recheck_context(
@@ -410,6 +446,14 @@ class DeliverySliceRunner:
                                     and result["verdict"] not in {"BLOCKED", "NEEDS_CONTEXT"}):
                                 raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             break
+                        if historical:
+                            reference = record["browser_evidence"]
+                            validate_historical_browser_baseline(
+                                BrowserBaselineEvidenceRef(Path(reference["path"]), reference["receipt_sha256"]),
+                                operation_id=browser_owners.get(assignment.dispatch_id, operation_id),
+                                task_id=task_id, input_fingerprint=input_fingerprint,
+                            )
+                            continue  # Completed history, not a new capture request.
                         if (browser_requests and not needs_snapshot_recapture
                                 and record["candidate_after"] == last_browser_candidate_after):
                             if (last_browser_capture_passed and browser_paths
@@ -456,7 +500,7 @@ class DeliverySliceRunner:
                             path=Path(reference["path"]), receipt_sha256=reference["receipt_sha256"],
                         )
                         observation = read_browser_baseline_observation(
-                            ref, operation_id=operation_id, task_id=task_id,
+                            ref, operation_id=browser_owners.get(assignment.dispatch_id, operation_id), task_id=task_id,
                             candidate_fingerprint=product_evidence_fingerprint(worktree),
                             input_fingerprint=input_fingerprint,
                         )

@@ -1014,7 +1014,17 @@ preserves the candidate as untrusted work, and starts
 a fresh implementer and full review/verification cycle. It does not count the
 unknown dispatch as success or bypass any acceptance gate. Known token usage
 and run counters are preserved; missing usage is recorded explicitly, not as
-zero. Interrupted later rounds remain blocked rather than resetting attempts.
+zero. Unknown dispatch outcomes in later rounds remain blocked rather than
+resetting attempts.
+
+Ordinary `delivery continue` can retry a known provider execution failure in a
+read-only review. It retains completed reviews and repair rounds, seals the
+failed receipt, and retries only the failed reviewer after checking the unchanged
+candidate and inputs. Captured browser evidence retains its original binding;
+known usage is charged once and missing usage remains explicitly unknown. Each
+continuation permits one recovery, not an unbounded provider retry loop. Review
+rejections, malformed results, mutated candidates, and later implementer failures
+are not converted into retryable provider failures.
 
 ### Review Loop (Phase 3)
 

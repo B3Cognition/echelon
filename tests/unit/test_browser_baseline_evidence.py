@@ -16,6 +16,23 @@ def _capture():
     )
 
 
+def test_historical_validation_authenticates_bytes_but_exposes_no_current_proposal(tmp_path):
+    from harness.browser_baseline_evidence import (
+        BrowserBaselineEvidenceError, read_browser_baseline_observation,
+        validate_historical_browser_baseline, write_browser_baseline_receipt,
+    )
+    args = dict(operation_id="operation-1", task_id="T-010", input_fingerprint="inputs-a")
+    ref = write_browser_baseline_receipt(evidence_root=tmp_path, capture=_capture(), **args)
+    assert validate_historical_browser_baseline(ref, **args) is None
+    for candidate in (None, "candidate-b"):
+        with pytest.raises(BrowserBaselineEvidenceError):
+            read_browser_baseline_observation(ref, candidate_fingerprint=candidate, **args)
+    image = ref.path.parent / "artifacts/0001.png"
+    image.write_bytes(b"tampered")
+    with pytest.raises(BrowserBaselineEvidenceError, match="artifact digest"):
+        validate_historical_browser_baseline(ref, **args)
+
+
 def test_baseline_proposal_retains_path_and_bytes_without_claiming_pass(tmp_path):
     from harness.browser_baseline_evidence import (
         read_browser_baseline_receipt, write_browser_baseline_receipt,
