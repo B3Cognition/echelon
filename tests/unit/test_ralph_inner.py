@@ -527,6 +527,9 @@ class TestInnerLoopTaskProgress:
     def test_explicit_feedback_blocker_stops_without_another_verify(self, tmp_path: Path) -> None:
         """A spec-governance blocker must not become another fulfillment-gap retry."""
         ctrl = _make_controller(tmp_path, [])
+        state = ctrl._state_store.read()
+        state.update(build_reason="stale earlier failure", build_status="done", build_exit_code=17)
+        ctrl._state_store.write(state)
         entry = VerifyResult(
             passed=False,
             failures=[
@@ -570,4 +573,8 @@ class TestInnerLoopTaskProgress:
         assert result["inner_count"] == 1
         assert result["final_verify"].failures[0].id == "build-blocked"
         assert "owner spec decision" in result["final_verify"].failures[0].error
+        saved = ctrl._state_store.read()
+        assert saved["build_reason"] == "NFR-008 requires an owner spec decision"
+        assert saved["build_status"] == "blocked"
+        assert saved["build_exit_code"] == 0
         ctrl._exec_verify.assert_not_called()

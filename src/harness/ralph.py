@@ -2110,6 +2110,12 @@ class RalphController:
                         fix_result.get("build_reason")
                         or "build agent reported a blocker"
                     )
+                    blocked_state = self._state_store.read()
+                    blocked_state.update(
+                        build_status="blocked", build_reason=blocker,
+                        build_exit_code=fix_result.get("exit_code"),
+                    )
+                    self._state_store.write(blocked_state)
                     return {
                         "converged": False,
                         "blocked": True,

@@ -187,15 +187,27 @@ def _outer_cap_delivery_action(
 
 
 def _is_retryable_delivery_provider_failure(state: dict) -> bool:
-    """Return true only for a provider failure bound to a durable slice operation."""
+    """Route a retained provider failure to the controller's locked validation."""
     operation = state.get("delivery_slice_operation")
+    verification = state.get("last_verify_result")
+    failures = verification.get("failures") if isinstance(verification, dict) else None
+    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
+    # Inner repairs publish their current failure in the final verification
+    # result. Older states may retain an earlier outer-build summary alongside it.
+    current_failure = (
+        isinstance(verification, dict) and verification.get("passed") is False
+        and isinstance(failure, dict) and failure.get("category") == "other"
+        and failure.get("id") == "build-blocked"
+        and failure.get("error") == "delivery_provider_failed"
+    )
     return (
         state.get("termination_reason") == "build_blocked"
         and state.get("blocked_phase") == "implementation"
         and state.get("build_status") == "blocked"
-        and state.get("build_reason") == "delivery_provider_failed"
+        and (state.get("build_reason") == "delivery_provider_failed" or current_failure)
         and isinstance(operation, dict)
         and bool(str(operation.get("id") or "").strip())
+        and operation.get("progress_applied") is not True
     )
 
 

@@ -16,6 +16,35 @@ from tests.unit.test_cli_harness_resume import (
 UNKNOWN_REASON = "delivery_reconciliation_required: dispatch completion is unknown"
 
 
+@pytest.mark.parametrize("failure_id,eligible", [("build-blocked", True), ("verify-command", False)])
+def test_continue_routes_current_provider_failure_despite_stale_summary(tmp_path, monkeypatch, failure_id, eligible):
+    from echelon.cli_app import app
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    _make_echelon_yml(tmp_path, verify_command="pytest")
+    _make_phase_a_spec(tmp_path)
+    state_dir = _setup_build(tmp_path, "001")
+    _write_state(state_dir, "001", "default", {
+        "status": "blocked", "termination_reason": "build_blocked",
+        "blocked_phase": "implementation", "build_status": "blocked",
+        "build_reason": UNKNOWN_REASON,
+        "last_verify_result": {"passed": False, "failures": [{
+            "category": "other", "id": failure_id, "error": "delivery_provider_failed",
+        }]},
+        "delivery_slice_operation": {"id": "pending", "progress_applied": False},
+    })
+    before = (state_dir / "delivery.json").read_bytes()
+    with patch("harness.skills.run_skill.run") as run, \
+         patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+         patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+        result = CliRunner().invoke(app, ["delivery", "continue", "001"])
+    assert result.exit_code == (0 if eligible else 1), result.output
+    assert run.call_count == int(eligible)
+    if eligible:
+        assert not run.call_args.kwargs.get("reconcile_unknown_dispatch")
+    assert (state_dir / "delivery.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("reason,build_status", [
     ("harness_error", ""),
     ("build_incomplete", "phase_a_not_ready"),
