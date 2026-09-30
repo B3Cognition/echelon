@@ -1,8 +1,9 @@
 # Delivery browser-failure repair handoff
 
 Status: implemented and independently reviewed; recovery fixes functionally
-verified. Native rollout is blocked at CLI admission; workspace acceptance is
-not complete. See the implementation plan's execution checkpoint.
+verified. Native rollout has passed admission and reached owner T-012;
+workspace acceptance is not complete. See the implementation plan's execution
+checkpoint.
 
 Implementation plan: [browser repair handoff](../plans/2026-09-30-browser-repair-handoff.md).
 

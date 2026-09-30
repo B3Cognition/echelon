@@ -349,3 +349,13 @@ and without a configured root verifier. GREEN: 100 CLI/recovery tests passed in
 handoff/controller/lock tests passed in 82.06s. Repository fail-fast: 96 passed,
 one known convergence-fixture failure in 41.08s. No reset, limit change, demo edit
 or provider recovery flag was introduced. Native retry follows this checkpoint.
+
+Native retry on `3b839ffb` passed admission and selected refresh
+`8744822883aef06eaba8761969deb5591c83211f612b9fdd0c84a819389f3043`.
+The persisted capture intent consumed ordinal 3, retaining 1,512,309 carried
+tokens and the original 14,021,444 operation cap. The new v3 receipt
+`c22a61d1c17a45ebbe7ddcc1b0c54ce8` reported `CT-NET-001` with zero unidentified
+failures, and the harness selected T-012 owner operation
+`bcc65da013e62bc359de68e7c3ac2cc7c5d47ccacd4f8d349f98377effaf0189`.
+The assigned implementer is executing. Owner review/recheck, source return and
+final acceptance remain unverified; observation continues. No manual demo edits.

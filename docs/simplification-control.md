@@ -18,8 +18,10 @@ push, or completed workspace acceptance. The repository-wide fail-fast check
 still stops at the known `test_converges_within_3_outer_iterations` fixture's
 missing canonical spec directory.
 
-The live run remains stopped on unfinished T-011. Cross-task repair/return is
-implemented and functionally tested, but native admission is blocked. The
+The live run has resumed from unfinished T-011 using `3b839ffb`. Its fresh,
+structured capture identified `CT-NET-001` and selected owner T-012 through the
+normal harness path. T-012 implementation is in flight; owner reviews/recheck,
+return to T-011 and final Delivery acceptance are not yet verified. The
 [browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
 and four-task
 [implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md) are approved.
@@ -38,8 +40,8 @@ round-count assertions deselected. Those are the three modes of
 `test_gate_failure_cannot_be_promoted_by_ralph` and
 `test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice`; they expect
 four rounds although the existing limit is five. No gate or limit was changed.
-Live Delivery is still stopped. Task 4 interruption tests, current v2 refresh
-integration, and independent review have run; native observation remains blocked.
+At the pre-review checkpoint, Delivery was still stopped. Task 4 interruption
+tests, current v2 refresh integration, and independent review have since run.
 Task 4 pre-review checkpoint: 328 focused tests passed (four known stale
 round-count assertions excluded). Ten crash boundaries preserve dispatches and
 accounting. Real Ralph refreshes the stopped v2 two-request shape without
@@ -67,7 +69,10 @@ consults that policy for routing/status only; locked runner validation still
 authorizes evidence, attempts and dispatch. No browser recovery rules were added
 to the CLI. Command/recovery tests: 100 passed; handoff/controller/lock tests:
 121 passed. Repository fail-fast: 96 passed, then the same known convergence
-fixture. Next: retry the normal native command and observe. Task 4 and STAB-1
+fixture. The native retry has now reached T-012 without flags or limit changes:
+refresh `8744822883ae…` used ordinal 3 and preserved the two prior requests;
+owner `bcc65da013e6…` is active. Capture receipt `c22a61d1c17a45ebbe7ddcc1b0c54ce8`
+retains structured `CT-NET-001`, with zero unidentified failures. Task 4 and STAB-1
 remain open; no workspace-acceptance claim is made.
 No new milestone or S6/S7 work is opened.
 
