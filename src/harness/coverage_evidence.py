@@ -94,19 +94,43 @@ def task_owned_coverage_case_ids(tasks_path: Path) -> dict[str, set[str]]:
     markdown = Path(tasks_path).read_text(encoding="utf-8", errors="replace")
     result: dict[str, set[str]] = {}
     current_task: str | None = None
+    in_test_tasks = False
+    fence = ""
     for line in markdown.splitlines():
+        stripped = line.strip()
+        if fence:
+            if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + ",}", stripped):
+                fence = ""
+            continue
+        fence_start = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_start:
+            if not line[0].isspace():
+                current_task = None
+                in_test_tasks = False
+            fence = fence_start.group(1)
+            continue
         task_match = _TASK_BLOCK_START_RE.match(line)
         if task_match is not None:
             current_task = task_match.group(1)
             result.setdefault(current_task, set())
+            in_test_tasks = False
+            continue
+        # Checkpoints and top-level prose end the preceding canonical block.
+        if stripped and (not line[0].isspace() or stripped.startswith("#")):
+            current_task = None
+            in_test_tasks = False
             continue
         if current_task is None:
             continue
+        if stripped.startswith("**"):
+            in_test_tasks = stripped == "**Test Tasks:**"
         ownership = _TASK_COVERAGE_OWNERSHIP_RE.match(line)
         if ownership is not None:
             result[current_task].update(
                 _COVERAGE_CASE_ID_RE.findall(ownership.group(1))
             )
+        elif in_test_tasks:
+            result[current_task].update(_COVERAGE_CASE_ID_RE.findall(line))
     return result
 
 

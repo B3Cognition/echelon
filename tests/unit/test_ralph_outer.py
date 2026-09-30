@@ -929,17 +929,25 @@ def test_coverage_gate_delegates_to_shared_candidate_evidence_runner(
     )
 
 
+@pytest.mark.parametrize("ownership_format", ["named", "test_tasks"])
 def test_partial_delivery_coverage_uses_only_completed_task_ownership(
-    tmp_path: Path,
+    tmp_path: Path, ownership_format: str,
 ) -> None:
     tasks = tmp_path / "tasks.md"
+    done_ownership, pending_ownership = (
+        ("  **Named Test Ownership:** `UT-DONE-001`, `E2E-DONE-002`.\n\n",
+         "  **Named Test Ownership:** `UT-FUTURE-001`.\n")
+        if ownership_format == "named" else
+        ("  **Test Tasks:**\n  - [x] Implement `UT-DONE-001`, `E2E-DONE-002`.\n\n",
+         "  **Test Tasks:**\n  - [ ] Implement `UT-FUTURE-001`.\n")
+    )
     tasks.write_text(
         "# Tasks\n\n"
         "- [x] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
         "  **Status:** DONE\n"
-        "  **Named Test Ownership:** `UT-DONE-001`, `E2E-DONE-002`.\n\n"
-        "- [ ] T-002 complexity=standard phase=feature req=FR-002 depends=T-001\n"
-        "  **Named Test Ownership:** `UT-FUTURE-001`.\n",
+        + done_ownership
+        + "- [ ] T-002 complexity=standard phase=feature req=FR-002 depends=T-001\n"
+        + pending_ownership,
         encoding="utf-8",
     )
 

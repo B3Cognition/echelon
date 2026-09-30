@@ -32,19 +32,88 @@ def _write_map(spec_dir: Path, rows: str) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("label", ["Named Test Ownership", "Test Case IDs Owned"])
 def test_task_coverage_parser_accepts_existing_test_case_ids_owned_label(
-    tmp_path: Path,
+    tmp_path: Path, label: str,
 ) -> None:
     tasks = tmp_path / "tasks.md"
     tasks.write_text(
         "# Tasks\n\n"
         "- [x] T-001 complexity=standard phase=foundation req=FR-012 depends=none\n"
-        "  **Test Case IDs Owned:** `UT-NAV-004`, `UT-NAV-005`, `UT-NAV-006`.\n",
+        f"  **{label}:** `UT-NAV-004`, `UT-NAV-005`, `UT-NAV-006`.\n",
         encoding="utf-8",
     )
 
     assert task_owned_coverage_case_ids(tasks) == {
         "T-001": {"UT-NAV-004", "UT-NAV-005", "UT-NAV-006"}
+    }
+
+
+@pytest.mark.unit
+def test_task_coverage_parser_reads_template_test_tasks_without_cross_task_leakage(
+    tmp_path: Path,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [x] T-011 complexity=complex phase=integration req=FR-001 depends=none\n"
+        "  **Description:** Consult `E2E-CONTEXT-001`; this is not ownership.\n"
+        "  **Test Tasks:**\n"
+        "  - [x] Implement `E2E-START-002`, `E2E-START-003`, and\n"
+        "    `E2E-MOTION-002` before merge.\n"
+        "  - [ ] Repeat `E2E-START-002` five times.\n\n"
+        "- [ ] T-012 complexity=standard phase=release req=NFR-001 depends=T-011\n"
+        "  **Description:** Depends on `E2E-START-002` from T-011.\n"
+        "  **Test Tasks:**\n"
+        "  - [ ] Implement `IT-SCOPE-001` and `CT-NET-001`.\n",
+        encoding="utf-8",
+    )
+    assert task_owned_coverage_case_ids(tasks) == {
+        "T-011": {"E2E-START-002", "E2E-START-003", "E2E-MOTION-002"},
+        "T-012": {"IT-SCOPE-001", "CT-NET-001"},
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("boundary", [
+    "  **Acceptance Criteria:**\n",
+    "## Checkpoint: Integration Complete\n",
+    "Unrelated top-level prose\n",
+    "```markdown\nTop-level example\n```\n",
+])
+def test_task_coverage_parser_stops_test_tasks_at_section_boundary(
+    tmp_path: Path, boundary: str,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [x] T-011 complexity=complex phase=integration req=FR-001 depends=none\n"
+        "  **Test Tasks:**\n"
+        "  - [x] Implement `E2E-START-002`.\n\n"
+        + boundary
+        + "  - [ ] Refer to `E2E-UNRELATED-001`.\n",
+        encoding="utf-8",
+    )
+    assert task_owned_coverage_case_ids(tasks) == {"T-011": {"E2E-START-002"}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fence", ["```", "~~~~"])
+def test_task_coverage_parser_ignores_fenced_examples_in_test_tasks(
+    tmp_path: Path, fence: str,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [x] T-011 complexity=complex phase=integration req=FR-001 depends=none\n"
+        "  **Test Tasks:**\n"
+        "  - [x] Implement `E2E-START-002`.\n"
+        f"  {fence}markdown\n"
+        "- [ ] T-099 complexity=standard phase=release req=FR-099 depends=none\n"
+        "  **Named Test Ownership:** `E2E-EXAMPLE-001`\n"
+        f"  {fence}\n"
+        "  - [ ] Implement `E2E-MOTION-002`.\n",
+        encoding="utf-8",
+    )
+    assert task_owned_coverage_case_ids(tasks) == {
+        "T-011": {"E2E-START-002", "E2E-MOTION-002"},
     }
 
 
