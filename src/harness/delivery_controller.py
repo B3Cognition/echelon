@@ -12,6 +12,10 @@ from typing import Any, Callable, Dict, Optional
 
 from harness.paths import build_dir
 from harness.config import HarnessConfig
+from harness.coverage_evidence import (
+    published_browser_gate_required as _published_browser_gate_required,
+    published_semantic_visual_gate_required as _published_semantic_visual_gate_required,
+)
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler, print_escalation_sticky_banner
 from harness.delivery_results import (
@@ -226,39 +230,6 @@ def _delivery_stack_snapshot(resolved: object) -> dict[str, object] | None:
         "resolved_stack_hash": resolved_stack_contract_sha256(resolved),
         "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
     }
-
-
-def _published_browser_gate_required(
-    spec_dir: Path | None,
-    *,
-    gates: frozenset[str] = frozenset({
-        "playwright e2e critical journeys", "visual validation task",
-    }),
-) -> bool:
-    """Read the published coverage map's browser execution obligation."""
-    if spec_dir is None:
-        return False
-    path = spec_dir / "coverage-map.md"
-    if not path.is_file():
-        return False
-    in_gates = False
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        heading = line.strip()
-        if heading.startswith("## "):
-            in_gates = heading.casefold() == "## browser app gates"
-            continue
-        if not in_gates or not heading.startswith("|"):
-            continue
-        cells = [cell.strip().casefold() for cell in heading.strip("|").split("|")]
-        if len(cells) >= 2 and cells[0] in gates and cells[1] == "yes":
-            return True
-    return False
-
-
-def _published_semantic_visual_gate_required(spec_dir: Path | None) -> bool:
-    return _published_browser_gate_required(
-        spec_dir, gates=frozenset({"visual validation task"}),
-    )
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:

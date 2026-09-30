@@ -106,6 +106,13 @@ def test_empty_spec_selection_is_actionable(tmp_path):
 
 ## Task 2: Capability-complete target-aware build readiness
 
+Completed 2026-09-30: 183 focused tests passed, including static greenfield and
+target-scoped capability probes. Adjacent controller tests: 60 passed, four
+repair-count expectation failures (expected four chains/112 tokens; current
+controller runs five chains/140 tokens). Repository fail-fast: 96 passed, then
+the documented canonical-spec convergence fixture failed. These are not full-suite
+success receipts.
+
 **Interfaces**
 
 Extend `stacks/preflight.py` with one pure function:

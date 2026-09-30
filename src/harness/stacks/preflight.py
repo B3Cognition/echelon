@@ -146,6 +146,40 @@ def run_stack_preflight(
     )
 
 
+def verification_capability_findings(
+    resolved: ResolvedStacks, *, coverage_test_types: Iterable[str],
+    browser_required: bool, semantic_visual_required: bool,
+    visual_execution_available: bool,
+) -> list[StackPreflightFinding]:
+    """Static owner capabilities only: never execute future product commands."""
+    findings: list[StackPreflightFinding] = []
+    def error(code: str, message: str) -> None:
+        findings.append(StackPreflightFinding(severity="error", code=code, message=message))
+
+    if not resolved.selected_ids:
+        error("stack_selection_required", "Explicit owner stack selection is required.")
+    elif not set(resolved.resolved_ids).difference({"generic"}):
+        error("stack_capabilities_unresolved", "Generic permits discovery, not Delivery readiness.")
+    findings.extend(coverage_observer_preflight_findings(
+        resolved, coverage_test_types=coverage_test_types,
+    ))
+    runtime = resolved.runnability
+    if browser_required and not (
+        runtime.classification == "user_facing" and runtime.policy == "required"
+        and runtime.runner == "linux_container"
+        and {"install", "start", "readiness", "primary_journey", "stop"}.issubset(runtime.capabilities)
+        and "browser_dom" in runtime.required_observations
+    ):
+        error("verification_runtime_unavailable", "Required browser execution lacks a supported runtime contract.")
+    if semantic_visual_required and not visual_execution_available:
+        error("semantic_visual_capability_unavailable", "Required semantic visual execution is unavailable.")
+    if runtime.policy == "required" and runtime.runner != "linux_container":
+        error("verification_runtime_unavailable", f"Required runtime {runtime.runner!r} is unsupported by this executor.")
+    if not browser_required and not runtime.sources:
+        error("stack_capabilities_unresolved", "Declare a runtime or an explicit non-runnable disposition.")
+    return findings
+
+
 def coverage_observer_preflight_findings(
     resolved: ResolvedStacks,
     *,

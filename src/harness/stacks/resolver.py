@@ -157,7 +157,10 @@ def resolve_stacks(
 
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
-        runnability = _merge_runnability(runnability, stack_id, stack.runnability)
+        runnability = _merge_runnability(
+            runnability, stack_id, stack.runnability,
+            explicitly_declared=stack.runnability_declared,
+        )
         for capability, value in stack.provides.items():
             existing = capabilities.get(capability)
             if existing is None:
@@ -367,8 +370,9 @@ def _merge_runnability(
     current: ResolvedRunnability,
     stack_id: str,
     declared: StackRunnability,
+    *, explicitly_declared: bool = False,
 ) -> ResolvedRunnability:
-    if declared == StackRunnability():
+    if declared == StackRunnability() and not explicitly_declared:
         return current
 
     if current.runner and declared.runner and current.runner != declared.runner:

@@ -13,10 +13,11 @@ from harness.coverage_evidence import (
     active_unmapped_coverage_requirement_ids,
     parse_coverage_map_obligations,
     task_owned_coverage_case_ids,
+    published_browser_gates,
 )
 from harness.deferred_scope import DeferredScopeError, active_entries
 from harness.spec_frontmatter import read_canonical_target_entries
-from harness.task_targets import analyze_task_targets
+from harness.task_targets import analyze_task_targets, validate_task_targets
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
     "00-overview.md",
@@ -152,6 +153,114 @@ def validate_phase_a_readiness(
         missing=missing,
         ready_spec_dir=None,
     )
+
+
+def validate_phase_a_build_readiness(
+    state: dict, candidate_spec_dirs: list[Path], *, project_root: Path,
+    visual_execution_available: bool,
+    allow_pending_retarget_finalization: bool = False,
+) -> PhaseAReadinessResult:
+    """Structural readiness plus current authoritative verification capability."""
+    structural = validate_phase_a_readiness(
+        state, candidate_spec_dirs,
+        allow_pending_retarget_finalization=allow_pending_retarget_finalization,
+    )
+    if not structural.ready:
+        return structural
+    blockers = verification_capability_blockers(
+        structural.ready_spec_dir, project_root=project_root,
+        visual_execution_available=visual_execution_available,
+    )
+    return PhaseAReadinessResult(
+        ready=not blockers, blockers=blockers, missing=structural.missing,
+        ready_spec_dir=None if blockers else structural.ready_spec_dir,
+    )
+
+
+def verification_capability_blockers(
+    spec_dir: Path, *, project_root: Path, visual_execution_available: bool,
+) -> list[str]:
+    """Evaluate each owner's static contract, without host execution or writes."""
+    from harness.stacks.errors import StackError
+    from harness.stacks.preflight import verification_capability_findings
+    from harness.verification_stack_runtime import resolve_verification_stacks
+
+    if not isinstance(project_root, Path) or not project_root.is_absolute():
+        return ["verification_context_required: authoritative absolute project root is required"]
+    error = coverage_contract_error(spec_dir)
+    if error:
+        return [f"coverage-map.md invalid: {error}"]
+    try:
+        canonical_ids = {item.id for item in extract_canonical_requirements(spec_dir)}
+        deferred_ids = {item for entry in active_entries(spec_dir) for item in entry.selected_ids}
+        obligations = [item for row in parse_coverage_map_obligations(
+            spec_dir / "coverage-map.md", canonical_ids,
+        ) for item in row if item.requirement_id not in deferred_ids]
+        entries = read_canonical_target_entries(spec_dir, strict=True)
+        targets = [entry["path"] for entry in entries]
+        if not targets and (spec_dir / "targets.yml").exists():
+            return ["verification_ownership_unresolved: targets.yml has no valid targets"]
+        markdown = (spec_dir / "tasks.md").read_text(encoding="utf-8")
+        task_cases = task_owned_coverage_case_ids(spec_dir / "tasks.md")
+        if targets:
+            ownership = validate_task_targets(
+                markdown, declared_targets=targets, allow_legacy_single_target=False,
+            )
+            if not ownership.valid:
+                return ["verification_ownership_unresolved: tasks must declare exactly one canonical target"]
+            target_tasks = ownership.target_tasks
+            owned = {case for tasks in target_tasks.values() for task in tasks for case in task_cases.get(task, ())}
+            unowned = {item.test_case_id for item in obligations} - owned
+            if unowned:
+                return ["verification_ownership_unresolved: unowned coverage cases: " + ", ".join(sorted(unowned))]
+        else:
+            analysis = analyze_task_targets(markdown)
+            if analysis.target_tasks or analysis.cross_target_tasks:
+                return ["verification_ownership_unresolved: task targets are absent from canonical spec targets"]
+            targets = ["."]
+            target_tasks = {".": tuple(task_cases)}
+
+        gates = published_browser_gates(spec_dir)
+        gate_targets: dict[str, set[str]] = {}
+        for gate in ("playwright e2e critical journeys", "visual validation task"):
+            if gate not in gates:
+                continue
+            if len(targets) == 1:
+                gate_targets[gate] = set(targets)
+                continue
+            refs = set(re.findall(r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b", gates[gate]))
+            task_refs = {ref for ref in refs if ref.startswith("T-")}
+            case_refs = refs - task_refs
+            if task_refs - set(task_cases) or case_refs - {case for cases in task_cases.values() for case in cases}:
+                return [f"verification_ownership_unresolved: {gate} references unknown task/case owners"]
+            owners = {target for target, tasks in target_tasks.items() if any(
+                task in task_refs or case_refs.intersection(task_cases.get(task, ())) for task in tasks
+            )}
+            if not owners:
+                return [f"verification_ownership_unresolved: {gate} must reference its task/case owners"]
+            gate_targets[gate] = owners
+
+        blockers: list[str] = []
+        for target in targets:
+            try:
+                resolved = resolve_verification_stacks(project_root, project_root / target)
+                cases = {case for task in target_tasks.get(target, ()) for case in task_cases.get(task, ())}
+                types = {item.test_type for item in obligations if not entries or item.test_case_id in cases}
+                visual = target in gate_targets.get("visual validation task", ())
+                browser = visual or target in gate_targets.get("playwright e2e critical journeys", ()) or any(
+                    item.observer.required and item.observer.adapter == "playwright-json"
+                    and types.intersection(item.observer.test_types) for item in resolved.coverage_observers
+                )
+                findings = verification_capability_findings(
+                    resolved, coverage_test_types=types, browser_required=browser,
+                    semantic_visual_required=visual, visual_execution_available=visual_execution_available,
+                )
+                blockers.extend(f"{target}: {item.code}: {item.message}" for item in findings if item.severity == "error")
+            except (StackError, ValueError) as exc:
+                blockers.append(f"{target}: verification_stack_invalid: {exc}")
+        return blockers
+    except (CoverageContractError, DeferredScopeError, OSError, ValueError) as exc:
+        return [f"verification_contract_invalid: {exc}"]
 
 
 def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> list[str]:

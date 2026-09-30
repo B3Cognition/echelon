@@ -223,6 +223,7 @@ class StackDefinition:
     provisioners: list[StackProvisioner] = field(default_factory=list)
     runnability: StackRunnability = field(default_factory=StackRunnability)
     coverage_observers: list[StackCoverageObserver] = field(default_factory=list)
+    runnability_declared: bool = False
 
 
 def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefinition:
@@ -342,6 +343,9 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         provisioners=provisioners,
         runnability=runnability,
         coverage_observers=coverage_observers,
+        runnability_declared=isinstance(raw.get("runnability"), dict) and all(
+            key in raw["runnability"] for key in ("classification", "policy")
+        ),
     )
 
 

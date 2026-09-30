@@ -89,6 +89,38 @@ class CoverageTaskIntegrityGap:
     test_case_ids: tuple[str, ...]
 
 
+def published_browser_gates(spec_dir: Path | None) -> dict[str, str]:
+    """Required published gates and their declared Coverage Evidence references."""
+    if spec_dir is None or not (spec_dir / "coverage-map.md").is_file():
+        return {}
+    gates: dict[str, str] = {}
+    in_gates = False
+    for line in (spec_dir / "coverage-map.md").read_text(encoding="utf-8", errors="replace").splitlines():
+        heading = line.strip()
+        if heading.startswith("## "):
+            in_gates = heading.casefold() == "## browser app gates"
+            continue
+        if not in_gates or not heading.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in heading.strip("|").split("|")]
+        if len(cells) >= 2 and cells[1].casefold() == "yes":
+            key = cells[0].casefold()
+            gates[key] = " ".join((gates.get(key, ""), *cells[2:])).strip()
+    return gates
+
+
+def published_browser_gate_required(
+    spec_dir: Path | None, *, gates: frozenset[str] = frozenset({
+        "playwright e2e critical journeys", "visual validation task",
+    }),
+) -> bool:
+    return bool(gates.intersection(published_browser_gates(spec_dir)))
+
+
+def published_semantic_visual_gate_required(spec_dir: Path | None) -> bool:
+    return published_browser_gate_required(spec_dir, gates=frozenset({"visual validation task"}))
+
+
 def task_owned_coverage_case_ids(tasks_path: Path) -> dict[str, set[str]]:
     """Return the named coverage cases owned by each canonical task block."""
     markdown = Path(tasks_path).read_text(encoding="utf-8", errors="replace")

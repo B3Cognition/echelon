@@ -158,8 +158,28 @@ def read_target_entries(spec_dir: Path) -> List[Dict[str, Any]]:
     return fallback_entries
 
 
-def read_canonical_target_entries(spec_dir: Path) -> List[Dict[str, Any]]:
+def read_canonical_target_entries(spec_dir: Path, *, strict: bool = False) -> List[Dict[str, Any]]:
     """Read targets.yml authoritatively, using frontmatter only when it is absent."""
+    if strict:
+        try:
+            raw = (
+                yaml.safe_load((spec_dir / TARGETS_FILENAME).read_text(encoding="utf-8"))
+                if (spec_dir / TARGETS_FILENAME).exists()
+                else _read_frontmatter_only(spec_dir)
+            )
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise ValueError(f"canonical targets invalid: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ValueError("canonical targets must be a mapping")
+        values = raw.get("targets", [])
+        if not isinstance(values, list):
+            raise ValueError("canonical targets must be a list")
+        entries = [_normalize_target_entry(spec_dir, item, index) for index, item in enumerate(values)]
+        if any(entry is None for entry in entries):
+            raise ValueError("canonical targets contain an invalid target entry")
+        if len({entry["path"] for entry in entries}) != len(entries):
+            raise ValueError("canonical targets contain duplicate paths")
+        return entries
     if (spec_dir / TARGETS_FILENAME).exists():
         return _read_targets_file_entries(spec_dir)
     return read_target_entries(spec_dir)
