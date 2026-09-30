@@ -8,7 +8,7 @@ version = "4.1.1"
 description = "Multi-agent development system with verified delivery, MemPalace requirements memory, and 34-metric requirements quality analysis"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
   { name = "Ladislav Bihari" },
   { name = "B3 Cognition", email = "b3.cognition@gmail.com" },
@@ -46,6 +46,9 @@ echelon       = "echelon.cli:main"
 understanding = "understanding.cli:main"
 lexicon       = "lexicon.cli:main"
 hormone-calc  = "hormone_calc.cli:main"
+
+[tool.setuptools]
+license-files = ["LICENSE", "LICENSE-MIT", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
