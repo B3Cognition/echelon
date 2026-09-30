@@ -332,3 +332,20 @@ reset the run, reopen the spec, or reconcile these completed requests as unknown
 dispatches. The next narrowly scoped change is native admission for authenticated
 pending browser recovery, followed by the same command and observation. Task 4
 remains incomplete; this is not a convergence or workspace-acceptance receipt.
+
+### Approved admission follow-up
+
+After the boundary was reported, the user approved harness-owned eligibility,
+with CLI forwarding/display only. The bounded correction moves the existing
+provider-failure, cancelled-slice and prior-review-cap predicates into
+`harness.delivery_controller.pending_slice_resume_supported`, alongside the
+pending browser-request classification. CLI status and continuation consult the
+same policy. Classification is not recovery authorization: Ralph's locked runner
+still validates current evidence, candidate, ownership and consumed allowances.
+
+RED: actual CLI entry rejected the eligible retained browser operation both with
+and without a configured root verifier. GREEN: 100 CLI/recovery tests passed in
+72.67s, including negative phase/operation/unknown-dispatch cases; 121 functional
+handoff/controller/lock tests passed in 82.06s. Repository fail-fast: 96 passed,
+one known convergence-fixture failure in 41.08s. No reset, limit change, demo edit
+or provider recovery flag was introduced. Native retry follows this checkpoint.

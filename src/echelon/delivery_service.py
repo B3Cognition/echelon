@@ -186,53 +186,9 @@ def _outer_cap_delivery_action(
     )
 
 
-def _is_retryable_delivery_provider_failure(state: dict) -> bool:
-    """Route a retained provider failure to the controller's locked validation."""
-    operation = state.get("delivery_slice_operation")
-    verification = state.get("last_verify_result")
-    failures = verification.get("failures") if isinstance(verification, dict) else None
-    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
-    # Inner repairs publish their current failure in the final verification
-    # result. Older states may retain an earlier outer-build summary alongside it.
-    current_failure = (
-        isinstance(verification, dict) and verification.get("passed") is False
-        and isinstance(failure, dict) and failure.get("category") == "other"
-        and failure.get("id") == "build-blocked"
-        and failure.get("error") == "delivery_provider_failed"
-    )
-    return (
-        state.get("termination_reason") == "build_blocked"
-        and state.get("blocked_phase") == "implementation"
-        and state.get("build_status") == "blocked"
-        and (state.get("build_reason") == "delivery_provider_failed" or current_failure)
-        and isinstance(operation, dict)
-        and bool(str(operation.get("id") or "").strip())
-        and operation.get("progress_applied") is not True
-    )
-
-
-def _is_retryable_cancelled_delivery_slice(state: dict) -> bool:
-    """Continue only a cancelled slice whose unreviewed operation is retained."""
-    operation = state.get("delivery_slice_operation")
-    verification = state.get("last_verify_result")
-    failures = verification.get("failures") if isinstance(verification, dict) else None
-    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
-    return (
-        state.get("status") == "blocked"
-        and state.get("termination_reason") == "build_blocked"
-        and state.get("blocked_phase") == "implementation"
-        and isinstance(operation, dict)
-        and bool(str(operation.get("id") or "").strip())
-        and operation.get("progress_applied") is not True
-        and isinstance(operation.get("worktree_path"), str)
-        and Path(operation["worktree_path"]).is_absolute()
-        and isinstance(verification, dict)
-        and verification.get("passed") is False
-        and isinstance(failure, dict)
-        and failure.get("category") == "other"
-        and failure.get("id") == "build-blocked"
-        and failure.get("error") == "delivery_slice_cancelled"
-    )
+def _pending_slice_resume_supported(state: dict) -> bool:
+    from harness.delivery_controller import pending_slice_resume_supported
+    return pending_slice_resume_supported(state)
 
 
 def _has_interrupted_pending_candidate(state: dict, state_dir: Path) -> bool:
@@ -300,50 +256,6 @@ def _has_reconcilable_delivery_operation(state: dict) -> bool:
     )
 
 
-def _is_pending_prior_review_cap(state: dict) -> bool:
-    """Allow an unfinished slice to use one newly available repair round."""
-    from harness.delivery_slice_journal import MAX_GATE_ROUNDS
-
-    operation = state.get("delivery_slice_operation")
-    verification = state.get("last_verify_result")
-    failures = verification.get("failures") if isinstance(verification, dict) else None
-    failure = failures[0] if isinstance(failures, list) and len(failures) == 1 else None
-    prior_cap_reasons = {
-        f"delivery_gate_repair_limit: required review still failed after {repairs} repairs"
-        for repairs in range(3, MAX_GATE_ROUNDS - 1)
-    }
-    if MAX_GATE_ROUNDS > 3:
-        prior_cap_reasons.add(
-            "delivery_gate_repair_limit: required review still failed after two repairs"
-        )
-    build_reason = state.get("build_reason")
-    verified_reason = (
-        failure.get("error")
-        if isinstance(verification, dict)
-        and verification.get("passed") is False
-        and isinstance(failure, dict)
-        and failure.get("category") == "other"
-        and failure.get("id") == "build-blocked"
-        else None
-    )
-    return (
-        MAX_GATE_ROUNDS > 3
-        and state.get("status") == "blocked"
-        and state.get("termination_reason") == "build_blocked"
-        and state.get("blocked_phase") == "implementation"
-        and isinstance(operation, dict)
-        and bool(str(operation.get("id") or "").strip())
-        and operation.get("progress_applied") is not True
-        and (
-            verified_reason in prior_cap_reasons
-            or (
-                state.get("build_status") == "blocked"
-                and build_reason in prior_cap_reasons
-            )
-        )
-    )
-
-
 def _delivery_status_next_step(
     state: dict,
     spec_id: str,
@@ -355,11 +267,7 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
-        if (
-            _is_retryable_delivery_provider_failure(state)
-            or _is_retryable_cancelled_delivery_slice(state)
-            or _is_pending_prior_review_cap(state)
-        ):
+        if _pending_slice_resume_supported(state):
             return f"echelon delivery continue {effective_spec}"
         if (
             termination_reason == "build_blocked"
@@ -3894,14 +3802,8 @@ def _run_delivery_resume(
         continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
-    if (
-        _is_retryable_delivery_provider_failure(state)
-        or _is_retryable_cancelled_delivery_slice(state)
-        or reconcile_unknown_dispatch
-    ):
-        continuation_reasons.add("build_blocked")
-    pending_prior_review_cap = _is_pending_prior_review_cap(state)
-    if pending_prior_review_cap:
+    pending_slice_resume = _pending_slice_resume_supported(state)
+    if pending_slice_resume or reconcile_unknown_dispatch:
         continuation_reasons.add("build_blocked")
     from harness.delivery_controller import pending_slice_budget_exhausted as _pending_slice_budget_exhausted
 
@@ -4039,11 +3941,9 @@ def _run_delivery_resume(
         and termination_reason not in recoverable_reasons
         and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
         and not pending_slice_budget_exhausted
-        and not pending_prior_review_cap
+        and not pending_slice_resume
         # A pending greenfield slice already has a candidate worktree. Its
         # verify command is resolved from that candidate during execution.
-        and not _is_retryable_cancelled_delivery_slice(state)
-        and not _is_retryable_delivery_provider_failure(state)
         and not _has_interrupted_pending_candidate(state, state_dir)
         and not reconcile_unknown_dispatch
     ):

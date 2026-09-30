@@ -60,9 +60,14 @@ The installed CLI imports this worktree. Native `echelon delivery continue
 `delivery.json` was byte-identical before/after; usage remains 34,990,865/50M,
 active operation `fb2d0a3533714e44a501940f3841fba5`. No demo edits, reset,
 unknown-dispatch reconciliation, limit increase, or provider dispatch occurred.
-Next: narrowly admit authenticated pending browser recovery through the existing
-resume boundary, then retry the native observation. Task 4.8 requires reporting
-this out-of-contract admission change before implementation. Task 4 and STAB-1
+The user subsequently approved a harness-owned admission correction. Existing
+provider-failure, cancelled-slice, and prior-review-cap predicates now live in
+`harness.delivery_controller`, with supported pending browser recovery. The CLI
+consults that policy for routing/status only; locked runner validation still
+authorizes evidence, attempts and dispatch. No browser recovery rules were added
+to the CLI. Command/recovery tests: 100 passed; handoff/controller/lock tests:
+121 passed. Repository fail-fast: 96 passed, then the same known convergence
+fixture. Next: retry the normal native command and observe. Task 4 and STAB-1
 remain open; no workspace-acceptance claim is made.
 No new milestone or S6/S7 work is opened.
 

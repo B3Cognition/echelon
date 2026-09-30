@@ -16,6 +16,45 @@ from tests.unit.test_cli_harness_resume import (
 UNKNOWN_REASON = "delivery_reconciliation_required: dispatch completion is unknown"
 
 
+@pytest.mark.parametrize("verify_command", ["pytest", None])
+@pytest.mark.parametrize("damage", [None, "missing_operation", "applied", "wrong_phase", "unknown", "other_blocker"])
+def test_continue_defers_pending_browser_recovery_to_harness(tmp_path, monkeypatch, verify_command, damage):
+    from echelon.cli_app import app
+    from echelon.delivery_service import _delivery_status_next_step
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    _make_echelon_yml(tmp_path, verify_command=verify_command)
+    _make_phase_a_spec(tmp_path)
+    state_dir = _setup_build(tmp_path, "001")
+    state = {
+        "status": "blocked", "termination_reason": "build_blocked",
+        "blocked_phase": "implementation", "build_status": "blocked",
+        "build_reason": "delivery_browser_evidence_request_repeated",
+        "delivery_slice_operation": {"id": "pending", "progress_applied": False,
+                                     "worktree_path": str(tmp_path / "candidate")},
+    }
+    if damage == "missing_operation":
+        state.pop("delivery_slice_operation")
+    elif damage == "applied":
+        state["delivery_slice_operation"]["progress_applied"] = True
+    elif damage == "wrong_phase":
+        state["blocked_phase"] = "review"
+    elif damage in {"unknown", "other_blocker"}:
+        state["build_reason"] = UNKNOWN_REASON if damage == "unknown" else "delivery_gate_repair_limit"
+    _write_state(state_dir, "001", "default", state)
+    before = (state_dir / "delivery.json").read_bytes()
+    with patch("harness.skills.run_skill.run") as run, \
+         patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+         patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+        result = CliRunner().invoke(app, ["delivery", "continue", "001"])
+    assert result.exit_code == (0 if damage is None else 1), result.output
+    assert run.call_count == int(damage is None)
+    if damage is None:
+        assert not run.call_args.kwargs.get("reconcile_unknown_dispatch")
+        assert _delivery_status_next_step(state, "001") == "echelon delivery continue 001"
+    assert (state_dir / "delivery.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("failure_id,eligible", [("build-blocked", True), ("verify-command", False)])
 @pytest.mark.parametrize("verify_command", ["pytest", None])
 def test_continue_routes_current_provider_failure_despite_stale_summary(tmp_path, monkeypatch, failure_id, eligible, verify_command):
