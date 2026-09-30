@@ -189,7 +189,10 @@ def resolve_stacks(
             if observer.required:
                 for test_type in observer.test_types:
                     existing = required_observers_by_test_type.get(test_type)
-                    if existing is not None:
+                    # One stack may explicitly require several runners for a
+                    # test type. Coverage still binds each case to one physical
+                    # test; overlapping authority from different stacks conflicts.
+                    if existing is not None and existing.owner_stack_id != stack_id:
                         raise StackConflictError(
                             "Stack coverage observer conflict for "
                             f"test type {test_type}: "

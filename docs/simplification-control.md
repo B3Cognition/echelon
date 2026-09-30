@@ -142,6 +142,14 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   blocker through Ralph without dispatching candidate-source repairs or charging
   meaningful attempts. No-map/no-observer verification and intermediate tasks
   without coverage obligations remain supported.
+- [x] Mixed-runner observer prerequisite: one stack may explicitly require both
+  Vitest and Playwright for a shared test type. Different-stack conflicts remain
+  blocked; every required observer is retained, and duplicate physical case
+  claims and failed results remain rejected by the existing evidence machinery.
+  Resolver/parser/receipt probes and adjacent checks: 177 passed; read-only review
+  found no blocking or minor issues. Repository
+  fail-fast: 96 passed, the same known convergence-fixture failure. This is not
+  an npm observer bundle, actual browser execution, or live Delivery acceptance.
 - [ ] Wire compatible structured observers and verify actual execution evidence
   reaches fulfillment for the preserved candidate. Do not blindly select a
   React/pnpm stack for this npm/Three.js candidate or rewrite the planning map.

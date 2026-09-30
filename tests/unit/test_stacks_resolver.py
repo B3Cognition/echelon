@@ -121,16 +121,56 @@ def _coverage_observer(
     test_types: tuple[str, ...],
     *,
     required: bool = True,
+    adapter: str = "playwright-json",
 ) -> StackCoverageObserver:
     return StackCoverageObserver(
         id=observer_id,
         test_types=test_types,
         command="pnpm exec test-reporter --json",
         report_path=f"artifacts/{observer_id}.json",
-        adapter="playwright-json",
+        adapter=adapter,
         mode="isolated",
         required=required,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_stack_retains_both_required_observers_for_shared_test_type(reverse: bool) -> None:
+    from harness.stacks.preflight import required_coverage_observers_for_types
+
+    observers = [
+        _coverage_observer("playwright", ("e2e", "contract")),
+        _coverage_observer("vitest", ("unit", "integration", "contract"), adapter="vitest-json"),
+    ]
+    if reverse:
+        observers.reverse()
+    resolved = resolve_stacks(["browser"], {
+        "browser": _stack("browser", provides={"web_app.framework": "vite"},
+                          coverage_observers=observers),
+    })
+
+    selected = required_coverage_observers_for_types(resolved, coverage_test_types=("contract",))
+    assert [item.observer.id for item in selected] == ["playwright", "vitest"]
+    assert all(item.owner_stack_id == "browser" for item in selected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("selected", [["browser", "policy"], ["policy", "browser"]])
+def test_same_stack_overlap_does_not_hide_cross_stack_conflict(selected: list[str]) -> None:
+    definitions = {
+        "browser": _stack("browser", provides={"web_app.framework": "vite"}, coverage_observers=[
+            _coverage_observer("playwright", ("e2e", "contract")),
+            _coverage_observer("vitest", ("unit", "contract"), adapter="vitest-json"),
+        ]),
+        "policy": _stack("policy", provides={"delivery.policy": "strict"}, coverage_observers=[
+            _coverage_observer("other-contract", ("contract",)),
+        ]),
+    }
+
+    with pytest.raises(StackConflictError, match="coverage observer.*contract") as error:
+        resolve_stacks(selected, definitions)
+    assert "policy/other-contract" in str(error.value)
 
 
 @pytest.mark.unit

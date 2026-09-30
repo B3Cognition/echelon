@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -267,6 +268,67 @@ def test_coverage_observation_accepts_each_type_owned_by_one_multi_type_observer
     assert result.ref.passed is True
     assert result.test_cases["UT-001"].status == "passed"
     assert result.test_cases["INT-001"].status == "passed"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("browser_result", ["passed", "failed", "duplicate"])
+def test_same_stack_mixed_runner_contract_evidence(tmp_path: Path, browser_result: str) -> None:
+    from harness.playwright_evidence import parse_playwright_json_executions
+    from harness.vitest_evidence import parse_vitest_json
+    from harness.stacks.preflight import required_coverage_observers_for_types
+    from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256, resolved_coverage_observer_plan_sha256
+    from tests.unit.test_stacks_resolver import _stack, _coverage_observer
+
+    resolved = resolve_stacks(["browser"], {
+        "browser": _stack("browser", provides={"web_app.framework": "vite"}, coverage_observers=[
+            _coverage_observer("playwright", ("e2e", "contract")),
+            _coverage_observer("vitest", ("unit", "contract"), adapter="vitest-json"),
+        ]),
+    })
+    observers = required_coverage_observers_for_types(resolved, coverage_test_types=("contract",))
+    worktree = tmp_path / "candidate"
+    core_title = "core contract [echelon:CT-CORE-001]"
+    browser_case = "CT-CORE-001" if browser_result == "duplicate" else "CT-NET-001"
+    browser_title = f"browser contract [echelon:{browser_case}]"
+    _source(worktree, "tests/core.test.ts", core_title)
+    _source(worktree, "tests/network.spec.ts", browser_title)
+    executions = parse_vitest_json(json.dumps({"testResults": [{
+        "name": "tests/core.test.ts", "assertionResults": [{"title": core_title, "status": "passed"}],
+    }]}), observer_id="vitest", test_type="unit") + parse_playwright_json_executions(json.dumps({
+        "suites": [{"specs": [{"title": browser_title, "file": "tests/network.spec.ts", "tests": [{
+            "projectName": "chromium", "results": [{"status": "failed" if browser_result == "failed" else "passed"}],
+        }]}]}],
+    }), observer_id="playwright", test_type="e2e")
+    obligations = parse_coverage_obligations(
+        "FR-001", "CT-CORE-001; CT-NET-001", "contract", "deferred-automation",
+        "deferred-automation", "oracle", "repair", {"FR-001"},
+    )
+    result = write_coverage_observation(
+        evidence_dir=tmp_path / "verify", candidate_commit=_COMMIT,
+        candidate_fingerprint=_FINGERPRINT, coverage_map_hash=_MAP_HASH,
+        resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+        observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+        runnability_contract_hash=_CONTRACT_HASH, verification_receipt=_receipt(tmp_path / "standard"),
+        observer_receipts={item.observer.id: _receipt(tmp_path / item.observer.id) for item in observers},
+        observer_test_types={item.observer.id: item.observer.test_types for item in observers},
+        obligations=obligations, executions=executions, candidate_worktree=worktree,
+        attempt_sequence=1, sensitive_environment={},
+    )
+
+    assert result.ref.passed is (browser_result == "passed")
+    if browser_result == "duplicate":
+        assert result.test_cases["CT-CORE-001"].status == "duplicate_binding"
+        assert result.test_cases["CT-NET-001"].status == "unbound"
+    else:
+        assert result.test_cases["CT-CORE-001"].status == "passed"
+        assert result.test_cases["CT-NET-001"].status == browser_result
+        assert result.requirements["FR-001"].status == ("observed" if browser_result == "passed" else "failed")
+    assert validate_coverage_observation(
+        result.ref, candidate_fingerprint=_FINGERPRINT, coverage_map_hash=_MAP_HASH,
+        resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+        observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+        runnability_contract_hash=_CONTRACT_HASH,
+    ).valid is (browser_result == "passed")
 
 
 @pytest.mark.unit
