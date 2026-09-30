@@ -1,166 +1,117 @@
-"""E2E test: Token budget exhaustion (E2E-04).
+"""Token limits through the current controlled Delivery loop.
 
-Per T051 task specification:
-- Ralph-loop with tight token budget
-- Stub LLM reports high token usage
-- Loop terminates at >= 95% budget threshold
-- termination_reason = budget_exhausted
-- PR stays as draft (not promoted since not converged)
-- Tokens tracked correctly in state
-
-Per FR-LOOP-004: termination conditions.
+Ralph, prompts, receipts and accounting are real; shared fixtures substitute
+external agents, GitOps, sandbox execution and Prosaic inspection.
 """
-
-from __future__ import annotations
-
-from pathlib import Path
+import json
 
 import pytest
 
-from harness.config import HarnessConfig
-from harness.delivery_results import ImplementationResult
+from harness.ai_cli_backend import CliRunResult
+from harness.delivery_slice_journal import DeliverySliceJournal
+from tests.unit.test_delivery_controller import _initialize_git_worktree
+from tests.unit.test_delivery_controller_integration import _controller, _reconstruct
+from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor, _steps
 
-from tests.e2e.conftest import MockGitOps, make_ralph_controller
-from tests.e2e.stub_llm import StubLLM
+
+def _budget_case(fixture, tmp_path, usages, *, budget, reject=False):
+    _initialize_git_worktree(fixture[0])
+
+    def agent(assignment, payload, root):
+        if reject and assignment["step"] == "spec_guard":
+            payload.update(verdict="FAIL", findings=["app.py:1 returns the wrong greeting"])
+        index = min(len(executor.calls) - 1, len(usages) - 1)
+        return CliRunResult(0, json.dumps(payload), "", token_usage=usages[index])
+
+    executor = ScriptedExecutor(agent)
+    controller, store = _controller(fixture, tmp_path, executor, "banzai")
+    state = store.read()
+    state["token_budget"] = budget
+    store.write(state)
+    return controller, store, executor
+
+
+def _journal(controller, store):
+    journal = DeliverySliceJournal(
+        controller._delivery_operation_evidence_root(),
+        store.read()["delivery_slice_operation"]["id"],
+    )
+    with journal:
+        return journal, journal.load(required=True)
+
+
+def _forbid_verification(monkeypatch, controller):
+    def unexpected_verification(**kwargs):
+        pytest.fail("A budget-exhausted or review-rejected slice cannot reach verification")
+    monkeypatch.setattr(controller, "_verify_candidate_checkpoint", unexpected_verification)
 
 
 @pytest.mark.e2e
-class TestRalphBudget:
-    """E2E-04: Budget exhaustion with 95% threshold."""
+@pytest.mark.parametrize("usages,steps,total", [
+    ([19], ["implementer"], 19),  # Stop at 95%, not 100%.
+    ([18, 1], ["implementer", "spec_guard"], 19),  # Below 95% may dispatch once more.
+    ([25], ["implementer"], 25),  # An in-flight response can overshoot; bill it in full.
+])
+def test_budget_exhaustion_terminates_loop(slice_project, tmp_path, monkeypatch, usages, steps, total):
+    controller, store, executor = _budget_case(slice_project, tmp_path, usages, budget=20)
+    _forbid_verification(monkeypatch, controller)
 
-    def test_budget_exhaustion_terminates_loop(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Loop terminates when tokens_used >= 95% of budget."""
-        # Each call uses 2000 tokens, budget is 5000
-        # After 3 calls (build=2000, verify=2000 -> 4000, that is 80%)
-        # After build(2000)+verify(2000)+feedback(2000)=6000 -> 120% over 5000
-        # But check happens at loop start, so it depends on when the check runs
-        stub = StubLLM(mode="never_converge", tokens_per_call=2000)
+    result = controller.run_loop(max_outer=10, max_inner=5, token_budget=20)
 
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="banzai",
-        )
+    assert result.status == "blocked"
+    assert result.termination_reason == "budget_exhausted"
+    assert result.tokens_used == total
+    assert result.outer_iterations == 1
+    assert _steps(executor) == steps
+    state = store.read()
+    assert state["tokens_used"] == total
+    assert state["delivery_slice_operation"]["accounted_tokens"] == total
+    assert state["delivery_slice_operation"]["progress_applied"] is False
+    assert "delivery_slice_task_id" not in state
+    assert "- [ ] T-001" in (slice_project[1] / "tasks.md").read_text()
+    assert not controller._gitops.push.called
+    assert not controller._gitops.create_draft_pr.called
+    assert not controller._gitops.promote_pr_ready.called
 
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="banzai",
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
+    journal, data = _journal(controller, store)
+    assert data["budget_limit"] == 19
+    assert [row["token_usage"] for row in data["records"]] == usages
+    assert all(row["result"] is not None for row in data["records"])
+    before = journal.path.read_bytes()
 
-        result = controller.run_loop(
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
+    # A fresh controller with the unchanged limit must not spend again or
+    # rewrite the retained receipts merely because the process restarted.
+    restarted_executor = ScriptedExecutor()
+    restarted = _reconstruct(controller, store, restarted_executor)
+    _forbid_verification(monkeypatch, restarted)
+    again = restarted.run_loop(max_outer=10, max_inner=5, token_budget=20)
+    assert again.status == "blocked"
+    assert again.termination_reason == "budget_exhausted"
+    assert again.tokens_used == total
+    assert store.read()["tokens_used"] == total
+    assert not restarted_executor.calls
+    assert journal.path.read_bytes() == before
 
-        # Should terminate due to budget, not outer cap
-        assert result.termination_reason == "budget_exhausted", (
-            f"Expected budget_exhausted, got {result.termination_reason}"
-        )
-        assert result.status == "blocked"
 
-    def test_tokens_tracked_in_state(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Token usage tracked correctly in state file."""
-        stub = StubLLM(mode="never_converge", tokens_per_call=2000)
+@pytest.mark.e2e
+def test_unlimited_budget_still_honors_review_repair_cap(slice_project, tmp_path, monkeypatch):
+    controller, store, executor = _budget_case(
+        slice_project, tmp_path, [10_000], budget=0, reject=True,
+    )
+    _forbid_verification(monkeypatch, controller)
 
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="banzai",
-        )
+    result = controller.run_loop(max_outer=2, max_inner=2, token_budget=None)
 
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="banzai",
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
-
-        result = controller.run_loop(
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
-
-        final_state = state_store.read()
-        assert final_state.get("tokens_used", 0) > 0
-        assert result.tokens_used > 0
-        assert result.tokens_used >= 5000 * 0.95, (
-            f"Tokens used ({result.tokens_used}) should be >= 95% of budget (4750)"
-        )
-
-    def test_pr_stays_draft_on_budget_exhaustion(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """PR remains as draft when loop does not converge."""
-        stub = StubLLM(mode="never_converge", tokens_per_call=2000)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="banzai",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="banzai",
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
-
-        result = controller.run_loop(
-            max_outer=10,
-            max_inner=5,
-            token_budget=5000,
-        )
-
-        assert result.status == "blocked"
-        # PR may or may not be created depending on timing, but should NOT be promoted
-        assert not gitops.pr_promoted, "PR should not be promoted when not converged"
-
-    def test_unlimited_budget_does_not_trigger_exhaustion(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """With no token budget, loop runs until outer cap."""
-        stub = StubLLM(mode="never_converge", tokens_per_call=10000)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="banzai",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="banzai",
-            max_outer=2,
-            max_inner=2,
-            token_budget=0,
-        )
-
-        result = controller.run_loop(
-            max_outer=2,
-            max_inner=2,
-            token_budget=None,  # Unlimited
-        )
-
-        assert result.termination_reason == "outer_cap", (
-            f"Expected outer_cap with unlimited budget, got {result.termination_reason}"
-        )
+    assert result.status == "blocked"
+    assert result.termination_reason == "build_blocked"
+    assert "delivery_gate_repair_limit" in store.read()["build_reason"]
+    assert _steps(executor) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"] * 5
+    assert result.tokens_used == 200_000
+    assert store.read()["tokens_used"] == 200_000
+    _, data = _journal(controller, store)
+    assert data["budget_limit"] is None
+    assert len(data["records"]) == 20
+    assert all(row["token_usage"] == 10_000 for row in data["records"])
+    assert "- [ ] T-001" in (slice_project[1] / "tasks.md").read_text()
+    assert not controller._gitops.push.called
+    assert not controller._gitops.create_draft_pr.called
