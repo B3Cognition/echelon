@@ -1171,6 +1171,7 @@ def run(
     resume_build_id: str | None = None,
     orchestration_root: str | Path | None = None,
     summary_command: str = "echelon delivery run",
+    reconcile_unknown_dispatch: bool = False,
 ) -> DeliveryRunOutcome:
     """Execute an Echelon delivery run.
 
@@ -1186,6 +1187,9 @@ def run(
 
     # 1. Parse intent
     intent = parse_intent(user_message)
+    if reconcile_unknown_dispatch and not intent.resume:
+        raise RunContextError("unknown dispatch reconciliation requires explicit continuation")
+    intent.reconcile_unknown_dispatch = reconcile_unknown_dispatch
     logger.info("Parsed run intent: spec=%s, mode=%s", intent.spec_id, intent.mode)
 
     spec_dir = find_spec_dir(intent.spec_id, workspace_root)

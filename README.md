@@ -1005,6 +1005,16 @@ echelon delivery resume 001 "<answer>"
 
 Delivery uses one controlled slice → verification → feedback → commit/PR loop.
 See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported flow.
+If status reports `dispatch completion is unknown`, ordinary continuation stays
+blocked. `echelon delivery continue 001 --reconcile-unknown-dispatch` is an
+explicit recovery action after confirming the original provider has stopped.
+It supports only the first implementer dispatch of a slice, before any review
+history exists: it seals the unresolved journal intent as outcome unknown,
+preserves the candidate as untrusted work, and starts
+a fresh implementer and full review/verification cycle. It does not count the
+unknown dispatch as success or bypass any acceptance gate. Known token usage
+and run counters are preserved; missing usage is recorded explicitly, not as
+zero. Interrupted later rounds remain blocked rather than resetting attempts.
 
 ### Review Loop (Phase 3)
 
@@ -1340,7 +1350,7 @@ independently rather than allowing either one to hide the other.
 | `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | Build → Docker verify → PR; validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY`. Use `--reconcile-unknown-dispatch` only when status reports an unresolved implementer dispatch. |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | `echelon delivery status [<id>]` | Show the active delivery state, iterations, cost, and PR context |
 | `echelon delivery verify-local <id> [--target <target-id>] [--engine auto\|docker\|podman]` | Explicit macOS-only local browser verification in a managed worktree; records separate local evidence and never changes landing authority |

@@ -106,13 +106,13 @@ def _git_backed_workspace(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("status", "expected_phase"),
-    [("running", "implementation"), ("validating", "visual"), ("reviewing", "review"), ("finalizing", "finalization")],
+    "status",
+    ["running", "validating", "reviewing", "finalizing"],
 )
-def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
-    tmp_path: Path, status: str, expected_phase: str
+def test_cli_error_reporting_preserves_controller_phase(
+    tmp_path: Path, status: str
 ) -> None:
-    from echelon.delivery_service import _mark_current_harness_state_blocked
+    from echelon.delivery_service import _print_harness_error_and_exit
 
     store = StateStore(tmp_path / "runs" / "state", "003")
     store.initialize("run-1", "semi", enabled_phases=["implementation", "visual", "review", "finalization"])
@@ -127,18 +127,19 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
         store.transition("verified", updates={"last_completed_phase": "review"})
         store.transition("finalizing")
 
-    _mark_current_harness_state_blocked(tmp_path, "003", "harness_error", "boom")
+    before = store.state_file.read_bytes()
+    with pytest.raises(SystemExit):
+        _print_harness_error_and_exit(
+            project_root=tmp_path, spec_id="003", command="echelon delivery continue 003",
+            exc=RuntimeError("boom"),
+        )
 
-    state = store.read()
-    assert state["status"] == "blocked"
-    assert state["blocked_phase"] == expected_phase
-    assert state["termination_reason"] == "harness_error"
-    assert state["harness_error"] == "boom"
+    assert store.state_file.read_bytes() == before
 
 
 @pytest.mark.unit
-def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: Path) -> None:
-    from echelon.delivery_service import _mark_current_harness_state_blocked
+def test_cli_error_reporting_preserves_converged_state(tmp_path: Path) -> None:
+    from echelon.delivery_service import _print_harness_error_and_exit
 
     store = StateStore(tmp_path / "runs" / "state", "003")
     store.initialize("run-1", "semi")
@@ -147,15 +148,19 @@ def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: 
     store.transition("finalizing")
     store.transition("converged", updates={"termination_reason": "converged"})
 
-    _mark_current_harness_state_blocked(tmp_path, "003", "harness_error", "post-run")
+    with pytest.raises(SystemExit):
+        _print_harness_error_and_exit(
+            project_root=tmp_path, spec_id="003", command="echelon delivery continue 003",
+            exc=RuntimeError("post-run"),
+        )
 
     assert store.read()["status"] == "converged"
 
 
 @pytest.mark.unit
-def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp_path: Path) -> None:
-    """Target child failures must not overwrite a same-ID source state file."""
-    from echelon.delivery_service import _mark_current_harness_state_blocked
+def test_target_dispatch_exception_preserves_target_and_source_state(tmp_path: Path) -> None:
+    """CLI reporting must not overwrite either controller-owned state file."""
+    from echelon.delivery_service import _print_harness_error_and_exit
 
     target_root = tmp_path / "runs" / "targets" / "api"
     target = StateStore(target_root / "runs" / "state", "003")
@@ -164,10 +169,14 @@ def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp
         store.initialize("run-1", "semi", enabled_phases=["implementation", "finalization"])
         store.transition("running")
 
-    _mark_current_harness_state_blocked(target_root, "003", "harness_error", "target crash")
+    before = target.state_file.read_bytes()
+    with pytest.raises(SystemExit):
+        _print_harness_error_and_exit(
+            project_root=target_root, spec_id="003", command="echelon delivery continue 003",
+            exc=RuntimeError("target crash"),
+        )
 
-    assert target.read()["status"] == "blocked"
-    assert target.read()["blocked_phase"] == "implementation"
+    assert target.state_file.read_bytes() == before
     assert source.read()["status"] == "running"
 
 

@@ -40,6 +40,7 @@ class RunIntent:
     task_description: str = ""
     reset: bool = False
     resume: bool = False
+    reconcile_unknown_dispatch: bool = False
 
     def __post_init__(self) -> None:
         """Validate all fields after construction."""

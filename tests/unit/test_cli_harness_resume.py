@@ -1159,7 +1159,7 @@ class TestCmdHarnessResume:
         assert 'echelon delivery resume 001 "<answer>"' in err
         assert "echelon delivery continue 001" in err
 
-    def test_harness_error_retries_after_phase_a_repair_and_refreshes_spec_paths(
+    def test_harness_error_preflights_current_spec_without_rewriting_paths(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1188,9 +1188,9 @@ class TestCmdHarnessResume:
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
         state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
-        assert state["spec_dir"] == str(spec_dir)
-        assert state["spec_file"] == str(spec_dir / "spec.md")
-        assert state["tasks_file"] == str(spec_dir / "tasks.md")
+        assert state["spec_dir"] == "/tmp/specs/001-wrong"
+        assert state["spec_file"] == "/tmp/specs/001-wrong/spec.md"
+        assert state["tasks_file"] == "/tmp/specs/001-wrong/tasks.md"
 
     def test_harness_error_stays_blocked_when_repair_preflight_fails(
         self,
@@ -1280,7 +1280,7 @@ class TestCmdHarnessResume:
         assert "tasks.md is not canonical" in err
 
     @pytest.mark.parametrize("reason", ["build_incomplete", "publish_failed"])
-    def test_recoverable_blocked_reason_recovers_and_calls_run(
+    def test_recoverable_blocked_reason_delegates_to_controller(
         self,
         tmp_path: Path,
         reason: str,
@@ -1305,7 +1305,7 @@ class TestCmdHarnessResume:
             from echelon.delivery_service import _run_delivery_resume
             _run_delivery_resume(Path.cwd(), ["001"])
 
-        mock_recover.assert_called_once()
+        mock_recover.assert_not_called()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
@@ -1384,14 +1384,12 @@ class TestCmdHarnessResume:
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
             from echelon.delivery_service import _run_delivery_continue
-            with pytest.raises(SystemExit) as exc:
-                _run_delivery_continue(Path.cwd(), ["001"])
+            _run_delivery_continue(Path.cwd(), ["001"])
 
-        assert exc.value.code == 2
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
         state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
-        assert state["termination_reason"] == "provider_session_limit"
+        assert state["termination_reason"] == "build_incomplete"
 
     def test_converged_resume_ignores_historical_provider_limit_status(
         self, tmp_path: Path
@@ -1422,7 +1420,7 @@ class TestCmdHarnessResume:
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
 
-    def test_target_resume_recovers_against_source_repo_not_target_harness_dir(
+    def test_target_resume_delegates_source_recovery_to_controller(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1463,8 +1461,8 @@ class TestCmdHarnessResume:
             from echelon.delivery_service import _run_delivery_resume
             _run_delivery_resume(Path.cwd(), ["001-prose-distribution-engine"])
 
-        mock_recover.assert_called_once()
-        assert mock_recover.call_args.kwargs["project_dir"] == source
+        mock_recover.assert_not_called()
+        assert mock_run.call_args.kwargs["config"].target_repo == str(source)
         mock_run.assert_called_once()
 
     def test_target_continue_dispatches_continue_not_answer_required_resume(
@@ -1597,7 +1595,7 @@ class TestCmdHarnessResume:
         assert exc.value.code == 1
         state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
-        assert state["termination_reason"] == "docker_unavailable"
+        assert state["termination_reason"] == "build_incomplete"
         err = capsys.readouterr().err
         assert "Docker is not running or is unreachable" in err
         assert "echelon delivery continue 001" in err
@@ -1623,7 +1621,7 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
-    def test_recoverable_resume_marks_unexpected_harness_error_blocked(
+    def test_recoverable_resume_reports_error_without_changing_controller_state(
         self,
         tmp_path: Path,
         capsys,
@@ -1653,14 +1651,14 @@ class TestCmdHarnessResume:
         assert exc.value.code == 1
         state = json.loads((sd / "delivery.json").read_text(encoding="utf-8"))
         assert state["status"] == "blocked"
-        assert state["termination_reason"] == "harness_error"
-        assert "fatal: invalid reference" in state["harness_error"]
+        assert state["termination_reason"] == "build_incomplete"
+        assert "harness_error" not in state
         err = capsys.readouterr().err
         assert "Harness run failed before completion" in err
         assert "echelon delivery resume 001" in err
         assert "Traceback" not in err
 
-    def test_recoverable_reason_recovers_even_when_status_was_overwritten_done(
+    def test_recoverable_reason_delegates_even_when_status_was_overwritten_done(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1685,7 +1683,7 @@ class TestCmdHarnessResume:
             from echelon.delivery_service import _run_delivery_resume
             _run_delivery_resume(Path.cwd(), ["001"])
 
-        mock_recover.assert_called_once()
+        mock_recover.assert_not_called()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 

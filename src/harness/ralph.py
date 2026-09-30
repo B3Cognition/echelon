@@ -420,6 +420,8 @@ class RalphController:
         fresh_branch_base: Optional[str] = None,
         defer_target_merge: bool = False,
         resume_worktree_path: Optional[str] = None,
+        reconcile_unknown_dispatch: bool = False,
+        retry_failed_dispatch: bool = False,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -441,6 +443,8 @@ class RalphController:
         self._fresh_branch_base = fresh_branch_base
         self._defer_target_merge = defer_target_merge
         self._resume_worktree_path = resume_worktree_path
+        self._reconcile_unknown_dispatch = reconcile_unknown_dispatch
+        self._retry_failed_dispatch = retry_failed_dispatch
         self._candidate_evidence_runner = CandidateEvidenceRunner(
             provider=self._provider,
             config=lambda: self._config,
@@ -2408,6 +2412,25 @@ class RalphController:
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)
 
+            def remember_supersession(successor_id, reference, previous_usage, unknown_usage):
+                current = self._state_store.read()
+                current["tokens_used"] = current.get("tokens_used", 0) + max(
+                    0, previous_usage - operation["accounted_tokens"],
+                )
+                if unknown_usage:
+                    current["provider_token_usage_unknown_count"] = (
+                        int(current.get("provider_token_usage_unknown_count") or 0) + 1
+                    )
+                operation["superseded_dispatches"] = [
+                    *operation.get("superseded_dispatches", []), reference,
+                ]
+                operation.update(id=successor_id, accounted_tokens=0)
+                operation.pop("budget_extension_limit", None)
+                current["delivery_slice_operation"] = operation
+                self._state_store.write(current)
+                self._reconcile_unknown_dispatch = False
+                self._retry_failed_dispatch = False
+
             self._prepare_delivery_context(worktree_path)
             runner = DeliveryDocumentationRunner if documentation else DeliverySliceRunner
             runner_options = {}
@@ -2431,6 +2454,12 @@ class RalphController:
                     ) if runnability_ref is not None else None,
                 }
             else:
+                runner_options.update(
+                    reconcile_unknown_dispatch=self._reconcile_unknown_dispatch,
+                    retry_failed_dispatch=self._retry_failed_dispatch,
+                    superseded_dispatches=operation.get("superseded_dispatches"),
+                    on_dispatch_superseded=remember_supersession,
+                )
                 runner_options["repair_task_id"] = repair_task_id
                 runner_options["semantic_visual_gate_required"] = (
                     state.get("semantic_visual_gate_required") is True
@@ -2472,7 +2501,8 @@ class RalphController:
                 token_budget=(self._controlled_slice_budget + operation["accounted_tokens"]
                               if self._controlled_slice_budget is not None else None),
                 budget_extension_limit=operation.get("budget_extension_limit"),
-                operation_id=operation["id"], journal_required=resuming,
+                operation_id=operation["id"],
+                journal_required=resuming,
                 on_journal_ready=remember_operation,
             )
             current = self._state_store.read()
@@ -2497,11 +2527,16 @@ class RalphController:
                 # preserve its receipts and last task for explicit repairs.
                 current.pop("delivery_slice_operation", None)
             self._state_store.write(current)
+            # Handover may also have charged a predecessor receipt whose
+            # process died before accounting it. Ralph's caller needs the
+            # whole durable delta, not only the successor's provider usage.
+            accounted_delta = current.get("tokens_used", 0) - state.get("tokens_used", 0)
             adapted = {
                 "exit_code": result.exit_code, "passed": result.succeeded,
                 "build_status": result.status, "completion_marker_explicit": True,
                 "build_reason": result.reason, "blocker_kind": result.blocker_kind,
-                "duration_s": result.duration_ms / 1000, "tokens": new_tokens,
+                "duration_s": result.duration_ms / 1000,
+                "tokens": accounted_delta if result.token_usage is not None or accounted_delta else None,
                 "provider_invocation": result.provider_invocation,
                 "impasse": False, "impasse_file": None, "task_ids": result.task_ids or [],
                 "stdout": result.stdout, "stderr": result.stderr,

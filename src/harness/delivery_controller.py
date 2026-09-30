@@ -1622,6 +1622,8 @@ class DeliveryController:
                     for phase in controller_state.get("enabled_phases", [])
                 ),
                 resume_worktree_path=resume_repaired_worktree,
+                reconcile_unknown_dispatch=intent.reconcile_unknown_dispatch,
+                retry_failed_dispatch=intent.resume,
             )
 
             publication_implementation = self._dispatch_verified_publication(
@@ -2306,6 +2308,19 @@ class DeliveryController:
                 escalation_handler=escalation_handler,
                 context=context,
             )
+        except Exception as exc:
+            # Only the owner of the execution lease may persist an unexpected
+            # failure. Admission/lock errors above must leave the run untouched.
+            state = state_store.read()
+            if state.get("status") in {
+                "running", "verified", "validating", "reviewing", "finalizing", "blocked",
+            }:
+                state_store.transition("blocked", updates={
+                    "blocked_phase": self._resume_phase(state),
+                    "termination_reason": "harness_error",
+                    "harness_error": str(exc),
+                })
+            raise
         finally:
             state_store.release_lock()
     def _build_stack_context(self, spec_dir: Path | None = None) -> str:

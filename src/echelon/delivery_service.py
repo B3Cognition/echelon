@@ -43,6 +43,7 @@ class DeliveryRecoveryRequest:
     token_budget: int | None = None
     max_outer: int | None = None
     auto_merge: bool | None = None
+    reconcile_unknown_dispatch: bool = False
 
 
 @dataclass(frozen=True)
@@ -268,6 +269,25 @@ def _has_interrupted_pending_candidate(state: dict, state_dir: Path) -> bool:
     )
 
 
+def _has_reconcilable_delivery_operation(state: dict) -> bool:
+    """Route a recovery request, including interrupted handovers, to its owner.
+
+    This is not recovery authorization: only the locked runner can establish
+    the receipt's eligibility. Diagnostic wording can change after a crash.
+    """
+    operation = state.get("delivery_slice_operation")
+    status = state.get("status")
+    phase = state.get(f"{status}_phase") if status in {"blocked", "interrupted"} else "implementation"
+    return (
+        status in {"blocked", "running", "interrupted"}
+        and phase == "implementation"
+        and isinstance(operation, dict)
+        and bool(operation.get("id"))
+        and operation.get("kind", "task") == "task"
+        and operation.get("progress_applied") is not True
+    )
+
+
 def _is_pending_prior_review_cap(state: dict) -> bool:
     """Allow an unfinished slice to use one newly available repair round."""
     from harness.delivery_slice_journal import MAX_GATE_ROUNDS
@@ -329,6 +349,13 @@ def _delivery_status_next_step(
             or _is_pending_prior_review_cap(state)
         ):
             return f"echelon delivery continue {effective_spec}"
+        if (
+            termination_reason == "build_blocked"
+            and state.get("blocked_phase") == "implementation"
+            and state.get("build_reason")
+            == "delivery_reconciliation_required: dispatch completion is unknown"
+        ):
+            return f"echelon delivery continue {effective_spec} --reconcile-unknown-dispatch"
         if termination_reason == "outer_cap":
             command, explanation = _outer_cap_delivery_action(
                 effective_spec, state.get("max_outer")
@@ -2628,6 +2655,8 @@ def _recovery_args(request: DeliveryRecoveryRequest) -> list[str]:
         mode=request.mode, token_budget=request.token_budget,
         max_outer=request.max_outer, auto_merge=request.auto_merge,
     ))
+    if request.reconcile_unknown_dispatch:
+        args.append("--reconcile-unknown-dispatch")
     return args
 
 
@@ -3282,11 +3311,6 @@ def _run_delivery(
             raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
-            _mark_current_harness_state_blocked(
-                harness_base_dir,
-                spec_id,
-                "docker_unavailable",
-            )
             print(
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
@@ -3369,68 +3393,6 @@ def _container_runtime_display(config: object) -> str:
     return "Docker" if cli == "docker" else "Podman"
 
 
-def _mark_current_harness_state_blocked(
-    project_root: Path,
-    spec_id: str,
-    reason: str,
-    error: str = "",
-) -> None:
-    try:
-        from harness.paths import build_dir, current_build_marker, runs_dir
-        from harness.state import DELIVERY_STATE_VERSION, StateStore
-
-        marker = current_build_marker(project_root, spec_id)
-        if marker.exists():
-            state_dir = build_dir(project_root, marker.read_text().strip()) / "state"
-        else:
-            state_dir = runs_dir(project_root) / "state"
-        state_store = StateStore(state_dir, spec_id)
-        data = state_store.read()
-        if not data:
-            return
-        status = data.get("status")
-        if status in {"converged", "failed", "cancelled_by_coordinator"}:
-            return
-        if data.get("delivery_state_version") == DELIVERY_STATE_VERSION:
-            if status == "blocked":
-                phase = data.get("blocked_phase")
-            elif status == "running":
-                phase = "implementation"
-            elif status == "validating":
-                phase = "visual"
-            elif status == "reviewing":
-                phase = "review"
-            elif status == "finalizing":
-                phase = "finalization"
-            elif status == "verified":
-                phases = data.get("enabled_phases")
-                completed = data.get("last_completed_phase")
-                phase = "finalization"
-                if isinstance(phases, list) and completed in phases:
-                    index = phases.index(completed)
-                    if index + 1 < len(phases):
-                        phase = phases[index + 1]
-            else:
-                phase = "implementation"
-            if phase not in {"implementation", "visual", "review", "finalization"}:
-                phase = "implementation"
-            updates = {"blocked_phase": phase, "termination_reason": reason}
-            if error:
-                updates["harness_error"] = error
-            state_store.transition("blocked", updates=updates)
-            return
-
-        # Legacy state remains V1. The coordinator is the only component that
-        # can select and snapshot its V2 phase plan from the active config.
-        data["status"] = "blocked"
-        data["termination_reason"] = reason
-        if error:
-            data["harness_error"] = error
-        state_store.write(data)
-    except Exception:
-        pass
-
-
 def _print_harness_error_and_exit(
     *,
     project_root: Path,
@@ -3438,16 +3400,9 @@ def _print_harness_error_and_exit(
     command: str,
     exc: Exception,
 ) -> None:
-    _mark_current_harness_state_blocked(
-        project_root,
-        spec_id,
-        "harness_error",
-        str(exc),
-    )
     print(
         "✗ Harness run failed before completion.\n"
         f"  Error: {exc}\n"
-        "  State was marked blocked instead of left running.\n"
         f"  Next:  {command if spec_id in command else f'{command} {spec_id}'}",
         file=sys.stderr,
     )
@@ -3461,10 +3416,9 @@ def _refresh_harness_state_spec_paths(
     state: dict,
     state_store: object,
 ) -> tuple[dict, Path | None, bool]:
-    """Refresh persisted harness artifact paths from the current project.
+    """Project current artifact paths for preflight without changing durable state.
 
-    Older or failed runs can retain stale paths in state. Resume must not trust
-    those paths when the project has a resolvable current spec directory.
+    The Delivery controller refreshes persisted paths after acquiring its lock.
     """
     from harness.spec_frontmatter import find_spec_dir
 
@@ -3483,7 +3437,6 @@ def _refresh_harness_state_spec_paths(
         return state, spec_dir, False
 
     refreshed.update(updates)
-    state_store.write(refreshed)  # type: ignore[attr-defined]
     return refreshed, spec_dir, True
 
 
@@ -3574,6 +3527,10 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     i = 1
     while i < len(args):
         arg = args[i]
+        if arg == "--reconcile-unknown-dispatch":
+            kv["reconcile_unknown_dispatch"] = "true"
+            i += 1
+            continue
         if arg in {"--mode", "--token-budget", "--max-outer"} and i + 1 < len(args):
             kv[arg.removeprefix("--").replace("-", "_")] = args[i + 1].strip()
             i += 2
@@ -3717,6 +3674,27 @@ def _run_delivery_resume(
 
             else:
                 targets = validate_targets(targets_rel, polyrepo_root)
+                if kv.get("reconcile_unknown_dispatch"):
+                    eligible_targets = []
+                    for target in targets:
+                        target_base = polyrepo_root / "runs" / "targets" / target.name
+                        target_marker = current_build_marker(target_base, spec_id)
+                        if not target_marker.exists():
+                            continue
+                        target_state_dir = build_dir(
+                            target_base, target_marker.read_text().strip()
+                        ) / "state"
+                        target_state = StateStore(target_state_dir, spec_id).read()
+                        if _has_reconcilable_delivery_operation(target_state):
+                            eligible_targets.append(target)
+                    if len(eligible_targets) != 1:
+                        print(
+                            "✗ Unknown-dispatch reconciliation requires exactly one eligible "
+                            f"target; found {len(eligible_targets)}.",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                    targets = eligible_targets
                 source_ids: dict[str, str] = {}
                 source_git_roles: dict[str, str] = {}
                 for target in targets:
@@ -3727,18 +3705,18 @@ def _run_delivery_resume(
                     )
                     source_ids.update(target_metadata["source_ids"])
                     source_git_roles.update(target_metadata["source_git_roles"])
-                    sys.exit(
-                        run_multi_target(
-                            spec_id,
-                            targets,
-                            args[1:],
-                            workspace_root=polyrepo_root.resolve(),
-                            workspace_git_role="orchestration",
-                            source_ids=source_ids,
-                            source_git_roles=source_git_roles,
-                            command=target_resume_command,
-                        )
+                sys.exit(
+                    run_multi_target(
+                        spec_id,
+                        targets,
+                        args[1:],
+                        workspace_root=polyrepo_root.resolve(),
+                        workspace_git_role="orchestration",
+                        source_ids=source_ids,
+                        source_git_roles=source_git_roles,
+                        command=target_resume_command,
                     )
+                )
 
             if direct_target_path is None:
                 _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
@@ -3833,12 +3811,20 @@ def _run_delivery_resume(
         )
         sys.exit(1)
 
-    state, resolved_spec_dir, spec_paths_refreshed = _refresh_harness_state_spec_paths(
+    state, resolved_spec_dir, _ = _refresh_harness_state_spec_paths(
         project_root=spec_search_root,
         spec_id=spec_id,
         state=state,
         state_store=state_store,
     )
+    reconcile_unknown_dispatch = bool(kv.get("reconcile_unknown_dispatch"))
+    if reconcile_unknown_dispatch:
+        if require_answer:
+            print("✗ Unknown-dispatch reconciliation requires 'echelon delivery continue'.", file=sys.stderr)
+            sys.exit(1)
+        if not _has_reconcilable_delivery_operation(state):
+            print("✗ No eligible unknown Delivery dispatch to reconcile.", file=sys.stderr)
+            sys.exit(1)
 
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
@@ -3846,8 +3832,6 @@ def _run_delivery_resume(
         state.get("build_status") == "provider_session_limit"
         and termination_reason in {"build_incomplete", "publish_failed"}
     ):
-        state["termination_reason"] = "provider_session_limit"
-        state_store.write(state)
         termination_reason = "provider_session_limit"
     recoverable_reasons = {"build_incomplete", "publish_failed"}
     continuation_reasons = {
@@ -3901,6 +3885,7 @@ def _run_delivery_resume(
     if (
         _is_retryable_delivery_provider_failure(state)
         or _is_retryable_cancelled_delivery_slice(state)
+        or reconcile_unknown_dispatch
     ):
         continuation_reasons.add("build_blocked")
     pending_prior_review_cap = _is_pending_prior_review_cap(state)
@@ -4017,233 +4002,29 @@ def _run_delivery_resume(
             file=sys.stderr,
         )
 
-    if _is_phase_a_build_incomplete_retry(state):
+    phase_a_retry = _is_phase_a_build_incomplete_retry(state)
+    if phase_a_retry or termination_reason in retryable_error_reasons:
         blockers = _harness_error_resume_blockers(
             project_root=spec_search_root,
             spec_id=spec_id,
             spec_dir=resolved_spec_dir,
         )
         if blockers:
+            context = "Phase A repair" if phase_a_retry else "the previous harness error"
             print(
-                f"✗ Spec {spec_id!r} is still blocked after Phase A repair.\n"
+                f"✗ Spec {spec_id!r} is still blocked after {context}.\n"
                 "  Resume preflight failed:\n"
                 + "".join(f"  - {blocker}\n" for blocker in blockers)
                 + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
                 file=sys.stderr,
             )
             sys.exit(1)
-
-        fields = [
-            ("Spec", spec_id),
-            ("Reason", "phase_a_repaired"),
-        ]
-        if resolved_spec_dir is not None:
-            fields.append(("Spec dir", str(resolved_spec_dir)))
-        if spec_paths_refreshed:
-            fields.append(("State", "refreshed stale spec artifact paths"))
-        _banner("HARNESS RESUME — RETRYING", fields)
-
-        from harness.skills.run_skill import run
-        provider = DockerWorktreeProvider(
-            buffer_limit_bytes=config.buffer_limit_bytes,
-            container_cli=_container_runtime_cli(config),
-        )
-        user_message = f"spec {spec_id} mode={mode} resume"
-        try:
-            outcome = run(
-                user_message,
-                provider,
-                gitops,
-                base_dir=str(harness_base_dir),
-                config=config,
-                resume_build_id=build_id or None,
-                orchestration_root=spec_search_root,
-                summary_command=command_prefix,
-            )
-            if _delivery_outcome_exit_code(outcome):
-                raise SystemExit(1)
-        except Exception as exc:
-            if _is_docker_unavailable_error(exc):
-                _mark_current_harness_state_blocked(
-                    harness_base_dir,
-                    spec_id,
-                    "docker_unavailable",
-                )
-                print(
-                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
-                    f"  Error: {exc}\n"
-                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery continue {spec_id}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            _print_harness_error_and_exit(
-                project_root=harness_base_dir,
-                spec_id=spec_id,
-                command=rerun_command,
-                exc=exc,
-            )
-        _exit_if_provider_session_limited(state_store)
-        return
-
-    if termination_reason in retryable_error_reasons:
-        blockers = _harness_error_resume_blockers(
-            project_root=spec_search_root,
-            spec_id=spec_id,
-            spec_dir=resolved_spec_dir,
-        )
-        if blockers:
-            print(
-                f"✗ Spec {spec_id!r} is still blocked after the previous harness error.\n"
-                "  Resume preflight failed:\n"
-                + "".join(f"  - {blocker}\n" for blocker in blockers)
-                + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        fields = [
-            ("Spec", spec_id),
-            ("Reason", termination_reason),
-        ]
-        if resolved_spec_dir is not None:
-            fields.append(("Spec dir", str(resolved_spec_dir)))
-        if spec_paths_refreshed:
-            fields.append(("State", "refreshed stale spec artifact paths"))
-        _banner("HARNESS RESUME — RETRYING", fields)
-
-        from harness.skills.run_skill import run
-        provider = DockerWorktreeProvider(
-            buffer_limit_bytes=config.buffer_limit_bytes,
-            container_cli=_container_runtime_cli(config),
-        )
-        user_message = f"spec {spec_id} mode={mode} resume"
-        try:
-            outcome = run(
-                user_message,
-                provider,
-                gitops,
-                base_dir=str(harness_base_dir),
-                config=config,
-                resume_build_id=build_id or None,
-                orchestration_root=spec_search_root,
-                summary_command=command_prefix,
-            )
-            if _delivery_outcome_exit_code(outcome):
-                raise SystemExit(1)
-        except Exception as exc:
-            if _is_docker_unavailable_error(exc):
-                _mark_current_harness_state_blocked(
-                    harness_base_dir,
-                    spec_id,
-                    "docker_unavailable",
-                )
-                print(
-                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
-                    f"  Error: {exc}\n"
-                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery continue {spec_id}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            _print_harness_error_and_exit(
-                project_root=harness_base_dir,
-                spec_id=spec_id,
-                command=rerun_command,
-                exc=exc,
-            )
-        _exit_if_provider_session_limited(state_store)
-        return
-
-    if termination_reason in recoverable_reasons:
-        from harness.recovery import HarnessRecoveryError, recover_blocked_run
-
-        recovery_project_dir = Path(
-            str(
-                state.get("target_repo_path")
-                or state.get("target_path")
-                or state.get("source_root")
-                or config.target_repo
-                or harness_base_dir
-            )
-        )
-        if not recovery_project_dir.is_absolute():
-            recovery_project_dir = (config_root / recovery_project_dir).resolve()
-
-        try:
-            recovered = recover_blocked_run(
-                project_dir=recovery_project_dir,
-                spec_id=spec_id,
-                state=state,
-                gitops=gitops,
-                build_id=build_id,
-            )
-        except HarnessRecoveryError as e:
-            print(
-                f"✗ Harness recovery failed for spec {spec_id!r}: {e}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        action = "applied" if recovered.applied else "already present"
-        fields = [
-            ("Spec", spec_id),
-            ("Reason", termination_reason),
-            ("Source", recovered.source),
-            ("Commit", recovered.commit[:12]),
-            ("Branch", recovered.target_branch),
-            ("Status", action),
-        ]
-        if recovered.backed_up_untracked:
-            fields.append(("Untracked backups", str(len(recovered.backed_up_untracked))))
-            fields.append(("Backup dir", recovered.backup_dir))
-        _banner("HARNESS RESUME — RECOVERED", fields)
-
-        from harness.skills.run_skill import run
-        provider = DockerWorktreeProvider(
-            buffer_limit_bytes=config.buffer_limit_bytes,
-            container_cli=_container_runtime_cli(config),
-        )
-        user_message = f"spec {spec_id} mode={mode} resume"
-        try:
-            outcome = run(
-                user_message,
-                provider,
-                gitops,
-                base_dir=str(harness_base_dir),
-                config=config,
-                resume_build_id=build_id or None,
-                orchestration_root=spec_search_root,
-                summary_command=command_prefix,
-            )
-            if _delivery_outcome_exit_code(outcome):
-                raise SystemExit(1)
-        except Exception as exc:
-            if _is_docker_unavailable_error(exc):
-                _mark_current_harness_state_blocked(
-                    harness_base_dir,
-                    spec_id,
-                    "docker_unavailable",
-                )
-                print(
-                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
-                    f"  Error: {exc}\n"
-                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery continue {spec_id}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            _print_harness_error_and_exit(
-                project_root=harness_base_dir,
-                spec_id=spec_id,
-                command=rerun_command,
-                exc=exc,
-            )
-        _exit_if_provider_session_limited(state_store)
-        return
 
     if (
         not config.verify_command
+        and not phase_a_retry
+        and termination_reason not in retryable_error_reasons
+        and termination_reason not in recoverable_reasons
         and termination_reason not in {"budget_exhausted", "checkpoint_outer_cap"}
         and not pending_slice_budget_exhausted
         and not pending_prior_review_cap
@@ -4251,6 +4032,7 @@ def _run_delivery_resume(
         # verify command is resolved from that candidate during execution.
         and not _is_retryable_cancelled_delivery_slice(state)
         and not _has_interrupted_pending_candidate(state, state_dir)
+        and not reconcile_unknown_dispatch
     ):
         print(
             _format_missing_verify_command_resume_message(echelon_yml, spec_id),
@@ -4285,16 +4067,12 @@ def _run_delivery_resume(
             resume_build_id=build_id or None,
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
+            reconcile_unknown_dispatch=reconcile_unknown_dispatch,
         )
         if _delivery_outcome_exit_code(outcome):
             raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
-            _mark_current_harness_state_blocked(
-                harness_base_dir,
-                spec_id,
-                "docker_unavailable",
-            )
             print(
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"

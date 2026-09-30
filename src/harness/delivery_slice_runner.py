@@ -47,6 +47,80 @@ _MAX_REVIEW_PATHS = 200
 _MAX_REVIEW_AUDIT_PATHS = 200
 
 
+def _validate_superseded_dispatches(root: Path, operation_id: str, references: list[dict] | None) -> None:
+    """Retained parent receipts remain authority on every successor replay."""
+    if references is None:
+        return
+    if not isinstance(references, list) or not references:
+        raise DeliverySliceError("invalid delivery supersession history")
+    seen = {operation_id}
+    for reference in reversed(references):
+        if (not isinstance(reference, dict)
+                or set(reference) != {"operation_id", "dispatch_id", "journal_sha256", "successor_id"}
+                or any(not isinstance(value, str) or not value for value in reference.values())
+                or reference["successor_id"] != operation_id
+                or reference["operation_id"] in seen):
+            raise DeliverySliceError("invalid delivery supersession history")
+        with DeliverySliceJournal(root, reference["operation_id"]) as parent:
+            data = parent.load(required=True)
+        if (not data["records"] or _digest(data) != reference["journal_sha256"]
+                or data["records"][-1]["assignment"]["dispatch_id"] != reference["dispatch_id"]
+                or data["records"][-1]["error"] not in {
+                    "delivery_dispatch_outcome_unknown_superseded:" + operation_id,
+                    "delivery_provider_failure_superseded:" + operation_id,
+                }):
+            raise DeliverySliceError("delivery_reconciliation_required: superseded receipt changed")
+        operation_id = reference["operation_id"]
+        seen.add(operation_id)
+
+
+def _supersede_initial_dispatch(*, stack, journal, data, operation_id, evidence_root,
+                               candidate, reconcile_unknown, retry_failed,
+                               token_budget, budget_extension_limit):
+    """Replace only a first implementer attempt, before any review history exists.
+
+    Successor journal -> explicit parent seal -> controller state handover.
+    The deterministic successor makes the first two writes crash-replayable;
+    the caller must persist the handover before any provider can be dispatched.
+    """
+    records = data["records"]
+    if (len(records) != 1 or records[0]["assignment"]["step"] != "implementer"
+            or records[0]["repair_attempt"] != 0 or records[0]["result"] is not None):
+        raise DeliverySliceError("delivery_reconciliation_required: recovery requires the first implementer dispatch")
+    record = records[0]
+    successor_id = _digest({"operation_id": operation_id, "dispatch_id": record["assignment"]["dispatch_id"]})
+    unknown_seal = "delivery_dispatch_outcome_unknown_superseded:" + successor_id
+    failed_seal = "delivery_provider_failure_superseded:" + successor_id
+    unknown = record["error"] in {None, unknown_seal}
+    if not (
+        unknown and reconcile_unknown
+        and all(record[key] is None for key in ("raw_result", "candidate_after", "token_usage"))
+        or not unknown and retry_failed and record["error"] in {"delivery_provider_failed", failed_seal}
+    ):
+        raise DeliverySliceError("delivery_reconciliation_required: dispatch is not eligible for recovery")
+    previous_usage = record["token_usage"] or 0
+    saved_budget = data["budget_limit"]
+    if saved_budget is not None and budget_extension_limit is not None:
+        saved_budget = max(saved_budget, budget_extension_limit)
+    limits = [limit for limit in (saved_budget, token_budget) if limit is not None]
+    remaining = min(limits) - previous_usage if limits else None
+    if remaining is not None and remaining <= 0:
+        raise DeliverySliceError("delivery_slice_budget_exhausted")
+    replacement = {**data, "run_id": successor_id, "candidate_fingerprint": candidate,
+                   "budget_limit": remaining, "records": []}
+    successor = stack.enter_context(DeliverySliceJournal(evidence_root, successor_id))
+    existing = successor.load(required=record["error"] in {unknown_seal, failed_seal})
+    if existing is not None and existing != replacement:
+        raise DeliverySliceError("delivery_reconciliation_required: successor journal changed")
+    if existing is None:
+        successor.save(replacement)
+    record["error"] = unknown_seal if unknown else failed_seal
+    journal.save(data)
+    reference = {"operation_id": operation_id, "dispatch_id": record["assignment"]["dispatch_id"],
+                 "journal_sha256": _digest(data), "successor_id": successor_id}
+    return successor, replacement, successor_id, reference, previous_usage, record["token_usage"] is None
+
+
 class DeliverySliceRunner:
     """Accept one canonical task only after three independent passing reviews."""
 
@@ -67,6 +141,10 @@ class DeliverySliceRunner:
         on_journal_ready: Callable[[], None] | None = None,
         browser_baseline_capture: Callable[[str], BrowserBaselineCapture] | None = None,
         semantic_visual_gate_required: bool = False,
+        reconcile_unknown_dispatch: bool = False,
+        retry_failed_dispatch: bool = False,
+        superseded_dispatches: list[dict] | None = None,
+        on_dispatch_superseded: Callable[[str, dict, int, bool], None] | None = None,
     ) -> BuildResult:
         start = time.monotonic()
         tokens = 0
@@ -134,6 +212,7 @@ class DeliverySliceRunner:
 
             journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id))
             data = journal.load(required=journal_required)
+            _validate_superseded_dispatches(evidence_root, operation_id, superseded_dispatches)
             normalized_declared_targets = _normalize_declared_targets(declared_targets)
             nested_target_prefix = _nested_target_prefix(implementation_target)
             if (
@@ -206,8 +285,6 @@ class DeliverySliceRunner:
             records = data["records"]
             tokens = sum(record["token_usage"] or 0 for record in records)
             usage_known = all(record["token_usage"] is not None for record in records)
-            if records and records[-1]["result"] is None and records[-1]["error"] is None:
-                raise DeliverySliceError("delivery_reconciliation_required: dispatch completion is unknown")
             accepted = _latest_review_round_accepted(records)
             allowed_inputs = {(data["input_fingerprint"], data["protected_fingerprint"])}
             if accepted:
@@ -217,6 +294,26 @@ class DeliverySliceRunner:
             candidate = records[-1]["candidate_after"] if records else data["candidate_fingerprint"]
             if candidate is not None and _candidate_fingerprint(worktree, spec_dir) != candidate:
                 raise DeliverySliceError("delivery_reconciliation_required: candidate changed")
+            if records and (
+                reconcile_unknown_dispatch
+                or (retry_failed_dispatch and records[-1]["error"] is not None)
+            ):
+                if on_dispatch_superseded is None:
+                    raise DeliverySliceError("delivery recovery requires a durable operation handover")
+                journal, data, operation_id, reference, previous_usage, unknown_usage = _supersede_initial_dispatch(
+                    stack=stack, journal=journal, data=data, operation_id=operation_id,
+                    evidence_root=evidence_root, candidate=_candidate_fingerprint(worktree, spec_dir),
+                    reconcile_unknown=reconcile_unknown_dispatch,
+                    retry_failed=retry_failed_dispatch, token_budget=token_budget,
+                    budget_extension_limit=budget_extension_limit,
+                )
+                on_dispatch_superseded(operation_id, reference, previous_usage, unknown_usage)
+                run_id, records = data["run_id"], data["records"]
+                tokens, usage_known = 0, True
+                token_budget = data["budget_limit"]
+                budget_extension_limit = None
+            if records and records[-1]["result"] is None and records[-1]["error"] is None:
+                raise DeliverySliceError("delivery_reconciliation_required: dispatch completion is unknown")
             if records and records[-1]["error"]:
                 raise DeliverySliceError(records[-1]["error"])
             if data["budget_limit"] is not None:

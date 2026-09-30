@@ -4584,6 +4584,11 @@ def delivery_continue(
     token_budget: Optional[int] = typer.Option(None, "--token-budget"),
     max_outer: Optional[int] = typer.Option(None, "--max-outer"),
     auto_merge: Optional[bool] = typer.Option(None, "--auto-merge/--no-auto-merge"),
+    reconcile_unknown_dispatch: bool = typer.Option(
+        False,
+        "--reconcile-unknown-dispatch",
+        help="After confirming the provider stopped, reconcile the first unknown implementer dispatch and rerun every gate.",
+    ),
 ) -> None:
     """Continue a blocked delivery run when no answer is needed."""
     from echelon.delivery_service import DeliveryRecoveryRequest, continue_delivery
@@ -4597,6 +4602,7 @@ def delivery_continue(
             token_budget=token_budget,
             max_outer=max_outer,
             auto_merge=auto_merge,
+            reconcile_unknown_dispatch=reconcile_unknown_dispatch,
         ),
     )
 
