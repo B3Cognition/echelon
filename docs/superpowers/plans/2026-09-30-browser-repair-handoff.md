@@ -287,8 +287,8 @@ Do not use `--reconcile-unknown-dispatch` for the two completed browser requests
 - [x] Written design approved by user instruction to proceed.
 - [x] Plan maps each design boundary to an implementation/test task.
 - [x] Native execution preserved from the user's earlier choice.
-- [ ] User reviewed this implementation plan.
-- [ ] Task 1 complete and its functional result reported.
+- [x] User reviewed this implementation plan.
+- [x] Task 1 complete and its functional result reported: 173 focused/adjacent tests passed; live routing unchanged.
 - [ ] Task 2 complete.
 - [ ] Task 3 complete.
 - [ ] Task 4 complete; actual workspace outcome recorded.

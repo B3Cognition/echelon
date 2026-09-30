@@ -5,7 +5,10 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
+
+if TYPE_CHECKING:
+    from harness.delivery_browser_handoff import BrowserRepairRequest
 
 from kernel.task_contract import TASK_ID_PATTERN
 
@@ -67,6 +70,7 @@ class BuildResult:
     provider_invocation: dict[str, object] | None = None
     blocker_kind: Optional[str] = None
     partial_progress: bool = False
+    browser_repair_request: BrowserRepairRequest | None = None
 
     def __post_init__(self) -> None:
         self.status = _normalize_status(self.status)

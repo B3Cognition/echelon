@@ -72,6 +72,11 @@ class DeliverySliceJournal:
         write_json_atomic(self.path, data, trusted_root=self.root)
 
 
+def delivery_journal_position(data: dict) -> tuple[int, int]:
+    """Validate the whole chain and return its consumed round/capture position."""
+    return _validate(data)
+
+
 def _validate(data):
     fields = {"schema_version", "run_id", "binding", "task_id", "input_fingerprint",
               "protected_fingerprint", "candidate_fingerprint", "progress_input_fingerprint",
@@ -232,3 +237,4 @@ def _validate(data):
                         review_rejected = False
                     else:
                         terminal = True
+    return repair, browser_requests_in_round

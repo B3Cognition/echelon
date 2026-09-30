@@ -23,7 +23,10 @@ not implemented. The
 [browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
 is approved. Next: review the four-task
 [implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md),
-then execute Task 1 natively and report its functional result before advancing.
+Task 1's read-only handoff contract is implemented: real journal/receipt tests
+resolve T-012 without dispatch or evidence writes, preserve same-task repair,
+and retain consumed allowances. Focused plus adjacent verification: 173 passed.
+Live routing is still unchanged. Next: Task 2's bounded controller checkpoints.
 No new milestone or S6/S7 work is opened.
 
 ## Status

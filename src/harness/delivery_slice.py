@@ -20,10 +20,10 @@ class DeliveryTasksComplete(DeliverySliceError):
     """No implementation remains in scope; authoritative verification is still owed."""
 
 
-def select_delivery_repair_task(
+def resolve_delivery_failure_owner(
     spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
 ) -> dict[str, object]:
-    """Bind a fresh repair to one declared owner, never to execution order."""
+    """Resolve strict failure identity and scope, independently of task status."""
     def blocked(reason: str) -> None:
         raise DeliverySliceError("delivery_repair_ownership_required: " + reason)
 
@@ -68,11 +68,22 @@ def select_delivery_repair_task(
     task_id = next(iter(owners))
     if allowed_task_ids is not None and task_id not in allowed_task_ids:
         blocked(f"{task_id} is outside the permitted target scope")
-    summary = summarize_task_progress((spec_dir / "tasks.md").read_text(encoding="utf-8"))
-    if not summary.valid or summary.task_statuses.get(task_id) not in {"DONE", "DONE_WITH_CONCERNS"}:
-        blocked(f"{task_id} is not an accepted task eligible for repair")
     return {"task_id": task_id, "failed_test_case_ids": sorted(cases),
             "reason": "unique_test_case_owner"}
+
+
+def select_delivery_repair_task(
+    spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
+) -> dict[str, object]:
+    """Bind a fresh repair to one accepted owner, never to execution order."""
+    selection = resolve_delivery_failure_owner(spec_dir, feedback, allowed_task_ids)
+    task_id = selection["task_id"]
+    summary = summarize_task_progress((spec_dir / "tasks.md").read_text(encoding="utf-8"))
+    if not summary.valid or summary.task_statuses.get(task_id) not in {"DONE", "DONE_WITH_CONCERNS"}:
+        raise DeliverySliceError(
+            f"delivery_repair_ownership_required: {task_id} is not an accepted task eligible for repair"
+        )
+    return selection
 
 
 STEP_VERDICTS = {
