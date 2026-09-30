@@ -141,6 +141,7 @@ _NON_CHARGEABLE_INFRASTRUCTURE_REASONS = {
     "sandbox_verification_unavailable",
     "user_runnability_sandbox_prerequisite",
     "verification_infrastructure",
+    "coverage_observer_unavailable",
     "verify_command_needed",
 }
 _BANZAI_MILESTONE_DEFER_REASON = (
@@ -163,6 +164,15 @@ def _is_user_runnability_sandbox_prerequisite(result: VerifyResult) -> bool:
         failure.id == "user-runnability-sandbox-prerequisite"
         for failure in result.failures
     )
+
+
+def _verification_prerequisite_reason(result: VerifyResult) -> str | None:
+    """Owner/runtime capability gaps cannot be repaired in candidate source."""
+    if _is_user_runnability_sandbox_prerequisite(result):
+        return "user_runnability_sandbox_prerequisite"
+    if any(failure.id == "coverage-observer-unavailable" for failure in result.failures):
+        return "coverage_observer_unavailable"
+    return None
 
 
 def _runnability_target_id(target_repo: str) -> str:
@@ -924,12 +934,13 @@ class RalphController:
                 preserve_worktree=True,
             )
 
-        if _is_user_runnability_sandbox_prerequisite(verify_result):
+        prerequisite_reason = _verification_prerequisite_reason(verify_result)
+        if prerequisite_reason:
             return CandidateCheckpointOutcome(
                 decision=CandidateDecision.TERMINAL,
                 result=self._finalize(
                     status="blocked",
-                    reason="user_runnability_sandbox_prerequisite",
+                    reason=prerequisite_reason,
                     outer_iterations=outer_iter + 1,
                     inner_iterations=total_inner_iterations,
                     pr_url=pr_url,
@@ -1895,11 +1906,12 @@ class RalphController:
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
             }
-        if _is_user_runnability_sandbox_prerequisite(verify_result):
+        prerequisite_reason = _verification_prerequisite_reason(verify_result)
+        if prerequisite_reason:
             return {
                 "converged": False,
                 "blocked": True,
-                "blocked_reason": "user_runnability_sandbox_prerequisite",
+                "blocked_reason": prerequisite_reason,
                 "inner_count": 0,
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
@@ -2201,11 +2213,12 @@ class RalphController:
                     "final_verify": current_verify,
                 }
 
-            if _is_user_runnability_sandbox_prerequisite(current_verify):
+            prerequisite_reason = _verification_prerequisite_reason(current_verify)
+            if prerequisite_reason:
                 return {
                     "converged": False,
                     "blocked": True,
-                    "blocked_reason": "user_runnability_sandbox_prerequisite",
+                    "blocked_reason": prerequisite_reason,
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
                     "final_verify": current_verify,

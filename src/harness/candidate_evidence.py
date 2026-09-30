@@ -49,6 +49,7 @@ from harness.stacks.preflight import (
     required_coverage_observers_for_types,
 )
 from harness.stacks.resolver import (
+    resolve_stacks,
     resolved_coverage_observer_plan_sha256,
     resolved_stack_contract_sha256,
 )
@@ -676,8 +677,12 @@ class CandidateEvidenceRunner:
             for item in getattr(resolved, "coverage_observers", ())
             if item.observer.required
         )
-        if not required:
+        # A planning contract, not stack selection, creates the obligation.
+        # Preserve stackless verification only when no coverage contract exists.
+        if not required and (spec_dir is None or not (spec_dir / "coverage-map.md").is_file()):
             return CoverageGateResult(verify_result)
+        if resolved is None:
+            resolved = resolve_stacks([], {})
         if spec_dir is None:
             return CoverageGateResult(
                 _coverage_failure(
@@ -792,7 +797,10 @@ class CandidateEvidenceRunner:
                 _coverage_failure(
                     verify_result,
                     "coverage-observer-unavailable",
-                    "; ".join(item.message for item in unavailable),
+                    "; ".join(item.message for item in unavailable)
+                    + " Configure compatible required coverage observers in the "
+                    "owner-controlled stack contract before retrying verification. "
+                    "This is a verification capability gap, not an implementation failure.",
                 ),
                 observer_required=True,
             )
