@@ -243,3 +243,137 @@ def test_invalid_coverage_case_cannot_be_silently_dropped(slice_project, tmp_pat
     )
     assert not result["passed"]
     assert executor.calls == []
+
+
+def _coverage_gaps(*case_ids):
+    return VerifyResult(False, [FailureEntry(
+        FailureCategory.OTHER, "coverage-observation-gaps", "Required coverage did not pass",
+        {"test_cases": {case: {"status": "unbound", "test_type": "contract" if case.startswith("CT-") else "e2e",
+                                "reason": "no executed tagged test matches the planned case"}
+                        for case in case_ids}},
+    )])
+
+
+def test_multi_owner_coverage_repairs_one_task_then_uses_fresh_remaining_debt(slice_project, tmp_path):
+    controller, store, executor = _project(slice_project, tmp_path)
+    root = str(slice_project[0])
+    first_evidence = _coverage_gaps("CT-NET-001", "E2E-START-002")
+    first = controller._exec_feedback(None, first_evidence, "echelon build", "", worktree_path=root)
+    assert first["passed"] and first["task_ids"] == ["T-011"], first
+    first_operation = store.read()["delivery_slice_operation"]
+    feedback = json.loads(first_operation["feedback"])
+    assert set(feedback["failures"][0]["details"]["test_cases"]) == {"CT-NET-001", "E2E-START-002"}
+    assert feedback["repair_selection"] == {
+        "task_id": "T-011", "failed_test_case_ids": ["E2E-START-002"],
+        "reason": "unique_test_case_owner",
+    }
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-011"] * 4
+    # A later verifier result, not a second owner dispatched from stale debt.
+    controller._apply_build_task_progress(worktree_path=root, task_ids=first["task_ids"])
+    second = controller._exec_feedback(None, _coverage_gaps("CT-NET-001"),
+                                       "echelon build", "", worktree_path=root)
+    assert second["passed"] and second["task_ids"] == ["T-012"], second
+    second_operation = store.read()["delivery_slice_operation"]
+    assert second_operation["id"] != first_operation["id"]
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-011"] * 4 + ["T-012"] * 4
+
+
+def test_multi_owner_pending_repair_keeps_saved_owner_and_all_evidence(slice_project, tmp_path):
+    controller, store, executor = _project(slice_project, tmp_path)
+    controller._controlled_slice_budget = 7
+    root = str(slice_project[0])
+    result = controller._exec_feedback(None, _coverage_gaps("CT-NET-001", "E2E-START-002"),
+                                      "echelon build", "", worktree_path=root)
+    assert not result["passed"] and "budget_exhausted" in result["build_reason"], result
+    pending = store.read()["delivery_slice_operation"]
+    state = store.read()
+    state["token_budget"] = 100
+    state["delivery_slice_operation"]["budget_extension_limit"] = 95
+    store.write(state)
+    controller._controlled_slice_budget = 95 - state["tokens_used"]
+    resumed = controller._exec_feedback(None, _coverage_gaps("CT-NET-001"),
+                                       "echelon build", "", worktree_path=root)
+    assert resumed["passed"] and resumed["task_ids"] == ["T-011"], resumed
+    assert store.read()["delivery_slice_operation"]["id"] == pending["id"]
+    assert store.read()["delivery_slice_operation"]["feedback"] == pending["feedback"]
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-011"] * 4
+
+
+@pytest.mark.parametrize("problem,reason", [
+    ("unknown", "no unique owner"), ("duplicate", "no unique owner"),
+    ("outside", "outside the permitted target scope"), ("pending", "not an accepted task"),
+])
+def test_multi_owner_coverage_validates_every_owner_before_dispatch(slice_project, tmp_path, problem, reason):
+    controller, store, executor = _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    evidence = _coverage_gaps("E2E-START-002", "CT-NET-001")
+    if problem == "unknown":
+        evidence = _coverage_gaps("E2E-START-002", "CT-UNKNOWN-001")
+    elif problem == "duplicate":
+        text = tasks.read_text().replace("Implement `E2E-START-002`", "Implement `CT-NET-001`, `E2E-START-002`")
+        tasks.write_text(text)
+    elif problem == "outside":
+        state = store.read()
+        state["target_task_ids"] = ["T-011"]
+        store.write(state)
+    else:
+        tasks.write_text(tasks.read_text().replace("- [x] T-012", "- [ ] T-012")
+                         .replace("**Status:** DONE\n  **Test Tasks:**\n  - [x] Implement `CT-NET-001`",
+                                  "**Status:** PENDING\n  **Test Tasks:**\n  - [x] Implement `CT-NET-001`"))
+    result = controller._exec_feedback(None, evidence, "echelon build", "", worktree_path=str(slice_project[0]))
+    assert not result["passed"] and reason in result["build_reason"], result
+    assert executor.calls == []
+
+
+def test_browser_owner_resolution_remains_strict_for_multi_owner_coverage(slice_project, tmp_path):
+    from harness.delivery_slice import resolve_delivery_failure_owner, DeliverySliceError
+    _project(slice_project, tmp_path)
+    evidence = _coverage_gaps("E2E-START-002", "CT-NET-001")
+    feedback = {"failures": [{"id": failure.id, "details": failure.details} for failure in evidence.failures]}
+    with pytest.raises(DeliverySliceError, match="multiple task owners"):
+        resolve_delivery_failure_owner(slice_project[1], feedback, None)
+
+
+def test_coverage_selection_follows_canonical_task_order_not_failure_order(slice_project, tmp_path):
+    from harness.delivery_slice import select_delivery_repair_task
+    _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    text = tasks.read_text().replace("T-011", "T-090")
+    tasks.write_text(text)
+    result = _coverage_gaps("CT-NET-001", "E2E-START-002")
+    feedback = {"failures": [{"id": failure.id, "details": failure.details} for failure in result.failures]}
+    assert select_delivery_repair_task(slice_project[1], feedback, None)["task_id"] == "T-090"
+
+
+def test_coverage_repair_does_not_advance_while_selected_owner_still_fails(slice_project, tmp_path):
+    controller, store, executor = _project(slice_project, tmp_path)
+    root = str(slice_project[0])
+    for _ in range(2):
+        result = controller._exec_feedback(None, _coverage_gaps("E2E-START-002", "CT-NET-001"),
+                                          "echelon build", "", worktree_path=root)
+        assert result["passed"] and result["task_ids"] == ["T-011"], result
+        controller._apply_build_task_progress(worktree_path=root, task_ids=result["task_ids"])
+    assert [call[0]["task_id"] for call in executor.calls] == ["T-011"] * 8
+
+
+def test_inner_loop_reverifies_between_coverage_owner_repairs(slice_project, tmp_path, monkeypatch):
+    controller, store, executor = _project(slice_project, tmp_path)
+    verification_points = []
+
+    def verify(**kwargs):
+        verification_points.append([call[0]["task_id"] for call in executor.calls])
+        # Only the next authoritative observation removes the first owner's debt.
+        # The second owner remains failing: accepted reviews must not converge.
+        return _coverage_gaps("CT-NET-001")
+
+    monkeypatch.setattr(controller._candidate_evidence_runner, "run_standard", verify)
+    result = controller._run_inner_loop(
+        handle=None, verify_result=_coverage_gaps("CT-NET-001", "E2E-START-002"),
+        outer_iter=0, max_inner=2, tokens_used=0, token_budget=1000,
+        state=store.read(), build_command="echelon build", delivery_context="",
+        worktree_path=str(slice_project[0]),
+    )
+    assert verification_points == [["T-011"] * 4, ["T-011"] * 4 + ["T-012"] * 4]
+    assert not result["converged"] and not result["blocked"], result
+    assert result["inner_count"] == 2
+    assert result["final_verify"].failures[0].details["test_cases"].keys() == {"CT-NET-001"}

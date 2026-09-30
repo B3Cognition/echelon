@@ -190,12 +190,44 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   Delivery remains paused. The old empty-observer snapshot must not be rewritten
   or reused as evidence for the new stack. Candidate-owned runnability contract
   is also absent; this remains a separate prerequisite before coverage acceptance.
-- [ ] Approve and implement bounded multi-owner coverage repair selection: one
+- [x] Approve and implement bounded multi-owner coverage repair selection: one
   uniquely owned task per existing repair operation, full failure evidence
   retained, fresh verification between repairs, pending-operation replay intact.
   Keep ambiguous/unowned cases, target-scope violations, and browser handoff
   single-owner rules fail-closed. Do not introduce a new queue/controller or
-  manually repair the demo. Concrete design presented; implementation pending.
+  manually repair the demo. Only pure structured coverage-observation failures
+  gain canonical-task-order selection; all case owners, target scope, and
+  accepted statuses are validated before selecting any owner. Other failure
+  formats and strict browser ownership remain unchanged. No Ralph control-flow,
+  durable-state schema, CLI or provider-contract changes.
+  Four regressions failed before implementation. Verification: 96 focused
+  repair/browser/recovery tests and the added real inner-loop sequencing test
+  passed; expanded gate finished with 355 passed and 21 existing failures in
+  `test_delivery_source_feedback.py`. All 21 also fail with the committed
+  pre-change `delivery_slice` module, during initial provider fixture setup.
+  Failed test groups are `test_actual_repair_roles_receive_one_contract_and_complete_evidence`
+  (18 variants), `test_empty_base_does_not_discard_controlled_failure_evidence`,
+  `test_restart_replays_exact_structured_feedback_and_accounts_once`, and
+  `test_old_pending_source_repair_blocks_without_rewriting_records`.
+  Repository fail-fast: 96 passed plus the known canonical-spec convergence
+  fixture failure. Independent read-only review found no issues. Retained-report
+  diagnostic now selects T-004 and its four cases from the 37-case report,
+  without dispatch. Tests verify full evidence retention, exact pending replay,
+  re-verification between distinct owners, and no convergence from reviews
+  while coverage still fails. No live candidate edits, restart, caps changes,
+  install, push or evidence migration.
+- [ ] Correct coverage progress identity before resuming multi-owner repair.
+  A read-only hypothetical shrinking-debt probe using the actual coverage map
+  demonstrates that the existing first-20-requirement error summary can remain
+  unchanged while remaining case debt falls 30 → 28 → 26. The existing repeated
+  failure detector would escalate at T-008 despite that progress. Use complete
+  structured coverage debt for repeat identity, preserving repeat thresholds,
+  caps and true-stagnation escalation. Do not weaken gates or add a queue.
+  Probe/log: `stack-wiring/coverage_progress_probe.py` and
+  `stack-wiring/coverage-progress-probe.log` under the local evidence directory
+  above. This is a simulated diagnostic, not repaired/accepted candidate work;
+  implementation remains a separate increment. Candidate runnability contract
+  remains another explicitly open prerequisite.
 - [ ] Correct semantic visual gate ordering, then test its phase handoff.
 - [ ] Address requirement-level fulfillment repair routing separately, with
   evidence-bound ownership and no fallback to the last executed task.

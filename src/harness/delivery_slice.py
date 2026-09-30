@@ -20,10 +20,10 @@ class DeliveryTasksComplete(DeliverySliceError):
     """No implementation remains in scope; authoritative verification is still owed."""
 
 
-def resolve_delivery_failure_owner(
+def _delivery_failure_cases_by_owner(
     spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
-) -> dict[str, object]:
-    """Resolve strict failure identity and scope, independently of task status."""
+) -> dict[str, list[str]]:
+    """Validate every failure before grouping uniquely owned, in-scope cases."""
     def blocked(reason: str) -> None:
         raise DeliverySliceError("delivery_repair_ownership_required: " + reason)
 
@@ -57,25 +57,62 @@ def resolve_delivery_failure_owner(
             blocked("missing failed test identity for " + str(failure.get("id", "unknown")))
         cases.update(ids)
     ownership = task_owned_coverage_case_ids(spec_dir / "tasks.md")
-    owners: set[str] = set()
+    owners: dict[str, list[str]] = {}
     for case in sorted(cases):
         matches = {task for task, owned in ownership.items() if case in owned}
         if len(matches) != 1:
             blocked(f"no unique owner for {case}: {', '.join(sorted(matches)) or 'none'}")
-        owners.update(matches)
+        task_id = next(iter(matches))
+        if allowed_task_ids is not None and task_id not in allowed_task_ids:
+            blocked(f"{task_id} is outside the permitted target scope")
+        owners.setdefault(task_id, []).append(case)
+    return owners
+
+
+def resolve_delivery_failure_owner(
+    spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
+) -> dict[str, object]:
+    """Resolve one strict owner; browser handoffs must never select a subset."""
+    owners = _delivery_failure_cases_by_owner(spec_dir, feedback, allowed_task_ids)
     if len(owners) != 1:
-        blocked("multiple task owners: " + ", ".join(sorted(owners)))
+        raise DeliverySliceError(
+            "delivery_repair_ownership_required: multiple task owners: " + ", ".join(sorted(owners))
+        )
     task_id = next(iter(owners))
-    if allowed_task_ids is not None and task_id not in allowed_task_ids:
-        blocked(f"{task_id} is outside the permitted target scope")
-    return {"task_id": task_id, "failed_test_case_ids": sorted(cases),
+    return {"task_id": task_id, "failed_test_case_ids": owners[task_id],
             "reason": "unique_test_case_owner"}
 
 
 def select_delivery_repair_task(
     spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
 ) -> dict[str, object]:
-    """Bind a fresh repair to one accepted owner, never to execution order."""
+    """Bind one accepted owner, deriving remaining coverage debt on reverify.
+
+    Ralph retains the complete failure report in its existing durable operation.
+    Only the selected owner's cases authorize this repair; there is no persisted
+    queue and pending operations continue replaying their original selection.
+    Other failure formats retain strict single-owner resolution.
+    """
+    failures = feedback.get("failures")
+    coverage_only = isinstance(failures, list) and bool(failures) and all(
+        isinstance(failure, dict) and failure.get("id") == "coverage-observation-gaps"
+        and isinstance(failure.get("details"), dict)
+        and isinstance(failure["details"].get("test_cases"), dict)
+        and "failed_test_case_ids" not in failure["details"]
+        for failure in failures
+    )
+    if coverage_only:
+        owners = _delivery_failure_cases_by_owner(spec_dir, feedback, allowed_task_ids)
+        text = (spec_dir / "tasks.md").read_text(encoding="utf-8")
+        summary = summarize_task_progress(text)
+        for task_id in owners:
+            if not summary.valid or summary.task_statuses.get(task_id) not in {"DONE", "DONE_WITH_CONCERNS"}:
+                raise DeliverySliceError(
+                    f"delivery_repair_ownership_required: {task_id} is not an accepted task eligible for repair"
+                )
+        task_id = next(row.task_id for row in parse_task_rows(text) if row.task_id in owners)
+        return {"task_id": task_id, "failed_test_case_ids": owners[task_id],
+                "reason": "unique_test_case_owner"}
     selection = resolve_delivery_failure_owner(spec_dir, feedback, allowed_task_ids)
     task_id = selection["task_id"]
     summary = summarize_task_progress((spec_dir / "tasks.md").read_text(encoding="utf-8"))
