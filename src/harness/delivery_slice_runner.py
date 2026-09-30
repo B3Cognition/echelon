@@ -556,6 +556,7 @@ class DeliverySliceRunner:
                             "browser_verification": {
                                 "passed": observation.verification_passed,
                                 "diagnostic": observation.diagnostic,
+                                "failures": observation.verification_failures,
                             },
                             "instruction": browser_instruction,
                         })

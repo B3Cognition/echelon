@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import hmac
 import json
@@ -11,10 +11,14 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from harness.durable_json import write_json_atomic
+from harness.verify_result import FailureCategory
 from harness.visual_ralph import (
     BrowserBaselineCapture, MAX_BROWSER_BASELINE_IMAGE_BYTES,
     MAX_BROWSER_BASELINE_IMAGES, MAX_BROWSER_BASELINE_TOTAL_BYTES,
 )
+
+
+MAX_BROWSER_VERIFICATION_BYTES = 1_000_000
 
 
 class BrowserBaselineEvidenceError(ValueError):
@@ -32,6 +36,8 @@ class BrowserBaselineObservation:
     images: dict[str, Path]
     verification_passed: bool
     diagnostic: str
+    # None means a historical v2 receipt did not retain structured failures.
+    verification_failures: list[dict[str, object]] | None
 
 
 def write_browser_baseline_receipt(
@@ -45,6 +51,8 @@ def write_browser_baseline_receipt(
         raise BrowserBaselineEvidenceError("invalid browser baseline identity or images")
     if not isinstance(capture.diagnostic, str) or len(capture.diagnostic) > 4000:
         raise BrowserBaselineEvidenceError("invalid browser verification diagnostic")
+    failures = [asdict(failure) for failure in capture.verification.failures]
+    _validate_failures(failures, capture.verification.passed)
     if (len(capture.images) > MAX_BROWSER_BASELINE_IMAGES
             or any(not isinstance(content, bytes) or len(content) > MAX_BROWSER_BASELINE_IMAGE_BYTES
                    for content in capture.images.values())
@@ -78,7 +86,7 @@ def write_browser_baseline_receipt(
             "size": len(content),
         })
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "authority": "browser-baseline-proposal",
         "operation_id": operation_id,
         "task_id": task_id,
@@ -86,6 +94,7 @@ def write_browser_baseline_receipt(
         "input_fingerprint": input_fingerprint,
         "verification_passed": capture.verification.passed,
         "verification_diagnostic": capture.diagnostic,
+        "verification_failures": failures,
         "artifacts": artifacts,
     }
     digest = _digest(receipt)
@@ -154,6 +163,8 @@ def _read_browser_baseline_observation(
             "candidate_fingerprint", "input_fingerprint", "verification_passed",
             "verification_diagnostic", "artifacts", "receipt_sha256",
         }
+        if isinstance(payload, dict) and payload.get("schema_version") == 3:
+            expected_keys.add("verification_failures")
         if not isinstance(payload, dict) or set(payload) != expected_keys:
             raise BrowserBaselineEvidenceError("invalid browser receipt schema")
         digest = payload.pop("receipt_sha256")
@@ -162,7 +173,7 @@ def _read_browser_baseline_observation(
             and hmac.compare_digest(digest, ref.receipt_sha256)
         ):
             raise BrowserBaselineEvidenceError("browser receipt digest mismatch")
-        if (payload["schema_version"] != 2
+        if (type(payload["schema_version"]) is not int or payload["schema_version"] not in {2, 3}
                 or payload["authority"] != "browser-baseline-proposal"
                 or payload["operation_id"] != operation_id
                 or payload["task_id"] != task_id
@@ -175,6 +186,9 @@ def _read_browser_baseline_observation(
                 or not isinstance(payload["verification_diagnostic"], str)
                 or len(payload["verification_diagnostic"]) > 4000):
             raise BrowserBaselineEvidenceError("browser receipt binding mismatch")
+        failures = payload.get("verification_failures")
+        if payload["schema_version"] == 3:
+            _validate_failures(failures, payload["verification_passed"])
         artifacts = payload["artifacts"]
         if (not isinstance(artifacts, list) or len(artifacts) > MAX_BROWSER_BASELINE_IMAGES
                 or (not artifacts and not payload["verification_passed"]
@@ -213,11 +227,35 @@ def _read_browser_baseline_observation(
             images=retained,
             verification_passed=payload["verification_passed"],
             diagnostic=payload["verification_diagnostic"],
+            verification_failures=failures,
         )
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         if isinstance(exc, BrowserBaselineEvidenceError):
             raise
         raise BrowserBaselineEvidenceError("browser baseline evidence unavailable") from exc
+
+
+def _validate_failures(failures: object, passed: bool) -> None:
+    """Keep complete, bounded FailureEntry records; never silently drop failures."""
+    if (type(passed) is not bool or not isinstance(failures, list)
+            or (passed and failures)):
+        raise BrowserBaselineEvidenceError("invalid browser verification failures")
+    categories = {category.value for category in FailureCategory}
+    for failure in failures:
+        if (not isinstance(failure, dict)
+                or set(failure) != {"category", "id", "error", "details"}
+                or not isinstance(failure["category"], str)
+                or failure["category"] not in categories
+                or not isinstance(failure["id"], str) or not failure["id"]
+                or not isinstance(failure["error"], str)
+                or not isinstance(failure["details"], dict)):
+            raise BrowserBaselineEvidenceError("invalid browser verification failure record")
+    try:
+        size = len(json.dumps(failures, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise BrowserBaselineEvidenceError("invalid browser verification failure data") from exc
+    if size > MAX_BROWSER_VERIFICATION_BYTES:
+        raise BrowserBaselineEvidenceError("browser verification failures exceed size limit")
 
 
 def _candidate_path(value: object) -> PurePosixPath:

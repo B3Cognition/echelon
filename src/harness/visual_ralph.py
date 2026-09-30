@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 import logging
+import re
 import shlex
 import subprocess
 import shutil
@@ -19,13 +20,14 @@ from harness.config import HarnessConfig
 from harness.delivery_errors import DeliveryConfigurationError
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
-from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
+from harness.playwright_evidence import PlaywrightEvidenceError, PlaywrightTestEvidence, parse_playwright_json
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from harness.verification_plan import build_verification_plan, materialize_services
 from harness.verification_evidence import redact_verification_text
 from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
+from harness.test_execution_evidence import parse_echelon_case_tags, TestExecutionEvidenceError
 
 logger = logging.getLogger(__name__)
 
@@ -408,19 +410,22 @@ class VisualRalphController:
                 ),
             ))
         for test in evidence.tests:
+            # Derive identities only after redaction. A scrubbed case tag is
+            # ambiguous, not a routable ID or a secret to retain in a list.
+            test = replace(test, title=redact_verification_text(test.title, self._runtime_env))
             if test.status == "failed":
                 failures.append(FailureEntry(
                     category=FailureCategory.PLAYWRIGHT_TEST,
                     id=test.title,
                     error=test.error,
-                    details={"test_id": test.id, "file": test.file, "project": test.project},
+                    details=_browser_failure_details(test),
                 ))
             elif test.status == "skipped":
                 failures.append(FailureEntry(
                     category=FailureCategory.PLAYWRIGHT_TEST,
                     id=f"playwright_skipped::{test.title}",
                     error=test.error,
-                    details={"test_id": test.id, "file": test.file, "project": test.project},
+                    details=_browser_failure_details(test),
                 ))
         if result.exit_code != 0 and not failures:
             failures.append(FailureEntry(
@@ -428,6 +433,16 @@ class VisualRalphController:
                 id="playwright_command_failed",
                 error=(result.stderr or result.stdout or "Playwright command failed")[:1000],
             ))
+        # These fields now leave the sandbox in a retained browser receipt, not
+        # only in the truncated diagnostic. Redact before that boundary.
+        failures = [replace(
+            failure,
+            id=redact_verification_text(failure.id, self._runtime_env),
+            error=redact_verification_text(failure.error, self._runtime_env),
+            details={key: redact_verification_text(value, self._runtime_env)
+                     if isinstance(value, str) else value
+                     for key, value in failure.details.items()},
+        ) for failure in failures]
         return VerifyResult(
             passed=not failures and result.exit_code == 0,
             failures=failures,
@@ -824,6 +839,27 @@ class VisualRalphController:
 
 
 # === Helpers ===
+
+def _browser_failure_details(test: PlaywrightTestEvidence) -> dict[str, object]:
+    """Identify failed/skipped tests, never IDs mentioned only in error output.
+
+    Like source-repair evidence, this accepts a single prefix or suffix tag for
+    repair identity. It does not grant the stricter coverage observer acceptance.
+    """
+    cases: tuple[str, ...] = ()
+    if len(re.findall(r"\[echelon:", test.title, re.IGNORECASE)) == 1:
+        tag = re.search(r"\[echelon:[^\]]*\]", test.title, re.IGNORECASE)
+        if tag is not None:
+            try:
+                cases = parse_echelon_case_tags(tag.group(0))
+            except TestExecutionEvidenceError:
+                pass
+    return {
+        "test_id": test.id, "file": test.file, "project": test.project,
+        "failed_test_case_ids": list(cases),
+        "unidentified_test_failures": 0 if cases else 1,
+    }
+
 
 def _safe_product_fingerprint(worktree_path: str) -> str:
     try:
