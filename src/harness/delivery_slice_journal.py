@@ -64,12 +64,39 @@ class DeliverySliceJournal:
         if not self.path.is_file() or self.path.stat().st_size > 2_000_000:
             raise DeliverySliceError("invalid delivery journal file")
         data = json.loads(self.path.read_text(encoding="utf-8"))
+        self._validate_checkpoint_paths(data)
         self._validator(data)
         return data
 
     def save(self, data):
+        self._validate_checkpoint_paths(data)
         self._validator(data)
         write_json_atomic(self.path, data, trusted_root=self.root)
+
+    def _validate_checkpoint_paths(self, data):
+        """Constrain receipt IO before schema validation reads any checkpoints."""
+        if not isinstance(data, dict) or data.get("schema_version") != 3:
+            return
+        checks = data.get("browser_checks")
+        if not isinstance(checks, list):
+            raise DeliverySliceError("invalid browser checkpoints")
+        root = self.root.parent
+        if root.is_symlink():
+            raise DeliverySliceError("unsafe browser checkpoint evidence root")
+        root = root.resolve(strict=True)
+        for check in checks:
+            ref = check.get("receipt") if isinstance(check, dict) else None
+            if ref is None:
+                continue
+            if not isinstance(ref, dict) or not isinstance(ref.get("path"), str):
+                raise DeliverySliceError("invalid browser checkpoint receipt")
+            path = Path(ref["path"])
+            if not path.is_absolute() or not path.is_relative_to(root) or ".." in path.parts:
+                raise DeliverySliceError("unsafe browser checkpoint receipt path")
+            relative = path.relative_to(root)
+            if any((root / Path(*relative.parts[:i])).is_symlink()
+                   for i in range(1, len(relative.parts) + 1)):
+                raise DeliverySliceError("unsafe browser checkpoint receipt path")
 
 
 def delivery_journal_position(data: dict) -> tuple[int, int]:

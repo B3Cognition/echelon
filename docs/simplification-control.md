@@ -19,7 +19,7 @@ still stops at the known `test_converges_within_3_outer_iterations` fixture's
 missing canonical spec directory.
 
 The live run remains stopped on unfinished T-011. Cross-task repair/return is
-not implemented. The
+implemented and functionally tested, but native admission is blocked. The
 [browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
 and four-task
 [implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md) are approved.
@@ -38,14 +38,32 @@ round-count assertions deselected. Those are the three modes of
 `test_gate_failure_cannot_be_promoted_by_ralph` and
 `test_banzai_outer_loop_does_not_verify_or_accept_rejected_slice`; they expect
 four rounds although the existing limit is five. No gate or limit was changed.
-Live Delivery is still stopped. Next: Task 4 interruption tests, current v2
-workspace refresh integration, independent review, then native observation.
+Live Delivery is still stopped. Task 4 interruption tests, current v2 refresh
+integration, and independent review have run; native observation remains blocked.
 Task 4 pre-review checkpoint: 328 focused tests passed (four known stale
 round-count assertions excluded). Ten crash boundaries preserve dispatches and
 accounting. Real Ralph refreshes the stopped v2 two-request shape without
 rewriting it. The repository gate still stops after 96 passing tests at the
-known convergence fixture. Independent review and live continuation remain
-pending; no workspace-acceptance claim is made.
+known convergence fixture.
+
+Post-review checkpoint: four Important findings reproduced and fixed individually:
+provider supersession retains authenticated capture identity, accepted source
+progress replays across its file/state write boundary, every checkpoint receipt
+is confined to the trusted evidence root, and v2 refresh preserves an explicitly
+admitted budget extension. The expanded gate passed **393 tests**, with the same
+four stale round-count assertions deselected. Repository fail-fast: 96 passed,
+then the known convergence-fixture failure; no green full-suite claim.
+
+The installed CLI imports this worktree. Native `echelon delivery continue
+001-simple-three-js-demo` exited 1: CLI admission rejects `build_blocked` /
+`delivery_browser_evidence_request_repeated` before reaching Ralph. Target
+`delivery.json` was byte-identical before/after; usage remains 34,990,865/50M,
+active operation `fb2d0a3533714e44a501940f3841fba5`. No demo edits, reset,
+unknown-dispatch reconciliation, limit increase, or provider dispatch occurred.
+Next: narrowly admit authenticated pending browser recovery through the existing
+resume boundary, then retry the native observation. Task 4.8 requires reporting
+this out-of-contract admission change before implementation. Task 4 and STAB-1
+remain open; no workspace-acceptance claim is made.
 No new milestone or S6/S7 work is opened.
 
 ## Status

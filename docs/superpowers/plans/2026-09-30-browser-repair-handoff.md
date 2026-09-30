@@ -292,3 +292,43 @@ Do not use `--reconcile-unknown-dispatch` for the two completed browser requests
 - [x] Task 2 complete: 204 focused tests passed, including 26 checkpoint/continuation cases; mutation checks failed as intended. Native Ralph routing not wired yet.
 - [x] Task 3 complete: 241 focused tests passed; four pre-existing stale round-count assertions reproduced with prior Ralph and reported separately. Native run not resumed.
 - [ ] Task 4 complete; actual workspace outcome recorded.
+
+### Task 4 execution checkpoint — review fixes and native admission
+
+Implementation commits through `42c42cb0` received one independent range review.
+All four Important findings were reproduced with regression tests and fixed:
+
+- Provider failure/unknown-outcome recovery after requested, return, and prior-round
+  owner captures: six cases. Retain the original v3 capture identity through the
+  existing sealed supersession chain; authenticate the retained checkpoint prefix
+  and origin rather than relabeling receipts. Fresh operations still start with
+  `run_id=operation_id`; v2 behavior is unchanged.
+- PENDING source completion interrupted before/after progress state persistence:
+  two cases. Authenticate immutable entry inputs separately from the existing
+  exact accepted-progress transition. Changed spec/scope/role checks still pass.
+- Redirected requested/owner/return capture ancestry: three cases. Constrain
+  checkpoint receipt paths at journal IO before reading evidence.
+- Explicit v2 budget extension: positive/negative cases. Preserve the admission
+  field for the existing runner; old evidence and consumed allowances stay intact.
+
+Each finding followed RED→GREEN. Expanded functional gate (the Task 4 gate plus
+checkpoint, failed-review recovery, and unknown-dispatch recovery tests):
+**393 passed, 4 deselected in 184.31s**. The four exclusions are the previously
+reproduced stale round-count fixtures. Repository fail-fast:
+**96 passed, 1 failed in 38.34s**, at the known
+`TestRalphConvergence::test_converges_within_3_outer_iterations` fixture. Review
+raised no Critical/Minor findings and declined no judgments. No second reviewer.
+
+Native runtime paths both point into this worktree. With no active Delivery
+process, the exact Task 4.8 command was attempted and exited 1: CLI admission
+rejects `build_blocked` / `delivery_browser_evidence_request_repeated` before
+Ralph. No provider ran. The target state file's SHA-256 was unchanged:
+`14a531f00d2a9a921149d993bb2a12f4a310eaaae8cbc0e9b6f56c89e2537ff5`.
+Usage remains 34,990,865/50M; operation remains
+`fb2d0a3533714e44a501940f3841fba5`. Bundles reported zero changed files.
+
+Per Task 4.8, stop/report this admission blocker before expanding scope. Do not
+reset the run, reopen the spec, or reconcile these completed requests as unknown
+dispatches. The next narrowly scoped change is native admission for authenticated
+pending browser recovery, followed by the same command and observation. Task 4
+remains incomplete; this is not a convergence or workspace-acceptance receipt.

@@ -90,6 +90,8 @@ def _validate_superseded_dispatches(root: Path, operation_id: str, references: l
     """Retained parent receipts remain authority on every successor replay."""
     browser_owners = {}
     if references is None:
+        if successor is not None and successor.get("schema_version") == 3 and successor["run_id"] != operation_id:
+            raise DeliverySliceError("delivery_reconciliation_required: browser operation identity changed")
         return browser_owners
     if not isinstance(references, list) or not references:
         raise DeliverySliceError("invalid delivery supersession history")
@@ -113,12 +115,21 @@ def _validate_superseded_dispatches(root: Path, operation_id: str, references: l
         retained = data["records"][:-1]
         if successor is None or successor["records"][:len(retained)] != retained:
             raise DeliverySliceError("delivery_reconciliation_required: retained review history changed")
+        if data.get("schema_version") == 3 and (
+                successor.get("schema_version") != 3 or successor["run_id"] != data["run_id"]
+                or successor["browser_checks"][:len(data["browser_checks"])] != data["browser_checks"]
+                or successor["continuation"] != data["continuation"]
+                or successor["require_browser_recheck"] != data["require_browser_recheck"]):
+            raise DeliverySliceError("delivery_reconciliation_required: retained browser history changed")
         for record in retained:
             if "browser_evidence" in record:
-                browser_owners[record["assignment"]["dispatch_id"]] = reference["operation_id"]
+                browser_owners[record["assignment"]["dispatch_id"]] = (
+                    data["run_id"] if data.get("schema_version") == 3 else reference["operation_id"])
         successor = data
         operation_id = reference["operation_id"]
         seen.add(operation_id)
+    if successor.get("schema_version") == 3 and successor["run_id"] != operation_id:
+        raise DeliverySliceError("delivery_reconciliation_required: browser origin identity changed")
     return browser_owners
 
 
@@ -167,7 +178,9 @@ def _supersede_failed_dispatch(*, stack, journal, data, operation_id, evidence_r
     remaining = min(limits) - failed_usage if limits else None
     if remaining is not None and remaining <= retained_usage:
         raise DeliverySliceError("delivery_slice_budget_exhausted")
-    replacement = {**data, "run_id": successor_id,
+    # A provider retry changes dispatch authority, not capture ownership. Keep
+    # the v3 evidence identity and authenticate it through the sealed parents.
+    replacement = {**data, "run_id": data["run_id"] if data["schema_version"] == 3 else successor_id,
                    "candidate_fingerprint": data["candidate_fingerprint"] if retained else candidate,
                    "budget_limit": remaining, "records": retained}
     successor = stack.enter_context(DeliverySliceJournal(evidence_root, successor_id))
@@ -273,7 +286,7 @@ class DeliverySliceRunner:
                 raise DeliverySliceError("delivery_browser_capture_limit")
             candidate_before = _candidate_fingerprint(worktree, spec_dir)
             check = {
-                "checkpoint_id": browser_checkpoint_id(operation_id, purpose, dispatch_id, ordinal),
+                "checkpoint_id": browser_checkpoint_id(data["run_id"], purpose, dispatch_id, ordinal),
                 "purpose": purpose, "after_dispatch_id": dispatch_id,
                 "candidate_fingerprint": product_evidence_fingerprint(worktree),
                 "input_fingerprint": input_fingerprint, "repair_attempt": repair,
@@ -287,7 +300,7 @@ class DeliverySliceRunner:
                     or input_fingerprint != _digest(_spec_inputs(spec_dir, self._project_dir))):
                 raise DeliverySliceError("delivery_reconciliation_required: stale browser capture")
             ref = write_browser_baseline_receipt(
-                evidence_root=evidence_root, operation_id=operation_id, task_id=task_id,
+                evidence_root=evidence_root, operation_id=data["run_id"], task_id=task_id,
                 input_fingerprint=input_fingerprint, capture=capture,
             )
             check["receipt"] = {"path": str(ref.path), "receipt_sha256": ref.receipt_sha256}
@@ -352,7 +365,10 @@ class DeliverySliceRunner:
                     continuation, evidence_root=evidence_root,
                     candidate_fingerprint=(data["candidate_fingerprint"] if data else
                                            _candidate_fingerprint(worktree, spec_dir)),
-                    input_fingerprint=input_fingerprint,
+                    # Lineage describes entry, not the later progress-only
+                    # write. Current inputs still require the exact accepted
+                    # progress transition below before any replay effect.
+                    input_fingerprint=data["input_fingerprint"] if data else input_fingerprint,
                 )
             binding = delivery_slice_binding(
                 worktree=worktree, spec_dir=spec_dir, roles=roles, allowed_task_ids=allowed_task_ids,
@@ -443,7 +459,8 @@ class DeliverySliceRunner:
                 run_id, records = data["run_id"], data["records"]
                 for record in records:
                     if "browser_evidence" in record:
-                        browser_owners.setdefault(record["assignment"]["dispatch_id"], reference["operation_id"])
+                        browser_owners.setdefault(record["assignment"]["dispatch_id"],
+                            data["run_id"] if data["schema_version"] == 3 else reference["operation_id"])
                 tokens, usage_known = retained_usage, True
                 token_budget = data["budget_limit"]
                 budget_extension_limit = None
@@ -596,7 +613,8 @@ class DeliverySliceRunner:
                             reference = record["browser_evidence"]
                             validate_historical_browser_baseline(
                                 BrowserBaselineEvidenceRef(Path(reference["path"]), reference["receipt_sha256"]),
-                                operation_id=browser_owners.get(assignment.dispatch_id, operation_id),
+                                operation_id=browser_owners.get(assignment.dispatch_id,
+                                    data["run_id"] if data["schema_version"] == 3 else operation_id),
                                 task_id=task_id, input_fingerprint=input_fingerprint,
                             )
                             continue  # Completed history, not a new capture request.
@@ -651,7 +669,8 @@ class DeliverySliceRunner:
                             path=Path(reference["path"]), receipt_sha256=reference["receipt_sha256"],
                         )
                         observation = read_browser_baseline_observation(
-                            ref, operation_id=browser_owners.get(assignment.dispatch_id, operation_id), task_id=task_id,
+                            ref, operation_id=browser_owners.get(assignment.dispatch_id,
+                                data["run_id"] if data["schema_version"] == 3 else operation_id), task_id=task_id,
                             candidate_fingerprint=product_evidence_fingerprint(worktree),
                             input_fingerprint=input_fingerprint,
                         )

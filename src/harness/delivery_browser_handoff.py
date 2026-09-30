@@ -140,7 +140,8 @@ def resolve_browser_repair(
                for index in range(1, len(relative.parts) + 1)):
             raise DeliverySliceError("unsafe browser handoff receipt path")
         observation = read_browser_baseline_observation(
-            request.receipt, operation_id=request.source.operation_id, task_id=data["task_id"],
+            request.receipt, operation_id=data["run_id"] if data["schema_version"] == 3 else request.source.operation_id,
+            task_id=data["task_id"],
             candidate_fingerprint=candidate_fingerprint, input_fingerprint=input_fingerprint,
         )
         if observation.verification_passed or observation.verification_failures is None:

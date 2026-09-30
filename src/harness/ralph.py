@@ -2417,7 +2417,8 @@ class RalphController:
         trigger = BrowserRepairRequest(reference, records[-1]["assignment"]["dispatch_id"],
             BrowserBaselineEvidenceRef(Path(retained["path"]), retained["receipt_sha256"]))
         successor = {key: deepcopy(value) for key, value in operation.items()
-                     if key in {"worktree_path", "source_binding", "outer_iter", "feedback", "repair_task_id"}}
+                     if key in {"worktree_path", "source_binding", "outer_iter", "feedback", "repair_task_id",
+                                "budget_extension_limit"}}
         successor.update(id=handoff_operation_id(trigger, "refresh"), accounted_tokens=0, progress_applied=False,
             continuation=entry, browser_refresh={"source_operation": deepcopy(operation), "source_journal": reference.as_mapping()})
         self._prepare_browser_operation(successor, worktree=worktree, spec_dir=spec_dir)
@@ -2488,8 +2489,10 @@ class RalphController:
         from harness.delivery_slice import DeliverySliceError
         from harness.delivery_slice_runner import (
             delivery_role_inputs, delivery_slice_binding, _candidate_fingerprint,
-            _digest, _spec_inputs, _durable_protected_fingerprint,
+            _digest, _spec_inputs, _durable_protected_fingerprint, _validate_superseded_dispatches,
         )
+        _validate_superseded_dispatches(self._delivery_operation_evidence_root(), operation["id"],
+                                       operation.get("superseded_dispatches"), data)
         state = self._state_store.read()
         binding = delivery_slice_binding(
             worktree=worktree.resolve(), spec_dir=spec_dir,
@@ -2531,7 +2534,8 @@ class RalphController:
         if owner == source["task_id"]:
             raise DeliverySliceError("browser handoff requires a foreign owner")
         observation = read_browser_baseline_observation(request.receipt,
-            operation_id=source_operation["id"], task_id=source["task_id"],
+            operation_id=source["run_id"] if source["schema_version"] == 3 else source_operation["id"],
+            task_id=source["task_id"],
             candidate_fingerprint=product, input_fingerprint=fingerprint)
         feedback = {"feedback_kind": "controlled_source_repair_v1", "failures": observation.verification_failures}
         feedback["repair_selection"] = select_delivery_repair_task(spec_dir, feedback, scope)

@@ -35,7 +35,7 @@ def _handoff_project(fixture, tmp_path, monkeypatch, *, recheck="pass"):
         nonlocal candidate_at_capture
         candidate_at_capture = (Path(worktree) / "app.py").read_bytes()
         operation = store.read()["delivery_slice_operation"]
-        captures.append(operation["repair_task_id"])
+        captures.append(operation.get("repair_task_id") or "T-011")
         if (len(captures) == 1 or (operation.get("continuation") or {}).get("kind") == "refresh"
                 or len(captures) == 2 and recheck != "pass"):
             title = "[echelon:E2E-START-002] startup" if len(captures) == 2 and recheck == "third" else "[echelon:CT-NET-001] network"
@@ -314,3 +314,131 @@ def test_explicit_existing_budget_extension_can_resume_owner_without_rewriting_p
     assert result["passed"] and result["task_ids"] == ["T-011"], result
     assert store.read()["tokens_used"] == 63 and len(executor.calls) == 9
     assert all(path.read_bytes() == content for path, content in retained.items())
+
+
+@pytest.mark.parametrize("purpose", ["requested", "owner_recheck", "return_capture"])
+def test_replay_rejects_redirected_checkpoint_ancestry(slice_project, tmp_path, monkeypatch, purpose):
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    assert _drive(controller, slice_project)["passed"]
+    root = controller._delivery_operation_evidence_root()
+    journals = [json.loads(path.read_text()) for path in root.rglob("journal.json")]
+    check = next(check for data in journals for check in data.get("browser_checks", [])
+                 if check["purpose"] == purpose and check["receipt"] is not None)
+    directory = Path(check["receipt"]["path"]).parent.parent
+    moved = tmp_path / "redirected-evidence"
+    directory.rename(moved)
+    directory.symlink_to(moved, target_is_directory=True)
+    result = _drive(controller, slice_project)
+    assert not result["passed"] and not result["task_ids"], result
+    assert len(executor.calls) == 9 and store.read()["tokens_used"] == 63
+    assert captures == ["T-011", "T-012", "T-011"]
+
+
+@pytest.mark.parametrize("after_write", [False, True])
+def test_pending_source_progress_replays_across_state_write(slice_project, tmp_path, monkeypatch, after_write):
+    from harness.state import StateStore
+    from tests.unit.test_delivery_slice_recovery import ProcessLost
+    from tests.unit.test_delivery_controller_integration import _reconstruct
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    tasks = slice_project[1] / "tasks.md"
+    tasks.write_text(tasks.read_text().replace("[x] T-011", "[ ] T-011")
+                     .replace("**Status:** DONE", "**Status:** PENDING", 1)
+                     .replace("[x] Implement `E2E", "[ ] Implement `E2E")
+                     .replace("depends=T-011", "depends=none"))
+    result = controller._exec_controlled_slice(str(slice_project[0]), "", repair=False)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    written = StateStore.write
+    def write(current_store, state):
+        if after_write:
+            written(current_store, state)
+        raise ProcessLost()
+    with monkeypatch.context() as patch:
+        patch.setattr(StateStore, "write", write)
+        with pytest.raises(ProcessLost):
+            controller._apply_build_task_progress(worktree_path=str(slice_project[0]), task_ids=result["task_ids"])
+    assert "[x] T-011" in tasks.read_text()
+    resumed = _reconstruct(controller, store, executor)
+    result = resumed._exec_controlled_slice(str(slice_project[0]), "", repair=False)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    resumed._apply_build_task_progress(worktree_path=str(slice_project[0]), task_ids=result["task_ids"])
+    assert store.read()["delivery_slice_operation"]["progress_applied"] is True
+    assert len(executor.calls) == 9 and store.read()["tokens_used"] == 63
+    assert captures == ["T-011", "T-012", "T-011"]
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+@pytest.mark.parametrize("checkpoint,failed_call,total_calls", [
+    ("return_capture", 7, 10), ("requested", 4, 11), ("owner_recheck", 7, 14),
+])
+def test_provider_recovery_retains_browser_checkpoint_authority(
+    slice_project, tmp_path, monkeypatch, unknown, checkpoint, failed_call, total_calls,
+):
+    from harness.ai_cli_backend import CliRunResult
+    from tests.unit.test_delivery_slice_recovery import ProcessLost
+    from tests.unit.test_delivery_controller_integration import _reconstruct
+    controller, store, executor, captures, _ = _handoff_project(
+        slice_project, tmp_path, monkeypatch, recheck="retry" if checkpoint == "owner_recheck" else "pass")
+    script = executor.script
+    requested_candidate = None
+    def fail(assignment, payload, root):
+        nonlocal requested_candidate
+        script(assignment, payload, root)
+        if checkpoint == "requested" and len(executor.calls) == 2:
+            requested_candidate = (root / "app.py").read_bytes()
+            payload.update(verdict="BROWSER_EVIDENCE_REQUIRED", summary="Need owner screenshots",
+                           browser_evidence_request={"purpose": "baseline_capture"})
+        elif checkpoint == "requested" and len(executor.calls) == 3:
+            (root / "app.py").write_bytes(requested_candidate)
+        if len(executor.calls) == failed_call:
+            assert assignment["step"] == "spec_guard"
+            if unknown:
+                raise ProcessLost()
+            return CliRunResult(1, "", "transient provider failure", token_usage=7)
+    executor.script = fail
+    if unknown:
+        with pytest.raises(ProcessLost):
+            _drive(controller, slice_project)
+    else:
+        blocked = _drive(controller, slice_project)
+        assert blocked["build_reason"] == "delivery_provider_failed", blocked
+    operation = store.read()["delivery_slice_operation"]
+    evidence = controller._delivery_operation_evidence_root()
+    parent = DeliverySliceJournal(evidence, operation["id"]).load(required=True)
+    checks = parent["browser_checks"]
+    assert any(check["purpose"] == checkpoint for check in checks)
+    receipt_bytes = {Path(check["receipt"]["path"]): Path(check["receipt"]["path"]).read_bytes()
+                     for check in checks if check["receipt"] is not None}
+    resumed = _reconstruct(controller, store, executor)
+    resumed._retry_failed_dispatch = not unknown
+    resumed._reconcile_unknown_dispatch = unknown
+    result = _drive(resumed, slice_project)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert len(executor.calls) == total_calls
+    assert store.read()["tokens_used"] == 7 * (total_calls - int(unknown))
+    assert all(path.read_bytes() == content for path, content in receipt_bytes.items())
+    again = _drive(resumed, slice_project)
+    assert again["passed"] and len(executor.calls) == total_calls, again
+
+
+@pytest.mark.parametrize("extend", [False, True])
+def test_stopped_v2_refresh_preserves_only_explicit_budget_extension(slice_project, tmp_path, monkeypatch, extend):
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    journal, data, ref = _stopped_v2(controller, store, slice_project, monkeypatch)
+    data["budget_limit"] = 14
+    journal.save(data)
+    before = journal.path.read_bytes(), ref.path.read_bytes()
+    state = store.read()
+    state["token_budget"] = 100
+    if extend:
+        state["delivery_slice_operation"]["budget_extension_limit"] = 95
+    store.write(state)
+    controller._controlled_slice_budget = 95 - state["tokens_used"]
+    result = _drive(controller, slice_project)
+    assert (journal.path.read_bytes(), ref.path.read_bytes()) == before
+    if not extend:
+        assert not result["passed"] and "budget_exhausted" in result["build_reason"], result
+        assert len(executor.calls) == 1 and captures == ["T-011"]
+        return
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert len(executor.calls) == 9 and store.read()["tokens_used"] == 70
+    assert captures == ["T-011", "T-011", "T-012", "T-011"]

@@ -1,6 +1,8 @@
 # Delivery browser-failure repair handoff
 
-Status: design approved by user instruction to proceed; implementation not started.
+Status: implemented and independently reviewed; recovery fixes functionally
+verified. Native rollout is blocked at CLI admission; workspace acceptance is
+not complete. See the implementation plan's execution checkpoint.
 
 Implementation plan: [browser repair handoff](../plans/2026-09-30-browser-repair-handoff.md).
 
@@ -202,7 +204,7 @@ claim a green suite or expand this repair into a stale-test cleanup.
 - [x] Structured failure receipts and feedback: `20e88b0d`; 209 focused tests;
   isolated Docker evidence-to-owner probe; independent review approved.
 - [x] Written handoff design approved.
-- [ ] Implementation plan approved and execution method selected.
+- [x] Implementation plan approved; native execution selected.
 - [ ] Handoff and recovery implemented, functionally verified, and reviewed.
 - [ ] Existing workspace demonstrates owner repair and return without manual
   demo edits or gate exemptions.
