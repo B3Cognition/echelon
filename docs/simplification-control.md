@@ -8,6 +8,21 @@ starting another.
 
 **Current milestone:** STAB-1 — provider finalization / workspace acceptance
 
+### Current branch follow-up: browser repair handoff (2026-09-30)
+
+Within STAB-1, structured browser-failure retention is complete on
+`fix/browser-evidence-handoff` at `20e88b0d`: 209 focused tests passed, independent
+review approved, and an isolated Docker capture's `CT-NET-001` failure resolved
+to T-012 through the existing ownership selector. This is not a claim of merge,
+push, or completed workspace acceptance. The repository-wide fail-fast check
+still stops at the known `test_converges_within_3_outer_iterations` fixture's
+missing canonical spec directory.
+
+The live run remains stopped on unfinished T-011. Cross-task repair/return is
+not implemented. Next: review the
+[browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md),
+then approve its implementation plan. No new milestone or S6/S7 work is opened.
+
 ## Status
 
 | ID | Status | Outcome | Current evidence | Exit check |
