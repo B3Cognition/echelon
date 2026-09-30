@@ -10,11 +10,24 @@ from harness.escalation import EscalationHandler
 from harness.mode import ModeController
 from harness.ralph import RalphController
 from harness.state import StateStore
-from harness.verify_result import VerifyResult
+from harness.verify_result import VerifyResult, FailureCategory, FailureEntry
 from tests.unit.test_delivery_controller import MockProvider
 from tests.unit.test_delivery_controller import _initialize_git_worktree
 from tests.unit.test_delivery_slice_runner import slice_project, ScriptedExecutor, _steps
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
+
+
+def _declare_repair_case(fixture):
+    tasks = fixture[1] / "tasks.md"
+    text = tasks.read_text()
+    first, rest = text.split("\n", 1)
+    tasks.write_text(first + "\n  **Named Test Ownership:** `UT-GREETING-001`.\n" + rest)
+
+
+def _repair_failure(*, token_usage=0):
+    return VerifyResult(False, [FailureEntry(
+        FailureCategory.TEST, "UT-GREETING-001", "Greeting assertion failed",
+    )], token_usage=token_usage)
 
 
 def _controller(fixture, tmp_path, executor, mode="semi"):
@@ -36,6 +49,7 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
 
 
 def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_path):
+    _declare_repair_case(slice_project)
     executor = ScriptedExecutor()
     controller, store = _controller(slice_project, tmp_path, executor)
     root = str(slice_project[0])
@@ -45,7 +59,7 @@ def test_ralph_build_and_feedback_both_run_independent_gates(slice_project, tmp_
     assert store.read()["delivery_slice_task_id"] == "T-001"
     controller._apply_build_task_progress(worktree_path=root, task_ids=result["task_ids"])
     fixed = controller._exec_feedback(
-        None, VerifyResult(passed=False), "echelon build", "", worktree_path=root,
+        None, _repair_failure(), "echelon build", "", worktree_path=root,
         prompt="Repair the reported failure, not another task.")
     assert fixed["passed"], fixed
     assert fixed["task_ids"] == ["T-001"]
@@ -305,6 +319,7 @@ def _build(controller, fixture):
 def test_downstream_repair_uses_current_durable_budget(
     slice_project, tmp_path, restart, used, expected_dispatches,
 ):
+    _declare_repair_case(slice_project)
     executor = ScriptedExecutor()
     controller, store = _controller(slice_project, tmp_path, executor)
     controller._controlled_slice_budget = 95  # Initial build allowance, now stale.
@@ -323,7 +338,7 @@ def test_downstream_repair_uses_current_durable_budget(
 
     result = controller.run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
-        verify_result=VerifyResult(False), build_command="echelon build",
+        verify_result=_repair_failure(), build_command="echelon build",
         delivery_context="", build_prompt="build", phase="visual",
     )
 
@@ -335,7 +350,7 @@ def test_downstream_repair_uses_current_durable_budget(
     resumed = ScriptedExecutor()
     again = _reconstruct(controller, store, resumed).run_downstream_feedback(
         handle=None, worktree_path=str(slice_project[0]),
-        verify_result=VerifyResult(False), build_command="echelon build",
+        verify_result=_repair_failure(), build_command="echelon build",
         delivery_context="", build_prompt="build", phase="visual",
     )
     assert not again["passed"] and not resumed.calls
@@ -402,13 +417,14 @@ def test_missing_pending_journal_never_starts_over(slice_project, tmp_path, monk
 
 
 def test_ralph_restart_preserves_feedback_operation_not_next_task(slice_project, tmp_path, monkeypatch):
+    _declare_repair_case(slice_project)
     controller, store = _controller(slice_project, tmp_path, ScriptedExecutor())
     result = _build(controller, slice_project)
     controller._apply_build_task_progress(worktree_path=str(slice_project[0]), task_ids=result["task_ids"])
     with monkeypatch.context() as patch:
         _crash_after_receipt(patch, 2)
         with pytest.raises(ProcessLost):
-            controller._exec_feedback(None, VerifyResult(passed=False), "echelon build", "",
+            controller._exec_feedback(None, _repair_failure(), "echelon build", "",
                                       worktree_path=str(slice_project[0]), prompt="fix greeting")
     resumed = ScriptedExecutor()
     result = _build(_reconstruct(controller, store, resumed), slice_project)
@@ -528,6 +544,7 @@ def test_full_loop_crash_after_progress_state_preserves_accepted_candidate(slice
 
 
 def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, tmp_path, monkeypatch):
+    _declare_repair_case(slice_project)
     import shutil
     from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
@@ -553,7 +570,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
         return ImplementationResult("verified", "converged", 1, 0, None, 28, None)
 
     def visual(self, **kwargs):
-        failure = VerifyResult(False, token_usage=20)
+        failure = _repair_failure(token_usage=20)
         result = self._feedback_runner(None, str(slice_project[0]), failure, [])
         assert not result["passed"], result
         assert result["build_reason"] == "delivery_slice_budget_exhausted"
@@ -570,6 +587,7 @@ def test_visual_callback_counts_current_gate_cost_before_repair(slice_project, t
 
 
 def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tmp_path, monkeypatch):
+    _declare_repair_case(slice_project)
     import shutil
     from harness.delivery_controller import DeliveryController
     from harness.delivery_results import ImplementationResult, VisualResult
@@ -604,7 +622,7 @@ def test_visual_reentry_counts_persisted_controlled_usage_once(slice_project, tm
         if len(visual_runs) == 2:
             return VisualResult("passed", "converged", 1, 0, None)
         result = implementations[-1].run_downstream_feedback(
-            handle=None, worktree_path=str(slice_project[0]), verify_result=VerifyResult(False),
+            handle=None, worktree_path=str(slice_project[0]), verify_result=_repair_failure(),
             build_command="echelon build", delivery_context="", build_prompt="build", phase="visual")
         assert result["passed"] and result["tokens"] == 28, result
         return VisualResult("fix_applied", "fix_applied", 1, result["tokens"], None)

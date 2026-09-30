@@ -35,7 +35,7 @@ from uuid import uuid4
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
-from harness.candidate_evidence import CandidateEvidenceRunner
+from harness.candidate_evidence import CandidateEvidenceRunner, _failed_test_case_details
 from harness.convergence import (
     DEFAULT_MAX_OUTER,
     ConvergenceLease,
@@ -2333,7 +2333,7 @@ class RalphController:
         """Adapt the delivery controller to Ralph's existing result boundary."""
         from harness.delivery_slice_runner import DeliverySliceRunner
         from harness.delivery_slice_runner import _digest, _spec_inputs
-        from harness.delivery_slice import DeliverySliceError
+        from harness.delivery_slice import DeliverySliceError, select_delivery_repair_task
         from harness.delivery_documentation import DeliveryDocumentationRunner
 
         try:
@@ -2350,7 +2350,8 @@ class RalphController:
                 scope = set(raw_scope)
             else:
                 scope = self._target_task_ids()
-            repair_task_id = state.get("delivery_slice_task_id") if repair else None
+            repair_task_id = None
+            repair_selection = None
             operation = state.get("delivery_slice_operation")
             requested_kind = "documentation" if documentation else "task"
             source = self._source_phase_a_spec_dir(worktree)
@@ -2401,9 +2402,19 @@ class RalphController:
                         raise DeliverySliceError(
                             "delivery_reconciliation_required: legacy source repair feedback"
                         )
-            elif repair and not documentation and (not isinstance(repair_task_id, str) or not repair_task_id):
-                raise DeliverySliceError("feedback requires a previously accepted delivery slice task")
             else:
+                if repair and not documentation:
+                    try:
+                        feedback = json.loads(prompt)
+                    except (ValueError, RecursionError) as exc:
+                        raise DeliverySliceError("invalid source repair feedback") from exc
+                    if (not isinstance(feedback, dict)
+                            or feedback.get("feedback_kind") != "controlled_source_repair_v1"):
+                        raise DeliverySliceError("invalid source repair feedback")
+                    repair_selection = select_delivery_repair_task(spec_dir, feedback, scope)
+                    repair_task_id = repair_selection["task_id"]
+                    feedback["repair_selection"] = repair_selection
+                    prompt = json.dumps(feedback, sort_keys=True)
                 operation = {"id": uuid4().hex, "feedback": prompt,
                              "repair_task_id": repair_task_id, "accounted_tokens": 0,
                              "worktree_path": str(worktree.resolve()), "source_binding": source_binding,
@@ -2417,6 +2428,12 @@ class RalphController:
                 current = self._state_store.read()
                 current["delivery_slice_operation"] = operation
                 self._state_store.write(current)
+                if repair_selection is not None:
+                    print(
+                        f"Repair task {repair_task_id}: owns failed cases "
+                        + ", ".join(repair_selection["failed_test_case_ids"]),
+                        file=sys.stderr,
+                    )
 
             def remember_supersession(successor_id, reference, previous_usage, unknown_usage, retained_usage):
                 current = self._state_store.read()
@@ -4197,6 +4214,10 @@ class RalphController:
                         category=FailureCategory.TEST,
                         id="verify-command",
                         error=out[-2000:] if len(out) > 2000 else out,
+                        details=_failed_test_case_details(
+                            stdout.decode("utf-8", errors="replace"),
+                            stderr.decode("utf-8", errors="replace"),
+                        ),
                     ))
             except _sp.TimeoutExpired as exc:
                 stdout = bytes(exc.stdout or b"")
@@ -4362,6 +4383,10 @@ class RalphController:
                         category=FailureCategory.BUILD if stage in ("build", "install") else FailureCategory.TEST,
                         id=f"local-{stage}",
                         error=output[-2000:] if len(output) > 2000 else output,
+                        details=_failed_test_case_details(
+                            stdout.decode("utf-8", errors="replace"),
+                            stderr.decode("utf-8", errors="replace"),
+                        ),
                     ))
                     # Don't run further stages if install or test fails
                     if stage in ("install", "test"):

@@ -8,6 +8,8 @@ import re
 
 from harness.task_progress import summarize_task_progress
 from kernel.task_contract import parse_task_rows
+from harness.coverage_evidence import task_owned_coverage_case_ids
+from harness.coverage_contract import is_coverage_case_id
 
 
 class DeliverySliceError(ValueError):
@@ -16,6 +18,61 @@ class DeliverySliceError(ValueError):
 
 class DeliveryTasksComplete(DeliverySliceError):
     """No implementation remains in scope; authoritative verification is still owed."""
+
+
+def select_delivery_repair_task(
+    spec_dir: Path, feedback: dict, allowed_task_ids: set[str] | None,
+) -> dict[str, object]:
+    """Bind a fresh repair to one declared owner, never to execution order."""
+    def blocked(reason: str) -> None:
+        raise DeliverySliceError("delivery_repair_ownership_required: " + reason)
+
+    failures = feedback.get("failures")
+    if not isinstance(failures, list) or not failures:
+        blocked("missing failed test identity")
+    cases: set[str] = set()
+    for failure in failures:
+        if not isinstance(failure, dict):
+            blocked("invalid failure evidence")
+        details = failure.get("details", {})
+        if not isinstance(details, dict):
+            blocked("invalid failure details")
+        if details.get("unidentified_test_failures", 0) != 0:
+            blocked("unidentified test failures remain")
+        ids = details.get("failed_test_case_ids")
+        if ids is None and failure.get("id") == "coverage-observation-gaps":
+            observed = details.get("test_cases")
+            if isinstance(observed, dict):
+                statuses = {"unbound", "duplicate_binding", "invalid_report",
+                            "observer_missing", "observer_failed", "provenance_mismatch",
+                            "failed", "skipped", "not_executed"}
+                if any(not isinstance(value, dict) or value.get("status") not in statuses
+                       for value in observed.values()):
+                    blocked("invalid coverage failure identity")
+                ids = list(observed)
+        if ids is None and is_coverage_case_id(str(failure.get("id", ""))):
+            ids = [failure["id"]]
+        if (not isinstance(ids, list) or not ids
+                or any(not isinstance(case, str) or not is_coverage_case_id(case) for case in ids)):
+            blocked("missing failed test identity for " + str(failure.get("id", "unknown")))
+        cases.update(ids)
+    ownership = task_owned_coverage_case_ids(spec_dir / "tasks.md")
+    owners: set[str] = set()
+    for case in sorted(cases):
+        matches = {task for task, owned in ownership.items() if case in owned}
+        if len(matches) != 1:
+            blocked(f"no unique owner for {case}: {', '.join(sorted(matches)) or 'none'}")
+        owners.update(matches)
+    if len(owners) != 1:
+        blocked("multiple task owners: " + ", ".join(sorted(owners)))
+    task_id = next(iter(owners))
+    if allowed_task_ids is not None and task_id not in allowed_task_ids:
+        blocked(f"{task_id} is outside the permitted target scope")
+    summary = summarize_task_progress((spec_dir / "tasks.md").read_text(encoding="utf-8"))
+    if not summary.valid or summary.task_statuses.get(task_id) not in {"DONE", "DONE_WITH_CONCERNS"}:
+        blocked(f"{task_id} is not an accepted task eligible for repair")
+    return {"task_id": task_id, "failed_test_case_ids": sorted(cases),
+            "reason": "unique_test_case_owner"}
 
 
 STEP_VERDICTS = {

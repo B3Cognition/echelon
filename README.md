@@ -1026,6 +1026,18 @@ continuation permits one recovery, not an unbounded provider retry loop. Review
 rejections, malformed results, mutated candidates, and later implementer failures
 are not converted into retryable provider failures.
 
+Fresh source repairs use declared test-case ownership, not the last completed
+task. Tagged Playwright failures are extracted from the final failed-test list;
+structured coverage failures and explicit case IDs use the same task selector.
+The CLI prints `Repair task T-...: owns failed cases ...`. The existing
+`delivery.json` operation's saved feedback contains `repair_selection` (task,
+case IDs, reason) and the immutable verification-receipt reference. The slice
+journal binds the selected assignment; LLM prose is not routing authority.
+Missing, conflicting, unaccepted, or out-of-target ownership blocks with
+`delivery_repair_ownership_required`. This includes generic build/lint failures
+without a usable case identity; they require diagnosis, not a last-task guess.
+Pending operations retain their original assignment and feedback on resume.
+
 ### Review Loop (Phase 3)
 
 After Phase 1 converges and a PR is open, the harness optionally enters a review

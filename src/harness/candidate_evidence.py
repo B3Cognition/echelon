@@ -33,6 +33,7 @@ from harness.deferred_scope import active_entries
 from harness.errors import NotSupportedError, SandboxError
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
+from harness.test_execution_evidence import parse_echelon_case_tags, TestExecutionEvidenceError
 from harness.runnability_contract import (
     CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH,
     RunnabilityContractError,
@@ -66,6 +67,48 @@ _FAILURE_CONTEXT_MARKERS = (
     "received",
     "[chromium]",
 )
+
+
+def _failed_test_case_details(stdout: str, stderr: str) -> dict[str, object]:
+    """Read Playwright's final failed list, excluding progress/retried tests.
+
+    An incomplete or untagged list retains uncertainty instead of authorizing
+    repair from whichever test IDs happen to appear in a log excerpt.
+    """
+    output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", f"{stdout}\n{stderr}")
+    summaries = list(re.finditer(r"(?m)^\s*(\d+) failed[ \t]*$", output))
+    if len(summaries) != 1:
+        return {}
+    summary = summaries[-1]
+    total = int(summary.group(1))
+    cases: set[str] = set()
+    identified = 0
+    entries = 0
+    for line in output[summary.end():].splitlines():
+        if not line.strip():
+            continue
+        match = re.match(r"^\s+\[[^\]]+\] › .+?:\d+(?::\d+)? › (.+)$", line)
+        if match is None:
+            break
+        entries += 1
+        title = match.group(1)
+        if len(re.findall(r"\[echelon:", title, re.IGNORECASE)) != 1:
+            continue
+        tag = re.search(r"\[echelon:[^\]]*\]", title, re.IGNORECASE)
+        if tag is None:
+            continue
+        try:
+            # Use the shared ID grammar. Prefix tags can identify repair work;
+            # this does not grant the observer's stricter coverage acceptance.
+            cases.update(parse_echelon_case_tags(tag.group(0)))
+        except TestExecutionEvidenceError:
+            continue
+        identified += 1
+    return {
+        "failed_test_case_ids": sorted(cases),
+        "unidentified_test_failures": abs(total - entries) + entries - identified,
+        "identity_source": "playwright_failed_summary",
+    }
 
 
 def _failure_excerpt(stdout: str, stderr: str, *, limit: int = 4_000) -> str:
@@ -255,6 +298,7 @@ class CandidateEvidenceRunner:
                                 category=FailureCategory.TEST,
                                 id="verify-command",
                                 error=_failure_excerpt(result.stdout, result.stderr),
+                                details=_failed_test_case_details(result.stdout, result.stderr),
                             )
                         ],
                         duration_s=result.duration_ms / 1000.0,
@@ -399,6 +443,7 @@ class CandidateEvidenceRunner:
                             else "verify-command"
                         ),
                         error=_failure_excerpt(result.stdout, result.stderr),
+                        details=_failed_test_case_details(result.stdout, result.stderr),
                     )
                 )
             return self._attach_receipt(
