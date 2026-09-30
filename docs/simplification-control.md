@@ -18,10 +18,13 @@ push, or completed workspace acceptance. The repository-wide fail-fast check
 still stops at the known `test_converges_within_3_outer_iterations` fixture's
 missing canonical spec directory.
 
-The live run has resumed from unfinished T-011 using `3b839ffb`. Its fresh,
-structured capture identified `CT-NET-001` and selected owner T-012 through the
-normal harness path. T-012 implementation is in flight; owner reviews/recheck,
-return to T-011 and final Delivery acceptance are not yet verified. The
+The live continuation using `3b839ffb` stopped at
+`delivery_browser_snapshot_recapture_required` (exit 1; 37,952,845 tokens).
+T-012 passed independent reviews and its actual browser recheck. T-011 then
+received a distinct passing return capture, but installing its exact proposals
+changed three baseline PNGs and triggered the runner's candidate-change guard
+before fresh reviews. The process ended and observation is paused. These
+captures use snapshot-update mode, not final regression/visual acceptance. The
 [browser repair handoff design](superpowers/specs/2026-09-30-browser-repair-handoff-design.md)
 and four-task
 [implementation plan](superpowers/plans/2026-09-30-browser-repair-handoff.md) are approved.
@@ -69,12 +72,39 @@ consults that policy for routing/status only; locked runner validation still
 authorizes evidence, attempts and dispatch. No browser recovery rules were added
 to the CLI. Command/recovery tests: 100 passed; handoff/controller/lock tests:
 121 passed. Repository fail-fast: 96 passed, then the same known convergence
-fixture. The native retry has now reached T-012 without flags or limit changes:
+fixture. The native retry initially reached T-012 without flags or limit changes:
 refresh `8744822883ae…` used ordinal 3 and preserved the two prior requests;
-owner `bcc65da013e6…` is active. Capture receipt `c22a61d1c17a45ebbe7ddcc1b0c54ce8`
+owner `bcc65da013e6…` was then active. Capture receipt `c22a61d1c17a45ebbe7ddcc1b0c54ce8`
 retains structured `CT-NET-001`, with zero unidentified failures. Task 4 and STAB-1
 remain open; no workspace-acceptance claim is made.
 No new milestone or S6/S7 work is opened.
+
+Approved bounded follow-up: the existing runner now records the exact projected
+post-install candidate fingerprint **before** the return/refresh implementer
+dispatch, linked to its authenticated passing capture checkpoint. Only an
+unchanged candidate or exact complete proposal installation can proceed to the
+existing independent reviews. Source/test edits, altered or partial images,
+unlisted images, executable-status changes and symlinks do not gain an exception.
+Normal verification and semantic visual acceptance are unchanged requirements.
+The installation intent is an optional field on the existing durable dispatch
+record, not a new controller or CLI rule. Missing historical intent stays
+fail-closed; no live journal, demo code, cap, or review gate was changed.
+
+Verification: the two exact-installation regressions failed first with the live
+`delivery_browser_snapshot_recapture_required` reason. The final focused gate
+passed **236 tests in 146.67s**, covering controller handoff, new/replaced images,
+complete/partial/failed-capture refresh, completed-install crash reconstruction,
+malformed/missing intent, recovery, receipt validation and Git-backed fingerprint
+projection. Independent review found no blocking issue; both minor points
+(executable-status wording and complete-set/refresh coverage) were addressed.
+Repository fail-fast remains **96 passed, 1 known failure in 37.00s**:
+`tests/e2e/test_ralph_convergence.py::TestRalphConvergence::test_converges_within_3_outer_iterations`.
+No green full-suite or live acceptance claim. Detailed command output is retained
+in `.superpowers/sdd/2026-09-30-browser-repair-handoff/baseline-installation-{focused,repository}.log`.
+
+Next live step remains open: determine a native, evidence-preserving continuation
+for the already-completed old dispatch without inventing a pre-dispatch intent
+after the fact. Do not resume blindly or mark Task 4/STAB-1 complete.
 
 ## Status
 

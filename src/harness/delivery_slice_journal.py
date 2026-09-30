@@ -219,7 +219,7 @@ def _validate(data):
             raise DeliverySliceError("delivery receipt after terminal result")
         base_fields = {"assignment", "repair_attempt", "raw_result", "result", "candidate_after", "token_usage", "error"}
         if (not isinstance(record, dict) or not base_fields <= set(record)
-                or set(record) - base_fields - {"browser_evidence", "review_evidence"}):
+                or set(record) - base_fields - {"browser_evidence", "review_evidence", "baseline_installation"}):
             raise DeliverySliceError("invalid delivery receipt fields")
         if "browser_evidence" in record and "review_evidence" in record:
             raise DeliverySliceError("invalid delivery receipt fields")
@@ -233,6 +233,24 @@ def _validate(data):
                 or assignment.dispatch_id in seen):
             raise DeliverySliceError("invalid delivery receipt chain")
         seen.add(assignment.dispatch_id)
+        if "baseline_installation" in record:
+            installation = record["baseline_installation"]
+            if (not current or index != 0 or assignment.step != "implementer"
+                    or continuation is None or continuation["kind"] not in {"refresh", "return"}
+                    or not isinstance(installation, dict)
+                    or set(installation) != {"checkpoint_id", "candidate_fingerprint"}
+                    or not isinstance(installation["candidate_fingerprint"], str)
+                    or len(installation["candidate_fingerprint"]) != 64
+                    or any(c not in "0123456789abcdef" for c in installation["candidate_fingerprint"])):
+                raise DeliverySliceError("invalid baseline installation intent")
+            checkpoint = next((check for check in checks[:check_cursor]
+                               if check["checkpoint_id"] == installation["checkpoint_id"]), None)
+            if (checkpoint is None or checkpoint["purpose"] not in {"refresh", "return_capture"}
+                    or checkpoint["receipt"] is None):
+                raise DeliverySliceError("baseline installation checkpoint missing")
+            proposal = browser_checkpoint_observation(data, checkpoint)
+            if not proposal.verification_passed or not proposal.images:
+                raise DeliverySliceError("baseline installation requires passing proposals")
         usage = record["token_usage"]
         if usage is not None and (type(usage) is not int or usage < 0):
             raise DeliverySliceError("invalid delivery receipt usage")

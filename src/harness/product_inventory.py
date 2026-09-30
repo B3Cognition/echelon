@@ -36,8 +36,11 @@ class ProductInventoryResult:
     inventory_source: str
 
 
-def product_evidence_fingerprint(project_root: Path, *, excluded_roots: tuple[Path, ...] = ()) -> str:
-    """Return a stable digest of the bounded product evidence set."""
+def product_evidence_fingerprint(
+    project_root: Path, *, excluded_roots: tuple[Path, ...] = (),
+    file_overrides: dict[str, bytes] | None = None,
+) -> str:
+    """Digest deliverables, optionally projecting exact regular-file writes without IO effects."""
     root = project_root.expanduser().resolve(strict=True)
     relative_paths, _inventory_source = _inventory_paths(root)
     entries = _existing_entries(
@@ -49,6 +52,25 @@ def product_evidence_fingerprint(project_root: Path, *, excluded_roots: tuple[Pa
             and not any((root / relative).is_relative_to(excluded) for excluded in excluded_roots)
         ),
     )
+    if file_overrides:
+        by_path = {entry["path"]: entry for entry in entries}
+        for name, content in file_overrides.items():
+            relative = PurePosixPath(name)
+            path = root / relative
+            if (not relative.parts or relative.is_absolute() or ".." in relative.parts
+                    or relative.as_posix() != name or not isinstance(content, bytes)
+                    or _bounded_paths([relative]) != [relative] or _fingerprint_ignored(relative)
+                    or any(path.is_relative_to(excluded) for excluded in excluded_roots)
+                    or any((root / Path(*relative.parts[:i])).is_symlink()
+                           for i in range(1, len(relative.parts) + 1))
+                    or (path.exists() and not path.is_file())):
+                raise ValueError("unsafe projected product file")
+            previous = by_path.get(name)
+            by_path[name] = {
+                "path": name, "kind": "file", "executable": previous["executable"] if previous else False,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        entries = [by_path[name] for name in sorted(by_path)]
     canonical = [
         {
             "path": entry["path"],

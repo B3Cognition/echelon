@@ -479,6 +479,7 @@ class DeliverySliceRunner:
 
             repair_context = feedback
             entry_browser_paths = None
+            entry_installation_check = None
             initial_repair = 0
             initial_requests = 0
             if continuation is not None:
@@ -511,6 +512,20 @@ class DeliverySliceRunner:
                         "browser_verification": {"passed": observation.verification_passed,
                             "diagnostic": observation.diagnostic, "failures": observation.verification_failures}})
                     entry_browser_paths = observation.images
+                    if observation.verification_passed and observation.images:
+                        entry_installation_check = next(check for check in data["browser_checks"]
+                                                        if check["receipt"] == reference)
+                        repair_context = json.dumps({
+                            "browser_context": repair_context,
+                            "baseline_installation_instruction": (
+                                "Inspect the retained baseline proposals. You may install the complete "
+                                "set at their exact candidate paths, using identical bytes and preserving "
+                                "executable status (new images must not be executable), then return DONE "
+                                "if ready for review. Any other candidate change requires fresh capture. "
+                                "Capture used snapshot-update mode: it is not regression or visual approval. "
+                                "Independent reviews and normal verification remain mandatory."
+                            ),
+                        })
             cursor = 0
             browser_requests = 0
             browser_duplicate_corrections = 0
@@ -554,6 +569,19 @@ class DeliverySliceRunner:
                             record = {"assignment": assignment.identity(), "repair_attempt": repair,
                                       "raw_result": None, "result": None, "candidate_after": None,
                                       "token_usage": None, "error": None}
+                            if (entry_installation_check is not None and not records
+                                    and step == "implementer" and repair == initial_repair):
+                                # Seal the sole permitted file transformation before
+                                # dispatch. Never derive authority from a cached,
+                                # already-modified candidate on recovery.
+                                record["baseline_installation"] = {
+                                    "checkpoint_id": entry_installation_check["checkpoint_id"],
+                                    "candidate_fingerprint": _candidate_fingerprint(
+                                        worktree, spec_dir,
+                                        file_overrides={name: path.read_bytes()
+                                                        for name, path in entry_browser_paths.items()},
+                                    ),
+                                }
                             records.append(record)
                             journal.save(data)  # Intent is durable before any external execution.
                             result = self._dispatch(
@@ -599,7 +627,10 @@ class DeliverySliceRunner:
                             if (entry_browser_paths is not None and not browser_requests
                                     and step == "implementer" and repair == initial_repair
                                     and result["verdict"] in PASSING_VERDICTS
-                                    and record["candidate_after"] != data["candidate_fingerprint"]):
+                                    and record["candidate_after"] not in {
+                                        data["candidate_fingerprint"],
+                                        record.get("baseline_installation", {}).get("candidate_fingerprint"),
+                                    }):
                                 raise DeliverySliceError("delivery_browser_snapshot_recapture_required")
                             if (browser_duplicate_corrections
                                     and result["verdict"] in PASSING_VERDICTS
@@ -979,7 +1010,9 @@ def _review_recheck_context(worktree: Path, record: dict[str, object],
     })
 
 
-def _candidate_fingerprint(worktree: Path, spec_dir: Path) -> str:
+def _candidate_fingerprint(
+    worktree: Path, spec_dir: Path, *, file_overrides: dict[str, bytes] | None = None,
+) -> str:
     # The common product fingerprint intentionally omits these control inputs.
     controls = {}
     for name in (".gitignore", ".echelon/runnability.yml"):
@@ -990,7 +1023,8 @@ def _candidate_fingerprint(worktree: Path, spec_dir: Path) -> str:
     # Selected spec is separately bound in full by input/protected fingerprints.
     # Keeping it out of product identity permits only the exact recorded progress
     # transformation after acceptance, not arbitrary spec changes.
-    return _digest({"product": product_evidence_fingerprint(worktree, excluded_roots=(spec_dir.resolve(),)),
+    return _digest({"product": product_evidence_fingerprint(
+                        worktree, excluded_roots=(spec_dir.resolve(),), file_overrides=file_overrides),
                     "controls": controls})
 
 

@@ -5,8 +5,37 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import pytest
 
 from harness.product_inventory import product_evidence_fingerprint, write_product_inventory
+
+
+def test_projected_fingerprint_matches_exact_git_file_installation_without_writes(tmp_path):
+    _git(tmp_path, "init", "-b", "main")
+    snapshot = tmp_path / "tests/pitch-snapshots/old.png"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_bytes(b"old")
+    (tmp_path / "app.py").write_text("source\n")
+    _git(tmp_path, "add", "app.py", "tests")
+    before = product_evidence_fingerprint(tmp_path)
+    replacements = {"tests/pitch-snapshots/old.png": b"new", "tests/pitch-snapshots/new.png": b"second"}
+    projected = product_evidence_fingerprint(tmp_path, file_overrides=replacements)
+    assert snapshot.read_bytes() == b"old" and not (snapshot.parent / "new.png").exists()
+    assert product_evidence_fingerprint(tmp_path) == before
+    for name, content in replacements.items():
+        (tmp_path / name).write_bytes(content)
+    assert product_evidence_fingerprint(tmp_path) == projected != before
+    (tmp_path / "app.py").write_text("other source\n")
+    assert product_evidence_fingerprint(tmp_path) != projected
+
+
+@pytest.mark.parametrize("unsafe", ["../escape.png", ".echelon/baseline.png", "specs/baseline.png", "linked/image.png"])
+def test_projected_fingerprint_rejects_escape_control_spec_or_symlink_paths(tmp_path, unsafe):
+    excluded = tmp_path / "specs"
+    excluded.mkdir()
+    (tmp_path / "linked").symlink_to(excluded, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe projected product file"):
+        product_evidence_fingerprint(tmp_path, excluded_roots=(excluded,), file_overrides={unsafe: b"image"})
 
 
 def _git(repo: Path, *args: str) -> None:

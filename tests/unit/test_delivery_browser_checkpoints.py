@@ -137,6 +137,52 @@ def test_owner_capture_checkpoint_survives_process_loss(slice_project, monkeypat
     assert [row["request_ordinal"] for row in data["browser_checks"]] == ([1] if after_receipt else [1, 2])
 
 
+@pytest.mark.parametrize("installation", ["complete", "partial", "failed_capture"])
+def test_refresh_installation_requires_complete_passing_proposals(slice_project, installation):
+    from harness.delivery_browser_handoff import JournalRef, journal_sha256, prepare_browser_continuation
+    from harness.delivery_slice_runner import _candidate_fingerprint
+    path, parent, _ = _old_pending(slice_project)
+    before = path.read_bytes()
+    root, spec, evidence = slice_project
+    source_bytes = (root / "app.py").read_bytes()
+    continuation = prepare_browser_continuation(
+        kind="refresh", predecessors=[JournalRef("source-op", journal_sha256(parent))],
+        evidence_root=evidence, candidate_fingerprint=_candidate_fingerprint(root, spec),
+        input_fingerprint=parent["input_fingerprint"], token_limit=100,
+    )
+    images = {
+        "tests/e2e/degradation.spec.ts-snapshots/pitch-chromium.png": b"proposal",
+        "tests/e2e/degradation.spec.ts-snapshots/second-chromium.png": b"second proposal",
+    }
+    def capture(worktree):
+        result = _capture(product_evidence_fingerprint(Path(worktree)))
+        if installation != "failed_capture":
+            result.verification.passed = True
+            result.verification.failures.clear()
+        result.images.update(images)
+        return result
+    def install(assignment, payload, candidate):
+        if assignment["step"] == "implementer":
+            (candidate / "app.py").write_bytes(source_bytes)
+            for index, (name, content) in enumerate(images.items()):
+                if index and installation == "partial":
+                    break
+                destination = candidate / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+    executor = ScriptedExecutor(install)
+    result = _run(slice_project, executor, operation_id="refresh-install", repair_task_id="T-011",
+                  continuation=continuation, browser_baseline_capture=capture, token_budget=100)
+    if installation == "complete":
+        assert result.succeeded, result.reason
+        assert [a["step"] for a, _, _ in executor.calls] == [
+            "implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    else:
+        assert not result.succeeded and result.reason == "delivery_browser_snapshot_recapture_required"
+        assert len(executor.calls) == 1
+    assert path.read_bytes() == before
+
+
 def test_refresh_continuation_preserves_history_and_consumes_next_capture(slice_project):
     from harness.delivery_browser_handoff import JournalRef, journal_sha256, prepare_browser_continuation
     from harness.delivery_slice_runner import _candidate_fingerprint

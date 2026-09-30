@@ -10,6 +10,7 @@ from harness.visual_ralph import VisualRalphController
 from tests.unit.test_browser_capture_failures import _capture
 from tests.unit.test_delivery_browser_checkpoints import _passing_capture
 from tests.unit.test_delivery_repair_ownership import _project, _verify
+from tests.unit.test_delivery_controller_integration import _reconstruct
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
 
 
@@ -55,6 +56,135 @@ def _handoff_project(fixture, tmp_path, monkeypatch, *, recheck="pass"):
 
 def _drive(controller, fixture):
     return controller._exec_feedback(None, _verify(), "echelon build", "", worktree_path=str(fixture[0]))
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("crash_after_install", [False, True])
+def test_return_installs_exact_proposals_then_reviews_and_replays(
+    slice_project, tmp_path, monkeypatch, existing, crash_after_install,
+):
+    """Receipt-backed installation is not an arbitrary post-capture edit."""
+    root, spec, _ = slice_project
+    baseline = root / "tests/e2e/degradation.spec.ts-snapshots/pitch-chromium.png"
+    if existing:
+        baseline.parent.mkdir(parents=True)
+        baseline.write_bytes(b"previous baseline")
+    controller, store, executor, captures, retained = _handoff_project(slice_project, tmp_path, monkeypatch)
+    original_script = executor.script
+
+    def install(assignment, payload, candidate):
+        original_script(assignment, payload, candidate)
+        if len(executor.calls) > 1 and assignment["task_id"] == "T-011" and assignment["step"] == "implementer":
+            baseline.parent.mkdir(parents=True, exist_ok=True)
+            baseline.write_bytes(b"proposal")
+
+    executor.script = install
+    if crash_after_install:
+        from tests.unit.test_delivery_slice_recovery import ProcessLost
+        save = DeliverySliceJournal.save
+        crashed = False
+
+        def save_then_crash(journal, data):
+            nonlocal crashed
+            save(journal, data)
+            if (not crashed and (data.get("continuation") or {}).get("kind") == "return"
+                    and data["records"] and data["records"][-1]["result"] is not None):
+                crashed = True
+                raise ProcessLost()
+
+        monkeypatch.setattr(DeliverySliceJournal, "save", save_then_crash)
+        with pytest.raises(ProcessLost):
+            _drive(controller, slice_project)
+        assert len(executor.calls) == 6
+        controller = _reconstruct(controller, store, executor)
+    result = _drive(controller, slice_project)
+    assert result["passed"] and result["task_ids"] == ["T-011"], result
+    assert baseline.read_bytes() == b"proposal"
+    assert [a["step"] for a, _, _ in executor.calls[-4:]] == [
+        "implementer", "spec_guard", "code_reviewer", "test_guardian"]
+    assert len(executor.calls) == 9
+    # Replaying the durable acceptance must not reinstall, recapture, or dispatch.
+    calls_before = len(executor.calls)
+    captures_before = list(captures)
+    replay = _drive(controller, slice_project)
+    assert replay["passed"], replay
+    assert len(executor.calls) == calls_before
+    assert captures == captures_before
+    assert retained and all(path.read_bytes() == content for path, content in retained.items())
+    assert not store.read()["delivery_slice_operation"]["progress_applied"]
+
+
+@pytest.mark.parametrize("damage", ["missing_intent", "wrong_checkpoint", "invalid_digest", "extra_field"])
+def test_return_installation_replay_requires_retained_valid_intent(slice_project, tmp_path, monkeypatch, damage):
+    from tests.unit.test_delivery_slice_recovery import ProcessLost
+    controller, store, executor, _, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    original_script = executor.script
+
+    def install(assignment, payload, root):
+        original_script(assignment, payload, root)
+        if len(executor.calls) > 1 and assignment["task_id"] == "T-011" and assignment["step"] == "implementer":
+            baseline = root / "tests/e2e/degradation.spec.ts-snapshots/pitch-chromium.png"
+            baseline.parent.mkdir(parents=True, exist_ok=True)
+            baseline.write_bytes(b"proposal")
+
+    executor.script = install
+    save = DeliverySliceJournal.save
+    def stop_after_install(journal, data):
+        save(journal, data)
+        if ((data.get("continuation") or {}).get("kind") == "return"
+                and data["records"] and data["records"][-1]["result"] is not None):
+            raise ProcessLost()
+    monkeypatch.setattr(DeliverySliceJournal, "save", stop_after_install)
+    with pytest.raises(ProcessLost):
+        _drive(controller, slice_project)
+    monkeypatch.setattr(DeliverySliceJournal, "save", save)
+    operation = store.read()["delivery_slice_operation"]
+    journal = DeliverySliceJournal(controller._delivery_operation_evidence_root(), operation["id"])
+    data = journal.load(required=True)
+    record = data["records"][0]
+    if damage == "missing_intent":
+        record.pop("baseline_installation")
+    elif damage == "wrong_checkpoint":
+        record["baseline_installation"]["checkpoint_id"] = "unrelated-checkpoint"
+    elif damage == "invalid_digest":
+        record["baseline_installation"]["candidate_fingerprint"] = None
+    else:
+        record["baseline_installation"]["authorize_all_pngs"] = True
+    journal.path.write_text(json.dumps(data))
+    before = journal.path.read_bytes()
+    result = _drive(_reconstruct(controller, store, executor), slice_project)
+    assert not result["passed"] and not result["task_ids"], result
+    assert len(executor.calls) == 6  # No review or implementer redispatch.
+    assert journal.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("damage", ["wrong_bytes", "source", "unlisted_image", "executable", "symlink"])
+def test_return_proposal_installation_does_not_authorize_other_changes(slice_project, tmp_path, monkeypatch, damage):
+    controller, store, executor, captures, _ = _handoff_project(slice_project, tmp_path, monkeypatch)
+    original_script = executor.script
+
+    def install(assignment, payload, root):
+        original_script(assignment, payload, root)
+        if len(executor.calls) > 1 and assignment["task_id"] == "T-011" and assignment["step"] == "implementer":
+            baseline = root / "tests/e2e/degradation.spec.ts-snapshots/pitch-chromium.png"
+            baseline.parent.mkdir(parents=True, exist_ok=True)
+            baseline.write_bytes(b"wrong" if damage == "wrong_bytes" else b"proposal")
+            if damage == "source":
+                (root / "app.py").write_text("unreviewed source change\n")
+            elif damage == "unlisted_image":
+                (baseline.parent / "unlisted.png").write_bytes(b"proposal")
+            elif damage == "executable":
+                baseline.chmod(0o755)
+            elif damage == "symlink":
+                baseline.unlink()
+                baseline.symlink_to(root / "app.py")
+
+    executor.script = install
+    result = _drive(controller, slice_project)
+    assert not result["passed"] and not result["task_ids"], result
+    assert "recapture_required" in result["build_reason"], result
+    assert executor.calls[-1][0]["step"] == "implementer"
+    assert not store.read()["delivery_slice_operation"]["progress_applied"]
 
 
 @pytest.mark.parametrize("recheck,rounds", [("pass", 1), ("retry", 2)])
