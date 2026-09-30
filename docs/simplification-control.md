@@ -172,6 +172,30 @@ The run and observation heartbeat are stopped; this is not live acceptance.
 - [ ] Wire compatible structured observers and verify actual execution evidence
   reaches fulfillment for the preserved candidate. Do not blindly select a
   React/pnpm stack for this npm/Three.js candidate or rewrite the planning map.
+  Workspace wiring completed through `workspace migrate-to-prosaic` and
+  `stack select browser-threejs-npm`; explicit/effective/resolved selection,
+  stack preflight, and configured build readiness pass. The installed editable
+  CLI already points to this checkout. Runtime refresh created four managed
+  files without overwriting existing bundle files; configuration diff is only
+  `stacks.selected`. Existing workspace edits were preserved, not committed.
+  A read-only production-helper probe of the retained actual reports reproduces
+  37 unbound cases due to terminal-tag violations. All cases have unique task
+  ownership, spread across eight accepted tasks (T-004 through T-009, T-011,
+  T-012). Combined repair admission rejects multiple owners; each diagnostic
+  owner partition independently passes admission. No partition was dispatched.
+  Focused ownership/admission/runtime/CLI verification: 64 tests passed.
+  Probe/log/config-before snapshot are retained in the local
+  `.superpowers/sdd/2026-09-30-stack-verification-prerequisites/stack-wiring/`.
+  Candidate fingerprint, stopped-run state and published spec/tasks are unchanged;
+  Delivery remains paused. The old empty-observer snapshot must not be rewritten
+  or reused as evidence for the new stack. Candidate-owned runnability contract
+  is also absent; this remains a separate prerequisite before coverage acceptance.
+- [ ] Approve and implement bounded multi-owner coverage repair selection: one
+  uniquely owned task per existing repair operation, full failure evidence
+  retained, fresh verification between repairs, pending-operation replay intact.
+  Keep ambiguous/unowned cases, target-scope violations, and browser handoff
+  single-owner rules fail-closed. Do not introduce a new queue/controller or
+  manually repair the demo. Concrete design presented; implementation pending.
 - [ ] Correct semantic visual gate ordering, then test its phase handoff.
 - [ ] Address requirement-level fulfillment repair routing separately, with
   evidence-bound ownership and no fallback to the last executed task.
