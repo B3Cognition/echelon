@@ -377,3 +377,45 @@ def test_inner_loop_reverifies_between_coverage_owner_repairs(slice_project, tmp
     assert not result["converged"] and not result["blocked"], result
     assert result["inner_count"] == 2
     assert result["final_verify"].failures[0].details["test_cases"].keys() == {"CT-NET-001"}
+
+
+@pytest.mark.parametrize("shrinking", [True, False])
+def test_inner_loop_detects_coverage_stagnation_from_complete_debt(
+    slice_project, tmp_path, monkeypatch, shrinking,
+):
+    controller, store, executor = _project(slice_project, tmp_path)
+    tasks = slice_project[1] / "tasks.md"
+    tasks.write_text(tasks.read_text() +
+        "- [x] T-013 complexity=standard phase=release req=FR-2 depends=T-012\n"
+        "  **Status:** DONE\n"
+        "  **Test Tasks:**\n"
+        "  - [x] Implement `CT-LAST-001`.\n")
+    initial = ("E2E-START-002", "CT-NET-001", "CT-LAST-001")
+    verification_points = []
+
+    def verify(**kwargs):
+        verification_points.append([call[0]["task_id"] for call in executor.calls])
+        remaining = initial[min(len(verification_points), 2):] if shrinking else initial
+        return _coverage_gaps(*remaining)
+
+    monkeypatch.setattr(controller._candidate_evidence_runner, "run_standard", verify)
+    result = controller._run_inner_loop(
+        handle=None, verify_result=_coverage_gaps(*initial), outer_iter=0, max_inner=3,
+        tokens_used=0, token_budget=1000, state=store.read(),
+        build_command="echelon build", delivery_context="", worktree_path=str(slice_project[0]),
+    )
+    assert not result["converged"], result
+    if shrinking:
+        assert not result["blocked"], result
+        assert verification_points == [
+            ["T-011"] * 4,
+            ["T-011"] * 4 + ["T-012"] * 4,
+            ["T-011"] * 4 + ["T-012"] * 4 + ["T-013"] * 4,
+        ]
+        assert result["inner_count"] == 3
+        assert set(result["final_verify"].failures[0].details["test_cases"]) == {"CT-LAST-001"}
+    else:
+        assert result["blocked"], result
+        assert verification_points == [["T-011"] * 4, ["T-011"] * 8]
+        assert store.read()["build_reason"] == "same_failure_repeat"
+        assert Path(store.read()["escalation_file"]).is_file()

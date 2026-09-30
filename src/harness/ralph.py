@@ -969,7 +969,7 @@ class RalphController:
             verify_result.duration_s,
             verify_result.token_usage,
             failure_signatures=[
-                normalize(f.category.value, f.id, f.error)
+                normalize(f.category.value, f.id, f.error, details=f.details)
                 for f in verify_result.failures
             ],
         )
@@ -1968,7 +1968,7 @@ class RalphController:
 
             # Compute failure signatures
             signatures = [
-                normalize(f.category.value, f.id, f.error)
+                normalize(f.category.value, f.id, f.error, details=f.details)
                 for f in current_verify.failures
             ]
             failure_history.append(signatures)
@@ -2197,7 +2197,7 @@ class RalphController:
                 current_verify.duration_s,
                 current_verify.token_usage,
                 failure_signatures=[
-                    normalize(f.category.value, f.id, f.error)
+                    normalize(f.category.value, f.id, f.error, details=f.details)
                     for f in current_verify.failures
                 ],
             )

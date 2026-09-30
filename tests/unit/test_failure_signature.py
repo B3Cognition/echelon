@@ -10,6 +10,62 @@ import pytest
 from harness.failure_signature import detect_same_failure, normalize
 
 
+def _coverage_details(*cases):
+    return {"test_cases": {case: {"test_type": "contract", "status": "unbound", "reason": "missing"}
+                           for case in cases}}
+
+
+def test_complete_coverage_debt_changes_even_when_display_summary_does_not():
+    # The display only renders twenty requirements, not the complete case debt.
+    summary = "; ".join(f"FR-{index}: missing" for index in range(20))
+    cases = [f"CT-CASE-{index:03d}" for index in range(23)]
+    fingerprints = [normalize("other", "coverage-observation-gaps", summary,
+                              details=_coverage_details(*cases[:count])) for count in (23, 22, 21)]
+    assert len(set(fingerprints)) == 3
+    assert not detect_same_failure([[value] for value in fingerprints])
+
+
+def test_coverage_fingerprint_ignores_order_and_diagnostic_noise():
+    first = _coverage_details("CT-ONE-001", "CT-TWO-001")
+    second = _coverage_details("CT-TWO-001", "CT-ONE-001")
+    second["observation"] = "new/receipt.json"
+    second["test_cases"]["CT-ONE-001"]["reason"] = "different diagnostic /tmp/report.json"
+    fp = normalize("other", "coverage-observation-gaps", "old summary", details=first)
+    other = normalize("other", "coverage-observation-gaps", "new summary", details=second)
+    assert fp == other
+    assert detect_same_failure([[fp], [other], [fp]]) == {fp}
+
+
+@pytest.mark.parametrize("field,value", [("case", "CT-TWO-001"), ("status", "failed"), ("test_type", "e2e")])
+def test_coverage_fingerprint_retains_case_type_and_status(field, value):
+    first = _coverage_details("CT-ONE-001")
+    second = _coverage_details(value if field == "case" else "CT-ONE-001")
+    if field != "case":
+        second["test_cases"]["CT-ONE-001"][field] = value
+    assert normalize("other", "coverage-observation-gaps", "gaps", details=first) != normalize(
+        "other", "coverage-observation-gaps", "gaps", details=second)
+
+
+@pytest.mark.parametrize("details", [
+    None, {}, [], {"test_cases": {}}, {"test_cases": []},
+    {"test_cases": {"CT-ONE-001": None}},
+    {"test_cases": {"CT-ONE-001": {"status": "failed"}}},
+    {"test_cases": {"bad id": {"status": "failed", "test_type": "contract"}}},
+    {"test_cases": {1: {"status": "failed", "test_type": "contract"}}},
+    {"test_cases": {"CT-ONE-001": {"status": [], "test_type": "contract"}}},
+    {"test_cases": {"CT-ONE-001": {"status": "failed", "test_type": ""}}},
+    {"test_cases": {"CT-ONE-001": {"status": "failed", "test_type": "contract"}, "CT-TWO-001": {}}},
+])
+def test_incomplete_coverage_details_fall_back_without_dropping_cases(details):
+    assert normalize("other", "coverage-observation-gaps", "Error", details=details) == normalize(
+        "other", "coverage-observation-gaps", "Error")
+
+
+def test_noncoverage_failure_keeps_legacy_normalization_with_details():
+    assert normalize("test", "test_calc", "Expected TRUE", details=_coverage_details("CT-ONE-001")) == (
+        "test:test_calc:expected true")
+
+
 @pytest.mark.unit
 class TestNormalization:
     """Test failure signature normalization."""

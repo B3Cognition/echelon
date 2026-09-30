@@ -6,14 +6,22 @@ Per data-model FailureSignature:
 strip_stack_frames removes file paths and line numbers but retains
 assertion messages and test identifiers.
 
+Structured coverage gaps instead fingerprint complete case debt because their
+human-readable error summary is truncated.
+
 Per FR-LOOP-003a/b: detect when the same fingerprint appears N consecutive
 times (default threshold=3).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from typing import List, Optional, Set
+from collections.abc import Mapping
+from typing import List, Set
+
+from harness.coverage_contract import is_coverage_case_id
 
 
 # Patterns for stripping stack frame details
@@ -41,11 +49,31 @@ def _strip_stack_frames(error: str) -> str:
     return cleaned
 
 
-def normalize(category: str, test_id: str, error: str) -> str:
+def normalize(category: str, test_id: str, error: str, *, details: object = None) -> str:
     """Compute a normalized failure fingerprint.
 
-    fingerprint = normalize(category + ":" + id + ":" + strip_stack_frames(lowercase(error)))
+    Coverage uses complete case debt, not the truncated display summary.
+    Other failures (and incomplete coverage details) retain legacy normalization.
     """
+    if test_id == "coverage-observation-gaps" and isinstance(details, Mapping):
+        cases = details.get("test_cases")
+        if isinstance(cases, Mapping) and cases:
+            debt = []
+            for case_id, observation in cases.items():
+                if (not isinstance(case_id, str) or not is_coverage_case_id(case_id)
+                        or not isinstance(observation, Mapping)):
+                    break
+                test_type = observation.get("test_type")
+                status = observation.get("status")
+                if (not isinstance(test_type, str) or not test_type.strip()
+                        or not isinstance(status, str) or not status.strip()):
+                    break
+                debt.append((case_id, test_type, status))
+            else:
+                # Reasons and receipt paths are diagnostic, not progress identity.
+                payload = json.dumps(sorted(debt), separators=(",", ":"))
+                digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                return f"{category}:{test_id}:case-debt:{digest}"
     error_normalized = _strip_stack_frames(error.lower())
     raw = f"{category}:{test_id}:{error_normalized}"
     return raw

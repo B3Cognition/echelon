@@ -216,18 +216,38 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   re-verification between distinct owners, and no convergence from reviews
   while coverage still fails. No live candidate edits, restart, caps changes,
   install, push or evidence migration.
-- [ ] Correct coverage progress identity before resuming multi-owner repair.
+- [x] Correct coverage progress identity before resuming multi-owner repair.
   A read-only hypothetical shrinking-debt probe using the actual coverage map
   demonstrates that the existing first-20-requirement error summary can remain
   unchanged while remaining case debt falls 30 → 28 → 26. The existing repeated
-  failure detector would escalate at T-008 despite that progress. Use complete
-  structured coverage debt for repeat identity, preserving repeat thresholds,
-  caps and true-stagnation escalation. Do not weaken gates or add a queue.
+  failure detector would escalate at T-008 despite that progress. Normalization
+  now fingerprints the complete sorted case-ID/type/status debt, ignoring display
+  truncation, diagnostic reasons and receipt paths. All three Ralph log/decision
+  call sites supply structured details. Incomplete details fall back as a whole;
+  non-coverage behavior, threshold three, caps, routing and gates are unchanged.
   Probe/log: `stack-wiring/coverage_progress_probe.py` and
   `stack-wiring/coverage-progress-probe.log` under the local evidence directory
-  above. This is a simulated diagnostic, not repaired/accepted candidate work;
-  implementation remains a separate increment. Candidate runnability contract
-  remains another explicitly open prerequisite.
+  above. The after-fix probe reaches all eight owners (37 → 3 remaining cases)
+  without false escalation. This is a hypothetical diagnostic, not repaired or
+  accepted candidate work. A real-controller inner-loop regression failed before
+  the fix: shrinking debt still escalated before the third owner's dispatch.
+  It now performs three distinct four-role repair chains with verification between
+  them and remains non-converged while debt remains. Its unchanged-debt control
+  still writes the durable `same_failure_repeat` escalation before a third repair.
+  External agents and verifier results are scripted in these controller tests;
+  this is not a live AI repair or end-to-end Delivery acceptance.
+  Verification: 55 focused tests passed; expanded adjacent gate: 289 passed,
+  two Phase A input-sync fixture failures in `test_ralph_outer.py` (missing explicit
+  stack selection/capabilities). Both reproduce with pre-change `84165035`
+  normalization and Ralph modules loaded in-process without changing checkout.
+  Repository fail-fast: 96 passed, then the known
+  `test_converges_within_3_outer_iterations` fixture failure. Logs:
+  `stack-wiring/coverage-progress-{focused,baseline,repository}.log` and
+  `coverage-progress-probe-after.log`. Independent read-only review found no
+  critical, important or minor issues. Candidate worktree remains clean at
+  `3b51c655`; stopped Delivery state and published spec/tasks hashes are unchanged.
+  No demo edits, live dispatch, restart, migration, caps changes or push.
+  Candidate runnability contract remains another explicitly open prerequisite.
 - [ ] Correct semantic visual gate ordering, then test its phase handoff.
 - [ ] Address requirement-level fulfillment repair routing separately, with
   evidence-bound ownership and no fallback to the last executed task.
