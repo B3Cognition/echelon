@@ -150,6 +150,25 @@ The run and observation heartbeat are stopped; this is not live acceptance.
   found no blocking or minor issues. Repository
   fail-fast: 96 passed, the same known convergence-fixture failure. This is not
   an npm observer bundle, actual browser execution, or live Delivery acceptance.
+- [x] Add the compatible `browser-threejs-npm` bundle using existing stack,
+  isolated-observer, report-adapter, and required browser-runnability contracts.
+  Project npm scripts retain their own repetitions and project configuration;
+  reporters write JSON separately from console output. No Python production or
+  CLI recovery changes. Verification: 247 focused/adjacent tests and all nine
+  dry-run checks passed; independent read-only review found no issues. The
+  catalog expectation also now includes the previously added `generic` bundle.
+  Repository fail-fast remains 96 passed plus the known
+  `test_converges_within_3_outer_iterations` canonical-spec fixture failure.
+  Actual isolated Docker probes against preserved candidate `3b51c6550391`
+  captured passing reports for 165 ordinary Playwright executions (five repeats,
+  no snapshot updates) and 127 Vitest tests. Both observer receipts validate;
+  candidate fingerprint and live Delivery state are unchanged. Raw reports,
+  receipts, and diagnostics are retained under
+  `.superpowers/sdd/2026-09-30-stack-verification-prerequisites/npm-observer-probe/`.
+  This proves observer execution/capture, not accepted coverage or fulfillment:
+  all 37 tagged physical tests still use prefix tags instead of terminal tags.
+  Do not edit these manually or weaken parsing; use normal Delivery repair.
+  No installation, live stack selection, Delivery restart, or push was performed.
 - [ ] Wire compatible structured observers and verify actual execution evidence
   reaches fulfillment for the preserved candidate. Do not blindly select a
   React/pnpm stack for this npm/Three.js candidate or rewrite the planning map.

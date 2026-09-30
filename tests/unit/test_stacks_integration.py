@@ -65,8 +65,10 @@ def test_loads_bundled_stack_catalog() -> None:
 
     assert sorted(definitions) == [
         "browser-3d-game",
+        "browser-threejs-npm",
         "browser-wasm-game",
         "game-persistence-postgres",
+        "generic",
         "ios-ar-game",
         "statsperform-msa-service",
         "statsperform-playbook",

@@ -1,0 +1,76 @@
+schema_version: "1.4"
+stack:
+  id: browser-threejs-npm
+  name: Browser Three.js (npm)
+  version: "1.0.0"
+  kind: archetype
+  owner: echelon
+  description: Browser-first plain Three.js client using TypeScript, Vite, and npm.
+applies_to:
+  archetypes:
+    - browser_3d_game
+provides:
+  web_app.framework: vite
+  web_app.rendering: threejs
+  web_app.workspace: npm
+  test.frontend: vitest-playwright
+  delivery.web_app: docker-web
+  x.game.client_runtime: browser-3d
+implies: []
+requires:
+  commands:
+    - npm
+runnability:
+  classification: user_facing
+  policy: required
+  runner: linux_container
+  capabilities:
+    - install
+    - provision
+    - start
+    - readiness
+    - primary_journey
+    - stop
+  required_observations:
+    - browser_dom
+  local_runner:
+    profiles:
+      - macos-compose-v1
+coverage_observers:
+  - id: playwright-e2e
+    test_types:
+      - e2e
+      - contract
+    command: >-
+      mkdir -p "$(dirname "$ECHELON_COVERAGE_REPORT")" &&
+      PLAYWRIGHT_JSON_OUTPUT_FILE="$ECHELON_COVERAGE_REPORT"
+      npm run test:e2e -- --reporter=json
+    report_path: .echelon/coverage-reports/playwright.json
+    adapter: playwright-json
+    mode: isolated
+    required: true
+  - id: vitest-core
+    test_types:
+      - unit
+      - integration
+      - contract
+    command: >-
+      mkdir -p "$(dirname "$ECHELON_COVERAGE_REPORT")" &&
+      npm run test:unit -- --reporter=json --outputFile="$ECHELON_COVERAGE_REPORT"
+    report_path: .echelon/coverage-reports/vitest.json
+    adapter: vitest-json
+    mode: isolated
+    required: true
+detection:
+  positive:
+    technologies:
+      - threejs
+    dependencies:
+      - three
+      - vite
+    files:
+      - package-lock.json
+context:
+  files:
+    - context.md
+conflicts: []
