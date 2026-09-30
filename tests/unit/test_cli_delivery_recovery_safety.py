@@ -17,11 +17,12 @@ UNKNOWN_REASON = "delivery_reconciliation_required: dispatch completion is unkno
 
 
 @pytest.mark.parametrize("failure_id,eligible", [("build-blocked", True), ("verify-command", False)])
-def test_continue_routes_current_provider_failure_despite_stale_summary(tmp_path, monkeypatch, failure_id, eligible):
+@pytest.mark.parametrize("verify_command", ["pytest", None])
+def test_continue_routes_current_provider_failure_despite_stale_summary(tmp_path, monkeypatch, failure_id, eligible, verify_command):
     from echelon.cli_app import app
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
-    _make_echelon_yml(tmp_path, verify_command="pytest")
+    _make_echelon_yml(tmp_path, verify_command=verify_command)
     _make_phase_a_spec(tmp_path)
     state_dir = _setup_build(tmp_path, "001")
     _write_state(state_dir, "001", "default", {

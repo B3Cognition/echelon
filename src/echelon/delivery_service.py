@@ -4043,6 +4043,7 @@ def _run_delivery_resume(
         # A pending greenfield slice already has a candidate worktree. Its
         # verify command is resolved from that candidate during execution.
         and not _is_retryable_cancelled_delivery_slice(state)
+        and not _is_retryable_delivery_provider_failure(state)
         and not _has_interrupted_pending_candidate(state, state_dir)
         and not reconcile_unknown_dispatch
     ):
