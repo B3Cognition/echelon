@@ -266,6 +266,7 @@ def _run_isolated_observer_once(
 ) -> CoverageObserverRun:
     observer = resolved.observer
     handle: SandboxHandle | None = None
+    selected_platform: str | None = None
     stages: list[VerificationStage] = []
     environment: dict[str, str] = {}
     started_at = datetime.now(timezone.utc).isoformat()
@@ -281,6 +282,7 @@ def _run_isolated_observer_once(
             failure_reason = "candidate fingerprint changed before coverage observation"
             raise CoverageObserverError(failure_reason)
         handle = provider.create(sandbox_spec)
+        selected_platform = handle.platform
         plan = build_verification_plan(
             worktree,
             config,
@@ -359,6 +361,7 @@ def _run_isolated_observer_once(
         started_at=started_at,
         attempt_sequence=attempt_sequence,
         retained_report=retained_report,
+        selected_platform=selected_platform,
     )
     if receipt is None:
         return CoverageObserverRun(
@@ -435,6 +438,7 @@ def _write_observer_receipt(
     started_at: str,
     attempt_sequence: int,
     retained_report: Path | None,
+    selected_platform: str | None,
 ) -> VerificationEvidenceRef | None:
     root = Path(evidence_dir) / "coverage-observers" / observer_id
     try:
@@ -451,6 +455,7 @@ def _write_observer_receipt(
             execution_context={
                 "mode": "sandbox",
                 "observer": observer_id,
+                **({"platform": selected_platform} if selected_platform is not None else {}),
                 "retained_report": (
                     retained_report.relative_to(root).as_posix()
                     if retained_report is not None

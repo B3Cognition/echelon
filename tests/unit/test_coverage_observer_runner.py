@@ -48,7 +48,11 @@ class _CoverageProvider(SandboxProvider):
             else f"observer-vitest-{len(self.created_session_ids)}"
         )
         self.created_session_ids.append(session_id)
-        return SandboxHandle(id=session_id, session_id=session_id)
+        return SandboxHandle(
+            id=session_id,
+            session_id=session_id,
+            platform="linux/amd64" if session_id == "standard" else "linux/arm64",
+        )
 
     def exec(
         self,
@@ -230,6 +234,8 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
     assert bundle.observer_runs[0].executions[0].test_type == "unit"
     assert bundle.observer_runs[0].receipt is not None
     assert bundle.observer_runs[0].receipt.passed is True
+    observer_receipt = json.loads(bundle.observer_runs[0].receipt.path.read_text())
+    assert observer_receipt["execution"]["platform"] == "linux/arm64"
     assert not (tmp_path / ".echelon" / "coverage-reports").exists()
     assert product_evidence_fingerprint(tmp_path) == fingerprint
     assert list(

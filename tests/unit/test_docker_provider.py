@@ -57,6 +57,9 @@ def test_isolated_candidate_is_copied_from_read_only_mount(tmp_path) -> None:
         for call in docker.call_args_list
         if call.args[0][:2] == ["run", "-d"] and "playwright:test" in call.args[0]
     )
+    # Docker's init process reaps orphaned verifier children; a bare `tail`
+    # as PID 1 leaves zombies visible to kill(pid, 0) cleanup checks.
+    assert "--init" in sandbox_command
     mounts = [sandbox_command[index + 1] for index, arg in enumerate(sandbox_command[:-1])
               if arg == "--volume"]
     assert f"{spec.worktree_mount}:/workspace-source:ro" in mounts
@@ -70,8 +73,9 @@ def test_isolated_candidate_is_copied_from_read_only_mount(tmp_path) -> None:
 
 
 @pytest.mark.unit
-def test_official_playwright_image_uses_browser_populated_amd64_variant(tmp_path) -> None:
-    """The arm64 image may lack the pinned browser and current Node runtime."""
+def test_official_playwright_image_prefers_capable_native_variant(tmp_path, monkeypatch) -> None:
+    """A capable native image must not run through x86 emulation."""
+    monkeypatch.setenv("DOCKER_DEFAULT_PLATFORM", "linux/amd64")
     squid_conf = tmp_path / "squid.conf"
     squid_conf.write_text("test", encoding="utf-8")
     provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
@@ -86,14 +90,97 @@ def test_official_playwright_image_uses_browser_populated_amd64_variant(tmp_path
     )
 
     with patch("harness.docker_provider._run_docker") as docker:
-        docker.return_value = MagicMock(stdout="sandbox-id\n")
-        provider.create(spec)
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        handle = provider.create(spec)
+
+    sandbox_command = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "-d"] and spec.image in call.args[0]
+    )
+    assert sandbox_command[sandbox_command.index("--platform") + 1] == "linux/arm64"
+    probe = next(
+        call.args[0] for call in docker.call_args_list
+        if call.args[0][:2] == ["run", "--rm"]
+    )
+    assert probe[probe.index("--platform") + 1] == "linux/arm64"
+    assert handle.platform == "linux/arm64"
+
+
+@pytest.mark.unit
+def test_official_playwright_image_falls_back_when_native_probe_fails(tmp_path) -> None:
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"] and "--platform" in args and args[args.index("--platform") + 1] == "linux/arm64":
+                return MagicMock(returncode=42, stdout="", stderr="browser missing")
+            if args[:2] == ["run", "--rm"]:
+                return MagicMock(returncode=0, stdout="x86_64\n", stderr="")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        handle = provider.create(spec)
 
     sandbox_command = next(
         call.args[0] for call in docker.call_args_list
         if call.args[0][:2] == ["run", "-d"] and spec.image in call.args[0]
     )
     assert sandbox_command[sandbox_command.index("--platform") + 1] == "linux/amd64"
+    assert handle.platform == "linux/amd64"
+    assert len([call for call in docker.call_args_list if call.args[0][:2] == ["run", "--rm"]]) == 2
+
+
+@pytest.mark.unit
+def test_official_playwright_image_does_not_fallback_on_docker_failure(tmp_path) -> None:
+    """A daemon or image-pull failure is not evidence that native is incapable."""
+    squid_conf = tmp_path / "squid.conf"
+    squid_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider(squid_conf_path=str(squid_conf))
+    spec = SandboxSpec(
+        image="mcr.microsoft.com/playwright:v1.63.0-noble",
+        image_source="fingerprint",
+        worktree_mount=str(tmp_path / "candidate"),
+        container_mount="/workspace",
+        resource_limits=ResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+
+    with patch("harness.docker_provider._run_docker") as docker:
+        def docker_result(args, **_kwargs):
+            if args[:2] == ["info", "--format"]:
+                return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
+            if args[:2] == ["run", "--rm"] and (
+                "--platform" not in args or args[args.index("--platform") + 1] == "linux/arm64"
+            ):
+                return MagicMock(returncode=125, stdout="", stderr="image pull failed")
+            return MagicMock(returncode=0, stdout="sandbox-id\n", stderr="")
+
+        docker.side_effect = docker_result
+        with pytest.raises(SandboxCreationError, match="image pull failed"):
+            provider.create(spec)
+
+    assert len([call for call in docker.call_args_list if call.args[0][:2] == ["run", "--rm"]]) == 1
 
 
 @pytest.mark.unit

@@ -182,6 +182,8 @@ class CandidateEvidenceRunner:
                 "network": "internal",
                 "services": [service.service_name for service in plan.services],
             }
+            if handle.platform is not None:
+                execution_context["platform"] = handle.platform
             for command in plan.bootstrap_commands:
                 started_at = _now()
                 result = self._provider.exec(
@@ -304,6 +306,10 @@ class CandidateEvidenceRunner:
                 if owned_handle:
                     self._provider.destroy(handle)
                     handle = self._provider.create(self._sandbox_spec_factory(candidate))
+                    if handle.platform is not None:
+                        execution_context["platform"] = handle.platform
+                    else:
+                        execution_context.pop("platform", None)
                     service_env = {}
                     if plan.services:
                         materialized = materialize_services(

@@ -83,6 +83,68 @@ TRUNCATION_TAIL_RATIO = 0.80
 DOCKER_CMD_TIMEOUT = 30
 _SAFE_PROXY_HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
 _LOOPBACK_PROXY_BYPASS = ("localhost", "127.0.0.1", "::1")
+_PLAYWRIGHT_IMAGE_PREFIX = "mcr.microsoft.com/playwright:v"
+_PLAYWRIGHT_PROBE = (
+    'node -e "process.exit(Number(process.versions.node.split(\'.\')[0]) >= 20 ? 0 : 1)" '
+    '|| exit 42; '
+    'test -d /ms-playwright || exit 42; '
+    'browser=$(find /ms-playwright -maxdepth 4 -type f '
+    '\\( -name chrome-headless-shell -o -name chrome \\) '
+    '-perm /111 -print -quit); '
+    'test -n "$browser" || exit 42; '
+    'timeout 10 "$browser" --headless --no-sandbox --disable-gpu '
+    '--dump-dom about:blank >/dev/null 2>&1 || exit 42; '
+    'uname -m'
+)
+
+
+def _linux_platform(machine: str) -> str | None:
+    return {
+        "aarch64": "linux/arm64",
+        "arm64": "linux/arm64",
+        "x86_64": "linux/amd64",
+        "amd64": "linux/amd64",
+    }.get(machine.strip())
+
+
+def _playwright_platform(image: str, *, cli: str) -> str:
+    """Prefer daemon-native Playwright; fall back only for missing capabilities."""
+    arch_format = "{{.Host.Arch}}" if Path(cli).name == "podman" else "{{.Architecture}}"
+    daemon = _run_docker(["info", "--format", arch_format], cli=cli)
+    native = _linux_platform(daemon.stdout)
+    if native is None:
+        raise SandboxCreationError(
+            f"unsupported container daemon architecture: {daemon.stdout.strip()}"
+        )
+    failures: list[str] = []
+    candidates = (native,) if native == "linux/amd64" else (native, "linux/amd64")
+    for platform in candidates:
+        args = ["run", "--rm", "--network", "none", "--platform", platform]
+        args.extend(["--entrypoint", "sh", image, "-ec", _PLAYWRIGHT_PROBE])
+        try:
+            result = _run_docker(args, cli=cli, timeout=90, check=False)
+        except SandboxExecError as exc:
+            raise SandboxCreationError(
+                f"Playwright image capability probe could not run on {platform}: {exc}"
+            ) from exc
+        if result.returncode == 0:
+            observed = _linux_platform(result.stdout)
+            if observed != platform:
+                raise SandboxCreationError(
+                    f"Playwright image platform mismatch: requested {platform}, "
+                    f"observed {result.stdout.strip()}"
+                )
+            return platform
+        if result.returncode != 42:
+            raise SandboxCreationError(
+                f"Playwright image probe failed on {platform} with exit "
+                f"{result.returncode}: {result.stderr.strip()[-500:]}"
+            )
+        failures.append(f"{platform}: missing supported Node or Chromium")
+    raise SandboxCreationError(
+        "Playwright image has no compatible Node/browser platform: "
+        + "; ".join(failures)
+    )
 
 
 def _loopback_proxy_bypass(env: Dict[str, str]) -> tuple[str, str]:
@@ -310,6 +372,12 @@ class DockerWorktreeProvider(SandboxProvider):
         volume_names: list[str] = []
 
         try:
+            selected_platform: str | None = None
+            if spec.image.startswith(_PLAYWRIGHT_IMAGE_PREFIX):
+                selected_platform = _playwright_platform(
+                    spec.image, cli=self._container_cli
+                )
+
             # Create internal Docker network
             result = _run_docker([
                 "network", "create", "--internal",
@@ -346,6 +414,7 @@ class DockerWorktreeProvider(SandboxProvider):
             # Build sandbox container args
             docker_args = [
                 "run", "-d",
+                "--init",
                 "--network", network_name,
                 "--memory", spec.resource_limits.memory,
                 "--cpus", str(spec.resource_limits.cpu),
@@ -354,10 +423,8 @@ class DockerWorktreeProvider(SandboxProvider):
                 "--label", f"echelon-harness.session_id={session_id}",
                 "--label", "echelon-harness.type=sandbox",
             ]
-            if spec.image.startswith("mcr.microsoft.com/playwright:v"):
-                # The official arm64 variant can lack its pinned browser and
-                # ship an older Node runtime. Use the browser-populated image.
-                docker_args.extend(["--platform", "linux/amd64"])
+            if selected_platform is not None:
+                docker_args.extend(["--platform", selected_platform])
 
             if candidate_volume is not None:
                 docker_args.extend([
@@ -446,6 +513,7 @@ class DockerWorktreeProvider(SandboxProvider):
             handle = SandboxHandle(
                 id=sandbox_container_id,
                 session_id=session_id,
+                platform=selected_platform,
             )
             self._containers[session_id] = _ContainerInfo(
                 sandbox_id=sandbox_container_id,

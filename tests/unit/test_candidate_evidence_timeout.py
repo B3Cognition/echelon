@@ -39,6 +39,8 @@ def _run(
     *,
     results: list[ExecResult],
     bootstrap_commands: tuple[str, ...] = (),
+    platform: str | None = None,
+    receipt_context: dict[str, object] | None = None,
 ) -> list[tuple[str, int]]:
     config = HarnessConfig(verify_command="npm run verify")
     # Config parsing is covered separately; isolate sandbox dispatch here.
@@ -65,13 +67,17 @@ def _run(
         target_id="demo",
         build_id="build-1",
     )
-    monkeypatch.setattr(
-        runner,
-        "_attach_receipt",
-        lambda **_kwargs: VerifyResult(passed=True, failures=[], duration_s=0),
-    )
+    def attach_receipt(**kwargs: object) -> VerifyResult:
+        if receipt_context is not None:
+            receipt_context.update(kwargs["execution_context"])
+        return VerifyResult(passed=True, failures=[], duration_s=0)
 
-    result = runner.run_standard(handle=SandboxHandle(id="sandbox", session_id="session"), worktree=tmp_path)
+    monkeypatch.setattr(runner, "_attach_receipt", attach_receipt)
+
+    result = runner.run_standard(
+        handle=SandboxHandle(id="sandbox", session_id="session", platform=platform),
+        worktree=tmp_path,
+    )
 
     assert result.passed is True
     return provider.calls
@@ -114,3 +120,19 @@ def test_bootstrap_retains_ten_minute_timeout(
     )
 
     assert calls == [("npm ci", 600_000), ("npm run verify", 1_800_000)]
+
+
+def test_authoritative_receipt_records_selected_sandbox_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context: dict[str, object] = {}
+
+    _run(
+        tmp_path,
+        monkeypatch,
+        results=[_result()],
+        platform="linux/arm64",
+        receipt_context=context,
+    )
+
+    assert context["platform"] == "linux/arm64"

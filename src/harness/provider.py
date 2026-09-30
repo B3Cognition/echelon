@@ -72,6 +72,7 @@ class SandboxHandle:
     """Handle to a created sandbox instance."""
     id: str
     session_id: str  # FR-SANDBOX-007c: unique per instance, non-null
+    platform: str | None = None  # Resolved image platform, when selected by provider.
 
 
 @dataclass
