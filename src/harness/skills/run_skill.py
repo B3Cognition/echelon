@@ -432,7 +432,10 @@ def _amended_delivery_completed_tasks(
     from harness.publication_transaction import PublicationTransaction
     from harness.runnability_amendment_plan import plan_owner_tasks, render_owner_tasks
     from harness.stacks.resolver import resolved_stack_contract_sha256
-    from harness.task_progress import checkpoint_input_hash, checkpoint_input_hash_from_contents
+    from harness.task_progress import (
+        checkpoint_input_hash, checkpoint_input_hash_from_contents,
+        summarize_task_progress,
+    )
     from harness.verification_stack_runtime import resolve_verification_stacks
     from kernel.task_contract import parse_task_rows
 
@@ -570,13 +573,30 @@ def _amended_delivery_completed_tasks(
     if not callable(ancestry):
         raise RunContextError("target Git ancestry check is unavailable")
     try:
-        return proven_amended_task_ids(
+        proven = proven_amended_task_ids(
             promoted, target_id=target_id, candidate=candidate,
             current_input_hash=current_hash, states=states,
             commit_is_ancestor=ancestry,
         )
     except AmendmentLineageError as exc:
         raise RunContextError(str(exc)) from exc
+    progress = summarize_task_progress((root / task_path).read_text(encoding="utf-8"))
+    if not progress.valid:
+        raise RunContextError("amended working task progress is invalid")
+    old_target_ids = {
+        row.task_id for row in parse_task_rows(old_tasks.decode("utf-8"))
+        if (row.target or ".") == target_id
+    }
+    unproven = sorted(
+        task_id for task_id in old_target_ids.difference(proven)
+        if progress.task_statuses.get(task_id) in {"DONE", "DONE_WITH_CONCERNS"}
+    )
+    if unproven:
+        raise RunContextError(
+            "unproven old task progress: " + ", ".join(unproven)
+            + "; recover original checkpoint evidence or re-plan the task"
+        )
+    return proven
 
 
 def _fresh_delivery_repair_task_id(

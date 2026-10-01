@@ -83,7 +83,8 @@ def test_amended_admission_uses_only_real_target_checkpoint(tmp_path: Path) -> N
     state.pop("delivery_slice_operation")
     state["checkpoint_commits"] = []
     state_path.write_text(json.dumps(state))
-    assert admitted() == ()
+    with pytest.raises(RunContextError, match="unproven old task progress"):
+        admitted()
 
     amendment_state = Path(str(prepared["state_path"]))
     amended = json.loads(amendment_state.read_text())
