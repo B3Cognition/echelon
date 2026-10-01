@@ -100,6 +100,16 @@ def test_rejected_docs_are_repaired_before_publication(documentation_project):
     assert len(provider.calls) == 4
 
 
+def test_docs_reviewer_is_told_the_strict_findings_shape(documentation_project):
+    runner, provider, paths = documentation_project(reject_first=True)
+    result = runner.run(**paths)
+    assert result.succeeded, result.reason
+    reviewer_prompt = next(prompt for assignment, _, prompt in provider.calls
+                           if assignment["step"] == "docs_verifier")
+    assert "findings must be a JSON array of non-empty strings" in reviewer_prompt
+    assert "not objects or a Markdown table" in reviewer_prompt
+
+
 def test_repeated_rejection_survives_reconstruction(documentation_project):
     runner, provider, paths = documentation_project(always_reject=True)
     first = runner.run(**paths)
@@ -126,7 +136,7 @@ def test_explicit_budget_extension_replays_documentation_author_receipt(document
     assert journal["budget_limit"] == 100
 
 
-@pytest.mark.parametrize("fault", ["identity", "fields", "legacy", "report_verdict", "passing_findings", "source", "spec", "control", "reviewer", "report_write"])
+@pytest.mark.parametrize("fault", ["identity", "fields", "legacy", "report_verdict", "passing_findings", "object_findings", "source", "spec", "control", "reviewer", "report_write"])
 def test_invalid_dispatch_cannot_publish(documentation_project, fault):
     def script(assignment, payload, root):
         if assignment["step"] != "docs_verifier":
@@ -136,6 +146,10 @@ def test_invalid_dispatch_cannot_publish(documentation_project, fault):
         if fault == "legacy": return CliRunResult(0, "ALL DOCS PASS", "", token_usage=7)
         if fault == "report_verdict": payload["report_markdown"] = review_report(True)
         if fault == "passing_findings": payload["findings"] = ["unresolved"]
+        if fault == "object_findings": payload.update(
+            verdict="FAIL", findings=[{"id": "DOCS-001", "issue": "README omission"}],
+            report_markdown=review_report(True),
+        )
         if fault == "source": (root / "app.py").write_text("changed")
         if fault == "spec": (root / "specs/001-slice/spec.md").write_text("changed")
         if fault == "control": (root / ".echelon/config.yml").write_text("changed")
