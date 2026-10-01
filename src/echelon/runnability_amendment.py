@@ -320,3 +320,12 @@ def prepare_runnability_owner(project_root: Path, spec_id: str) -> dict[str, obj
                 _git(root, "worktree", "remove", "--force", str(worktree.path))
                 _git(root, "branch", "-D", worktree.branch)
                 raise
+
+
+def promote_runnability_owner(
+    project_root: Path, amendment_id: str,
+) -> dict[str, object]:
+    """Delegate promotion to the amendment-owned recoverable transaction."""
+    from echelon.runnability_amendment_transaction import promote_runnability_owner as promote
+
+    return promote(project_root, amendment_id)
