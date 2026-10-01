@@ -307,7 +307,13 @@ class DeliveryDocumentationRunner:
             stage = journal.root / "staged"
             stage.mkdir(exist_ok=True)
             if stage.is_symlink(): raise DeliverySliceError("unsafe documentation staging directory")
-            cursor, repair_feedback = 0, feedback
+            cursor = 0
+            repair_feedback = json.dumps({
+                "historical_verification_feedback": feedback,
+                "independent_findings": [],
+                "deterministic_findings": [],
+                "gate_findings": [],
+            })
             for attempt in range(3):
                 for step in STEPS:
                     if cursor < len(records):
@@ -351,7 +357,16 @@ class DeliveryDocumentationRunner:
                             write_text_atomic(stage / REPORTS[0], impact, trusted_root=journal.root)
                             deterministic = verify_docs(worktree, stage, changed_files=changed_files, runnability_report=runnability_report)
                             baseline = [f"{item.identifier}: {item.issue}; {item.evidence}; repair: {item.required_repair}" for item in deterministic.findings]
-                            review_context = {"impact_report": impact, "deterministic_baseline": _report_markdown(deterministic)}
+                            review_context = {
+                                "impact_report": impact,
+                                "impact_report_source": "writer_result.report_markdown",
+                                "publication_status": "staged_not_published",
+                                "publication_contract": (
+                                    "Review the staged impact report text now; its canonical Spec file is "
+                                    "intentionally absent until independent review and gates pass."
+                                ),
+                                "deterministic_baseline": _report_markdown(deterministic),
+                            }
                         assignment = {"schema_version": 1, "dispatch_id": uuid4().hex, "step": step, "task_ids": scope,
                                       "candidate_fingerprint": expected_candidate, "input_fingerprint": fingerprint}
                         if runnability_report is not None:
@@ -443,8 +458,12 @@ class DeliveryDocumentationRunner:
                     publication["complete"] = True
                     journal.save(data)
                     return outcome("delivery_documentation_passed", True)
-                repair_feedback = json.dumps({"original_feedback": feedback, "independent_findings": result["findings"],
-                                              "deterministic_findings": record["deterministic_findings"], "gate_findings": record["gate_findings"]})
+                repair_feedback = json.dumps({
+                    "historical_verification_feedback": feedback,
+                    "independent_findings": result["findings"],
+                    "deterministic_findings": record["deterministic_findings"],
+                    "gate_findings": record["gate_findings"],
+                })
             return outcome("delivery_documentation_repair_limit")
         except (ValueError, OSError, RuntimeError, TypeError, AttributeError, KeyError) as exc:
             return outcome(str(exc))

@@ -16,6 +16,13 @@ ALWAYS inspect every delivery_change_id, source/test evidence and claimed
 README/CHANGELOG coverage independently, including no-impact claims.
 NEVER copy the author's dispositions into a PASS without checking source.
 
+ALWAYS review the controller-captured `impact_report` text when
+`publication_status` is `staged_not_published`. Its canonical Spec file is
+intentionally absent until your independent PASS and the deterministic gate
+permit controller publication. Historical missing-report feedback is not a
+current finding about this staged text. NEVER require the writer to create
+the canonical report, or waive a genuine content, evidence, or README gap.
+
 ALWAYS preserve Python's deterministic findings and add independent source-backed
 findings about correctness, coverage, command ordering, prerequisites and claims.
 NEVER let deterministic PASS erase semantic failures or semantic PASS erase a

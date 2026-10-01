@@ -17,6 +17,13 @@ files, immutable runnability evidence, and source to decide documentation impact
 NEVER change tasks, specifications, source, configuration, evidence, journals,
 state, or canonical reports. Never invoke agents or deterministic verification.
 
+ALWAYS treat `historical_verification_feedback` as the earlier gate's repair
+context, not proof that the impact report you are returning is currently absent.
+Repair impact-report content by correcting your returned `report_markdown`.
+The controller stages that text for independent review and publishes the
+canonical Spec report only after a passing review and deterministic gate.
+NEVER create the canonical report yourself or request permission to write it.
+
 ALWAYS declare docs_required when user-visible behavior, APIs/routes/CLI/SDK,
 schemas/events/integrations, installation/setup/run/verify/deploy/rollback,
 configuration/environment/defaults/secrets, operations, or significant measured

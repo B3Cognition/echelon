@@ -148,6 +148,39 @@ def test_docs_reviewer_is_told_the_strict_findings_shape(documentation_project):
     assert "not objects or a Markdown table" in reviewer_prompt
 
 
+def test_historical_missing_report_feedback_does_not_block_staged_review(documentation_project):
+    historical = "documentation-impact-report-missing: prior canonical report absent"
+    provider = None
+
+    def script(assignment, payload, _root):
+        prompt = provider.calls[-1][2]
+        repair_text = prompt.split("## Repair feedback\n", 1)[1]
+        try:
+            repair = json.loads(repair_text)
+        except ValueError:
+            repair = {}
+        if assignment["step"] == "tech_writer" and repair.get("historical_verification_feedback") != historical:
+            payload.update(verdict="NEEDS_CONTEXT", summary="canonical report is absent",
+                           findings=["Need publication-order context"])
+        if assignment["step"] == "docs_verifier":
+            context = json.loads(prompt.split("## Independent review inputs\n", 1)[1].split("\n## Repair feedback", 1)[0])
+            if context.get("publication_status") != "staged_not_published":
+                payload.update(verdict="FAIL", summary="canonical report is absent",
+                               findings=["Create canonical report before review"],
+                               report_markdown=review_report(True))
+        return CliRunResult(0, json.dumps(payload), "", token_usage=7)
+
+    runner, provider, paths = documentation_project(script=script)
+    result = runner.run(**paths, feedback=historical)
+    assert result.succeeded, result.reason
+    assert provider.steps == ["tech_writer", "docs_verifier"]
+    assert provider.snapshots == [None, None]
+    reviewer_prompt = provider.calls[1][2]
+    assert '"impact_report_source": "writer_result.report_markdown"' in reviewer_prompt
+    assert '"publication_status": "staged_not_published"' in reviewer_prompt
+    assert (paths["spec_dir"] / "documentation-impact-report.md").read_text() == IMPACT
+
+
 def test_completed_malformed_review_retries_without_rewriting_candidate(documentation_project):
     reviews = 0
     def script(assignment, payload, root):
