@@ -34,6 +34,7 @@ from harness.spec_frontmatter import (
 )
 from harness.stacks.resolver import resolved_stack_contract_sha256
 from harness.task_progress import checkpoint_input_hash_from_contents
+from kernel.task_contract import parse_task_rows
 from harness.verification_stack_runtime import resolve_verification_stacks
 
 
@@ -258,6 +259,7 @@ def _build_preview(
         "spec_branch": baseline.branch,
         "baseline_commit": baseline.commit,
         "new_task_ids": [item.task_id for item in proposals],
+        "old_task_ids": [row.task_id for row in parse_task_rows(published_tasks)],
         "contract_paths": [item.contract_path for item in proposals],
         "target_paths": list(targets),
         "stack_contracts": stack_contracts,

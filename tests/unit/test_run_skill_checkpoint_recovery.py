@@ -11,10 +11,112 @@ import pytest
 from harness.paths import current_build_marker
 from harness.skills.run_skill import (
     RunContextError,
+    _amended_delivery_completed_tasks,
     _fresh_delivery_baseline,
     _fresh_delivery_completed_tasks,
     _fresh_delivery_repair_task_id,
 )
+
+
+def test_amended_admission_uses_only_real_target_checkpoint(tmp_path: Path) -> None:
+    from echelon.runnability_amendment import prepare_runnability_owner
+    from echelon.runnability_amendment_transaction import promote_runnability_owner
+    from harness.task_progress import checkpoint_input_hash
+    from tests.unit.test_runnability_amendment import _git, _repo
+
+    repo = _repo(tmp_path)
+    spec = repo / "specs/004-demo"
+    target_repo = repo / "apps/web"
+    _git(target_repo, "init", "-b", "main")
+    _git(target_repo, "config", "user.name", "Test User")
+    _git(target_repo, "config", "user.email", "test@example.com")
+    _git(target_repo, "add", "package.json")
+    _git(target_repo, "commit", "-m", "target candidate")
+    tasks = spec / "tasks.md"
+    tasks.write_text(tasks.read_text().replace("- [ ] T-001", "- [x] T-001")
+                     .replace("**Status:** PENDING", "**Status:** DONE"))
+    candidate = _git(target_repo, "rev-parse", "HEAD")
+    harness_root = repo / "runs/targets/web"
+    state_path = harness_root / "runs/build-old/state/delivery.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "checkpoint_commits": [{
+            "commit": candidate, "task_ids": ["T-001"],
+            "checkpoint_input_hash": checkpoint_input_hash(spec),
+        }],
+    }))
+    prepared = prepare_runnability_owner(repo, "004-demo")
+    promote_runnability_owner(repo, str(prepared["amendment_id"]))
+
+    class GitOps:
+        @staticmethod
+        def commit_is_ancestor(ancestor: str, descendant: str) -> bool:
+            return subprocess.run(
+                ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                cwd=target_repo, check=False,
+            ).returncode == 0
+
+    intent = SimpleNamespace(spec_id="004-demo", reset=False, resume=False)
+    config = SimpleNamespace(target_repo=str(repo / "apps/web"))
+    admitted = lambda: _amended_delivery_completed_tasks(
+        workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+        intent=intent, candidate=candidate, gitops=GitOps(), config=config,
+    )
+    assert admitted() == ("T-001",)
+    config.target_repo = "apps/web"
+    assert admitted() == ("T-001",)
+
+    state = json.loads(state_path.read_text())
+    state["delivery_slice_operation"] = {"id": "sealed-original", "progress_applied": False}
+    state_path.write_text(json.dumps(state))
+    with pytest.raises(RunContextError, match="pending original Delivery operation"):
+        admitted()
+    from harness.skills.run_skill import _execute_delivery_run
+    with pytest.raises(RunContextError, match="pending original Delivery operation"):
+        _execute_delivery_run(
+            intent=intent, provider=object(), gitops=GitOps(),
+            harness_root=harness_root, workspace_root=repo, spec_dir=spec,
+            config=config, resume_build_id=None, summary_command="echelon delivery run",
+        )
+    assert not current_build_marker(harness_root, "004-demo").exists()
+    state.pop("delivery_slice_operation")
+    state["checkpoint_commits"] = []
+    state_path.write_text(json.dumps(state))
+    assert admitted() == ()
+
+    amendment_state = Path(str(prepared["state_path"]))
+    amended = json.loads(amendment_state.read_text())
+    amended["old_task_ids"] = ["T-999"]
+    amendment_state.write_text(json.dumps(amended))
+    with pytest.raises(RunContextError, match="older task definitions"):
+        admitted()
+    amended["old_task_ids"] = ["T-001"]
+    amended["spec_id"] = "foreign-spec"
+    amendment_state.write_text(json.dumps(amended))
+    with pytest.raises(RunContextError, match="identity"):
+        admitted()
+
+
+def test_unrelated_amendment_leaves_exact_hash_delivery_path_unchanged(tmp_path: Path) -> None:
+    from tests.unit.test_runnability_amendment import _git, _repo
+
+    repo = _repo(tmp_path)
+    generic = repo / ".git/echelon/amendments/004-demo/001/state.json"
+    generic.parent.mkdir(parents=True)
+    generic.write_text(json.dumps({
+        "kind": "product_input", "spec_id": "004-demo", "status": "prepared",
+    }))
+    _git(repo, "switch", "main")
+    _git(repo, "branch", "-D", "004-demo")
+    spec = repo / "specs/004-demo"
+    intent = SimpleNamespace(spec_id="004-demo", reset=False, resume=False)
+
+    assert _amended_delivery_completed_tasks(
+        workspace_root=repo, harness_root=repo / "runs/targets/web",
+        spec_dir=spec, intent=intent, candidate=None, gitops=object(),
+        config=SimpleNamespace(target_repo=str(repo / "apps/web")),
+    ) is None
 
 
 def _write_state(

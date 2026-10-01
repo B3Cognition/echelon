@@ -33,7 +33,7 @@ from echelon.runnability_amendment import (
 
 _AMENDMENT_ID = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)/([0-9]{3,})\Z")
 _PINNED_FIELDS = (
-    "baseline_commit", "new_task_ids", "contract_paths", "target_paths",
+    "baseline_commit", "old_task_ids", "new_task_ids", "contract_paths", "target_paths",
     "stack_contracts", "targets", "published_input_hash",
     "pre_amendment_working_hash", "proposed_published_hash",
     "projected_working_hash", "old_tasks_sha256",

@@ -408,6 +408,177 @@ def _fresh_delivery_completed_tasks(
     return tuple(sorted(recovered))
 
 
+def _amended_delivery_completed_tasks(
+    *,
+    workspace_root: Path,
+    harness_root: Path,
+    spec_dir: Path | None,
+    intent: Any,
+    candidate: str | None,
+    gitops: Any,
+    config: Any,
+) -> tuple[str, ...] | None:
+    """Validate a settled plan amendment before inheriting old task checkpoints.
+
+    None means no promoted amendment applies and preserves the original exact-
+    hash path. An empty tuple means an amendment applies but proves no old task.
+    """
+    from echelon.spec_amendment import _amendment_root
+    from echelon.runnability_amendment import (
+        _canonical_targets, _git, _published_blob, _sha256,
+    )
+    from harness.amendment_lineage import AmendmentLineageError, proven_amended_task_ids
+    from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
+    from harness.publication_transaction import PublicationTransaction
+    from harness.runnability_amendment_plan import plan_owner_tasks, render_owner_tasks
+    from harness.stacks.resolver import resolved_stack_contract_sha256
+    from harness.task_progress import checkpoint_input_hash, checkpoint_input_hash_from_contents
+    from harness.verification_stack_runtime import resolve_verification_stacks
+    from kernel.task_contract import parse_task_rows
+
+    if spec_dir is None:
+        return None
+    root = workspace_root.resolve()
+    if not (root / ".git").exists():
+        return None
+    amendment_root = _amendment_root(root, intent.spec_id)
+    if not amendment_root.is_dir():
+        return None
+    amendments: list[tuple[Path, dict[str, object]]] = []
+    for state_path in sorted(amendment_root.glob("[0-9]*/state.json")):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RunContextError(f"unreadable Spec amendment state: {state_path}") from exc
+        if isinstance(state, dict) and state.get("kind") == "runnability_owner":
+            amendments.append((state_path, state))
+    if not amendments:
+        return None
+    for state_path, state in amendments:
+        if state.get("status") in {"promoting", "needs_attention"}:
+            raise RunContextError(f"unsettled runnability amendment: {state_path}")
+    if not any(state.get("status") == "promoted" for _, state in amendments):
+        return None
+    current_ref = _git(root, "rev-parse", f"refs/heads/{intent.spec_id}")
+    promoted: dict[str, object] | None = None
+    promoted_path: Path | None = None
+    for state_path, state in amendments:
+        if state.get("status") == "promoted" and state.get("proposed_commit") == current_ref:
+            if promoted is not None:
+                raise RunContextError("multiple promoted amendments name the current Spec commit")
+            promoted, promoted_path = state, state_path
+    if promoted is None or promoted_path is None:
+        return None
+    if (promoted.get("spec_id") != intent.spec_id
+            or promoted.get("spec_branch") != intent.spec_id
+            or promoted.get("amendment_id")
+            != f"{intent.spec_id}/{promoted_path.parent.name}"):
+        raise RunContextError("promoted amendment identity differs from current Spec")
+    if getattr(intent, "resume", False):
+        raise RunContextError("amended Spec requires a fresh Delivery run, not resume")
+    if _git(root, "branch", "--show-current") != intent.spec_id:
+        raise RunContextError("active checkout is not the promoted Spec branch")
+    old_ref = promoted.get("baseline_commit")
+    new_ref = promoted.get("proposed_commit")
+    if not isinstance(old_ref, str) or not isinstance(new_ref, str):
+        raise RunContextError("promoted amendment has no pinned commits")
+    task_path = f"specs/{intent.spec_id}/tasks.md"
+    if _git(root, "rev-parse", f"{new_ref}^") != old_ref:
+        raise RunContextError("promoted amendment is not a direct child of baseline")
+    changed = _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", old_ref, new_ref)
+    if changed.splitlines() != [task_path]:
+        raise RunContextError("promoted amendment changed files outside tasks.md")
+    old_tasks = _published_blob(root, old_ref, task_path)
+    new_tasks = _published_blob(root, new_ref, task_path)
+    if old_tasks is None or new_tasks is None or _sha256(old_tasks) != promoted.get("old_tasks_sha256"):
+        raise RunContextError("promoted amendment old task definition changed")
+    paths = promoted.get("target_paths")
+    contracts = promoted.get("contract_paths")
+    if not isinstance(paths, list) or not isinstance(contracts, list):
+        raise RunContextError("promoted amendment target declarations are malformed")
+    target_paths = _canonical_targets(root, intent.spec_id, new_ref)
+    if list(target_paths) != paths:
+        raise RunContextError("promoted amendment target identity changed")
+    required = tuple(
+        target for target in target_paths
+        if (Path(target) / ".echelon/runnability.yml").as_posix() in contracts
+    )
+    proposals = plan_owner_tasks(old_tasks.decode("utf-8"), old_tasks.decode("utf-8"),
+                                 target_paths, required)
+    if ([item.task_id for item in proposals] != promoted.get("new_task_ids")
+            or [item.contract_path for item in proposals] != contracts
+            or render_owner_tasks(old_tasks.decode("utf-8"), proposals).encode("utf-8") != new_tasks
+            or [row.task_id for row in parse_task_rows(old_tasks.decode("utf-8"))]
+            != promoted.get("old_task_ids")):
+        raise RunContextError("promoted amendment altered older task definitions")
+    for commit, key in ((old_ref, "published_input_hash"),
+                        (new_ref, "proposed_published_hash")):
+        contents = {
+            name: blob for name in SCOPE_INPUT_FILENAMES
+            if (blob := _published_blob(root, commit, f"specs/{intent.spec_id}/{name}"))
+            is not None
+        }
+        if checkpoint_input_hash_from_contents(contents) != promoted.get(key):
+            raise RunContextError(f"promoted amendment {key} differs from Git")
+    if _git(root, "rev-parse", f":{task_path}") != promoted.get("new_index_blob"):
+        raise RunContextError("promoted amendment index entry is unsettled")
+    if _sha256((root / task_path).read_bytes()) != promoted.get("working_projected_sha256"):
+        raise RunContextError("promoted amendment working plan is unsettled")
+    journal = promoted_path.parent / "file-publication.json"
+    try:
+        file_state = json.loads(journal.read_text(encoding="utf-8"))
+        if file_state.get("status") != "complete":
+            raise ValueError("file publication did not complete")
+        PublicationTransaction.from_journal(
+            workspace_root=root, staging_root=promoted_path.parent, journal=journal,
+        )
+    except (OSError, ValueError) as exc:
+        raise RunContextError("promoted amendment file publication is unsettled") from exc
+    current_hash = checkpoint_input_hash(spec_dir)
+    if current_hash is None:
+        raise RunContextError("current Spec input hash is unavailable")
+    for target in target_paths:
+        resolved = resolve_verification_stacks(root, root / target)
+        expected = promoted.get("stack_contracts")
+        if (not isinstance(expected, dict)
+                or resolved_stack_contract_sha256(resolved) != expected.get(target)):
+            raise RunContextError(f"stack contract changed after amendment: {target}")
+    configured_target = Path(getattr(config, "target_repo", None) or root)
+    target_root = (
+        configured_target if configured_target.is_absolute()
+        else root / configured_target
+    ).resolve()
+    try:
+        target_id = target_root.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise RunContextError("Delivery target is outside amended workspace") from exc
+    target_info = promoted.get("targets")
+    record = target_info.get(target_id) if isinstance(target_info, dict) else None
+    if (not isinstance(record, dict)
+            or record.get("source_root") != str(target_root)
+            or record.get("source_git_root") != _git(target_root, "rev-parse", "--show-toplevel")):
+        raise RunContextError("Delivery target repository differs from amendment")
+    states: list[dict[str, object]] = []
+    for path in sorted(runs_dir(harness_root).glob("build-*/state/delivery.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and value.get("spec_id") == intent.spec_id:
+            states.append(dict(value, build_id=path.parents[1].name, target_id=target_id))
+    ancestry = getattr(gitops, "commit_is_ancestor", None)
+    if not callable(ancestry):
+        raise RunContextError("target Git ancestry check is unavailable")
+    try:
+        return proven_amended_task_ids(
+            promoted, target_id=target_id, candidate=candidate,
+            current_input_hash=current_hash, states=states,
+            commit_is_ancestor=ancestry,
+        )
+    except AmendmentLineageError as exc:
+        raise RunContextError(str(exc)) from exc
+
+
 def _fresh_delivery_repair_task_id(
     harness_root: Path,
     intent: Any,
@@ -1055,12 +1226,24 @@ def _execute_delivery_run(
         if getattr(intent, "resume", False)
         else _fresh_delivery_baseline(harness_root, intent, gitops)
     )
-    fresh_completed_task_ids = _fresh_delivery_completed_tasks(
-        harness_root,
-        intent,
-        fresh_branch_base,
-        gitops,
+    amended_completed = _amended_delivery_completed_tasks(
+        workspace_root=workspace_root,
+        harness_root=harness_root,
         spec_dir=spec_dir,
+        intent=intent,
+        candidate=fresh_branch_base,
+        gitops=gitops,
+        config=config,
+    )
+    fresh_completed_task_ids = (
+        amended_completed if amended_completed is not None
+        else _fresh_delivery_completed_tasks(
+            harness_root,
+            intent,
+            fresh_branch_base,
+            gitops,
+            spec_dir=spec_dir,
+        )
     )
     fresh_repair_task_id = _fresh_delivery_repair_task_id(
         harness_root,
