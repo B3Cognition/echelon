@@ -444,7 +444,7 @@ def _amended_delivery_completed_tasks(
     """
     from echelon.spec_amendment import _amendment_root
     from echelon.runnability_amendment import (
-        _canonical_targets, _git, _published_blob, _sha256,
+        _LIFECYCLE_STATUSES, _canonical_targets, _git, _published_blob, _sha256,
     )
     from harness.amendment_lineage import AmendmentLineageError, proven_amended_task_ids
     from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
@@ -454,6 +454,7 @@ def _amended_delivery_completed_tasks(
         plan_owner_tasks, render_owner_tasks, validate_progress_only,
     )
     from harness.stacks.resolver import resolved_stack_contract_sha256
+    from harness.spec_frontmatter import render_status_markdown
     from harness.task_progress import (
         checkpoint_input_hash, checkpoint_input_hash_from_contents,
         summarize_task_progress,
@@ -564,6 +565,36 @@ def _amended_delivery_completed_tasks(
     current_hash = checkpoint_input_hash(spec_dir)
     if current_hash is None:
         raise RunContextError("current Spec input hash is unavailable")
+    lineage_hash = current_hash
+    if current_hash != promoted.get("projected_working_hash"):
+        # The CLI sets in_progress before this admission. A published Spec with
+        # no status frontmatter gains a new block, which changes the historical
+        # checkpoint hash even though only controller-owned lifecycle changed.
+        # Reconstruct the pinned preimage, then accept only the exact CLI edit;
+        # other scope inputs must still hash to the promoted working plan.
+        published_spec = _published_blob(root, old_ref, f"specs/{intent.spec_id}/spec.md")
+        if published_spec is None:
+            raise RunContextError("promoted amendment published Spec is missing")
+        source = published_spec.decode("utf-8")
+        possible_preimages = (source, *(
+            render_status_markdown(source, status)
+            for status in sorted(_LIFECYCLE_STATUSES)
+        ))
+        preimage = next((item for item in possible_preimages
+                         if _sha256(item.encode("utf-8"))
+                         == promoted.get("working_spec_sha256")), None)
+        current_spec = (spec_dir / "spec.md").read_text(encoding="utf-8")
+        if preimage is None or current_spec != render_status_markdown(preimage, "in_progress"):
+            raise RunContextError("current Spec input hash differs from promoted amendment")
+        contents = {
+            name: (spec_dir / name).read_bytes()
+            for name in SCOPE_INPUT_FILENAMES
+            if (spec_dir / name).is_file()
+        }
+        contents["spec.md"] = preimage.encode("utf-8")
+        lineage_hash = checkpoint_input_hash_from_contents(contents)
+        if lineage_hash != promoted.get("projected_working_hash"):
+            raise RunContextError("current Spec input hash differs from promoted amendment")
     for target in target_paths:
         resolved = resolve_verification_stacks(root, root / target)
         expected = promoted.get("stack_contracts")
@@ -622,7 +653,7 @@ def _amended_delivery_completed_tasks(
     try:
         proven = proven_amended_task_ids(
             promoted, target_id=target_id, candidate=candidate,
-            current_input_hash=current_hash, states=states,
+            current_input_hash=lineage_hash, states=states,
             commit_is_ancestor=ancestry,
             landed_baseline_commit=actual_default,
             allow_descendant=bool(admitted),

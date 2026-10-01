@@ -247,10 +247,25 @@ def test_landed_old_checkpoint_inherits_from_pinned_default_branch(
     prepared = prepare_runnability_owner(control, "004-demo")
     assert prepared["targets"]["apps/web"]["landed_baseline_commit"] == checkpoint
     promoted = promote_runnability_owner(control, str(prepared["amendment_id"]))
+    # Native Delivery writes this lifecycle status before amendment admission.
+    # When the published Spec had no frontmatter, the exact scope hash changes.
+    from harness.spec_frontmatter import write_status
+    write_status(spec, "in_progress")
+    assert checkpoint_input_hash(spec) != promoted["projected_working_hash"]
     assert _amended_delivery_completed_tasks(
         workspace_root=control, harness_root=harness_root, spec_dir=spec,
         intent=intent, candidate=None, gitops=gitops, config=config,
     ).task_ids == ("T-001",)
+    lifecycle_spec = (spec / "spec.md").read_text(encoding="utf-8")
+    (spec / "spec.md").write_text(lifecycle_spec.replace("# Demo", "# Changed scope"),
+                                   encoding="utf-8")
+    from harness.skills.run_skill import RunContextError
+    with pytest.raises(RunContextError, match="current Spec input hash differs"):
+        _amended_delivery_completed_tasks(
+            workspace_root=control, harness_root=harness_root, spec_dir=spec,
+            intent=intent, candidate=None, gitops=gitops, config=config,
+        )
+    (spec / "spec.md").write_text(lifecycle_spec, encoding="utf-8")
     assert promoted["status"] == "promoted"
 
     monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "web")
