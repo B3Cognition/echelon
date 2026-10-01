@@ -35,6 +35,7 @@ def proven_amended_task_ids(
     commit_is_ancestor: Callable[[str, str], bool],
     landed_baseline_commit: str | None = None,
     allow_descendant: bool = False,
+    terminal_documentation_handoffs: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[str, ...]:
     """Return only older tasks proven by recorded checkpoints on one target.
 
@@ -106,6 +107,11 @@ def proven_amended_task_ids(
         pending = state.get("delivery_slice_operation")
         if (isinstance(build_id, str) and isinstance(pending, Mapping)
                 and pending.get("progress_applied") is not True):
+            operation_id = pending.get("id")
+            if (pending.get("kind") == "documentation"
+                    and isinstance(operation_id, str) and operation_id
+                    and (build_id, operation_id) in terminal_documentation_handoffs):
+                continue
             raise AmendmentLineageError(
                 f"pending Delivery operation in {build_id}; recover it under sealed inputs"
             )

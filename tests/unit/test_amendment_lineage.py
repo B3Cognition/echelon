@@ -187,3 +187,77 @@ def test_pending_amended_build_blocks_even_when_its_id_sorts_before_original() -
     }
     with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
         _prove(_manifest(), (old, amended))
+
+
+def test_explicit_terminal_documentation_identity_preserves_only_checkpoint_credit() -> None:
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    state["delivery_slice_operation"] = {
+        "kind": "documentation", "id": "docs-op", "progress_applied": False,
+    }
+    with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
+        _prove(_manifest(), (state,))
+
+    assert proven_amended_task_ids(
+        _manifest(), target_id="apps/web", candidate=WEB_CANDIDATE,
+        current_input_hash=NEW_HASH, states=(state,),
+        commit_is_ancestor=lambda ancestor, commit: (
+            ancestor, commit) == (WEB_CHECKPOINT, WEB_CANDIDATE),
+        terminal_documentation_handoffs=frozenset({("build-web", "docs-op")}),
+    ) == ("T-001",)
+
+
+@pytest.mark.parametrize("proof,kind", [
+    (frozenset(), "documentation"),
+    (frozenset({("build-other", "docs-op")}), "documentation"),
+    (frozenset({("build-web", "other-op")}), "documentation"),
+    (frozenset({("build-web", "docs-op")}), "task"),
+])
+def test_unproven_or_non_documentation_operation_still_blocks(proof, kind) -> None:
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    state["delivery_slice_operation"] = {
+        "kind": kind, "id": "docs-op", "progress_applied": False,
+    }
+    with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
+        proven_amended_task_ids(
+            _manifest(), target_id="apps/web", candidate=WEB_CANDIDATE,
+            current_input_hash=NEW_HASH, states=(state,),
+            commit_is_ancestor=lambda ancestor, commit: (
+                ancestor, commit) == (WEB_CHECKPOINT, WEB_CANDIDATE),
+            terminal_documentation_handoffs=proof,
+        )
+
+
+def test_other_pending_operation_still_blocks_after_documentation_handoff() -> None:
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    state["delivery_slice_operation"] = {
+        "kind": "documentation", "id": "docs-op", "progress_applied": False,
+    }
+    newer = {
+        "spec_id": "004-demo", "target_id": "apps/web", "build_id": "build-next",
+        "delivery_slice_operation": {
+            "kind": "task", "id": "task-op", "progress_applied": False,
+        },
+    }
+    with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
+        proven_amended_task_ids(
+            _manifest(), target_id="apps/web", candidate=WEB_CANDIDATE,
+            current_input_hash=NEW_HASH, states=(state, newer),
+            commit_is_ancestor=lambda ancestor, commit: (
+                ancestor, commit) == (WEB_CHECKPOINT, WEB_CANDIDATE),
+            terminal_documentation_handoffs=frozenset({("build-web", "docs-op")}),
+        )
+
+
+def test_terminal_documentation_identity_without_checkpoint_grants_no_task() -> None:
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    state["checkpoint_commits"] = []
+    state["delivery_slice_operation"] = {
+        "kind": "documentation", "id": "docs-op", "progress_applied": False,
+    }
+    assert proven_amended_task_ids(
+        _manifest(), target_id="apps/web", candidate=WEB_CANDIDATE,
+        current_input_hash=NEW_HASH, states=(state,),
+        commit_is_ancestor=lambda ancestor, commit: (
+            ancestor, commit) == (WEB_CHECKPOINT, WEB_CANDIDATE),
+        terminal_documentation_handoffs=frozenset({("build-web", "docs-op")}),
+    ) == ()
