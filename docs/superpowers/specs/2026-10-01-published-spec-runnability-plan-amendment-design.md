@@ -1,6 +1,6 @@
 # Published spec runnability plan amendment
 
-Status: proposed design for owner review. No implementation is authorized by this document.
+Status: reviewed design. Implementation requires approval of its separate plan.
 
 ## Outcome and scope
 
@@ -54,8 +54,8 @@ explicit and independently validated.
    targets, and current readiness. It separates published task definitions
    from recognized task-progress edits and spec lifecycle-only edits in the
    working checkout. It reports each target missing a contract owner, the
-   proposed new task ID, and whether
-   a prior candidate appears eligible for carry-forward. Unrecognized working
+   proposed new task ID, and a separate tentative carry-forward result for
+   each target repository. Unrecognized working
    edits block the proposal. No provider runs, files change, or run state is
    allocated during preview.
 2. **Prepare.** Reuse the existing isolated amendment worktree and per-spec
@@ -64,23 +64,34 @@ explicit and independently validated.
    spec mutation for this spec. Preserve the old published branch and candidate.
 3. **Plan.** A deterministic harness planner appends one canonical PENDING task
    per missing target. It assigns the next unused task ID, the exact
-   target-qualified `.echelon/runnability.yml` in `Files`, a dependency on the
-   target's preceding work, and acceptance language requiring a real composed
+   target-qualified `.echelon/runnability.yml` in `Files`, `req=INFRA`, a
+   dependency on the target's preceding work, and acceptance language requiring a real composed
    journey under the selected stack. The Delivery implementer, not the planner,
    chooses project-specific install/start/readiness/browser/stop commands.
    The planner updates task counts and an amendment record, but does not alter
    old task blocks, coverage obligations, product code, or prior receipts.
 4. **Validate and promote.** Validate canonical tasks, target scope, unique
    ownership, structural and capability-aware readiness, and an allowlisted
-   diff against the pinned baseline. A durable amendment transaction uses the
-   existing publication journal to install the appended task into the active
-   checkout while retaining its exact task-progress overlay, then uses the
-   existing compare-and-swap branch update and synchronizes the index to the
-   promoted commit. Recovery settles or rolls back each exact owned effect;
-   it never overwrites subsequent user edits or unrelated status/reports. If
+   diff against the pinned baseline. A durable amendment-specific journal
+   coordinates the existing file publication primitive with Git index and ref
+   changes. Promotion requires the active checkout to be on the pinned spec
+   branch and the affected index entries to equal the pinned commit; recognized
+   unstaged task progress is allowed. Under the per-spec lock it installs the
+   projected working `tasks.md` (old progress plus new PENDING tasks), updates
+   only affected index entries to the proposed commit's blobs, and finally
+   compare-and-swaps the branch ref from the pinned commit to the proposed
+   commit. The ref change is the commit point. Before it, recovery rolls back
+   only effects still matching the transaction's installed hashes; after it,
+   recovery verifies the new ref and index and settles publication. If any
+   owned effect or subsequent user edit cannot be distinguished, recovery marks
+   the amendment `needs_attention` and blocks Delivery without overwriting it.
+   The journal does not pretend the existing file publication primitive alone
+   can make Git ref and index changes atomic. If
    the branch, working file, stack contract, targets, or proposed diff changed,
    stop and require a new
-   preview. Do not leave a moved branch ref with a stale active checkout.
+   preview. The active checkout is never treated as ready while the transaction
+   is unsettled; a moved ref with a stale index or file is a blocking recovery
+   condition, not a successful promotion.
 5. **Deliver.** Start a new Delivery run against the amended published spec.
    Native candidate selection may retain the previous source commit only after
    the carry-forward check below. The new task is selected as pending and uses
@@ -99,8 +110,10 @@ carry-forward decision.
 
 The amendment records the old and new published spec commits, old and new
 checkpoint-input hashes, target identities, unchanged older task-definition
-hashes, the preimage and projected working-file hashes, new task IDs, selected
-candidate commit, and source checkpoint references. Progress-only differences
+hashes, the preimage and projected working-file hashes, and new task IDs. For
+each target repository separately, it records its source repository identity,
+tentatively selected candidate commit, and source checkpoint references.
+Progress-only differences
 between the published baseline and working `tasks.md` are normalized by the
 existing task-progress rules; the working `spec.md` status transition is
 validated separately and preserved byte-for-byte. Arbitrary edits are not.
@@ -112,11 +125,17 @@ Before inheriting any accepted task progress, Delivery rechecks that:
 - The amendment is the promoted commit, contains only the allowed append and
   count/status bookkeeping, leaves every older task definition unchanged, and
   has fully settled its workspace publication and Git index effects.
-- Each carried task has an accepted checkpoint on the selected candidate's
-  ancestry, or is already part of the target's landed baseline under the
-  unchanged old task definition. A checked box or provider result alone is not
-  proof. An unproven old task is not silently marked accepted; it requires the
+- Each carried task has an accepted checkpoint whose
+  `checkpoint_input_hash` equals the amendment's **old full-plan input hash**
+  and whose commit is on that target's newly selected candidate ancestry, or
+  is already part of that target's landed baseline through an accepted
+  checkpoint with the same old full-plan hash and ancestry proof. Unchanged task definitions
+  alone are insufficient. A checked box or provider result alone is not proof.
+  An unproven old task is not silently marked accepted; it requires the
   existing task/review path or blocks if that path cannot represent it.
+- Each target's source repository and newly selected candidate still match
+  its amendment record. One target's checkpoint or candidate cannot authorize
+  another target. A target with no prior candidate inherits no task progress.
 - The selected candidate is clean and unchanged at admission. No pending or
   unknown-dispatch operation is skipped; any such operation must first recover
   under its original sealed inputs.
@@ -140,11 +159,15 @@ Implement in small, independently tested increments:
    proposed task bytes and verify no writes or provider calls in preview.
 2. Isolated amendment and promotion: real temporary Git repositories, strict
    diff validation, concurrent branch movement, an active dirty checkout with
-   legitimate progress, interrupted file/ref/index transitions, and idempotent
-   retry. Confirm unrelated workspace edits, source candidate, and Delivery
-   journals remain byte-identical; reject an unrecognized task edit.
-3. Carry-forward admission: actual checkpoint ancestry and task-definition
-   fixtures for accepted, unproven, changed, and pending/unknown-dispatch cases.
+   legitimate unstaged progress, interrupted file/index/ref transitions, and
+   idempotent retry. Assert both pre-commit rollback and post-commit settlement;
+   a concurrent edit must produce `needs_attention` without overwriting bytes.
+   Confirm unrelated workspace edits, source candidate, and Delivery journals
+   remain byte-identical; reject an unrecognized task edit or staged change to
+   an affected file.
+3. Carry-forward admission: actual checkpoint ancestry, old full-plan hash,
+   and per-target repository fixtures for accepted, unproven, changed,
+   cross-target, and pending/unknown-dispatch cases.
    A changed global hash alone must neither discard proven work nor grant new
    authority. No old verification receipt may satisfy the new final gate.
 4. Disposable native Spec amendment to Delivery: confirm the new task alone is
