@@ -133,7 +133,11 @@ def build_verification_sandbox_spec(
         ),
         env={
             "ECHELON_HARNESS_RUN": "1",
-            "NODE_OPTIONS": "--use-env-proxy",
+            # Node 20 (the default Node sandbox image) rejects --use-env-proxy
+            # in NODE_OPTIONS. Newer Node releases honor this equivalent env
+            # switch; older releases ignore it and remain on the internal
+            # network with the explicit proxy sidecar.
+            "NODE_USE_ENV_PROXY": "1",
         },
         secrets_env={},
         post_create_command=None,

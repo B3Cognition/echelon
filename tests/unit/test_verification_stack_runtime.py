@@ -78,5 +78,6 @@ def test_build_verification_sandbox_spec_preserves_delivery_isolation(
     assert spec.worktree_mount == str(tmp_path)
     assert spec.container_mount == "/workspace"
     assert spec.env["ECHELON_HARNESS_RUN"] == "1"
-    assert spec.env["NODE_OPTIONS"] == "--use-env-proxy"
+    assert spec.env["NODE_USE_ENV_PROXY"] == "1"
+    assert "NODE_OPTIONS" not in spec.env
     assert spec.ephemeral_volumes == ["node_modules"]
