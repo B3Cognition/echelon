@@ -21,6 +21,20 @@ Playwright executions and projects do not create new source tests.
 NEVER claim a planned case is implemented merely because its ID appears in a
 document, unexecuted source, or an ambiguous/duplicate test tag.
 
+ALWAYS assign coverage-linked case IDs to candidate-authored Playwright tests
+or Vitest tests that an ordinary test entry point actually executes. For visual
+behavior, candidate-authored Playwright tests must make observable assertions
+and retain timed and resized screenshots under `test-results/` during a normal
+Playwright run when those observations are needed by the requirement. Delivery
+retains those images and independently reviews them against the published Spec.
+The controller-owned semantic visual receipt is not a source test: it binds one
+independent review verdict to the browser receipt, candidate fingerprint, and
+Spec digest. It does not supply physical source-test identities, terminal case
+tags, or an identity manifest for coverage-map cases.
+NEVER assign a coverage case to COMMANDER or VISUAL as a future source-test
+producer, invent controller-owned tagged cases or a manifest, or cite a
+screenshot alone as proof of motion, resize behavior, or semantic correctness.
+
 ## User-runnability contract
 
 ALWAYS author the candidate-owned `.echelon/runnability.yml` with exact install,

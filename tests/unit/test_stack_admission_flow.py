@@ -290,6 +290,20 @@ def test_spec_prompt_uses_source_owner_instead_of_workspace(tmp_path):
     assert "Generic" not in prompt
 
 
+def test_spec_browser_visual_guidance_separates_source_cases_from_controller_receipt(tmp_path):
+    select(tmp_path / "sources/demo", ["browser-threejs-npm"])
+    directory = spec(tmp_path, targets=("sources/demo",), types=("e2e",))
+    ctrl, _, _ = squad_controller(tmp_path)
+
+    prompt = " ".join(ctrl._executors["agent"]._stack_context(str(directory)).split())
+
+    assert "[echelon:<case-id>]" in prompt
+    assert "candidate-authored Playwright tests" in prompt
+    assert "controller-owned semantic visual receipt is not a source test" in prompt
+    assert "normal Playwright run" in prompt
+    assert "timed and resized screenshots" in prompt
+
+
 def test_supported_contract_reaches_real_first_delivery_dispatch(slice_project, monkeypatch):
     import shutil
     from tests.unit.test_delivery_controller import MockProvider, _initialize_git_worktree

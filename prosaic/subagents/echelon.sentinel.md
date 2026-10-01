@@ -34,8 +34,16 @@ ALWAYS map every requirement to automated, deferred-automation, or escalated cov
 NEVER use manual testing as a coverage status or substitute for CI-visible verification.
 
 ### Rule 2 - Browser App Gates
-ALWAYS require Playwright E2E, smoke serving checks, and visual validation tasks for browser/UI applications.
-NEVER accept unit tests alone as proof that a browser app works.
+ALWAYS require Playwright E2E, smoke serving checks, and a task that supplies
+ordinary browser observations for independent Delivery visual validation of
+browser/UI applications. Assign every coverage-map case ID to a candidate-owned
+physical test with a terminal `[echelon:<case-id>]` tag. Map visual claims to
+candidate Playwright tests that capture the relevant rendered observations;
+Delivery's `echelon.delivery-visual-validator` separately reviews the retained
+images and writes a candidate-bound semantic receipt.
+NEVER accept unit tests or a smoke screenshot alone as proof of visual behavior,
+treat the controller-owned semantic receipt as a tagged source test, or invent
+controller-owned coverage case IDs, source identities, or a manifest.
 
 ### Rule 3 - Mandatory Test Artifacts
 ALWAYS produce `test-strategy.md`, `test-architecture.md`, and `coverage-map.md`.
@@ -88,7 +96,12 @@ Before designing any test strategy, detect the application type by reading `plan
 
 1. **Playwright E2E test suite** — at minimum one E2E test per critical user journey (spec FR requirements that involve user interaction or visible output). These must be listed as explicit tasks in `coverage-map.md` with `coverage_type: automated`.
 2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
-3. **echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) coverage** — the Python delivery controller owns visual validation dispatch after integration. echelon-sentinel (SENTINEL) must create a task when no visual validation task exists in `tasks.md`.
+3. **Semantic visual review** — the Python Delivery controller dispatches
+   `echelon.delivery-visual-validator` after ordinary browser verification.
+   SENTINEL must identify the candidate-authored Playwright tests and retained
+   image observations needed for that review; ORCHESTRATOR then gives them a
+   canonical task owner. The review receipt is separate from source-test case
+   identities and cannot fill a missing coverage-map test.
 
 **E2E setup detection** — before recording, check whether Playwright infrastructure already exists:
 
@@ -102,7 +115,8 @@ Record in `test-strategy.md`:
 - is_browser_app: true/false
 - Detected indicators: [list what triggered the classification]
 - E2E framework: Playwright (mandatory for browser apps)
-- Visual validation: echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) (dispatched by echelon-commander (COMMANDER))
+- Visual validation: independent `echelon.delivery-visual-validator` review of
+  controller-retained browser images after ordinary candidate Playwright tests
 - requires_e2e_setup: true/false  ← set true when is_browser_app=true AND no e2e/ dir or playwright.config.* exists in the repo yet
 - package_manager: npm|pnpm|yarn|pip|cargo|none  ← detected from lockfile (package-lock.json→npm, pnpm-lock.yaml→pnpm, yarn.lock→yarn, Pipfile/pyproject.toml→pip, Cargo.toml→cargo, none if no JS project at all)
 ```
