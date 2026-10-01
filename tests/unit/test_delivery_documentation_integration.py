@@ -1,4 +1,5 @@
 """Documentation repair at Ralph's real feedback, recovery and verification boundaries."""
+import json
 import shutil
 from types import SimpleNamespace
 
@@ -50,6 +51,23 @@ def test_completed_tasks_route_actual_docs_failure_without_implementation_pointe
     assert "delivery_slice_task_id" not in store.read()
     assert controller._apply_documentation_gate(VerifyResult(True), str(root)).passed
     assert (spec / "docs-verification-report.md").read_text() == review_report()
+
+
+def test_controlled_ralph_documentation_journal_carries_exact_operation_identity(documentation_project, tmp_path):
+    from harness.delivery_slice_journal import DeliverySliceJournal
+
+    controller, store, _executor, root, _spec = _setup(documentation_project, tmp_path, complete=True)
+    result = _feedback(controller, root, _failure("documentation-impact-report-missing"))
+    assert result["passed"], result
+    state = store.read()
+    operation_id = state["delivery_slice_operation"]["id"]
+    journal = DeliverySliceJournal(controller._delivery_operation_evidence_root(), operation_id).path
+    data = json.loads(journal.read_text())
+    assert data["schema_version"] == 5
+    assert data["operation_binding"] == dict(
+        build_id="build-test", delivery_run_id=state["run_id"],
+        spec_id=state["spec_id"], operation_id=operation_id,
+    )
 
 
 @pytest.mark.parametrize("review", [None, True, False])

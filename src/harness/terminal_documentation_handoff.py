@@ -96,6 +96,14 @@ def prove_terminal_documentation_handoff(
         if not journal.path.is_file() or journal.path.is_symlink():
             return None
         data = lock_stack.enter_context(journal).load(required=True)
+        expected_binding = {
+            "build_id": build_id,
+            "delivery_run_id": run_id,
+            "spec_id": spec_id,
+            "operation_id": operation_id,
+        }
+        if data["schema_version"] != 5 or data["operation_binding"] != expected_binding:
+            return None
         records = data["records"]
         if not records or data["publication"] is not None:
             return None

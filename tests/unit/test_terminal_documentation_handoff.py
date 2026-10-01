@@ -60,6 +60,8 @@ def terminal_handoff_case(documentation_project, tmp_path, request):
     result = DeliveryDocumentationRunner(executor, runner._project_dir).run(
         **{**paths, "worktree": worktree, "evidence_root": evidence},
         operation_id="docs-op",
+        operation_binding=dict(build_id=build_dir.name, delivery_run_id=run_id,
+                               spec_id="001-slice", operation_id="docs-op"),
     )
     assert result.reason == f"delivery_documentation_{expected_step}_blocked: need context"
     _git(worktree, "add", "-A")
@@ -111,6 +113,42 @@ def test_terminal_writer_receipt_allows_only_handoff_identity(terminal_handoff_c
 @pytest.mark.parametrize("terminal_handoff_case", ["docs_verifier"], indirect=True)
 def test_terminal_verifier_blocked_receipt_allows_handoff(terminal_handoff_case):
     assert _prove(terminal_handoff_case) == ("build-old", "docs-op")
+
+
+def test_copied_terminal_journal_cannot_authorize_other_operation(terminal_handoff_case):
+    state, journal_path, _worktree, _spec, _candidate, build_dir, _identity = terminal_handoff_case
+    data = json.loads(journal_path.read_text())
+    assert data["operation_binding"] == dict(
+        build_id=build_dir.name, delivery_run_id=state["run_id"],
+        spec_id=state["spec_id"], operation_id="docs-op",
+    )
+    copied = DeliverySliceJournal(journal_path.parent.parent, "other-op").path
+    copied.parent.mkdir(parents=True, exist_ok=True)
+    copied.write_bytes(journal_path.read_bytes())
+    state["delivery_slice_operation"]["id"] = "other-op"
+    (build_dir / "state" / "delivery.json").write_text(json.dumps(state))
+    assert _prove(terminal_handoff_case, state=state) is None
+
+
+@pytest.mark.parametrize("field", ["build_id", "delivery_run_id", "spec_id", "operation_id"])
+def test_wrong_terminal_journal_binding_cannot_authorize_handoff(terminal_handoff_case, field):
+    _state, journal_path, _worktree, _spec, _candidate, _build, _identity = terminal_handoff_case
+    data = json.loads(journal_path.read_text())
+    data["operation_binding"][field] += "-other"
+    journal_path.write_text(json.dumps(data))
+    assert _prove(terminal_handoff_case) is None
+
+
+@pytest.mark.parametrize("legacy_version", [2, 4])
+def test_legacy_terminal_journal_cannot_authorize_handoff(terminal_handoff_case, legacy_version):
+    _state, journal_path, _worktree, _spec, _candidate, _build, _identity = terminal_handoff_case
+    data = json.loads(journal_path.read_text())
+    data["schema_version"] = legacy_version
+    data.pop("operation_binding")
+    if legacy_version == 2:
+        data.pop("rejected_reviews")
+    journal_path.write_text(json.dumps(data))
+    assert _prove(terminal_handoff_case) is None
 
 
 def test_unknown_usage_cannot_authorize_handoff(terminal_handoff_case):

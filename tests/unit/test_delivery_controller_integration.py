@@ -68,6 +68,7 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
         provider=MockProvider(), gitops=gitops, state_store=store,
         mode_controller=ModeController(mode), escalation_handler=EscalationHandler(str(tmp_path / "escalation")),
         spec_id="001", config=config, llm_provider=executor,
+        build_id="build-test",
     )
     return controller, store
 
@@ -333,6 +334,7 @@ def _reconstruct(controller, store, executor):
         mode_controller=ModeController(store.read()["mode"]),
         escalation_handler=EscalationHandler(str(store.state_dir / "escalation")),
         spec_id="001", config=controller._config, llm_provider=executor,
+        build_id=controller._build_id,
     )
 
 

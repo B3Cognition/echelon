@@ -99,6 +99,8 @@ def test_amended_admission_restarts_after_terminal_documentation(
         worktree=worktree, spec_dir=spec, evidence_root=evidence_root,
         allowed_task_ids={"T-001"}, changed_files=["package.json"],
         operation_id="docs-op",
+        operation_binding=dict(build_id=build_dir.name, delivery_run_id=run_id,
+                               spec_id="004-demo", operation_id="docs-op"),
     )
     assert result.reason == "delivery_documentation_tech_writer_blocked: source gap"
     _git(worktree, "add", "-A")

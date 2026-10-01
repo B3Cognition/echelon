@@ -2758,6 +2758,12 @@ class RalphController:
                 runnability_ref, runnability_required = self._controlled_documentation_runnability(worktree)
                 runner_options = {
                     "dispatch_admission": self._verification_admission,
+                    "operation_binding": {
+                        "build_id": self._build_id,
+                        "delivery_run_id": state["run_id"],
+                        "spec_id": self._spec_id,
+                        "operation_id": operation["id"],
+                    },
                     "changed_files": operation["changed_files"],
                     "runnability_report": runnability_ref,
                     "runnability_required": runnability_required,
@@ -3362,7 +3368,8 @@ class RalphController:
         evidence_dir: Path,
     ) -> VerifyResult:
         """Require a fresh composed journey when resolved stacks demand it."""
-        operation = self._state_store.read().get("delivery_slice_operation")
+        current_state = self._state_store.read()
+        operation = current_state.get("delivery_slice_operation")
         if (verify_result.passed and isinstance(operation, dict)
                 and operation.get("kind") == "documentation"
                 and operation.get("progress_applied") is True and operation.get("runnability_reviewed") is True):
@@ -3373,6 +3380,12 @@ class RalphController:
                 ref = reviewed_runnability_checkpoint(
                     worktree=Path(worktree_path), spec_dir=self._find_existing_spec_dir(worktree_path),
                     evidence_root=self._delivery_operation_evidence_root(), operation_id=operation["id"],
+                    operation_binding={
+                        "build_id": self._build_id,
+                        "delivery_run_id": current_state["run_id"],
+                        "spec_id": self._spec_id,
+                        "operation_id": operation["id"],
+                    },
                 )
                 current, _ = self._controlled_documentation_runnability(Path(worktree_path), validate_candidate=True)
                 if current != ref:
