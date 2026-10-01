@@ -195,6 +195,21 @@ def pending_slice_resume_supported(state: dict[str, Any]) -> bool:
             or _is_pending_prior_review_cap(state)):
         return True
     operation = state.get("delivery_slice_operation")
+    if (state.get("status") == "blocked"
+            and state.get("termination_reason") == "build_blocked"
+            and state.get("blocked_phase") == "implementation"
+            and state.get("build_status") == "blocked"
+            and state.get("build_reason") in {
+                "invalid documentation findings",
+                "delivery_reconciliation_required: documentation inputs changed",
+            }
+            and isinstance(operation, dict)
+            and operation.get("kind") == "documentation"
+            and isinstance(operation.get("id"), str) and bool(operation["id"].strip())
+            and operation.get("progress_applied") is not True
+            and isinstance(operation.get("worktree_path"), str)
+            and Path(operation["worktree_path"]).is_absolute()):
+        return True  # Admission only; the locked journal validates the completed receipt.
     return (
         state.get("status") == "blocked"
         and (

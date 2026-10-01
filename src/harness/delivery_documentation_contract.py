@@ -127,8 +127,10 @@ def validate_journal(data):
     fields = {"schema_version", "run_id", "binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint",
               "budget_limit", "task_ids", "records", "reports_before", "docs_before", "publication",
               "authoring_evidence", "checkpoints"}
-    _require(isinstance(data, dict) and set(data) == fields and type(data["schema_version"]) is int
-             and data["schema_version"] == 2, "invalid documentation journal schema")
+    _require(isinstance(data, dict) and type(data.get("schema_version")) is int
+             and data["schema_version"] in {2, 4}
+             and set(data) == (fields if data["schema_version"] == 2 else fields | {"rejected_reviews"}),
+             "invalid documentation journal schema")
     _require(isinstance(data["run_id"], str) and bool(data["run_id"]), "invalid documentation run identity")
     for field in ("binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint"):
         _require(_fingerprint(data[field]), "invalid documentation fingerprint")
@@ -211,6 +213,44 @@ def validate_journal(data):
             terminal = result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"} or (
                 index % 2 and result["verdict"] == "PASS" and not record["deterministic_findings"] and not record["gate_findings"])
         _require(not terminal or index == len(records) - 1, "documentation receipts after terminal result")
+    if data["schema_version"] == 4:
+        rejected = data["rejected_reviews"]
+        _require(isinstance(rejected, list) and len(rejected) <= 1, "invalid documentation rejected reviews")
+        for old in rejected:
+            _require(isinstance(old, dict) and set(old) == {
+                "assignment", "repair_attempt", "result", "candidate_after", "token_usage", "error",
+                "deterministic_findings", "gate_findings"}, "invalid documentation rejected review")
+            attempt = old["repair_attempt"]
+            _require(type(attempt) is int and 0 <= attempt < 3 and 2 * attempt < len(records),
+                     "invalid documentation rejected review attempt")
+            writer = records[2 * attempt]
+            assignment = old["assignment"]
+            _require(data["authoring_evidence"] is None or attempt < len(checkpoints),
+                     "invalid documentation rejected review checkpoint")
+            _require(writer["result"] is not None and writer["result"]["verdict"] == "DONE"
+                     and isinstance(assignment, dict) and set(assignment) == IDENTITY
+                     and type(assignment["schema_version"]) is int and assignment["schema_version"] == 1
+                     and assignment["step"] == "docs_verifier" and assignment["task_ids"] == scope
+                     and assignment["candidate_fingerprint"] == writer["candidate_after"]
+                     and assignment["input_fingerprint"] == (checkpoints[attempt]["input_fingerprint"]
+                          if data["authoring_evidence"] is not None else data["input_fingerprint"])
+                     and (data["authoring_evidence"] is None or checkpoints[attempt]["status"] == "complete"),
+                     "invalid documentation rejected review binding")
+            _require(isinstance(assignment["dispatch_id"], str) and bool(assignment["dispatch_id"])
+                     and assignment["dispatch_id"] not in seen,
+                     "invalid documentation rejected review dispatch")
+            _require(old["result"] is None and old["candidate_after"] is None
+                     and old["error"] == "invalid documentation findings"
+                     and type(old["token_usage"]) is int and old["token_usage"] >= 0
+                     and _strings(old["deterministic_findings"]) and old["gate_findings"] == [],
+                     "invalid documentation rejected review receipt")
+            if 2 * attempt + 1 < len(records):
+                retry = records[2 * attempt + 1]
+                _require(retry["assignment"]["step"] == "docs_verifier"
+                         and {key: assignment[key] for key in IDENTITY - {"dispatch_id"}} ==
+                             {key: retry["assignment"][key] for key in IDENTITY - {"dispatch_id"}},
+                         "invalid documentation review retry chain")
+            seen.add(assignment["dispatch_id"])
     publication = data["publication"]
     if publication is not None:
         _require(isinstance(publication, dict) and set(publication) == {"before", "after", "complete"}

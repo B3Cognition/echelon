@@ -52,7 +52,9 @@ def _source_fingerprint(worktree, spec):
     # author's exclusive write boundary is narrower: those paths cannot change.
     entries = _tree_fingerprint(worktree, excluded=(worktree / ".git", spec, *(worktree / name for name in DOCS)))
     return _digest({"product": entries,
-                    "controls": controls, "protected": _protected_fingerprint(worktree, spec, excluded_report_paths=reports)})
+                    "controls": controls, "protected": _protected_fingerprint(
+                        worktree, spec, excluded_report_paths=reports,
+                        excluded_controller_paths=(spec / "harness-run-history.json",))})
 
 
 def _tree_fingerprint(directory, *, excluded=()):
@@ -147,8 +149,8 @@ class DeliveryDocumentationRunner:
         start, data, dispatches = time.monotonic(), None, 0
         stack = ExitStack()
         def outcome(reason, success=False):
-            records = data["records"] if data else []
-            usage = sum(record["token_usage"] or 0 for record in records) if all(record["token_usage"] is not None for record in records) else None
+            receipts = [*data["records"], *data.get("rejected_reviews", [])] if data else []
+            usage = sum(record["token_usage"] for record in receipts) if all(record["token_usage"] is not None for record in receipts) else None
             return BuildResult(exit_code=0 if success else 1, status="done" if success else "blocked", impasse_file=None,
                                stdout="", stderr="", reason=reason, duration_ms=int((time.monotonic()-start)*1000),
                                token_usage=usage, task_ids=[], provider_invocation={"delivery_documentation": data["run_id"] if data else "",
@@ -259,13 +261,27 @@ class DeliveryDocumentationRunner:
                 if expected_candidate is not None and _documentation_candidate_fingerprint(worktree, spec_dir) != expected_candidate:
                     raise DeliverySliceError("delivery_reconciliation_required: documentation candidate changed")
                 if check_budget and token_budget is not None:
-                    if any(record["token_usage"] is None for record in records):
+                    receipts = [*records, *data.get("rejected_reviews", [])]
+                    if any(record["token_usage"] is None for record in receipts):
                         raise DeliverySliceError("delivery_usage_unknown_with_finite_budget")
-                    if sum(record["token_usage"] for record in records) >= token_budget:
+                    if sum(record["token_usage"] for record in receipts) >= token_budget:
                         raise DeliverySliceError("delivery_documentation_budget_exhausted")
 
             if records and records[-1]["result"] is None:
-                raise DeliverySliceError(records[-1]["error"] or "delivery_reconciliation_required: dispatch completion is unknown")
+                failed = records[-1]
+                retryable = (failed["error"] == "invalid documentation findings"
+                             and failed["assignment"]["step"] == "docs_verifier"
+                             and type(failed["token_usage"]) is int
+                             and len(records) % 2 == 0 and not data.get("rejected_reviews")
+                             and records[-2]["result"] is not None
+                             and records[-2]["result"]["verdict"] == "DONE")
+                if not retryable:
+                    raise DeliverySliceError(failed["error"] or "delivery_reconciliation_required: dispatch completion is unknown")
+                expected_candidate = records[-2]["candidate_after"]
+                guard()
+                data["schema_version"] = 4
+                data["rejected_reviews"] = [records.pop()]
+                journal.save(data)
             guard()
             stage = journal.root / "staged"
             stage.mkdir(exist_ok=True)

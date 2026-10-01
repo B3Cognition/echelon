@@ -110,6 +110,70 @@ def test_docs_reviewer_is_told_the_strict_findings_shape(documentation_project):
     assert "not objects or a Markdown table" in reviewer_prompt
 
 
+def test_completed_malformed_review_retries_without_rewriting_candidate(documentation_project):
+    reviews = 0
+    def script(assignment, payload, root):
+        nonlocal reviews
+        if assignment["step"] == "docs_verifier":
+            reviews += 1
+            if reviews == 1:
+                payload.update(verdict="FAIL", findings=[{"id": "DOCS-001", "issue": "README omission"}],
+                               report_markdown=review_report(True))
+        return CliRunResult(0, json.dumps(payload), "", token_usage=7)
+
+    runner, provider, paths = documentation_project(script=script)
+    blocked = runner.run(**paths)
+    assert blocked.reason == "invalid documentation findings"
+    initial = json.loads(next(paths["evidence_root"].rglob("journal.json")).read_text())
+    assert initial["records"][-1]["token_usage"] == 7
+    (paths["spec_dir"] / "harness-run-history.json").write_text('{"runs": [{"status": "blocked"}]}')
+
+    recovered = type(runner)(provider, runner._project_dir).run(**paths, journal_required=True)
+    assert recovered.succeeded, recovered.reason
+    assert recovered.token_usage == 21
+    assert provider.steps == ["tech_writer", "docs_verifier", "docs_verifier"]
+    journal = json.loads(next(paths["evidence_root"].rglob("journal.json")).read_text())
+    assert journal["rejected_reviews"] == [initial["records"][-1]]
+    assert journal["records"][0] == initial["records"][0]
+    assert journal["records"][1]["assignment"]["dispatch_id"] != initial["records"][1]["assignment"]["dispatch_id"]
+    assert journal["records"][1]["assignment"]["candidate_fingerprint"] == initial["records"][1]["assignment"]["candidate_fingerprint"]
+
+
+@pytest.mark.parametrize("obstacle", ["changed_candidate", "exhausted_budget", "second_malformed"])
+def test_malformed_review_retry_is_bounded_and_preserves_safety(documentation_project, obstacle):
+    def script(assignment, payload, root):
+        if assignment["step"] == "docs_verifier":
+            payload.update(verdict="FAIL", findings=[{"id": "DOCS-001", "issue": "README omission"}],
+                           report_markdown=review_report(True))
+        return CliRunResult(0, json.dumps(payload), "", token_usage=7)
+
+    runner, provider, paths = documentation_project(script=script)
+    assert runner.run(**paths, token_budget=14 if obstacle == "exhausted_budget" else None).reason == "invalid documentation findings"
+    if obstacle == "changed_candidate":
+        (paths["worktree"] / "README.md").write_text("changed after review")
+    resumed = type(runner)(provider, runner._project_dir).run(**paths, journal_required=True)
+    assert resumed.status == "blocked"
+    if obstacle == "changed_candidate":
+        assert "candidate changed" in resumed.reason
+    elif obstacle == "exhausted_budget":
+        assert resumed.reason == "delivery_documentation_budget_exhausted"
+    else:
+        assert resumed.reason == "invalid documentation findings"
+    assert len(provider.calls) == (3 if obstacle == "second_malformed" else 2)
+    if obstacle == "second_malformed":
+        again = type(runner)(provider, runner._project_dir).run(**paths, journal_required=True)
+        assert again.reason == "invalid documentation findings"
+        assert len(provider.calls) == 3
+
+
+def test_documentation_source_binding_ignores_controller_run_history(documentation_project):
+    from harness.delivery_documentation import _source_fingerprint
+    _, _, paths = documentation_project()
+    before = _source_fingerprint(paths["worktree"], paths["spec_dir"])
+    (paths["spec_dir"] / "harness-run-history.json").write_text('{"runs": [{"status": "blocked"}]}')
+    assert _source_fingerprint(paths["worktree"], paths["spec_dir"]) == before
+
+
 def test_repeated_rejection_survives_reconstruction(documentation_project):
     runner, provider, paths = documentation_project(always_reject=True)
     first = runner.run(**paths)

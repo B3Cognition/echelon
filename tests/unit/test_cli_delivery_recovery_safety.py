@@ -16,6 +16,42 @@ from tests.unit.test_cli_harness_resume import (
 UNKNOWN_REASON = "delivery_reconciliation_required: dispatch completion is unknown"
 
 
+@pytest.mark.parametrize("kind,reason,eligible", [
+    ("documentation", "invalid documentation findings", True),
+    ("documentation", "delivery_reconciliation_required: documentation inputs changed", True),
+    ("task", "invalid documentation findings", False),
+    ("task", "delivery_reconciliation_required: documentation inputs changed", False),
+    ("documentation", UNKNOWN_REASON, False),
+])
+def test_continue_defers_completed_documentation_review_recovery_to_locked_journal(
+    tmp_path, monkeypatch, kind, reason, eligible,
+):
+    from echelon.cli_app import app
+    from echelon.delivery_service import _delivery_status_next_step
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    _make_echelon_yml(tmp_path, verify_command="pytest")
+    _make_phase_a_spec(tmp_path)
+    state_dir = _setup_build(tmp_path, "001")
+    state = {
+        "status": "blocked", "termination_reason": "build_blocked",
+        "blocked_phase": "implementation", "build_status": "blocked", "build_reason": reason,
+        "delivery_slice_operation": {"id": "pending", "kind": kind, "progress_applied": False,
+                                     "worktree_path": str(tmp_path / "candidate")},
+    }
+    _write_state(state_dir, "001", "default", state)
+    before = (state_dir / "delivery.json").read_bytes()
+    with patch("harness.skills.run_skill.run") as run, \
+         patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+         patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+        result = CliRunner().invoke(app, ["delivery", "continue", "001"])
+    assert result.exit_code == (0 if eligible else 1), result.output
+    assert run.call_count == int(eligible)
+    if eligible:
+        assert _delivery_status_next_step(state, "001") == "echelon delivery continue 001"
+    assert (state_dir / "delivery.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("verify_command", ["pytest", None])
 @pytest.mark.parametrize("stack_drift", [False, True])
 @pytest.mark.parametrize("prerequisite", [False, True])
