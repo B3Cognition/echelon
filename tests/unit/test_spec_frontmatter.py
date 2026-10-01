@@ -1,6 +1,5 @@
 """Unit tests for harness.spec_frontmatter — frontmatter parse and write."""
 from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -14,6 +13,21 @@ from harness.spec_frontmatter import (
     write_status,
     write_targets,
 )
+
+
+def test_render_status_markdown_matches_delivery_lifecycle_write(tmp_path):
+    from harness.spec_frontmatter import render_status_markdown
+
+    spec_dir = tmp_path / "specs/004-demo"
+    spec_dir.mkdir(parents=True)
+    original = "# Demo\n\n**Status**: Planned\n"
+    (spec_dir / "spec.md").write_text(original, encoding="utf-8")
+
+    write_status(spec_dir, "in_progress")
+
+    assert render_status_markdown(original, "in_progress") == (
+        spec_dir / "spec.md"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.mark.unit

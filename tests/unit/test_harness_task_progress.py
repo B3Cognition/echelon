@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from harness.task_progress import (
     TaskProgressError,
+    checkpoint_input_hash,
+    checkpoint_input_hash_from_contents,
     summarize_task_progress,
     update_task_progress_markdown,
 )
@@ -28,6 +31,26 @@ TASKS = """# Tasks: Demo
   **Acceptance Criteria:**
   - [ ] Core flow works
 """
+
+
+def test_checkpoint_hash_from_published_bytes_matches_on_disk_normalization(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "specs/001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("---\nstatus: published\n---\n# Demo\n")
+    (spec / "tasks.md").write_text(TASKS)
+    published = {
+        "spec.md": (spec / "spec.md").read_bytes(),
+        "tasks.md": (spec / "tasks.md").read_bytes(),
+    }
+
+    assert checkpoint_input_hash_from_contents(published) == checkpoint_input_hash(spec)
+    changed_status = dict(published, **{"spec.md": published["spec.md"].replace(
+        b"status: published", b"status: in_progress")})
+    assert checkpoint_input_hash_from_contents(changed_status) == checkpoint_input_hash(spec)
+    changed_spec = dict(published, **{"spec.md": b"---\nstatus: published\n---\n# Different\n"})
+    assert checkpoint_input_hash_from_contents(changed_spec) != checkpoint_input_hash(spec)
 
 
 @pytest.mark.unit

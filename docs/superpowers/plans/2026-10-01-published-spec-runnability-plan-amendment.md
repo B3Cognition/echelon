@@ -4,7 +4,7 @@
 
 **Goal:** Let Echelon append a missing runnability-contract owner to a published Spec and continue Delivery without redoing checkpoint-proven work or hand-editing generated product files.
 
-**Architecture:** A typed, deterministic planner proposes only new owner tasks. An isolated Spec amendment prepares their commit; an amendment-specific journal promotes its file, index, and branch effects in that order. Fresh Delivery may inherit old task progress only through a promoted amendment record, the old full-plan hash, and target-local checkpoint ancestry.
+**Architecture:** A typed, deterministic planner proposes only new owner tasks. An isolated Spec amendment prepares their commit; an amendment-specific journal promotes its file, index, and branch effects in that order. Fresh Delivery may inherit old task progress only through a promoted amendment record, the verified pre-amendment working-input hash, and target-local checkpoint ancestry.
 
 **Tech Stack:** Python 3, Typer CLI, Git, existing Echelon Spec amendment, publication, task-progress, and Delivery modules; pytest.
 
@@ -29,6 +29,7 @@
 - Create `src/harness/amendment_lineage.py`: validate promoted amendment evidence and return proven completed task IDs for exactly one target/candidate.
 - Modify `src/echelon/cli_app.py` and `src/echelon/spec_service.py`: thin `spec amend ... --runnability-owner` preview/prepare and `spec amend promote <id>` routing; leave pre-build amendment behavior intact.
 - Modify `src/harness/skills/run_skill.py`: call target-local amendment lineage only when a promoted record applies; retain exact-hash behavior otherwise.
+- Factor `checkpoint_input_hash` in `src/harness/task_progress.py` and scope normalization in `src/harness/fulfillment_runner.py` so preview can hash pinned Git blobs without creating files; reuse `spec_frontmatter.write_status`'s exact renderer to validate lifecycle-only working edits.
 - Add focused tests beside existing amendment, CLI, and checkpoint-recovery tests. One disposable integration test owns the end-to-end transition.
 
 ## Review Focus
@@ -36,7 +37,7 @@
 - A required stack with a valid deferral: preview reports no task and performs no write (Task 1 test).
 - Progress-only dirty `tasks.md` plus staged unrelated content: promotion retains both exactly (Task 3 test).
 - A user edit between file installation and recovery: recovery does not overwrite it and blocks admission (Task 3 test).
-- Two targets with similarly named checkpoints: only each target's own old-hash, ancestor checkpoint carries (Task 4 test).
+- Two targets with similarly named checkpoints: only each target's own verified pre-amendment working-hash, ancestor checkpoint carries (Task 4 test).
 - A completed-looking checkbox without an accepted checkpoint: Delivery selects/reviews that task or blocks; it never inherits the checkbox (Task 4 test).
 
 ---
@@ -124,7 +125,7 @@ assert not (repo / ".echelon/runtime/amend-worktrees/004-demo").exists()
 ```
 
 - [ ] **Step 2: Run the named tests red.** Run `tests/unit/test_runnability_amendment.py` plus the two new CLI/service test names with `-q`; require a missing route or callable failure.
-- [ ] **Step 3: Implement read-only preview, then isolated prepare.** Resolve required targets with the same stack/disposition/readiness inputs as Phase A, not a duplicate policy table. Require a published spec branch, no active Spec/Delivery operation or unsettled publication, and no unrecognized working edit. Acquire the per-spec mutation and Phase A execution locks only for prepare. Pin the old full-plan input hash from the published branch, then use `create_amendment_worktree`; write only the new plan task and amendment manifest in that isolated worktree, commit there, and record each target's source-repository identity and tentative candidate/checkpoint references. A target with no candidate records `null` and an empty list. `--dry-run` does not allocate revision state or create a worktree.
+- [ ] **Step 3: Implement read-only preview, then isolated prepare.** Resolve required targets with the same stack/disposition/readiness inputs as Phase A, not a duplicate policy table. Require a published spec branch, no active Spec/Delivery operation or unsettled publication, and no unrecognized working edit. Acquire the per-spec mutation and Phase A execution locks only for prepare. Pin both the published-branch input hash and the verified pre-amendment working-input hash; the latter must differ only through Echelon's exact lifecycle-status rendering and task progress. Then use `create_amendment_worktree`; write only the new plan task and amendment manifest in that isolated worktree, commit there, and record each target's source-repository identity and tentative candidate/checkpoint references. A target with no candidate records `null` and an empty list. `--dry-run` does not allocate revision state or create a worktree.
 
 ```python
 def preview_runnability_owner(project_root: Path, spec_id: str) -> dict[str, object]:
@@ -194,7 +195,7 @@ else:
 - Consumes: settled promoted amendment manifest, current target identity, current spec input hash, native selected candidate, target-local delivery states, and `gitops.commit_is_ancestor`.
 - Produces: `proven_amended_task_ids(manifest: Mapping[str, object], *, target_id: str, candidate: str | None, current_input_hash: str, states: Iterable[Mapping[str, object]], commit_is_ancestor: Callable[[str, str], bool]) -> tuple[str, ...]`. Raises `AmendmentLineageError` before dispatch for changed or unsettled lineage.
 
-- [ ] **Step 1: Write failing lineage tests.** Use two target IDs and different candidate DAGs. Assert an accepted T-001 with matching old full-plan hash and ancestor checkpoint carries only for its target; a matching task ID with another hash or nonancestor commit does not. Assert checkbox/provider-result-only completion does not carry. Reject target identity change, changed older task definition, candidate mismatch, pending/unknown dispatch, unsettled promotion, and current hash different from manifest's new hash. Add a test that the existing exact-hash path still works unchanged when no promoted amendment exists.
+- [ ] **Step 1: Write failing lineage tests.** Use two target IDs and different candidate DAGs. Assert an accepted T-001 with matching verified pre-amendment working-input hash and ancestor checkpoint carries only for its target; a matching task ID with another hash or nonancestor commit does not. Assert checkbox/provider-result-only completion does not carry. Reject target identity change, changed older task definition, candidate mismatch, pending/unknown dispatch, unsettled promotion, and current hash different from manifest's post-amendment working hash. Add a test that the existing exact-hash path still works unchanged when no promoted amendment exists.
 
 ```python
 assert proven_amended_task_ids(manifest, target_id="apps/web",
@@ -204,7 +205,7 @@ assert proven_amended_task_ids(manifest, target_id="apps/web",
 ```
 
 - [ ] **Step 2: Run those tests red.** `.venv/bin/python -m pytest tests/unit/test_amendment_lineage.py -q` must fail because the new validator is absent.
-- [ ] **Step 3: Implement a narrow admission branch.** Load only a manifest that names the current promoted spec commit and target; validate its settled transaction, old/new full-plan hashes, unchanged old task definitions, target repository, exact selected candidate, and original sealed-operation status. For each checkpoint, require its `checkpoint_input_hash == old_hash`, accepted `task_ids`, and `commit_is_ancestor(checkpoint_commit, candidate) is True`. Do not merge evidence across target run directories or treat `build.task_results` as acceptance. Return only proven IDs; do not rewrite old state. In `_execute_delivery_run`, call this after native baseline selection and before advancing the new current-build marker; when no applicable manifest exists, leave `_fresh_delivery_completed_tasks` and its strict current-hash behavior intact.
+- [ ] **Step 3: Implement a narrow admission branch.** Load only a manifest that names the current promoted spec commit and target; validate its settled transaction, published and verified working input hashes, unchanged old task definitions, target repository, exact selected candidate, and original sealed-operation status. For each checkpoint, require its `checkpoint_input_hash == pre_amendment_working_hash`, accepted `task_ids`, and `commit_is_ancestor(checkpoint_commit, candidate) is True`. Do not merge evidence across target run directories or treat `build.task_results` as acceptance. Return only proven IDs; do not rewrite old state. In `_execute_delivery_run`, call this after native baseline selection and before advancing the new current-build marker; when no applicable manifest exists, leave `_fresh_delivery_completed_tasks` and its strict current-hash behavior intact.
 
 ```python
 if promoted_amendment is None:

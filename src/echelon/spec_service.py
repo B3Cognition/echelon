@@ -855,6 +855,36 @@ def prepare_amendment(
     )
 
 
+def runnability_owner_amendment(
+    project_root: Path,
+    spec_id: str,
+    *,
+    dry_run: bool,
+) -> None:
+    """Forward a typed published-plan correction to the Spec harness."""
+    from echelon.runnability_amendment import (
+        prepare_runnability_owner,
+        preview_runnability_owner,
+    )
+
+    result = (
+        preview_runnability_owner(project_root, spec_id)
+        if dry_run else prepare_runnability_owner(project_root, spec_id)
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
+def promote_runnability_owner_amendment(
+    project_root: Path,
+    amendment_id: str,
+) -> None:
+    """Forward promotion to the amendment transaction owner."""
+    from echelon.runnability_amendment import promote_runnability_owner
+
+    result = promote_runnability_owner(project_root, amendment_id)
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+
 def reject_target_mutation() -> NoReturn:
     """Reject the retired post-authoring target mutation route."""
     print(

@@ -1147,7 +1147,12 @@ def _spec_input_hash(spec_dir: Path | None) -> str | None:
 
 def _normalized_scope_input_bytes(filename: str, path: Path) -> bytes:
     """Exclude lifecycle-only status transitions from fulfillment provenance."""
-    content = path.read_text(encoding="utf-8")
+    return normalized_scope_input_content(filename, path.read_bytes())
+
+
+def normalized_scope_input_content(filename: str, content_bytes: bytes) -> bytes:
+    """Apply the same scope normalization to published Git blobs and files."""
+    content = content_bytes.decode("utf-8")
     if filename == "spec.md":
         content = re.sub(
             r"\A(---\n.*?^status:\s*)[^\n]*(\n---)",

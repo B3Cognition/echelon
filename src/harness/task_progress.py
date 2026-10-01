@@ -6,6 +6,7 @@ import re
 import hashlib
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Mapping
 from typing import Any
 
 from kernel.task_contract import TASK_ID_PATTERN, validate_tasks_markdown
@@ -34,18 +35,32 @@ class TaskProgressError(RuntimeError):
 
 def checkpoint_input_hash(spec_dir: Path | None) -> str | None:
     """Bind recoverable progress to definitions, excluding progress-only edits."""
-    from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES, _normalized_scope_input_bytes
-
     if spec_dir is None or not (spec_dir / "tasks.md").is_file():
+        return None
+    from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
+
+    contents = {
+        filename: (spec_dir / filename).read_bytes()
+        for filename in SCOPE_INPUT_FILENAMES
+        if (spec_dir / filename).is_file()
+    }
+    return checkpoint_input_hash_from_contents(contents)
+
+
+def checkpoint_input_hash_from_contents(contents: Mapping[str, bytes]) -> str | None:
+    """Hash pinned published blobs with the same rules as working spec files."""
+    from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES, normalized_scope_input_content
+
+    if "tasks.md" not in contents:
         return None
     digest = hashlib.sha256(b"checkpoint-input-v1\0")
     for filename in SCOPE_INPUT_FILENAMES:
-        path = spec_dir / filename
         digest.update(filename.encode() + b"\0")
-        if not path.is_file():
+        raw = contents.get(filename)
+        if raw is None:
             digest.update(b"0\0")
             continue
-        content = _normalized_scope_input_bytes(filename, path)
+        content = normalized_scope_input_content(filename, raw)
         if filename == "tasks.md":
             text = content.decode("utf-8")
             text = re.sub(r"(?m)^(\s*- )\[[ xX]\]", r"\1[ ]", text)

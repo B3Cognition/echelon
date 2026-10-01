@@ -597,6 +597,39 @@ def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
 
 
 @pytest.mark.unit
+def test_spec_amend_runnability_owner_routes_typed_preview(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[tuple[Path, str, bool]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.runnability_owner_amendment",
+        lambda root, spec_id, *, dry_run: calls.append((root, spec_id, dry_run)),
+        raising=False,
+    )
+
+    run(["spec", "amend", "004-demo", "Add runnability owner",
+         "--runnability-owner", "--dry-run"])
+
+    assert calls == [(Path.cwd(), "004-demo", True)]
+
+
+@pytest.mark.unit
+def test_spec_amend_promote_routes_typed_promotion(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        "echelon.spec_service.promote_runnability_owner_amendment",
+        lambda root, amendment_id: calls.append((root, amendment_id)),
+        raising=False,
+    )
+
+    run(["spec", "amend", "promote", "004-demo/001"])
+
+    assert calls == [(Path.cwd(), "004-demo/001")]
+
+
+@pytest.mark.unit
 def test_spec_add_input_routes_product_inputs(monkeypatch):
     from echelon.cli_app import run
 

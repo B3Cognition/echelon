@@ -4386,8 +4386,26 @@ def spec_amend(
         help="Product input as requirement:<path> or reference:<path>; repeat as needed.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview baseline and inputs without mutation."),
+    runnability_owner: bool = typer.Option(
+        False, "--runnability-owner", help="Prepare one missing published runnability owner task."
+    ),
 ) -> None:
     """Prepare an isolated amendment for an unbuilt spec."""
+    if spec_id == "promote":
+        from echelon.spec_service import promote_runnability_owner_amendment
+
+        if input_values or dry_run or runnability_owner or ctx.args:
+            raise typer.BadParameter("promote accepts only an amendment ID")
+        promote_runnability_owner_amendment(Path.cwd(), description)
+        return
+    if runnability_owner:
+        from echelon.spec_service import runnability_owner_amendment
+
+        if input_values or ctx.args:
+            raise typer.BadParameter("--runnability-owner cannot be combined with --input or other options")
+        runnability_owner_amendment(Path.cwd(), spec_id, dry_run=dry_run)
+        return
+
     from echelon.spec_service import prepare_amendment
 
     prepare_amendment(

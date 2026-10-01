@@ -59,7 +59,11 @@ explicit and independently validated.
    edits block the proposal. No provider runs, files change, or run state is
    allocated during preview.
 2. **Prepare.** Reuse the existing isolated amendment worktree and per-spec
-   mutation lock. Pin the published spec commit and its checkpoint-input hash.
+   mutation lock. Pin the published spec commit, its input hash, and the
+   pre-amendment working-input hash. Echelon may have added lifecycle-only
+   `spec.md` status frontmatter before Delivery checkpointing; the two hashes
+   are not assumed equal. The exact lifecycle transformation and task-progress
+   overlay must be validated before the working hash can authorize carry-forward.
    Require no active Spec step, Delivery dispatch, publication transaction, or
    spec mutation for this spec. Preserve the old published branch and candidate.
 3. **Plan.** A deterministic harness planner appends one canonical PENDING task
@@ -108,8 +112,9 @@ carry-forward decision.
 
 ## Carry-forward contract
 
-The amendment records the old and new published spec commits, old and new
-checkpoint-input hashes, target identities, unchanged older task-definition
+The amendment records the old and new published spec commits, their input
+hashes, the verified pre- and post-amendment working-input hashes, target
+identities, unchanged older task-definition
 hashes, the preimage and projected working-file hashes, and new task IDs. For
 each target repository separately, it records its source repository identity,
 tentatively selected candidate commit, and source checkpoint references.
@@ -126,10 +131,12 @@ Before inheriting any accepted task progress, Delivery rechecks that:
   count/status bookkeeping, leaves every older task definition unchanged, and
   has fully settled its workspace publication and Git index effects.
 - Each carried task has an accepted checkpoint whose
-  `checkpoint_input_hash` equals the amendment's **old full-plan input hash**
+  `checkpoint_input_hash` equals the amendment's **verified pre-amendment
+  working-input hash**
   and whose commit is on that target's newly selected candidate ancestry, or
   is already part of that target's landed baseline through an accepted
-  checkpoint with the same old full-plan hash and ancestry proof. Unchanged task definitions
+  checkpoint with that same verified working-input hash and ancestry proof.
+  Unchanged task definitions
   alone are insufficient. A checked box or provider result alone is not proof.
   An unproven old task is not silently marked accepted; it requires the
   existing task/review path or blocks if that path cannot represent it.

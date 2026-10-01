@@ -323,6 +323,12 @@ def write_status(spec_dir: Path, status: str) -> Path:
         raise FileNotFoundError(f"No .md file found in {spec_dir}")
 
     text = md.read_text(encoding="utf-8")
+    write_text_atomic(md, render_status_markdown(text, status))
+    return md
+
+
+def render_status_markdown(text: str, status: str) -> str:
+    """Render precisely the lifecycle-only mutation performed by write_status."""
     m = _FRONTMATTER_RE.match(text)
     body = text[m.end():] if m else text
 
@@ -330,7 +336,7 @@ def write_status(spec_dir: Path, status: str) -> Path:
         data: Dict[str, Any] = yaml.safe_load(m.group(1)) if m else {}
         data = data if isinstance(data, dict) else {}
     except yaml.YAMLError:
-        logger.warning("write_status: corrupt YAML frontmatter in %s — dropping existing keys", md)
+        logger.warning("write_status: corrupt YAML frontmatter — dropping existing keys")
         data = {}
 
     data["status"] = status
@@ -340,8 +346,7 @@ def write_status(spec_dir: Path, status: str) -> Path:
     # Keep the human-readable **Status**: line in the body in sync when present.
     body = re.sub(r'(\*\*Status\*\*:\s*).*', rf'\g<1>{status}', body, count=1)
 
-    write_text_atomic(md, f"---\n{front}\n---\n{body}")
-    return md
+    return f"---\n{front}\n---\n{body}"
 
 
 def find_spec_dir(spec_id: str, start_dir: Path) -> Optional[Path]:
