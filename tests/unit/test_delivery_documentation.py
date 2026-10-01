@@ -181,6 +181,51 @@ def test_historical_missing_report_feedback_does_not_block_staged_review(documen
     assert (paths["spec_dir"] / "documentation-impact-report.md").read_text() == IMPACT
 
 
+def test_defective_staged_impact_is_repaired_before_canonical_publication(
+    documentation_project,
+):
+    defective = IMPACT.replace(
+        "Internal greeting test maintenance; app.py is the evidence.",
+        "Internal greeting test maintenance; evidence is pending.",
+    )
+    provider = None
+    staged_seen = []
+    canonical_snapshots = []
+
+    def script(assignment, payload, _root):
+        impact_path = provider.spec / "documentation-impact-report.md"
+        canonical_snapshots.append(
+            impact_path.read_text() if impact_path.exists() else None
+        )
+        if assignment["step"] == "tech_writer":
+            if len(staged_seen) == 0:
+                payload["report_markdown"] = defective
+        else:
+            prompt = provider.calls[-1][2]
+            context = json.loads(
+                prompt.split("## Independent review inputs\n", 1)[1]
+                .split("\n## Repair feedback", 1)[0]
+            )
+            staged_seen.append(context["impact_report"])
+            if len(staged_seen) == 1:
+                payload.update(
+                    verdict="FAIL",
+                    findings=["Staged impact text lacks app.py evidence"],
+                    report_markdown=review_report(True),
+                )
+        return CliRunResult(0, json.dumps(payload), "", token_usage=7)
+
+    runner, provider, paths = documentation_project(script=script)
+    result = runner.run(**paths)
+    assert result.succeeded, result.reason
+    assert provider.steps == ["tech_writer", "docs_verifier"] * 2
+    assert canonical_snapshots == [None] * 4
+    assert provider.snapshots == [None] * 4
+    assert staged_seen == [defective, IMPACT]
+    assert (paths["spec_dir"] / "documentation-impact-report.md").read_text() == IMPACT
+    assert (paths["spec_dir"] / "docs-verification-report.md").read_text() == review_report()
+
+
 def test_completed_malformed_review_retries_without_rewriting_candidate(documentation_project):
     reviews = 0
     def script(assignment, payload, root):
