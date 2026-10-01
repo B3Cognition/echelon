@@ -22,6 +22,7 @@ from harness.delivery_controller import DeliveryController
 from harness.gc import run_gc
 from harness.harness_run_history import append_run, summarize_history
 from harness.delivery_results import DeliveryResult, DeliveryRunOutcome, LandingOutcome
+from harness.delivery_execution_lease import DeliveryExecutionLocked, target_delivery_execution_lease
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
 from harness.spec_frontmatter import find_spec_dir, read_targets
@@ -1336,6 +1337,31 @@ def _append_harness_history(
 
 
 def _execute_delivery_run(
+    *,
+    intent: Any,
+    provider: Any,
+    gitops: Any,
+    harness_root: Path,
+    workspace_root: Path,
+    spec_dir: Path | None,
+    config: Any,
+    resume_build_id: str | None,
+    summary_command: str,
+) -> DeliveryRunOutcome:
+    """Serialize native admission and its controller for one target root."""
+    try:
+        with target_delivery_execution_lease(harness_root):
+            return _execute_delivery_run_locked(
+                intent=intent, provider=provider, gitops=gitops,
+                harness_root=harness_root, workspace_root=workspace_root,
+                spec_dir=spec_dir, config=config, resume_build_id=resume_build_id,
+                summary_command=summary_command,
+            )
+    except DeliveryExecutionLocked as exc:
+        raise RunContextError(str(exc)) from exc
+
+
+def _execute_delivery_run_locked(
     *,
     intent: Any,
     provider: Any,
