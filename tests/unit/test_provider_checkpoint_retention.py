@@ -85,6 +85,54 @@ def test_optional_completion_proof_keeps_only_published_spec_outputs() -> None:
     )
 
 
+def test_completion_proof_uses_final_sealed_write_after_consensus_revalidation() -> None:
+    initial = "a" * 64
+    final = "b" * 64
+    execution = SimpleNamespace(receipts=({
+        "outcome": "published",
+        "outputs": [
+            {"root": "active_spec", "path": "issues.md", "kind": "file",
+             "requirement": "required", "sha256": initial},
+            {"root": "active_spec", "path": "quality-gates.md", "kind": "file",
+             "requirement": "required", "sha256": initial},
+        ],
+    }, {
+        "outcome": "published",
+        "outputs": [
+            {"root": "active_spec", "path": "issues.md", "kind": "file",
+             "requirement": "required", "sha256": final},
+            {"root": "active_spec", "path": "quality-gates.md", "kind": "file",
+             "requirement": "required", "sha256": final},
+        ],
+    }))
+
+    proofs = _required_active_spec_output_proofs(execution)
+    assert proofs == (
+        {"path": "issues.md", "kind": "file", "sha256": final},
+        {"path": "quality-gates.md", "kind": "file", "sha256": final},
+    )
+    assert _validated_provider_output_proofs(proofs) == list(proofs)
+
+
+def test_completion_proof_preserves_required_obligation_after_optional_rewrite() -> None:
+    initial = "a" * 64
+    final = "b" * 64
+    execution = SimpleNamespace(receipts=({
+        "outcome": "published",
+        "outputs": [{"root": "active_spec", "path": "report.md", "kind": "file",
+                     "requirement": "required", "sha256": initial}],
+    }, {
+        "outcome": "published",
+        "outputs": [{"root": "active_spec", "path": "report.md", "kind": "file",
+                     "requirement": "optional", "sha256": final}],
+    }))
+
+    assert _required_active_spec_output_proofs(execution) == (
+        {"path": "report.md", "kind": "file", "sha256": final},
+    )
+    assert squad._optional_active_spec_output_proofs(execution) == ()
+
+
 def test_revisit_retains_only_receipt_proven_optional_output(
     tmp_path: Path,
 ) -> None:

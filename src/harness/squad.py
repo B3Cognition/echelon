@@ -999,17 +999,37 @@ def _active_spec_output_proofs(
     *,
     requirement: str,
 ) -> tuple[dict[str, str], ...]:
-    """Keep published spec outputs of one requirement from sealed receipts."""
+    """Prove each final spec postimage while retaining its strongest obligation.
+
+    A controlled phase can publish the same path twice, for example when WHY3
+    revalidates a report after PLAN2. The execution retains both sealed
+    receipts; a phase-completion proof describes only the final write to that
+    path, so it must not submit duplicate or superseded digests to state.
+    """
+    final_outputs: dict[tuple[str, str], tuple[str, dict[str, str]]] = {}
+    for receipt in execution.receipts:
+        if receipt["outcome"] != "published":
+            continue
+        for output in receipt["outputs"]:
+            if output["root"] != "active_spec":
+                continue
+            key = (output["path"], output["kind"])
+            previous = final_outputs.get(key)
+            strongest_requirement = (
+                "required"
+                if output["requirement"] == "required"
+                or (previous is not None and previous[0] == "required")
+                else "optional"
+            )
+            final_outputs[key] = (
+                strongest_requirement,
+                {"path": output["path"], "kind": output["kind"],
+                 "sha256": output["sha256"]},
+            )
     return tuple(
-        {
-            "path": output["path"],
-            "kind": output["kind"],
-            "sha256": output["sha256"],
-        }
-        for receipt in execution.receipts
-        if receipt["outcome"] == "published"
-        for output in receipt["outputs"]
-        if output["root"] == "active_spec" and output["requirement"] == requirement
+        proof
+        for effective_requirement, proof in final_outputs.values()
+        if effective_requirement == requirement
     )
 
 
