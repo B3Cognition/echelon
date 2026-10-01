@@ -24,6 +24,7 @@ from harness.ai_cli_backend import (
 from harness.ai_cli_backends.claude import ClaudeCliBackend
 from harness.ai_cli_backends.claude import _workspace_sandbox_profile
 from harness.ai_cli_backends.codex import CodexCliBackend
+from harness.ai_cli_backends.codex import _codex_product_plane_permission_profile
 from harness.ai_cli_backends.copilot import CopilotCliBackend
 from harness.ai_cli_backends.opencode import OpenCodeCliBackend
 from harness.ai_cli_backends.plain import PlainCliBackend
@@ -44,6 +45,39 @@ def _config(cli: str) -> HarnessConfig:
         provider="docker",
         llm=LlmConfig(cli=cli),
     )
+
+
+def test_exact_reviewer_contract_read_exception_keeps_control_siblings_forbidden(tmp_path):
+    control = tmp_path / ".echelon"
+    control.mkdir()
+    contract = control / "runnability.yml"
+    sibling = control / "config.yml"
+    contract.write_text("schema_version: 1\n")
+    sibling.write_text("private: true\n")
+    read_path = str(contract.resolve())
+    forbidden = str(control.resolve())
+    codex = _codex_product_plane_permission_profile(
+        workspace_root=str(tmp_path.resolve()), read_roots=(str(tmp_path.resolve()),),
+        read_paths=(read_path,), write_paths=(), forbidden_roots=(forbidden,),
+        operational_roots=(), operational_read_paths=(),
+        operational_metadata_paths=(forbidden,), exclusive_write_scope=True,
+    )
+    assert f'{json.dumps(read_path)}="read"' in codex
+    assert f'{json.dumps(str(sibling.resolve()))}="deny"' in codex
+    claude = _workspace_sandbox_profile(
+        (forbidden,), read_roots=(str(tmp_path.resolve()),), read_paths=(read_path,),
+        read_only_roots=(str(tmp_path.resolve()),), preserve_forbidden_children=True,
+    )
+    assert f'(allow file-read* (literal {json.dumps(read_path)}))' in claude
+    assert f'(allow file-write* (literal {json.dumps(read_path)}))' not in claude
+    if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
+        def probe(command):
+            return subprocess.run(["/usr/bin/sandbox-exec", "-p", claude, *command],
+                                  capture_output=True, check=False)
+
+        assert probe(["/bin/cat", read_path]).returncode == 0
+        assert probe(["/bin/cat", str(sibling)]).returncode != 0
+        assert probe(["/bin/sh", "-c", 'printf "changed" > "$1"', "sh", read_path]).returncode != 0
 
 
 def _openai_config(features: dict[str, object] | None = None) -> HarnessConfig:

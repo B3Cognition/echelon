@@ -117,6 +117,21 @@ class TestAICodingCliProvider:
         assert "execute explicitly named Echelon runtime helpers" in request.prompt
         assert "Never inspect or search those helper files" in request.prompt
 
+    def test_reviewer_contract_exception_is_exact_and_read_only(self, tmp_path):
+        from harness.provider_workspace_scope import apply_product_plane_boundary
+
+        contract = str((tmp_path / ".echelon/runnability.yml").resolve())
+        prompt, metadata = apply_product_plane_boundary(
+            tmp_path, "Review the candidate contract.",
+            {"prompt_metadata": {"tool_read_paths": [contract],
+                                 "tool_write_paths": []}},
+        )
+
+        assert metadata["prompt_metadata"]["tool_read_paths"] == [contract]
+        assert "inspect that exact file" in prompt
+        assert "create or modify" not in prompt
+        assert str((tmp_path / ".echelon").resolve()) in metadata["prompt_metadata"]["tool_forbidden_roots"]
+
     def test_provider_boundary_preserves_narrower_prompt_scopes_and_metadata(
         self, tmp_path
     ):

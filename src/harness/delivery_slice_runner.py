@@ -33,7 +33,7 @@ from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
 from harness.delivery_containment import containment_policy_env
 from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
-from harness.task_targets import task_files_section_for
+from harness.task_targets import task_declares_file, task_files_section_for
 from harness.task_progress import update_task_progress_markdown
 from harness.visual_ralph import BrowserBaselineCapture
 from kernel.task_contract import parse_task_rows
@@ -825,6 +825,19 @@ class DeliverySliceRunner:
         forbidden_roots = [str(spec_dir), str(evidence_root), str(worktree / ".git")]
         if nested_target_prefix is not None:
             forbidden_roots.append(str(worktree / nested_target_prefix))
+        task_paths = (
+            path_projection.get("selected_task_paths")
+            if isinstance(path_projection, dict) else None
+        )
+        owns_runnability_contract = (
+            ".echelon/runnability.yml" in task_paths.values()
+            if isinstance(task_paths, dict) else
+            task_declares_file(
+                inputs[str(spec_dir / "tasks.md")], assignment.task_id,
+                ".echelon/runnability.yml",
+            )
+        )
+        candidate_contract = str(worktree / ".echelon/runnability.yml")
         metadata = {
             **{key: artifact.frontmatter[key] for key in ("model_tier", "effort")
                if key in artifact.frontmatter},
@@ -832,8 +845,10 @@ class DeliverySliceRunner:
                                 if step == "implementer" and browser_paths else
                                 [] if step == "implementer" else [str(worktree)]),
             "tool_forbidden_roots": forbidden_roots,
-            "tool_write_paths": ([str(worktree / ".echelon/runnability.yml")]
-                                 if step == "implementer" else []),
+            "tool_read_paths": ([candidate_contract]
+                                if step != "implementer" and owns_runnability_contract else []),
+            "tool_write_paths": ([candidate_contract]
+                                 if step == "implementer" and owns_runnability_contract else []),
             "tool_write_scope_exclusive": step != "implementer",
         }
         directory = evidence_root / run_id / assignment.dispatch_id

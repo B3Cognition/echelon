@@ -114,6 +114,11 @@ class ClaudeCliBackend:
             if isinstance(raw_prompt_metadata, Mapping)
             else ()
         )
+        read_paths = (
+            _prompt_scope_paths(request, raw_prompt_metadata, "tool_read_paths")
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
         write_paths = (
             _prompt_scope_paths(request, raw_prompt_metadata, "tool_write_paths")
             if isinstance(raw_prompt_metadata, Mapping)
@@ -171,6 +176,7 @@ class ClaudeCliBackend:
                     _workspace_sandbox_profile(
                         forbidden_roots,
                         read_roots=read_roots,
+                        read_paths=read_paths,
                         write_paths=write_paths,
                         operational_roots=operational_roots,
                         operational_read_paths=operational_read_paths,
@@ -540,6 +546,7 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
         "--disable-slash-commands",
     ]
     read_roots = _prompt_scope_paths(request, metadata, "tool_read_roots")
+    read_paths = _prompt_scope_paths(request, metadata, "tool_read_paths")
     write_paths = _prompt_scope_paths(request, metadata, "tool_write_paths")
     if metadata.get("tool_write_scope_exclusive") is False:
         # Explicit nonexclusive scope adds control-file exceptions to the normal
@@ -549,6 +556,7 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
                  for tool in ("Read", "Write", "Edit")]
         rules.extend(f"Read({_claude_absolute_rule_path(path)}/**)"
                      for path in read_roots if path != root)
+        rules.extend(f"Read({_claude_absolute_rule_path(path)})" for path in read_paths)
         for path in write_paths:
             rules.extend(f"{tool}({_claude_absolute_rule_path(path)})"
                          for tool in ("Read", "Write", "Edit"))
@@ -559,6 +567,7 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
         rules = ["Glob", "Grep"]
         for root in read_roots or (str(Path(request.cwd).resolve()),):
             rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
+        rules.extend(f"Read({_claude_absolute_rule_path(path)})" for path in read_paths)
         for path in write_paths:
             rules.extend(f"{tool}({_claude_absolute_rule_path(path)})"
                          for tool in ("Read", "Write", "Edit"))
@@ -567,12 +576,14 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
             "Read,Glob,Grep,Write,Edit" if write_paths else "Read,Glob,Grep",
             "--allowedTools", ",".join(rules),
         ]
-    if not read_roots and not write_paths:
+    if not read_roots and not read_paths and not write_paths:
         return []
 
     rules: list[str] = []
     for root in read_roots:
         rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
+    for path in read_paths:
+        rules.append(f"Read({_claude_absolute_rule_path(path)})")
     for path in write_paths:
         rule_path = _claude_absolute_rule_path(path)
         rules.extend(
@@ -638,6 +649,7 @@ def _workspace_sandbox_profile(
     forbidden_roots: tuple[str, ...],
     *,
     read_roots: tuple[str, ...] = (),
+    read_paths: tuple[str, ...] = (),
     write_paths: tuple[str, ...] = (),
     operational_roots: tuple[str, ...] = (),
     operational_read_paths: tuple[str, ...] = (),
@@ -682,6 +694,10 @@ def _workspace_sandbox_profile(
         f"(allow file-read* {allowed_files})",
         f"(allow file-write* {writable_files})",
         *read_rules,
+        *(
+            f"(allow file-read* (literal {json.dumps(path)}))"
+            for path in read_paths
+        ),
         *(
             f"(allow file-read* (literal {json.dumps(path)}))"
             for path in operational_read_paths

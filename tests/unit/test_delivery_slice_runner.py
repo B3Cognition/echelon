@@ -1904,6 +1904,28 @@ def test_user_clarifications_are_embedded_and_implementation_keeps_source_write_
     implementation_metadata = executor.calls[0][1]
     assert str(slice_project[0]) not in implementation_metadata["tool_read_roots"]
     assert str(slice_project[1]) in implementation_metadata["tool_forbidden_roots"]
+    assert implementation_metadata["tool_write_paths"] == []
+    assert all(metadata["tool_read_paths"] == [] for _, metadata, _ in executor.calls[1:])
+
+
+def test_declared_runnability_owner_is_readable_to_independent_reviewers(slice_project):
+    project, spec, _ = slice_project
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-1 depends=none\n"
+        "  **Files:**\n  - `.echelon/runnability.yml` - candidate contract\n"
+    )
+
+    def create_contract(assignment, payload, root):
+        if assignment["step"] == "implementer":
+            (root / ".echelon/runnability.yml").write_text("schema_version: 1\n")
+
+    executor = ScriptedExecutor(create_contract)
+    assert _run(slice_project, executor).succeeded
+    contract = str(project / ".echelon/runnability.yml")
+    assert executor.calls[0][1]["tool_write_paths"] == [contract]
+    for _, metadata, _ in executor.calls[1:]:
+        assert metadata["tool_read_paths"] == [contract]
+        assert metadata["tool_write_paths"] == []
 
 
 def test_budget_exhaustion_prevents_another_provider_dispatch(slice_project):

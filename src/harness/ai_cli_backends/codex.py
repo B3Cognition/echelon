@@ -199,6 +199,7 @@ class CodexCliBackend:
         isolated_user_config = not self._config.llm.codex_inherit_user_config
         raw_prompt_metadata = request.metadata.get("prompt_metadata")
         read_roots: tuple[str, ...] = ()
+        read_paths: tuple[str, ...] = ()
         write_paths: tuple[str, ...] = ()
         forbidden_roots: tuple[str, ...] = ()
         operational_roots: tuple[str, ...] = ()
@@ -208,6 +209,9 @@ class CodexCliBackend:
         if isinstance(raw_prompt_metadata, Mapping):
             read_roots = _prompt_scope_paths(
                 request, raw_prompt_metadata, "tool_read_roots"
+            )
+            read_paths = _prompt_scope_paths(
+                request, raw_prompt_metadata, "tool_read_paths"
             )
             write_paths = _prompt_scope_paths(
                 request, raw_prompt_metadata, "tool_write_paths"
@@ -270,6 +274,7 @@ class CodexCliBackend:
                 _codex_product_plane_permission_profile(
                     workspace_root=str(Path(request.cwd).resolve()),
                     read_roots=read_roots,
+                    read_paths=read_paths,
                     write_paths=write_paths,
                     forbidden_roots=forbidden_roots,
                     operational_roots=operational_roots,
@@ -299,6 +304,7 @@ class CodexCliBackend:
                 _workspace_sandbox_profile(
                     forbidden_roots,
                     read_roots=read_roots,
+                    read_paths=read_paths,
                     write_paths=write_paths,
                 ),
                 *cmd,
@@ -953,6 +959,7 @@ def _codex_product_plane_permission_profile(
     *,
     workspace_root: str,
     read_roots: tuple[str, ...],
+    read_paths: tuple[str, ...],
     write_paths: tuple[str, ...],
     forbidden_roots: tuple[str, ...],
     operational_roots: tuple[str, ...],
@@ -969,13 +976,14 @@ def _codex_product_plane_permission_profile(
     if exclusive_write_scope:
         access[workspace_root] = "read"
 
-    for path in (*read_roots, *operational_roots, *operational_read_paths):
+    for path in (*read_roots, *read_paths, *operational_roots, *operational_read_paths):
         access[path] = "read"
     for path in write_paths:
         access[path] = "write"
     metadata_visible = set(operational_metadata_paths)
     explicitly_authorized = {
         *read_roots,
+        *read_paths,
         *write_paths,
         *operational_roots,
         *operational_read_paths,
@@ -1032,6 +1040,7 @@ def _is_empty_isolated_directory(path: str) -> bool:
 
 _ISOLATED_WORKSPACE_SCOPE_KEYS = (
     "tool_read_roots",
+    "tool_read_paths",
     "tool_write_paths",
     "tool_forbidden_roots",
     "tool_operational_roots",

@@ -28,14 +28,22 @@ _CONTROL_PLANE_PATHS = (
 _CANDIDATE_RUNNABILITY_CONTRACT = Path(".echelon/runnability.yml")
 
 
-def _product_plane_contract(*, runnability_contract_authorized: bool) -> str:
+def _product_plane_contract(*, runnability_contract_readable: bool,
+                            runnability_contract_writable: bool) -> str:
     contract_exception = ""
-    if runnability_contract_authorized:
+    if runnability_contract_writable:
         contract_exception = """
 - The sole candidate-owned control-plane exception authorized for this
   invocation is `.echelon/runnability.yml`. You may inspect, create, or modify
   that exact file as part of product delivery. This exception does not grant
   access to any sibling or other `.echelon` content.
+"""
+    elif runnability_contract_readable:
+        contract_exception = """
+- The sole candidate-owned control-plane exception authorized for this
+  invocation is `.echelon/runnability.yml`. You may inspect that exact file,
+  read-only, as task evidence. This exception does not grant access to any
+  sibling or other `.echelon` content.
 """
     return f"""{PRODUCT_PLANE_BOUNDARY_HEADING}
 
@@ -76,10 +84,12 @@ def apply_product_plane_boundary(
         prompt_metadata.get("tool_forbidden_roots"),
     )
     write_paths = _normalized_paths(root, prompt_metadata.get("tool_write_paths"))
+    read_paths = _normalized_paths(root, prompt_metadata.get("tool_read_paths"))
     runnability_contract = str(
         (root / _CANDIDATE_RUNNABILITY_CONTRACT).resolve(strict=False)
     )
-    runnability_contract_authorized = runnability_contract in write_paths
+    runnability_contract_writable = runnability_contract in write_paths
+    runnability_contract_readable = runnability_contract in read_paths
     defaults = tuple(
         str((root / relative).resolve(strict=False))
         for relative in _CONTROL_PLANE_PATHS
@@ -102,7 +112,8 @@ def apply_product_plane_boundary(
 
     if PRODUCT_PLANE_BOUNDARY_HEADING not in prompt:
         boundary = _product_plane_contract(
-            runnability_contract_authorized=runnability_contract_authorized
+            runnability_contract_readable=runnability_contract_readable,
+            runnability_contract_writable=runnability_contract_writable,
         )
         prompt = f"{boundary}\n{prompt}"
     return prompt, metadata
