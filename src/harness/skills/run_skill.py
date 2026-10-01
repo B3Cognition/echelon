@@ -5,7 +5,7 @@ Wires RunIntent parsing to the single DeliveryController and terminal output.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
@@ -436,6 +436,7 @@ def _amended_delivery_completed_tasks(
     gitops: Any,
     config: Any,
     resume_build_id: str | None = None,
+    handoff_locks: ExitStack | None = None,
 ) -> _AmendedDeliveryAdmission | None:
     """Validate a settled plan amendment before inheriting old task checkpoints.
 
@@ -459,6 +460,7 @@ def _amended_delivery_completed_tasks(
         checkpoint_input_hash, checkpoint_input_hash_from_contents,
         summarize_task_progress,
     )
+    from harness.terminal_documentation_handoff import prove_terminal_documentation_handoff
     from harness.verification_stack_runtime import resolve_verification_stacks
     from kernel.task_contract import parse_task_rows
 
@@ -647,42 +649,65 @@ def _amended_delivery_completed_tasks(
             raise RunContextError("resume build was not admitted under this Spec amendment")
         return _AmendedDeliveryAdmission((), str(promoted["amendment_id"]),
                                          new_ref, target_id, None, current_hash)
-    ancestry = getattr(gitops, "commit_is_ancestor", None)
-    if not callable(ancestry):
-        raise RunContextError("target Git ancestry check is unavailable")
+    owned_locks = ExitStack()
+    locks = handoff_locks if handoff_locks is not None else owned_locks
     try:
-        proven = proven_amended_task_ids(
-            promoted, target_id=target_id, candidate=candidate,
-            current_input_hash=lineage_hash, states=states,
-            commit_is_ancestor=ancestry,
-            landed_baseline_commit=actual_default,
-            allow_descendant=bool(admitted),
+        terminal_handoffs: set[tuple[str, str]] = set()
+        if isinstance(candidate, str):
+            for state in admitted:
+                operation = state.get("delivery_slice_operation")
+                if (isinstance(operation, dict)
+                        and operation.get("kind") == "documentation"
+                        and operation.get("progress_applied") is not True):
+                    proof = prove_terminal_documentation_handoff(
+                        state=state,
+                        build_dir=runs_dir(harness_root) / str(state["build_id"]),
+                        spec_dir=spec_dir,
+                        candidate=candidate,
+                        amendment_identity=identity,
+                        lock_stack=locks,
+                    )
+                    if proof is not None:
+                        terminal_handoffs.add(proof)
+        ancestry = getattr(gitops, "commit_is_ancestor", None)
+        if not callable(ancestry):
+            raise RunContextError("target Git ancestry check is unavailable")
+        try:
+            proven = proven_amended_task_ids(
+                promoted, target_id=target_id, candidate=candidate,
+                current_input_hash=lineage_hash, states=states,
+                commit_is_ancestor=ancestry,
+                landed_baseline_commit=actual_default,
+                allow_descendant=bool(admitted),
+                terminal_documentation_handoffs=frozenset(terminal_handoffs),
+            )
+        except AmendmentLineageError as exc:
+            raise RunContextError(str(exc)) from exc
+        progress = summarize_task_progress((root / task_path).read_text(encoding="utf-8"))
+        if not progress.valid:
+            raise RunContextError("amended working task progress is invalid")
+        proof_base = candidate or actual_default
+        same_hash_proven = _fresh_delivery_completed_tasks(
+            harness_root, intent, proof_base, gitops, spec_dir=spec_dir,
         )
-    except AmendmentLineageError as exc:
-        raise RunContextError(str(exc)) from exc
-    progress = summarize_task_progress((root / task_path).read_text(encoding="utf-8"))
-    if not progress.valid:
-        raise RunContextError("amended working task progress is invalid")
-    proof_base = candidate or actual_default
-    same_hash_proven = _fresh_delivery_completed_tasks(
-        harness_root, intent, proof_base, gitops, spec_dir=spec_dir,
-    )
-    all_proven = tuple(sorted(set(proven) | set(same_hash_proven)))
-    target_task_ids = {
-        row.task_id for row in parse_task_rows(new_tasks.decode("utf-8"))
-        if (row.target or ".") == target_id
-    }
-    unproven = sorted(
-        task_id for task_id in target_task_ids.difference(all_proven)
-        if progress.task_statuses.get(task_id) in {"DONE", "DONE_WITH_CONCERNS"}
-    )
-    if unproven:
-        raise RunContextError(
-            "unproven task progress: " + ", ".join(unproven)
-            + "; recover checkpoint evidence or re-plan the task"
+        all_proven = tuple(sorted(set(proven) | set(same_hash_proven)))
+        target_task_ids = {
+            row.task_id for row in parse_task_rows(new_tasks.decode("utf-8"))
+            if (row.target or ".") == target_id
+        }
+        unproven = sorted(
+            task_id for task_id in target_task_ids.difference(all_proven)
+            if progress.task_statuses.get(task_id) in {"DONE", "DONE_WITH_CONCERNS"}
         )
-    return _AmendedDeliveryAdmission(all_proven, str(promoted["amendment_id"]),
-                                     new_ref, target_id, proof_base, current_hash)
+        if unproven:
+            raise RunContextError(
+                "unproven task progress: " + ", ".join(unproven)
+                + "; recover checkpoint evidence or re-plan the task"
+            )
+        return _AmendedDeliveryAdmission(all_proven, str(promoted["amendment_id"]),
+                                         new_ref, target_id, proof_base, current_hash)
+    finally:
+        owned_locks.close()
 
 
 def _fresh_delivery_repair_task_id(
@@ -1327,43 +1352,45 @@ def _execute_delivery_run(
     # The CLI reserves a new build directory before this adapter runs and passes
     # that ID here.  A build ID therefore does not itself mean "resume"; intent
     # is the authority for whether a prior checkpoint must be retained.
-    fresh_branch_base = (
-        None
-        if getattr(intent, "resume", False)
-        else _fresh_delivery_baseline(harness_root, intent, gitops)
-    )
-    amended_completed = _amended_delivery_completed_tasks(
-        workspace_root=workspace_root,
-        harness_root=harness_root,
-        spec_dir=spec_dir,
-        intent=intent,
-        candidate=fresh_branch_base,
-        gitops=gitops,
-        config=config,
-        resume_build_id=resume_build_id,
-    )
-    fresh_completed_task_ids = (
-        amended_completed.task_ids if amended_completed is not None
-        else _fresh_delivery_completed_tasks(
+    with ExitStack() as admission_locks:
+        fresh_branch_base = (
+            None
+            if getattr(intent, "resume", False)
+            else _fresh_delivery_baseline(harness_root, intent, gitops)
+        )
+        amended_completed = _amended_delivery_completed_tasks(
+            workspace_root=workspace_root,
+            harness_root=harness_root,
+            spec_dir=spec_dir,
+            intent=intent,
+            candidate=fresh_branch_base,
+            gitops=gitops,
+            config=config,
+            resume_build_id=resume_build_id,
+            handoff_locks=admission_locks,
+        )
+        fresh_completed_task_ids = (
+            amended_completed.task_ids if amended_completed is not None
+            else _fresh_delivery_completed_tasks(
+                harness_root,
+                intent,
+                fresh_branch_base,
+                gitops,
+                spec_dir=spec_dir,
+            )
+        )
+        fresh_repair_task_id = _fresh_delivery_repair_task_id(
             harness_root,
             intent,
             fresh_branch_base,
             gitops,
             spec_dir=spec_dir,
+            completed_task_ids=fresh_completed_task_ids,
         )
-    )
-    fresh_repair_task_id = _fresh_delivery_repair_task_id(
-        harness_root,
-        intent,
-        fresh_branch_base,
-        gitops,
-        spec_dir=spec_dir,
-        completed_task_ids=fresh_completed_task_ids,
-    )
-    build_id = resume_build_id or make_build_id()
-    rd = runs_dir(harness_root)
-    rd.mkdir(parents=True, exist_ok=True)
-    current_build_marker(harness_root, intent.spec_id).write_text(build_id)
+        build_id = resume_build_id or make_build_id()
+        rd = runs_dir(harness_root)
+        rd.mkdir(parents=True, exist_ok=True)
+        current_build_marker(harness_root, intent.spec_id).write_text(build_id)
     logger.info("Build ID: %s", build_id)
 
     controller = DeliveryController(

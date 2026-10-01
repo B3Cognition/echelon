@@ -3,11 +3,17 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from contextlib import ExitStack
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from harness.ai_cli_backend import CliRunResult
+from harness.delivery_documentation import DeliveryDocumentationRunner
+from harness.delivery_slice import DeliverySliceError
+from harness.delivery_slice_journal import DeliverySliceJournal
 from harness.paths import current_build_marker
 from harness.skills.run_skill import (
     RunContextError,
@@ -16,6 +22,166 @@ from harness.skills.run_skill import (
     _fresh_delivery_completed_tasks,
     _fresh_delivery_repair_task_id,
 )
+from tests.unit.test_delivery_documentation import documentation_project
+from tests.unit.test_delivery_slice_runner import slice_project
+
+
+def test_amended_admission_restarts_after_terminal_documentation(
+    tmp_path: Path, documentation_project, monkeypatch,
+) -> None:
+    from echelon.runnability_amendment import prepare_runnability_owner
+    from echelon.runnability_amendment_transaction import promote_runnability_owner
+    from harness.skills.run_skill import _execute_delivery_run
+    from harness.task_progress import checkpoint_input_hash
+    from tests.unit.test_runnability_amendment import _git, _repo
+
+    repo = _repo(tmp_path)
+    spec = repo / "specs/004-demo"
+    target_repo = repo / "apps/web"
+    _git(target_repo, "init", "-b", "main")
+    _git(target_repo, "config", "user.name", "Test User")
+    _git(target_repo, "config", "user.email", "test@example.com")
+    _git(target_repo, "add", "package.json")
+    _git(target_repo, "commit", "-m", "accepted target task")
+    accepted = _git(target_repo, "rev-parse", "HEAD")
+    tasks = spec / "tasks.md"
+    tasks.write_text(tasks.read_text().replace("- [ ] T-001", "- [x] T-001")
+                     .replace("**Status:** PENDING", "**Status:** DONE"))
+    old_hash = checkpoint_input_hash(spec)
+    harness_root = repo / "runs/targets/web"
+    accepted_state = harness_root / "runs/build-old/state/delivery.json"
+    accepted_state.parent.mkdir(parents=True)
+    accepted_state.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "checkpoint_commits": [{"commit": accepted, "task_ids": ["T-001"],
+                                "checkpoint_input_hash": old_hash}],
+    }))
+    prepared = prepare_runnability_owner(repo, "004-demo")
+    promote_runnability_owner(repo, str(prepared["amendment_id"]))
+
+    build_dir = harness_root / "runs/build-docs"
+    worktree = build_dir / "worktrees/iter-0"
+    worktree.parent.mkdir(parents=True)
+    _git(repo, "clone", "-q", str(target_repo), str(worktree))
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "config", "user.email", "test@example.com")
+
+    class GitOps:
+        @staticmethod
+        def commit_is_ancestor(ancestor: str, descendant: str) -> bool:
+            return subprocess.run(
+                ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                cwd=worktree, check=False,
+            ).returncode == 0
+
+    intent = SimpleNamespace(spec_id="004-demo", reset=False, resume=False)
+    config = SimpleNamespace(target_repo=str(target_repo))
+    def admit(candidate, *, handoff_locks=None):
+        return _amended_delivery_completed_tasks(
+            workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+            intent=intent, candidate=candidate, gitops=GitOps(), config=config,
+            handoff_locks=handoff_locks,
+        )
+    identity = admit(accepted).durable_identity()
+
+    def blocked_writer(assignment, payload, _root):
+        if assignment["step"] == "tech_writer":
+            payload.update(verdict="NEEDS_CONTEXT", summary="source gap",
+                           findings=["source-backed gap"])
+        return CliRunResult(0, json.dumps(payload), "", token_usage=7)
+
+    fixture_runner, executor, _fixture_paths = documentation_project(script=blocked_writer)
+    run_id = "old-run"
+    evidence_root = build_dir / "state/delivery-slices" / hashlib.sha256(
+        f"{build_dir.name}:{run_id}".encode(),
+    ).hexdigest()
+    result = DeliveryDocumentationRunner(executor, fixture_runner._project_dir).run(
+        worktree=worktree, spec_dir=spec, evidence_root=evidence_root,
+        allowed_task_ids={"T-001"}, changed_files=["package.json"],
+        operation_id="docs-op",
+    )
+    assert result.reason == "delivery_documentation_tech_writer_blocked: source gap"
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-m", "retained docs candidate")
+    salvage = _git(worktree, "rev-parse", "HEAD")
+    old_state = {
+        "spec_id": "004-demo", "run_id": run_id,
+        "status": "blocked", "termination_reason": "build_blocked",
+        "blocked_phase": "implementation", "build_status": "blocked",
+        "build_reason": result.reason, "amendment_admission": identity,
+        "salvage_commit": salvage, "checkpoint_commits": [],
+        "delivery_slice_operation": {
+            "id": "docs-op", "kind": "documentation", "progress_applied": False,
+            "worktree_path": str(worktree.resolve()),
+        },
+    }
+    old_state_path = build_dir / "state/delivery.json"
+    old_state_path.write_text(json.dumps(old_state))
+    old_bytes = old_state_path.read_bytes()
+    journal_path = DeliverySliceJournal(evidence_root, "docs-op").path
+    journal_bytes = journal_path.read_bytes()
+
+    with ExitStack() as locks:
+        admitted = admit(salvage, handoff_locks=locks)
+        assert admitted.task_ids == ("T-001",)
+        with pytest.raises(DeliverySliceError, match="delivery_slice_locked"):
+            with DeliverySliceJournal(evidence_root, "docs-op"):
+                pass
+    with DeliverySliceJournal(evidence_root, "docs-op"):
+        pass
+    assert old_state_path.read_bytes() == old_bytes
+    assert journal_path.read_bytes() == journal_bytes
+
+    accepted_bytes = accepted_state.read_bytes()
+    accepted_without_checkpoint = json.loads(accepted_bytes)
+    accepted_without_checkpoint["checkpoint_commits"] = []
+    accepted_state.write_text(json.dumps(accepted_without_checkpoint))
+    with pytest.raises(RunContextError, match="unproven task progress: T-001"):
+        admit(salvage)
+    accepted_state.write_bytes(accepted_bytes)
+
+    monkeypatch.setattr("harness.skills.run_skill._fresh_delivery_baseline", lambda *_: salvage)
+    for kind in ("task", "unknown"):
+        old_state["delivery_slice_operation"]["kind"] = kind
+        old_state_path.write_text(json.dumps(old_state))
+        with pytest.raises(RunContextError, match="pending Delivery operation"):
+            _execute_delivery_run(
+                intent=intent, provider=object(), gitops=GitOps(),
+                harness_root=harness_root, workspace_root=repo, spec_dir=spec,
+                config=config, resume_build_id=None,
+                summary_command="echelon delivery run",
+            )
+        assert not current_build_marker(harness_root, "004-demo").exists()
+    old_state["delivery_slice_operation"]["kind"] = "documentation"
+    old_state_path.write_bytes(old_bytes)
+
+    class ReachedController(Exception):
+        pass
+    real_marker = current_build_marker
+    class GuardedMarker:
+        def write_text(self, value):
+            with pytest.raises(DeliverySliceError, match="delivery_slice_locked"):
+                with DeliverySliceJournal(evidence_root, "docs-op"):
+                    pass
+            return real_marker(harness_root, "004-demo").write_text(value)
+    monkeypatch.setattr("harness.skills.run_skill.current_build_marker",
+                        lambda *_: GuardedMarker())
+    def controller_after_marker(**kwargs):
+        assert current_build_marker(harness_root, "004-demo").is_file()
+        assert kwargs["fresh_completed_task_ids"] == ("T-001",)
+        with DeliverySliceJournal(evidence_root, "docs-op"):
+            pass
+        raise ReachedController
+    monkeypatch.setattr("harness.skills.run_skill.DeliveryController", controller_after_marker)
+    with pytest.raises(ReachedController):
+        _execute_delivery_run(
+            intent=intent, provider=object(), gitops=GitOps(),
+            harness_root=harness_root, workspace_root=repo, spec_dir=spec,
+            config=config, resume_build_id=None, summary_command="echelon delivery run",
+        )
+    assert old_state_path.read_bytes() == old_bytes
+    assert journal_path.read_bytes() == journal_bytes
+
 
 
 def test_amended_admission_uses_only_real_target_checkpoint(tmp_path: Path) -> None:
