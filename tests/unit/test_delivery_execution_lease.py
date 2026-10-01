@@ -21,10 +21,69 @@ def test_same_target_contends_while_different_target_remains_available(tmp_path)
         with pytest.raises(DeliveryExecutionLocked):
             with target_delivery_execution_lease(first):
                 pass
+        with pytest.raises(DeliveryExecutionLocked):
+            with target_delivery_execution_lease(first, adapter_reentry=True):
+                pass
         with target_delivery_execution_lease(second):
             pass
+
+    with target_delivery_execution_lease(first, allow_adapter_reentry=True):
+        with target_delivery_execution_lease(first, adapter_reentry=True):
+            with pytest.raises(DeliveryExecutionLocked):
+                with target_delivery_execution_lease(first, adapter_reentry=True):
+                    pass
+        with target_delivery_execution_lease(first, adapter_reentry=True):
+            pass
+        result = []
+
+        def competing_command():
+            try:
+                with target_delivery_execution_lease(first):
+                    result.append("overlapped")
+            except DeliveryExecutionLocked:
+                result.append("contended")
+
+        worker = threading.Thread(target=competing_command)
+        worker.start()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        assert result == ["contended"]
     with target_delivery_execution_lease(first):
         pass
+
+
+@pytest.mark.parametrize("command", ["run", "resume"])
+@pytest.mark.parametrize(
+    "targets", [["sources/api"], ["sources/api", "sources/web"]],
+)
+def test_polyrepo_parent_does_not_hold_workspace_lease_across_target_dispatch(
+    tmp_path, monkeypatch, command, targets,
+):
+    from echelon import delivery_service
+    from harness.delivery_execution_lease import target_delivery_execution_lease
+
+    workspace = tmp_path / "workspace"
+    spec = workspace / "specs/001-test"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text(
+        "---\ntargets:\n" + "".join(f"  - {target}\n" for target in targets) + "---\n"
+    )
+    reached = []
+
+    def delegated(*_args, **_kwargs):
+        reached.append("orchestrator")
+
+    inner = (
+        "_run_delivery_under_lease"
+        if command == "run" else "_run_delivery_resume_under_lease"
+    )
+    monkeypatch.setattr(delivery_service, inner, delegated)
+    with target_delivery_execution_lease(workspace):
+        if command == "run":
+            delivery_service._run_delivery(workspace, ["001-test"])
+        else:
+            delivery_service._run_delivery_resume(workspace, ["001-test", "answer"])
+    assert reached == ["orchestrator"]
 
 
 def test_lease_releases_after_exception_and_process_death(tmp_path):
@@ -130,3 +189,95 @@ def test_unsafe_symlink_cannot_be_used_as_execution_lease(tmp_path):
         with target_delivery_execution_lease(target):
             pass
     assert destination.read_text() == "not a lock"
+
+
+@pytest.mark.parametrize("command", ["run", "resume"])
+@pytest.mark.parametrize("polyrepo", [False, True])
+def test_native_cli_contends_before_preparation_or_recovery_effects(
+    tmp_path, monkeypatch, command, polyrepo,
+):
+    from echelon import delivery_service
+    from echelon import cli
+    from harness.delivery_execution_lease import target_delivery_execution_lease
+
+    project = tmp_path / "workspace"
+    project.mkdir()
+    spec = project / "specs/001-test"
+    spec.mkdir(parents=True)
+    spec_file = spec / "spec.md"
+    spec_file.write_text("# Test\n\n**Status**: Planned\n")
+    harness_root = project
+    if polyrepo:
+        harness_root = project / "runs/targets/demo"
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(project))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(project / "sources/demo"))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "demo")
+    reached = []
+
+    def preflight(*_args, **_kwargs):
+        reached.append("provider preflight")
+        raise AssertionError("native effects began before lease admission")
+
+    monkeypatch.setattr(cli, "_require_provider_capability", preflight)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_lease():
+        with target_delivery_execution_lease(harness_root):
+            entered.set()
+            assert release.wait(timeout=10)
+
+    worker = threading.Thread(target=hold_lease)
+    worker.start()
+    try:
+        assert entered.wait(timeout=10)
+        with pytest.raises(SystemExit) as exc_info:
+            if command == "run":
+                delivery_service._run_delivery(project, ["001-test"])
+            else:
+                delivery_service._run_delivery_resume(
+                    project, ["001-test", "answer"],
+                )
+        assert exc_info.value.code == 1
+        assert reached == []
+        assert spec_file.read_text() == "# Test\n\n**Status**: Planned\n"
+        assert not list(project.glob("runs/build-*"))
+    finally:
+        release.set()
+        worker.join(timeout=10)
+    assert not worker.is_alive()
+
+
+def test_native_cli_lease_allows_its_own_adapter_and_releases_on_error(
+    tmp_path, monkeypatch,
+):
+    from echelon import delivery_service
+    from harness.skills import run_skill
+
+    class StopAfterAdmission(Exception):
+        pass
+
+    reached = []
+
+    def admission(**_kwargs):
+        reached.append("adapter admission")
+        raise StopAfterAdmission
+
+    monkeypatch.setattr(run_skill, "_fresh_delivery_baseline", lambda *_: None)
+    monkeypatch.setattr(run_skill, "_amended_delivery_completed_tasks", admission)
+
+    def enter_adapter(*_args, **_kwargs):
+        return run_skill._execute_delivery_run(
+            intent=SimpleNamespace(spec_id="001-test", resume=False),
+            provider=object(), gitops=object(), harness_root=tmp_path,
+            workspace_root=tmp_path, spec_dir=None, config=object(),
+            resume_build_id=None, summary_command="echelon delivery run",
+        )
+
+    monkeypatch.setattr(delivery_service, "_run_delivery_under_lease", enter_adapter)
+    with pytest.raises(StopAfterAdmission):
+        delivery_service._run_delivery(tmp_path, ["001-test"])
+    assert reached == ["adapter admission"]
+    with pytest.raises(StopAfterAdmission):
+        delivery_service._run_delivery(tmp_path, ["001-test"])
+    assert reached == ["adapter admission", "adapter admission"]

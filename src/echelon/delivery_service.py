@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -16,6 +17,10 @@ import subprocess
 import sys
 
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
+from harness.delivery_execution_lease import (
+    DeliveryExecutionLocked,
+    target_delivery_execution_lease,
+)
 from harness.phase_a_readiness import validate_configured_phase_a_build_readiness
 from harness.provider_capability import ProviderCapability
 from harness.runtime_surface import prune_delivery_workflow_definition
@@ -2872,7 +2877,73 @@ def _prepare_delivery_build_state(
         raise SystemExit(1) from exc
 
 
+def _native_delivery_harness_root(project_root: Path) -> Path:
+    """Resolve the target-local lease root before native CLI side effects."""
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    if target_env and polyrepo_env:
+        target_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
+        return (
+            Path(polyrepo_env).resolve()
+            / "runs"
+            / "targets"
+            / (target_name or Path(target_env).resolve().name)
+        )
+    return project_root
+
+
+def _native_delivery_entry_lease_root(
+    project_root: Path, args: list[str],
+) -> Path | None:
+    """Lease a direct target here; delegated targets lease in their child CLI.
+
+    Parent orchestration takes a uniquely named safety snapshot and dispatches
+    child commands. Holding the workspace lease through their entire execution
+    would serialize unrelated targets and would not protect child target state.
+    """
+    if (
+        os.environ.get("ECHELON_TARGET_REPO_PATH")
+        and os.environ.get("ECHELON_POLYREPO_ROOT")
+    ):
+        return _native_delivery_harness_root(project_root)
+    if args:
+        from harness.spec_frontmatter import find_spec_dir, read_targets
+
+        spec_dir = find_spec_dir(args[0], project_root)
+        if spec_dir is not None:
+            try:
+                targets = read_targets(spec_dir)
+            except (OSError, ValueError):
+                return project_root
+            if len(targets) > 1 or (len(targets) == 1 and targets[0] != "."):
+                return None
+    return project_root
+
+
 def _run_delivery(
+    project_root: Path,
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery run",
+    display_args: list[str] | None = None,
+) -> None:
+    try:
+        lease_root = _native_delivery_entry_lease_root(project_root, args)
+        with (
+            target_delivery_execution_lease(lease_root, allow_adapter_reentry=True)
+            if lease_root else nullcontext()
+        ):
+            _run_delivery_under_lease(
+                project_root, args,
+                command_prefix=command_prefix,
+                display_args=display_args,
+            )
+    except DeliveryExecutionLocked as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def _run_delivery_under_lease(
     project_root: Path,
     args: list[str],
     *,
@@ -2969,19 +3040,13 @@ def _run_delivery(
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
-    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
     direct_target_path: Path | None = None
     spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else project_root
     harness_base_dir = project_root
     config_root = project_root
     if target_env and polyrepo_env:
         config_root = Path(polyrepo_env).resolve()
-        harness_base_dir = (
-            config_root
-            / "runs"
-            / "targets"
-            / (target_name_env or Path(target_env).resolve().name)
-        )
+        harness_base_dir = _native_delivery_harness_root(project_root)
         _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
     spec_dir = find_spec_dir(spec_id, spec_search_root)
     if spec_dir is not None:
@@ -3482,6 +3547,31 @@ def _run_delivery_resume(
     display_args: list[str] | None = None,
     require_answer: bool = True,
 ) -> None:
+    try:
+        lease_root = _native_delivery_entry_lease_root(project_root, args)
+        with (
+            target_delivery_execution_lease(lease_root, allow_adapter_reentry=True)
+            if lease_root else nullcontext()
+        ):
+            _run_delivery_resume_under_lease(
+                project_root, args,
+                command_prefix=command_prefix,
+                display_args=display_args,
+                require_answer=require_answer,
+            )
+    except DeliveryExecutionLocked as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def _run_delivery_resume_under_lease(
+    project_root: Path,
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery resume",
+    display_args: list[str] | None = None,
+    require_answer: bool = True,
+) -> None:
     import logging
 
     from echelon.cli import (
@@ -3531,7 +3621,6 @@ def _run_delivery_resume(
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
-    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
     direct_target_path: Path | None = None
     cwd = project_root
     spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else cwd
@@ -3539,12 +3628,7 @@ def _run_delivery_resume(
     config_root = cwd
     if target_env and polyrepo_env:
         config_root = Path(polyrepo_env).resolve()
-        harness_base_dir = (
-            config_root
-            / "runs"
-            / "targets"
-            / (target_name_env or Path(target_env).resolve().name)
-        )
+        harness_base_dir = _native_delivery_harness_root(project_root)
         _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
 
     spec_dir = find_spec_dir(spec_id, spec_search_root)

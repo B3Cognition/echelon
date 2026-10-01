@@ -1350,7 +1350,7 @@ def _execute_delivery_run(
 ) -> DeliveryRunOutcome:
     """Serialize native admission and its controller for one target root."""
     try:
-        with target_delivery_execution_lease(harness_root):
+        with target_delivery_execution_lease(harness_root, adapter_reentry=True):
             return _execute_delivery_run_locked(
                 intent=intent, provider=provider, gitops=gitops,
                 harness_root=harness_root, workspace_root=workspace_root,
