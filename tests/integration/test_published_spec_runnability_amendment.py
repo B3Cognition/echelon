@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from echelon.runnability_amendment import prepare_runnability_owner, preview_runnability_owner
@@ -126,3 +128,41 @@ def test_published_plan_amendment_enters_only_new_task_with_fresh_four_role_rece
         "implementer", "spec_guard", "code_reviewer", "test_guardian",
     ]
     assert len({record["assignment"]["dispatch_id"] for record in records}) == 4
+
+
+def test_installed_cli_previews_prepares_and_promotes_in_disposable_workspace(
+    tmp_path: Path,
+) -> None:
+    executable = Path(sys.executable).with_name("echelon")
+    if not executable.is_file():
+        pytest.skip("installed Echelon CLI is unavailable")
+    control = _repo(tmp_path)
+    spec = control / "specs/004-demo"
+    tasks = spec / "tasks.md"
+    tasks.write_text(tasks.read_text().replace("- [ ] T-001", "- [x] T-001")
+                     .replace("**Status:** PENDING", "**Status:** DONE"))
+    old_progress = tasks.read_bytes()
+    old_ref = _git(control, "rev-parse", "HEAD")
+
+    def command(*args: str) -> dict[str, object]:
+        result = subprocess.run(
+            [str(executable), "spec", "amend", *args], cwd=control,
+            capture_output=True, text=True, check=False,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        return json.loads(result.stdout)
+
+    preview = command("004-demo", "Add required runnability owner",
+                      "--runnability-owner", "--dry-run")
+    assert preview["new_task_ids"] == ["T-002"]
+    assert tasks.read_bytes() == old_progress
+    assert _git(control, "rev-parse", "HEAD") == old_ref
+    prepared = command("004-demo", "Add required runnability owner", "--runnability-owner")
+    assert prepared["status"] == "prepared"
+    assert tasks.read_bytes() == old_progress
+    assert _git(control, "rev-parse", "HEAD") == old_ref
+    promoted = command("promote", str(prepared["amendment_id"]))
+    assert promoted["status"] == "promoted"
+    assert _git(control, "rev-parse", "HEAD") == promoted["proposed_commit"]
+    assert b"- [x] T-001" in tasks.read_bytes()
+    assert b"- [ ] T-002" in tasks.read_bytes()
