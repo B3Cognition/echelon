@@ -333,6 +333,18 @@ class DeliveryDocumentationRunner:
                             review_context = {"impact_report": impact, "deterministic_baseline": _report_markdown(deterministic)}
                         assignment = {"schema_version": 1, "dispatch_id": uuid4().hex, "step": step, "task_ids": scope,
                                       "candidate_fingerprint": expected_candidate, "input_fingerprint": fingerprint}
+                        if runnability_report is not None:
+                            _validate_current_runnability(runnability_report, worktree, spec_dir)
+                        review_context["runnability_relation"] = {
+                            "assignment_fingerprint_kind": "documentation_candidate",
+                            "receipt_fingerprint_kind": "runnability_product",
+                            "receipt_current_for_product": runnability_report is not None,
+                            "post_writer_refresh": (
+                                "required_before_review" if step == "tech_writer" and runnability_checkpoint is not None
+                                else "completed_before_review" if step == "docs_verifier" and runnability_report is not None
+                                else "not_applicable"
+                            ),
+                        }
                         record = {"assignment": assignment, "repair_attempt": attempt, "result": None, "candidate_after": None,
                                   "token_usage": None, "error": None, "deterministic_findings": baseline, "gate_findings": []}
                         records.append(record)

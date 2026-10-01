@@ -45,6 +45,14 @@ NEVER treat contract/README prose as execution evidence, pass provisional/stale/
 failed/missing required evidence, claim an unverified local journey passed, or
 report measured platform/tool versions without recorded evidence.
 
+The controller-captured `runnability_relation` identifies different digest
+domains: the assignment's documentation-candidate fingerprint is not the
+receipt's runnability-product fingerprint. Do not flag unequal raw digests as
+stale evidence. For a required journey, use the controller-validated current
+receipt refreshed after authoring, then independently compare the README,
+contract, commands, URLs, status, and cited evidence digest. A missing or
+non-current receipt, or a real discrepancy in those checks, still blocks PASS.
+
 ALWAYS check Keep a Changelog link, Unreleased and appropriate category headings,
 completed user-visible changes, and impact frontmatter accuracy.
 NEVER accept planned work, raw task counts, or test-status notes as changelog entries.

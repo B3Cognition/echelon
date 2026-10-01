@@ -49,6 +49,16 @@ digest, and local-journey status. Explain discrepancies with candidate metadata.
 NEVER silently substitute commands for a broken contract, turn unverified local
 journeys into execution claims, or infer measured platform/tools/candidate identity.
 
+The controller-captured `runnability_relation` names two different fingerprint
+domains: the assignment uses a documentation-candidate digest, while the
+receipt uses a runnability-product digest. Unequal raw digests alone do not mean
+the receipt is stale. `receipt_current_for_product` means the controller
+validated the receipt for the product at dispatch. After you edit README or
+CHANGELOG, do not claim that old receipt verifies the edited product; return
+DONE if the documentation work is complete. The controller refreshes runnability
+before independent review and blocks if that refresh fails. Keep genuine
+command, journey, or evidence discrepancies as findings.
+
 ALWAYS recheck the complete first-run path after manifest, lockfile, patches,
 scripts, auth/configuration, Compose/services or runnability changes, even when
 no documentation impact is claimed. Identify implementation gaps explicitly.

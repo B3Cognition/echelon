@@ -66,6 +66,7 @@ def test_real_inner_loop_converges_with_post_authoring_runnability(documentation
     controller._config.llm.cli = cli
     provider = AICodingCliProvider(controller._config)
     class ExternalBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
         def run_agent(self, request):
             return executor.run_agent_result(request.cwd, request.prompt, request_metadata=request.metadata)
     provider._backend = ExternalBackend()
@@ -96,6 +97,24 @@ def test_report_publication_preserves_post_authoring_receipt_candidate(documenta
     from harness.runnability_evidence import runnability_product_fingerprint
     assert runnability_product_fingerprint(root, spec) == executor.authored_runnability_fingerprint
     assert product_evidence_fingerprint(root) != executor.authored_fingerprint
+
+
+def test_roles_receive_typed_current_runnability_relation_at_dispatch(documentation_project, tmp_path):
+    controller, store, executor, _, root, _, initial, original_ref = _runnable_project(documentation_project, tmp_path)
+    assert _feedback(controller, root, initial)["passed"]
+    assert executor.steps == ["tech_writer", "docs_verifier"]
+    current_ref = load_runnability_evidence_ref(store.read()["user_runnability"]["report"])
+    for index, ref, refresh in ((0, original_ref, "required_before_review"),
+                                (1, current_ref, "completed_before_review")):
+        assignment, _, prompt = executor.calls[index]
+        context = json.loads(prompt.split("## Independent review inputs\n", 1)[1].split("\n## Repair feedback", 1)[0])
+        assert assignment["candidate_fingerprint"] != ref.candidate_fingerprint
+        assert context.get("runnability_relation") == {
+            "assignment_fingerprint_kind": "documentation_candidate",
+            "receipt_fingerprint_kind": "runnability_product",
+            "receipt_current_for_product": True,
+            "post_writer_refresh": refresh,
+        }
 
 
 @pytest.mark.parametrize("path", ["README.md", "CHANGELOG.md", "app.py", "specs/001-slice/spec.md",
