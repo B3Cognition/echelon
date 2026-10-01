@@ -13,6 +13,7 @@ REPORTS = ("documentation-impact-report.md", "docs-verification-report.md")
 DOCS = ("README.md", "CHANGELOG.md")
 STEPS = ("tech_writer", "docs_verifier")
 IDENTITY = {"schema_version", "dispatch_id", "step", "task_ids", "candidate_fingerprint", "input_fingerprint"}
+OPERATION_BINDING_FIELDS = {"build_id", "delivery_run_id", "spec_id", "operation_id"}
 
 
 class _ReportLoader(yaml.SafeLoader):
@@ -122,15 +123,26 @@ def validate_result(raw, assignment):
     return value
 
 
+def validate_operation_binding(value):
+    _require(isinstance(value, dict) and set(value) == OPERATION_BINDING_FIELDS
+             and all(isinstance(item, str) and bool(item) for item in value.values()),
+             "invalid documentation operation binding")
+    return dict(value)
+
+
 def validate_journal(data):
     _require(len(json.dumps(data).encode()) <= 2_000_000, "documentation journal exceeds size limit")
     fields = {"schema_version", "run_id", "binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint",
               "budget_limit", "task_ids", "records", "reports_before", "docs_before", "publication",
               "authoring_evidence", "checkpoints"}
     _require(isinstance(data, dict) and type(data.get("schema_version")) is int
-             and data["schema_version"] in {2, 4}
-             and set(data) == (fields if data["schema_version"] == 2 else fields | {"rejected_reviews"}),
+             and data["schema_version"] in {2, 4, 5}
+             and set(data) == (fields if data["schema_version"] == 2
+                               else fields | {"rejected_reviews"} if data["schema_version"] == 4
+                               else fields | {"rejected_reviews", "operation_binding"}),
              "invalid documentation journal schema")
+    if data["schema_version"] == 5:
+        validate_operation_binding(data["operation_binding"])
     _require(isinstance(data["run_id"], str) and bool(data["run_id"]), "invalid documentation run identity")
     for field in ("binding", "input_fingerprint", "source_fingerprint", "candidate_fingerprint"):
         _require(_fingerprint(data[field]), "invalid documentation fingerprint")
@@ -213,7 +225,7 @@ def validate_journal(data):
             terminal = result["verdict"] in {"BLOCKED", "NEEDS_CONTEXT"} or (
                 index % 2 and result["verdict"] == "PASS" and not record["deterministic_findings"] and not record["gate_findings"])
         _require(not terminal or index == len(records) - 1, "documentation receipts after terminal result")
-    if data["schema_version"] == 4:
+    if data["schema_version"] in {4, 5}:
         rejected = data["rejected_reviews"]
         _require(isinstance(rejected, list) and len(rejected) <= 1, "invalid documentation rejected reviews")
         for old in rejected:

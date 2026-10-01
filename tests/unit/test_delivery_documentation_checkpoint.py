@@ -99,6 +99,28 @@ def test_report_publication_preserves_post_authoring_receipt_candidate(documenta
     assert product_evidence_fingerprint(root) != executor.authored_fingerprint
 
 
+def test_reviewed_checkpoint_rejects_copied_operation_binding(documentation_project, tmp_path):
+    from harness.delivery_documentation import reviewed_runnability_checkpoint
+    from harness.delivery_slice_journal import DeliverySliceJournal
+
+    controller, store, executor, _, root, spec, initial, _ = _runnable_project(documentation_project, tmp_path)
+    assert _feedback(controller, root, initial)["passed"]
+    operation = store.read()["delivery_slice_operation"]["id"]
+    evidence_root = controller._delivery_operation_evidence_root()
+    journal_path = DeliverySliceJournal(evidence_root, operation).path
+    data = json.loads(journal_path.read_text())
+    identity = dict(build_id="build-fixture", delivery_run_id="run-fixture",
+                    spec_id="001-slice", operation_id=operation)
+    data.update(schema_version=5, operation_binding=identity, rejected_reviews=[])
+    journal_path.write_text(json.dumps(data))
+    wrong = {**identity, "operation_id": "copied-op"}
+    with pytest.raises(ValueError, match="documentation operation binding changed"):
+        reviewed_runnability_checkpoint(
+            worktree=root, spec_dir=spec, evidence_root=evidence_root,
+            operation_id=operation, operation_binding=wrong,
+        )
+
+
 def test_roles_receive_typed_current_runnability_relation_at_dispatch(documentation_project, tmp_path):
     controller, store, executor, _, root, _, initial, original_ref = _runnable_project(documentation_project, tmp_path)
     assert _feedback(controller, root, initial)["passed"]

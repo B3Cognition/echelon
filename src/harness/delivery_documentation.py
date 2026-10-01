@@ -8,10 +8,12 @@ import math
 import os
 from pathlib import Path
 import time
+from collections.abc import Mapping
 from uuid import uuid4
 
 from harness.build_result import BuildResult
-from harness.delivery_documentation_contract import DOCS, REPORTS, STEPS, report_metadata, validate_journal, validate_result
+from harness.delivery_documentation_contract import (DOCS, REPORTS, STEPS, report_metadata,
+    validate_journal, validate_operation_binding, validate_result)
 from harness.delivery_slice import DeliverySliceError, DeliveryTasksComplete, select_delivery_task
 from harness.delivery_slice_journal import DeliverySliceJournal
 from harness.delivery_slice_runner import _candidate_fingerprint, _digest, _protected_fingerprint, _spec_inputs
@@ -112,12 +114,18 @@ def _validate_current_runnability(ref, worktree, spec_dir):
         raise DeliverySliceError("documentation_runnability_evidence_stale: " + validation.reason)
 
 
-def reviewed_runnability_checkpoint(*, worktree, spec_dir, evidence_root, operation_id):
+def reviewed_runnability_checkpoint(*, worktree, spec_dir, evidence_root, operation_id,
+                                   operation_binding: Mapping[str, str] | None = None):
     """Read-only proof for Ralph's final reuse of the exact reviewed receipt."""
     _images(Path(spec_dir), REPORTS)
     worktree, spec_dir = Path(worktree).resolve(strict=True), Path(spec_dir).resolve(strict=True)
     with DeliverySliceJournal(evidence_root, operation_id, validator=validate_journal) as journal:
         data = journal.load(required=True)
+        expected_binding = validate_operation_binding(dict(operation_binding)) if operation_binding is not None else None
+        if ((expected_binding is None and data["schema_version"] == 5)
+                or (expected_binding is not None and (
+                    data["schema_version"] != 5 or data["operation_binding"] != expected_binding))):
+            raise DeliverySliceError("delivery_reconciliation_required: documentation operation binding changed")
         publication = data["publication"]
         if not publication or publication["complete"] is not True or not data["checkpoints"]:
             raise DeliverySliceError("documentation reviewed runnability checkpoint missing")
@@ -144,7 +152,8 @@ class DeliveryDocumentationRunner:
             runnability_report: RunnabilityEvidenceRef | None = None, runnability_required: bool = False,
             containment_policy_file: str | None = None, token_budget: float | None = None,
             budget_extension_limit: float | None = None,
-            operation_id: str = "active", journal_required: bool = False, on_journal_ready=None, stop_requested=None,
+            operation_id: str = "active", operation_binding: Mapping[str, str] | None = None,
+            journal_required: bool = False, on_journal_ready=None, stop_requested=None,
             runnability_checkpoint=None, dispatch_admission=None) -> BuildResult:
         start, data, dispatches = time.monotonic(), None, 0
         stack = ExitStack()
@@ -157,6 +166,7 @@ class DeliveryDocumentationRunner:
                                                                                 "dispatches": dispatches, "token_usage": usage,
                                                                                 "runnability_reviewed": bool(success and data and data["checkpoints"])})
         try:
+            expected_binding = validate_operation_binding(dict(operation_binding)) if operation_binding is not None else None
             if budget_extension_limit is not None and (
                 type(budget_extension_limit) not in (int, float)
                 or not math.isfinite(budget_extension_limit)
@@ -200,6 +210,12 @@ class DeliveryDocumentationRunner:
                 roles[step] = role
             journal = stack.enter_context(DeliverySliceJournal(evidence_root, operation_id, validator=validate_journal))
             data = journal.load(required=journal_required)
+            if data is not None and (
+                (expected_binding is None and data["schema_version"] == 5)
+                or (expected_binding is not None and (
+                    data["schema_version"] != 5 or data["operation_binding"] != expected_binding))
+            ):
+                raise DeliverySliceError("delivery_reconciliation_required: documentation operation binding changed")
             provided_evidence = _evidence_context(runnability_report)
             evidence = data["authoring_evidence"] if data else provided_evidence
             if runnability_required and runnability_report is None:
@@ -214,11 +230,15 @@ class DeliveryDocumentationRunner:
             if data is None:
                 if runnability_report is not None:
                     _validate_current_runnability(runnability_report, worktree, spec_dir)
-                data = {"schema_version": 2, "run_id": uuid4().hex, "binding": binding, "input_fingerprint": fingerprint,
+                data = {"schema_version": 5 if expected_binding is not None else 2,
+                        "run_id": uuid4().hex, "binding": binding, "input_fingerprint": fingerprint,
                         "source_fingerprint": source, "candidate_fingerprint": _documentation_candidate_fingerprint(worktree, spec_dir),
                         "budget_limit": token_budget, "task_ids": scope, "records": [], "publication": None,
                         "authoring_evidence": evidence, "checkpoints": [],
                         "reports_before": _images(spec_dir, REPORTS), "docs_before": _images(worktree, DOCS)}
+                if expected_binding is not None:
+                    data["operation_binding"] = expected_binding
+                    data["rejected_reviews"] = []
                 journal.save(data)
             if on_journal_ready: on_journal_ready()
             if data["binding"] != binding or data["input_fingerprint"] != fingerprint or data["source_fingerprint"] != source:
@@ -279,7 +299,8 @@ class DeliveryDocumentationRunner:
                     raise DeliverySliceError(failed["error"] or "delivery_reconciliation_required: dispatch completion is unknown")
                 expected_candidate = records[-2]["candidate_after"]
                 guard()
-                data["schema_version"] = 4
+                if data["schema_version"] == 2:
+                    data["schema_version"] = 4
                 data["rejected_reviews"] = [records.pop()]
                 journal.save(data)
             guard()

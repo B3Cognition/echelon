@@ -100,6 +100,44 @@ def test_rejected_docs_are_repaired_before_publication(documentation_project):
     assert len(provider.calls) == 4
 
 
+def test_controlled_documentation_journal_binds_operation_before_replay(documentation_project):
+    runner, provider, paths = documentation_project()
+    identity = dict(build_id="build-a", delivery_run_id="run-a",
+                    spec_id="001-slice", operation_id="docs-op")
+    result = runner.run(**paths, operation_id="docs-op", operation_binding=identity)
+    assert result.succeeded, result.reason
+    journal = next(paths["evidence_root"].rglob("journal.json"))
+    data = json.loads(journal.read_text())
+    assert data["schema_version"] == 5
+    assert data["operation_binding"] == identity
+    assert runner.run(**paths, operation_id="docs-op", operation_binding=identity,
+                      journal_required=True).succeeded
+    assert provider.steps == ["tech_writer", "docs_verifier"]
+
+    for field in identity:
+        wrong = {**identity, field: identity[field] + "-other"}
+        blocked = runner.run(**paths, operation_id="docs-op", operation_binding=wrong,
+                             journal_required=True)
+        assert not blocked.succeeded
+        assert "documentation operation binding changed" in blocked.reason
+    unbound = runner.run(**paths, operation_id="docs-op", journal_required=True)
+    assert not unbound.succeeded
+    assert "documentation operation binding" in unbound.reason
+    assert provider.steps == ["tech_writer", "docs_verifier"]
+
+
+def test_legacy_documentation_journal_cannot_become_controlled(documentation_project):
+    runner, provider, paths = documentation_project()
+    assert runner.run(**paths, operation_id="docs-op").succeeded
+    identity = dict(build_id="build-a", delivery_run_id="run-a",
+                    spec_id="001-slice", operation_id="docs-op")
+    blocked = runner.run(**paths, operation_id="docs-op", operation_binding=identity,
+                         journal_required=True)
+    assert not blocked.succeeded
+    assert "documentation operation binding changed" in blocked.reason
+    assert provider.steps == ["tech_writer", "docs_verifier"]
+
+
 def test_docs_reviewer_is_told_the_strict_findings_shape(documentation_project):
     runner, provider, paths = documentation_project(reject_first=True)
     result = runner.run(**paths)
