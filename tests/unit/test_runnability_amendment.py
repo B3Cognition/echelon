@@ -147,6 +147,29 @@ def test_preview_rejects_unsettled_spec_step(tmp_path: Path) -> None:
         preview_runnability_owner(repo, "004-demo")
 
 
+def test_clean_pending_delivery_operation_blocks_preview_and_prepare(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    state_path = repo / "runs/targets/web/runs/build-001/state/delivery.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "delivery_slice_operation": {"operation_id": "sealed-001", "progress_applied": False},
+    }), encoding="utf-8")
+    before_ref = _git(repo, "rev-parse", "refs/heads/004-demo")
+    before_file = (repo / "specs/004-demo/tasks.md").read_bytes()
+    before_index = _git(repo, "rev-parse", ":specs/004-demo/tasks.md")
+
+    with pytest.raises(ValueError, match="pending Delivery operation"):
+        preview_runnability_owner(repo, "004-demo")
+    with pytest.raises(ValueError, match="pending Delivery operation"):
+        prepare_runnability_owner(repo, "004-demo")
+
+    assert _git(repo, "rev-parse", "refs/heads/004-demo") == before_ref
+    assert _git(repo, "rev-parse", ":specs/004-demo/tasks.md") == before_index
+    assert (repo / "specs/004-demo/tasks.md").read_bytes() == before_file
+    assert not (repo / ".git/echelon/amendments/004-demo").exists()
+
+
 def test_preview_existing_owner_reports_noop_without_writes(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     tasks = repo / "specs/004-demo/tasks.md"
@@ -162,6 +185,39 @@ def test_preview_existing_owner_reports_noop_without_writes(tmp_path: Path) -> N
     assert preview["new_task_ids"] == []
     assert preview["status"] == "no_change"
     assert _git(repo, "status", "--porcelain", "--untracked-files=all") == before
+    assert not (repo / ".git/echelon/amendments/004-demo").exists()
+
+
+def test_preview_valid_owner_deferral_is_read_only_noop(tmp_path: Path) -> None:
+    from harness.runnability_disposition import defer_runnability
+    from harness.runnability_evidence import RunnabilityStage, write_runnability_report
+
+    repo = _repo(tmp_path)
+    spec = repo / "specs/004-demo"
+    report = write_runnability_report(
+        evidence_dir=repo / "runs/targets/web/runs/build-old/evidence/user-runnability",
+        spec_id="004-demo", target_id="apps/web", build_id="build-old",
+        candidate_commit="a" * 40, candidate_fingerprint="product-1",
+        contract_hash="contract-1", stack_hash="stack-1",
+        status="not_runnable", failure_class="primary_journey_failed",
+        summary="Composed local journey needs an owner decision.",
+        stages=(RunnabilityStage(name="primary_journey", status="failed", exit_code=1),),
+        required_stages=("primary_journey",), attempt_sequence=1,
+        sensitive_environment={}, user_commands={},
+    )
+    defer_runnability(
+        spec_dir=spec, target="apps/web", reason="Explicitly deferred by owner",
+        evidence_report=report.path.parent / "report.json",
+    )
+    before_status = _git(repo, "status", "--porcelain", "--untracked-files=all")
+    before_ref = _git(repo, "rev-parse", "HEAD")
+
+    preview = preview_runnability_owner(repo, "004-demo")
+
+    assert preview["status"] == "no_change"
+    assert preview["new_task_ids"] == []
+    assert _git(repo, "rev-parse", "HEAD") == before_ref
+    assert _git(repo, "status", "--porcelain", "--untracked-files=all") == before_status
     assert not (repo / ".git/echelon/amendments/004-demo").exists()
 
 

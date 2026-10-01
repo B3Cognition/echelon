@@ -33,6 +33,8 @@ def proven_amended_task_ids(
     current_input_hash: str,
     states: Iterable[Mapping[str, object]],
     commit_is_ancestor: Callable[[str, str], bool],
+    landed_baseline_commit: str | None = None,
+    allow_descendant: bool = False,
 ) -> tuple[str, ...]:
     """Return only older tasks proven by recorded checkpoints on one target.
 
@@ -52,8 +54,22 @@ def proven_amended_task_ids(
     if not isinstance(target, Mapping):
         raise AmendmentLineageError("target evidence is missing")
     expected_candidate = target.get("candidate_commit")
-    if expected_candidate != candidate:
-        raise AmendmentLineageError("selected candidate differs from amendment")
+    pinned_base = expected_candidate or target.get("landed_baseline_commit")
+    proof_base = candidate or landed_baseline_commit or pinned_base
+    if candidate != expected_candidate or (
+        candidate is None and landed_baseline_commit is not None
+        and landed_baseline_commit != target.get("landed_baseline_commit")
+    ):
+        try:
+            descendant = (
+                allow_descendant and isinstance(pinned_base, str)
+                and isinstance(proof_base, str)
+                and commit_is_ancestor(pinned_base, proof_base) is True
+            )
+        except Exception:
+            descendant = False
+        if not descendant:
+            raise AmendmentLineageError("selected candidate differs from amendment")
     old_tasks = set(_task_ids(manifest.get("old_task_ids")))
     new_tasks = set(_task_ids(manifest.get("new_task_ids")))
     if old_tasks & new_tasks:
@@ -81,7 +97,6 @@ def proven_amended_task_ids(
             raise AmendmentLineageError("target checkpoint reference is malformed") from exc
         refs.add((build_id, commit, digest, recorded_tasks))
     ref_builds = {ref[0] for ref in refs}
-    latest_ref_build = max(ref_builds, default=None)
     target_states = [
         state for state in states
         if state.get("target_id") == target_id and state.get("spec_id") == manifest.get("spec_id")
@@ -90,17 +105,15 @@ def proven_amended_task_ids(
         build_id = state.get("build_id")
         pending = state.get("delivery_slice_operation")
         if (isinstance(build_id, str) and isinstance(pending, Mapping)
-                and pending.get("progress_applied") is not True
-                and (build_id in ref_builds or latest_ref_build is None
-                     or build_id > latest_ref_build)):
+                and pending.get("progress_applied") is not True):
             raise AmendmentLineageError(
-                f"pending original Delivery operation in {build_id}; recover it under sealed inputs"
+                f"pending Delivery operation in {build_id}; recover it under sealed inputs"
             )
-    if candidate is None:
-        if refs:
-            raise AmendmentLineageError("checkpoint references exist without a candidate")
-        return ()
-    if not isinstance(candidate, str) or not _COMMIT.fullmatch(candidate):
+    if proof_base is None:
+        if not refs:
+            return ()
+        raise AmendmentLineageError("checkpoint references have no pinned landed baseline")
+    if not isinstance(proof_base, str) or not _COMMIT.fullmatch(proof_base):
         raise AmendmentLineageError("selected candidate is malformed")
     recovered: set[str] = set()
     for state in target_states:
@@ -124,7 +137,7 @@ def proven_amended_task_ids(
                     or digest != old_hash):
                 continue
             try:
-                ancestor = commit_is_ancestor(commit, candidate) is True
+                ancestor = commit_is_ancestor(commit, proof_base) is True
             except Exception:
                 ancestor = False
             if ancestor:

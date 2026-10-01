@@ -63,17 +63,62 @@ def test_amended_admission_uses_only_real_target_checkpoint(tmp_path: Path) -> N
         workspace_root=repo, harness_root=harness_root, spec_dir=spec,
         intent=intent, candidate=candidate, gitops=GitOps(), config=config,
     )
-    assert admitted() == ("T-001",)
+    assert admitted().task_ids == ("T-001",)
     config.target_repo = "apps/web"
-    assert admitted() == ("T-001",)
+    assert admitted().task_ids == ("T-001",)
+    projected_tasks = tasks.read_bytes()
+    amendment_identity = admitted().durable_identity()
+
+    admitted_state_path = harness_root / "runs/build-amended/state/delivery.json"
+    admitted_state_path.parent.mkdir(parents=True)
+    admitted_state_path.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "amendment_admission": amendment_identity,
+    }))
+    assert _amended_delivery_completed_tasks(
+        workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+        intent=SimpleNamespace(spec_id="004-demo", reset=False, resume=True),
+        candidate=None, gitops=GitOps(), config=config,
+        resume_build_id="build-amended",
+    ).task_ids == ()
+    with pytest.raises(RunContextError, match="resume build was not admitted"):
+        _amended_delivery_completed_tasks(
+            workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+            intent=SimpleNamespace(spec_id="004-demo", reset=False, resume=True),
+            candidate=None, gitops=GitOps(), config=config,
+            resume_build_id="build-old",
+        )
+    _git(target_repo, "commit", "--allow-empty", "-m", "accepted amended task")
+    descendant = _git(target_repo, "rev-parse", "HEAD")
+    tasks.write_text(tasks.read_text().replace("- [ ] T-002", "- [x] T-002")
+                     .replace("**Status:** PENDING", "**Status:** DONE"))
+    with pytest.raises(RunContextError, match="unproven task progress: T-002"):
+        _amended_delivery_completed_tasks(
+            workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+            intent=intent, candidate=descendant, gitops=GitOps(), config=config,
+        )
+    admitted_state_path.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "amendment_admission": amendment_identity,
+        "checkpoint_commits": [{
+            "commit": descendant, "task_ids": ["T-002"],
+            "checkpoint_input_hash": checkpoint_input_hash(spec),
+        }],
+    }))
+    assert _amended_delivery_completed_tasks(
+        workspace_root=repo, harness_root=harness_root, spec_dir=spec,
+        intent=intent, candidate=descendant, gitops=GitOps(), config=config,
+    ).task_ids == ("T-001", "T-002")
+    tasks.write_bytes(projected_tasks)
+    admitted_state_path.unlink()
 
     state = json.loads(state_path.read_text())
     state["delivery_slice_operation"] = {"id": "sealed-original", "progress_applied": False}
     state_path.write_text(json.dumps(state))
-    with pytest.raises(RunContextError, match="pending original Delivery operation"):
+    with pytest.raises(RunContextError, match="pending Delivery operation"):
         admitted()
     from harness.skills.run_skill import _execute_delivery_run
-    with pytest.raises(RunContextError, match="pending original Delivery operation"):
+    with pytest.raises(RunContextError, match="pending Delivery operation"):
         _execute_delivery_run(
             intent=intent, provider=object(), gitops=GitOps(),
             harness_root=harness_root, workspace_root=repo, spec_dir=spec,
@@ -83,7 +128,7 @@ def test_amended_admission_uses_only_real_target_checkpoint(tmp_path: Path) -> N
     state.pop("delivery_slice_operation")
     state["checkpoint_commits"] = []
     state_path.write_text(json.dumps(state))
-    with pytest.raises(RunContextError, match="unproven old task progress"):
+    with pytest.raises(RunContextError, match="unproven task progress"):
         admitted()
 
     amendment_state = Path(str(prepared["state_path"]))

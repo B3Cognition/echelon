@@ -132,12 +132,20 @@ def promote_runnability_owner(
 ) -> dict[str, object]:
     """Publish only the prepared task append, index blob, and branch ref."""
     root = Path(project_root).resolve()
-    _, _, spec_id = _load(root, amendment_id)
+    _, initial_state, spec_id = _load(root, amendment_id)
+    if initial_state.get("status") in {"promoting", "needs_attention"}:
+        outcome = recover_runnability_promotion(root, amendment_id)
+        if outcome == "needs_attention":
+            raise RunnabilityAmendmentError(
+                "amendment needs attention; owned file, index, or ref changed"
+            )
     owner = f"runnability-promote-{amendment_id.replace('/', '-')}"
     with AmendmentLock.acquire(root, spec_id, owner):
         with PhaseAExecutionLock.acquire(root, owner):
             state_path, state, spec_id = _load(root, amendment_id)
-            if state.get("status") != "prepared":
+            if state.get("status") == "promoted":
+                return state
+            if state.get("status") not in {"prepared", "rolled_back"}:
                 raise RunnabilityAmendmentError("amendment is not prepared for promotion")
             projected, old_blob, new_blob = _verify_prepared(root, state, spec_id)
             task_path = _task_path(spec_id)

@@ -43,6 +43,24 @@ class RunContextError(ValueError):
     """The delivery caller supplied an invalid orchestration context."""
 
 
+@dataclass(frozen=True)
+class _AmendedDeliveryAdmission:
+    task_ids: tuple[str, ...]
+    amendment_id: str
+    spec_commit: str
+    target_id: str
+    baseline_commit: str | None
+    input_hash: str
+
+    def durable_identity(self) -> dict[str, str]:
+        return {
+            "amendment_id": self.amendment_id,
+            "spec_commit": self.spec_commit,
+            "target_id": self.target_id,
+            "input_hash": self.input_hash,
+        }
+
+
 @dataclass
 class _DeliverySummaryScope:
     intent: Any
@@ -417,11 +435,12 @@ def _amended_delivery_completed_tasks(
     candidate: str | None,
     gitops: Any,
     config: Any,
-) -> tuple[str, ...] | None:
+    resume_build_id: str | None = None,
+) -> _AmendedDeliveryAdmission | None:
     """Validate a settled plan amendment before inheriting old task checkpoints.
 
     None means no promoted amendment applies and preserves the original exact-
-    hash path. An empty tuple means an amendment applies but proves no old task.
+    hash path. An admission with empty task IDs proves no old task.
     """
     from echelon.spec_amendment import _amendment_root
     from echelon.runnability_amendment import (
@@ -429,8 +448,11 @@ def _amended_delivery_completed_tasks(
     )
     from harness.amendment_lineage import AmendmentLineageError, proven_amended_task_ids
     from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES
+    from harness.paths import mirror_path
     from harness.publication_transaction import PublicationTransaction
-    from harness.runnability_amendment_plan import plan_owner_tasks, render_owner_tasks
+    from harness.runnability_amendment_plan import (
+        plan_owner_tasks, render_owner_tasks, validate_progress_only,
+    )
     from harness.stacks.resolver import resolved_stack_contract_sha256
     from harness.task_progress import (
         checkpoint_input_hash, checkpoint_input_hash_from_contents,
@@ -477,8 +499,6 @@ def _amended_delivery_completed_tasks(
             or promoted.get("amendment_id")
             != f"{intent.spec_id}/{promoted_path.parent.name}"):
         raise RunContextError("promoted amendment identity differs from current Spec")
-    if getattr(intent, "resume", False):
-        raise RunContextError("amended Spec requires a fresh Delivery run, not resume")
     if _git(root, "branch", "--show-current") != intent.spec_id:
         raise RunContextError("active checkout is not the promoted Spec branch")
     old_ref = promoted.get("baseline_commit")
@@ -525,8 +545,12 @@ def _amended_delivery_completed_tasks(
             raise RunContextError(f"promoted amendment {key} differs from Git")
     if _git(root, "rev-parse", f":{task_path}") != promoted.get("new_index_blob"):
         raise RunContextError("promoted amendment index entry is unsettled")
-    if _sha256((root / task_path).read_bytes()) != promoted.get("working_projected_sha256"):
-        raise RunContextError("promoted amendment working plan is unsettled")
+    try:
+        validate_progress_only(
+            new_tasks.decode("utf-8"), (root / task_path).read_text(encoding="utf-8"),
+        )
+    except ValueError as exc:
+        raise RunContextError("amended working plan changed outside Delivery progress") from exc
     journal = promoted_path.parent / "file-publication.json"
     try:
         file_state = json.loads(journal.read_text(encoding="utf-8"))
@@ -561,6 +585,15 @@ def _amended_delivery_completed_tasks(
             or record.get("source_root") != str(target_root)
             or record.get("source_git_root") != _git(target_root, "rev-parse", "--show-toplevel")):
         raise RunContextError("Delivery target repository differs from amendment")
+    actual_default: str | None = None
+    if (candidate is None and record.get("checkpoint_refs")
+            and not getattr(intent, "resume", False)):
+        default_branch = getattr(gitops, "get_default_branch", None)
+        if not callable(default_branch):
+            raise RunContextError("target default branch proof is unavailable")
+        actual_default = _git(
+            mirror_path(harness_root), "rev-parse", f"refs/heads/{default_branch()}",
+        )
     states: list[dict[str, object]] = []
     for path in sorted(runs_dir(harness_root).glob("build-*/state/delivery.json")):
         try:
@@ -569,6 +602,20 @@ def _amended_delivery_completed_tasks(
             continue
         if isinstance(value, dict) and value.get("spec_id") == intent.spec_id:
             states.append(dict(value, build_id=path.parents[1].name, target_id=target_id))
+    identity = {
+        "amendment_id": promoted["amendment_id"],
+        "spec_commit": new_ref,
+        "target_id": target_id,
+        "input_hash": current_hash,
+    }
+    admitted = [state for state in states if state.get("amendment_admission") == identity]
+    if getattr(intent, "resume", False):
+        if not resume_build_id or not any(
+            state.get("build_id") == resume_build_id for state in admitted
+        ):
+            raise RunContextError("resume build was not admitted under this Spec amendment")
+        return _AmendedDeliveryAdmission((), str(promoted["amendment_id"]),
+                                         new_ref, target_id, None, current_hash)
     ancestry = getattr(gitops, "commit_is_ancestor", None)
     if not callable(ancestry):
         raise RunContextError("target Git ancestry check is unavailable")
@@ -577,26 +624,34 @@ def _amended_delivery_completed_tasks(
             promoted, target_id=target_id, candidate=candidate,
             current_input_hash=current_hash, states=states,
             commit_is_ancestor=ancestry,
+            landed_baseline_commit=actual_default,
+            allow_descendant=bool(admitted),
         )
     except AmendmentLineageError as exc:
         raise RunContextError(str(exc)) from exc
     progress = summarize_task_progress((root / task_path).read_text(encoding="utf-8"))
     if not progress.valid:
         raise RunContextError("amended working task progress is invalid")
-    old_target_ids = {
-        row.task_id for row in parse_task_rows(old_tasks.decode("utf-8"))
+    proof_base = candidate or actual_default
+    same_hash_proven = _fresh_delivery_completed_tasks(
+        harness_root, intent, proof_base, gitops, spec_dir=spec_dir,
+    )
+    all_proven = tuple(sorted(set(proven) | set(same_hash_proven)))
+    target_task_ids = {
+        row.task_id for row in parse_task_rows(new_tasks.decode("utf-8"))
         if (row.target or ".") == target_id
     }
     unproven = sorted(
-        task_id for task_id in old_target_ids.difference(proven)
+        task_id for task_id in target_task_ids.difference(all_proven)
         if progress.task_statuses.get(task_id) in {"DONE", "DONE_WITH_CONCERNS"}
     )
     if unproven:
         raise RunContextError(
-            "unproven old task progress: " + ", ".join(unproven)
-            + "; recover original checkpoint evidence or re-plan the task"
+            "unproven task progress: " + ", ".join(unproven)
+            + "; recover checkpoint evidence or re-plan the task"
         )
-    return proven
+    return _AmendedDeliveryAdmission(all_proven, str(promoted["amendment_id"]),
+                                     new_ref, target_id, proof_base, current_hash)
 
 
 def _fresh_delivery_repair_task_id(
@@ -1254,9 +1309,10 @@ def _execute_delivery_run(
         candidate=fresh_branch_base,
         gitops=gitops,
         config=config,
+        resume_build_id=resume_build_id,
     )
     fresh_completed_task_ids = (
-        amended_completed if amended_completed is not None
+        amended_completed.task_ids if amended_completed is not None
         else _fresh_delivery_completed_tasks(
             harness_root,
             intent,
@@ -1289,6 +1345,9 @@ def _execute_delivery_run(
         fresh_branch_base=fresh_branch_base,
         fresh_completed_task_ids=fresh_completed_task_ids,
         fresh_repair_task_id=fresh_repair_task_id,
+        amendment_admission=(
+            amended_completed.durable_identity() if amended_completed is not None else None
+        ),
     )
     if fresh_branch_base:
         logger.info(

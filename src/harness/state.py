@@ -423,6 +423,7 @@ class StateStore:
         enabled_phases: list[str] | None = None,
         delivery_stack_snapshot: dict[str, Any] | None = None,
         semantic_visual_gate_required: bool = False,
+        amendment_admission: dict[str, str] | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -496,6 +497,8 @@ class StateStore:
             "started_at": now,
             "updated_at": now,
         }
+        if amendment_admission is not None:
+            data["amendment_admission"] = dict(amendment_admission)
         self.write(data)
         return data
 

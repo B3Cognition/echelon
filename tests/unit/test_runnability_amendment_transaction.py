@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
@@ -45,6 +46,23 @@ def test_promotion_preserves_dirty_progress_and_unrelated_staged_file(tmp_path: 
     assert old_progress != working and old_ref != prepared["proposed_commit"]
 
 
+def test_pending_delivery_arriving_after_prepare_blocks_promotion(tmp_path: Path) -> None:
+    repo, prepared, old_progress, old_ref, old_index = _prepared(tmp_path)
+    state_path = repo / "runs/targets/web/runs/build-002/state/delivery.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "spec_id": "004-demo", "status": "interrupted",
+        "delivery_slice_operation": {"operation_id": "sealed-002", "progress_applied": False},
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="pending Delivery operation"):
+        promote_runnability_owner(repo, str(prepared["amendment_id"]))
+
+    assert _git(repo, "rev-parse", "HEAD") == old_ref
+    assert _git(repo, "rev-parse", ":specs/004-demo/tasks.md") == old_index
+    assert (repo / "specs/004-demo/tasks.md").read_bytes() == old_progress
+
+
 @pytest.mark.parametrize("cut,expected", [
     ("before_file", "rolled_back"),
     ("after_file", "rolled_back"),
@@ -78,6 +96,43 @@ def test_recovery_follows_ref_after_each_fault_cut(
     else:
         assert _git(repo, "rev-parse", "HEAD") == prepared["proposed_commit"]
         assert b"- [ ] T-002" in (repo / "specs/004-demo/tasks.md").read_bytes()
+
+
+@pytest.mark.parametrize("cut", ["before_file", "after_file", "after_index", "after_ref"])
+def test_promotion_retry_uses_transaction_recovery_without_manual_state_edits(
+    tmp_path: Path, cut: str,
+) -> None:
+    repo, prepared, _, _, _ = _prepared(tmp_path)
+
+    def fault(phase: str) -> None:
+        if phase == cut:
+            raise RuntimeError(f"injected {cut}")
+
+    with pytest.raises(RuntimeError, match=f"injected {cut}"):
+        promote_runnability_owner(repo, str(prepared["amendment_id"]), fault_hook=fault)
+
+    retried = promote_runnability_owner(repo, str(prepared["amendment_id"]))
+    assert retried["status"] == "promoted"
+    assert _git(repo, "rev-parse", "HEAD") == prepared["proposed_commit"]
+
+
+def test_promotion_retry_refuses_changed_owned_file(tmp_path: Path) -> None:
+    repo, prepared, _, old_ref, _ = _prepared(tmp_path)
+    tasks = repo / "specs/004-demo/tasks.md"
+
+    def fault(phase: str) -> None:
+        if phase == "after_file":
+            tasks.write_bytes(tasks.read_bytes() + b"\nuser edit\n")
+            raise RuntimeError("injected edit")
+
+    with pytest.raises(RuntimeError, match="injected edit"):
+        promote_runnability_owner(repo, str(prepared["amendment_id"]), fault_hook=fault)
+    user_bytes = tasks.read_bytes()
+
+    with pytest.raises(ValueError, match="needs attention"):
+        promote_runnability_owner(repo, str(prepared["amendment_id"]))
+    assert tasks.read_bytes() == user_bytes
+    assert _git(repo, "rev-parse", "HEAD") == old_ref
 
 
 def test_promotion_rejects_staged_tasks_without_touching_it(tmp_path: Path) -> None:

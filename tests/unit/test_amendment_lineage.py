@@ -132,6 +132,34 @@ def test_no_candidate_never_inherits_progress() -> None:
     assert _prove(manifest, (), candidate=None) == ()
 
 
+def test_landed_checkpoint_is_proven_against_pinned_default_baseline() -> None:
+    manifest = _manifest()
+    manifest["targets"]["apps/web"]["candidate_commit"] = None
+    manifest["targets"]["apps/web"]["landed_baseline_commit"] = WEB_CANDIDATE
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+
+    assert _prove(manifest, (state,), candidate=None) == ("T-001",)
+
+
+def test_admitted_continuation_accepts_only_descendant_candidate() -> None:
+    manifest = _manifest()
+    state = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    descendant = "1" * 40
+    ancestry = lambda ancestor, commit: (
+        (ancestor, commit) in {(WEB_CANDIDATE, descendant), (WEB_CHECKPOINT, descendant)}
+    )
+    with pytest.raises(AmendmentLineageError, match="selected candidate"):
+        proven_amended_task_ids(
+            manifest, target_id="apps/web", candidate=descendant,
+            current_input_hash=NEW_HASH, states=(state,), commit_is_ancestor=ancestry,
+        )
+    assert proven_amended_task_ids(
+        manifest, target_id="apps/web", candidate=descendant,
+        current_input_hash=NEW_HASH, states=(state,), commit_is_ancestor=ancestry,
+        allow_descendant=True,
+    ) == ("T-001",)
+
+
 def test_malformed_recorded_task_ids_fail_closed() -> None:
     manifest = _manifest()
     manifest["targets"]["apps/web"]["checkpoint_refs"][0]["task_ids"] = [{"bad": "shape"}]
@@ -146,5 +174,16 @@ def test_newer_uncheckpointed_pending_dispatch_blocks_carry_forward() -> None:
         "checkpoint_commits": [],
         "delivery_slice_operation": {"id": "sealed-newer", "progress_applied": False},
     }
-    with pytest.raises(AmendmentLineageError, match="pending original Delivery operation"):
+    with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
         _prove(_manifest(), (old, newer))
+
+
+def test_pending_amended_build_blocks_even_when_its_id_sorts_before_original() -> None:
+    old = _state("apps/web", "build-web", WEB_CHECKPOINT, "T-001")
+    amended = {
+        "spec_id": "004-demo", "target_id": "apps/web", "build_id": "build-aa",
+        "amendment_admission": {"amendment_id": "004-demo/001"},
+        "delivery_slice_operation": {"id": "sealed", "progress_applied": False},
+    }
+    with pytest.raises(AmendmentLineageError, match="pending Delivery operation"):
+        _prove(_manifest(), (old, amended))

@@ -169,6 +169,20 @@ def _target_evidence(root: Path, spec_id: str, target: str) -> dict[str, object]
         config = load_config(project_root=root, squad_only=True)
         config.target_repo = str(target_root)
         gitops = GitOpsManager(config, base_dir=str(harness_root))
+    # A clean worktree does not imply that a sealed Delivery operation has
+    # settled. Do this before native baseline selection, which may otherwise
+    # retain the candidate and allow publication over its original Spec input.
+    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/delivery.json")):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (isinstance(state, dict) and state.get("spec_id") == spec_id
+                and isinstance(state.get("delivery_slice_operation"), dict)
+                and state["delivery_slice_operation"].get("progress_applied") is not True):
+            raise RunnabilityAmendmentError(
+                f"pending Delivery operation must settle before amendment: {state_path}"
+            )
     intent = SimpleNamespace(spec_id=spec_id, reset=False, resume=False)
     candidate = _fresh_delivery_baseline(harness_root, intent, gitops)
     checkpoint_refs: list[dict[str, object]] = []
@@ -187,11 +201,18 @@ def _target_evidence(root: Path, spec_id: str, target: str) -> dict[str, object]
                     "checkpoint_input_hash": checkpoint.get("checkpoint_input_hash"),
                     "task_ids": checkpoint.get("task_ids"),
                 })
+    landed_baseline = None
+    if candidate is None and checkpoint_refs and gitops is not None:
+        landed_baseline = _git(
+            mirror_path(harness_root), "rev-parse",
+            f"refs/heads/{gitops.get_default_branch()}",
+        )
     return {
         "target_path": target,
         "source_root": str(target_root),
         "source_git_root": source_git_root,
         "candidate_commit": candidate,
+        "landed_baseline_commit": landed_baseline,
         "checkpoint_refs": checkpoint_refs,
     }
 

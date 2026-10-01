@@ -88,6 +88,11 @@ def _validate_working_progress(published_tasks: str, working_tasks: str) -> None
         raise RunnabilityAmendmentPlanError("old task definition changed outside progress")
 
 
+def validate_progress_only(published_tasks: str, working_tasks: str) -> None:
+    """Reject definition edits while allowing the canonical Delivery progress fields."""
+    _validate_working_progress(published_tasks, working_tasks)
+
+
 def _replace_count(markdown: str, count: int) -> str:
     if len(_COUNT.findall(markdown)) != 1:
         raise RunnabilityAmendmentPlanError("malformed total task count")
