@@ -768,6 +768,12 @@ def _materialize_canonical_test_config(project_root: Path) -> None:
         if config_path.is_file()
         else {}
     )
+    # These fixtures model discovery work. Declare that intent explicitly,
+    # while preserving an owner-supplied selection (including an empty one).
+    if "stacks" not in overrides:
+        overrides["stacks"] = {"selected": ["generic"]}
+    elif isinstance(overrides["stacks"], dict):
+        overrides["stacks"].setdefault("selected", ["generic"])
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         yaml.safe_dump(
@@ -816,6 +822,22 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
         squad_dir=squad_dir,
     )
     return ctrl, store
+
+
+def test_controller_fixture_preserves_explicit_empty_stack_selection(tmp_path: Path) -> None:
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir()
+    config_path.write_text("stacks:\n  selected: []\n", encoding="utf-8")
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+    _mark_constitution_complete(tmp_path, store)
+    before = store.load()
+
+    result = ctrl.run("msg", "greenfield")
+
+    assert result.status == "blocked"
+    assert "stack_selection_required" in result.summary
+    assert store.load() == before
 
 
 @pytest.mark.parametrize("mode, expected_attempts", [("banzai", 4), ("semi", 1)])
