@@ -1863,32 +1863,22 @@ class TestSmartResumeDetection:
         outer_iter: int = 2,
         spec_id: str = "spec-001",
     ) -> None:
-        """Write a state.json with the given status and outer_iter."""
-        state_dir = tmp_path / "runs" / "state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        state = {
-            "spec_id": spec_id,
-            "run_id": "prior-run-id",
-            "status": status,
-            "mode": "semi",
-            "outer_iter": outer_iter,
-            "max_outer": 5,
-            "inner_iter": 0,
-            "max_inner": 3,
-            "token_budget": 0,
-            "tokens_used": 0,
-            "cancel_requested": False,
-            "pr_url": None,
-            "branch_name": None,
-            "last_verify_result": None,
-            "termination_reason": None,
-            "escalation_file": None,
-            "iteration_log": [],
-            "started_at": "2026-01-01T00:00:00+00:00",
-            "updated_at": "2026-01-01T00:00:00+00:00",
-        }
-        state_file = state_dir / "delivery.json"
-        state_file.write_text(json.dumps(state), encoding="utf-8")
+        """Retain a current run with the requested checkpoint and counter."""
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.verification_stack_runtime import resolve_verification_stacks
+        from harness.delivery_controller import _delivery_stack_snapshot
+
+        _write_phase_a_build_inputs(tmp_path / "specs" / spec_id)
+        store = StateStore(tmp_path / "runs" / "state", spec_id)
+        store.initialize(
+            "prior-run-id", "semi", max_outer=5, max_inner=3,
+            delivery_stack_snapshot=_delivery_stack_snapshot(
+                resolve_verification_stacks(tmp_path, tmp_path),
+            ),
+        )
+        store.transition("running", updates={"outer_iter": outer_iter})
+        if status != "running":
+            store.transition(status, updates={f"{status}_phase": "implementation"})
 
     # --- should_resume condition unit tests ---
 
@@ -1943,7 +1933,7 @@ class TestSmartResumeDetection:
         """A pre-existing interrupted state is resumed (not wiped) and the run converges."""
         self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False)
 
         with patch("harness.delivery_controller.RalphController") as MockRalph:
@@ -1974,7 +1964,7 @@ class TestSmartResumeDetection:
         """With reset=True, an existing interrupted state is wiped and starts fresh."""
         self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
         with patch("harness.delivery_controller.RalphController") as MockRalph:
@@ -2369,7 +2359,7 @@ class TestSmartResumeDetection:
         """Explicit resume leaves blocked state intact for Ralph's blocked-resume handler."""
         self._make_state_file(tmp_path, status="blocked", outer_iter=1)
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         # No escalation_file in state, so the pre-flight guard passes
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False, resume=True)
         seen: dict[str, Any] = {}
