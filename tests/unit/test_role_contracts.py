@@ -21,7 +21,15 @@ def _write_fixture_prosaic(root: Path, agent_text: str, outputs=None) -> tuple[P
     phase = {
         "id": "phase1-discover",
         "type": "agent",
-        "agent": "echelon-scout",
+        "agent": "echelon.scout",
+        "artifact_contract": {
+            "mode": "publish",
+            "artifacts": [
+                {"root": "active_spec", "path": path, "kind": "file", "requirement": "required"}
+                for path in (outputs or ["artifact.md"])
+            ],
+            "read_inputs": [],
+        },
         "transitions": [{"to": "done", "condition": "always"}],
     }
     if outputs is not None:
