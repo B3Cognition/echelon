@@ -51,13 +51,23 @@ src/
 """
 
 
-def _write_phase_a_build_inputs(spec_dir: Path) -> None:
+def _write_phase_a_build_inputs(spec_dir: Path, *, target: str) -> None:
+    from tests.unit.test_verification_capability_preflight import custom_stack
+
+    root = spec_dir.parent.parent
+    custom_stack(root)
+    (root / ".echelon" / "local.yml").write_text(
+        "stacks:\n  selected: [custom]\n", encoding="utf-8",
+    )
     spec_dir.mkdir(parents=True, exist_ok=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
         if name == "plan.md":
             content = VALID_PLAN
         elif name == "tasks.md":
-            content = "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            content = (
+                f"- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target={target}\n"
+                "  **Named Test Ownership:** UT-001\n"
+            )
         elif name == "constitution.md":
             content = "# Constitution\n\nReal project rules.\n"
         elif name == "plan-conformance.json":
@@ -146,7 +156,7 @@ class TestSingleRepoPathUnchanged:
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
         spec_dir = tmp_path / "specs" / "024-test"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir, target="repo-a")
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - repo-a\n---\n# spec\n", encoding="utf-8"
         )
@@ -185,7 +195,7 @@ class TestSingleRepoPathUnchanged:
         _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "024-test"
-        _write_phase_a_build_inputs(spec_dir)
+        _write_phase_a_build_inputs(spec_dir, target="repo-a")
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - repo-a\n---\n# spec\n",
             encoding="utf-8",
@@ -250,7 +260,7 @@ class TestSingleRepoPathUnchanged:
         _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "001-prose-distribution-engine"
-        _write_phase_a_build_inputs(spec_dir)
+        _write_phase_a_build_inputs(spec_dir, target="sources/prosaic")
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - sources/prosaic\n---\n# spec\n",
             encoding="utf-8",
@@ -355,7 +365,7 @@ class TestSingleRepoPathUnchanged:
         _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "001-prose-distribution-engine"
-        _write_phase_a_build_inputs(spec_dir)
+        _write_phase_a_build_inputs(spec_dir, target="sources/prosaic")
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - sources/prosaic\n---\n# spec\n",
             encoding="utf-8",
