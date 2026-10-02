@@ -18,7 +18,6 @@ if str(EXT_ROOT) not in sys.path:
 from echelon.context_builder import build_run_context
 from echelon.context_metadata import artifact_hash
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.squad import SquadController
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
@@ -530,21 +529,32 @@ def test_run_context_refreshes_after_phase_updates_run_local_spec_artifacts(
     tmp_path: Path,
 ) -> None:
     _ensure_git_repo(tmp_path)
+    _materialize_canonical_test_config(tmp_path)
     definition = tmp_path / "definition.yaml"
     definition.write_text(
         """
 phases:
   - id: init
     type: agent
+    agent: test.context-author
+    artifact_contract:
+      mode: publish
+      artifacts:
+        - {root: active_spec, path: spec.md, kind: file, requirement: required}
     transitions:
       - to: phase1-constitution
         condition: verdict = DONE
   - id: phase1-constitution
     type: agent
+    agent: echelon.chief
+    artifact_contract:
+      mode: publish
+      artifacts:
+        - {root: squad, path: constitution.draft.md, kind: file, requirement: required}
     context_pack:
       - "{context_dir}/current-feature-context.md"
     transitions:
-      - to: DONE
+      - to: terminal-blocked
         condition: always
 """,
         encoding="utf-8",
@@ -581,31 +591,12 @@ phases:
                 "# Demo Spec\n\n- FR-123: Refreshed context.\n",
                 encoding="utf-8",
             )
-            for name in REQUIRED_PHASE_A_BUILD_INPUTS:
-                if name != "spec.md":
-                    content = (
-                        '{\n'
-                        '  "status": "pass",\n'
-                        '  "findings": [],\n'
-                        '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
-                        '}\n'
-                        if name == "plan-conformance.json"
-                        else (
-                            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
-                            "|---|---|---|---|---|---|---|\n"
-                            "| FR-123 | UT-123 | unit | planned | planned | tests | implement |\n"
-                            if name == "coverage-map.md"
-                            else f"# {name}\n"
-                        )
-                    )
-                    (run_local_spec_dir / name).write_text(
-                        content, encoding="utf-8"
-                    )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
                     "state_updates": {},
+                    "output_files": [str(run_local_spec_dir / "spec.md")],
                 },
                 raw_output="",
                 duration_ms=50,
@@ -617,7 +608,8 @@ phases:
         )
         return SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": {}},
+            echelon_result={"verdict": "DONE", "state_updates": {},
+                "output_files": [str(squad_dir / "constitution.draft.md")]},
             raw_output="",
             duration_ms=50,
             timed_out=False,
@@ -642,6 +634,9 @@ phases:
     )
     second_prompt = provider.exec_agent.call_args_list[1].args[1]
 
-    assert result.status == "done"
+    # This is a bounded context-propagation workflow, not a complete Phase A
+    # publication. Stop deliberately before readiness and publication gates.
+    assert result.status == "blocked" and result.phase == "terminal-blocked"
+    assert call_count == 2
     assert "FR-123" in current_context
     assert "FR-123" in second_prompt
