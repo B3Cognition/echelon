@@ -743,9 +743,7 @@ def test_phase_run_experimental_artifact_quality_phases(
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            target = Path(project_root) / "specs" / "001-demo" / report_name
-            target.write_text("# Quality Report\n\nPass.\n", encoding="utf-8")
-            return SquadAgentResult(
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
@@ -759,7 +757,7 @@ def test_phase_run_experimental_artifact_quality_phases(
                 raw_output="",
                 duration_ms=10,
                 timed_out=False,
-            )
+            ), _kwargs, content="# Quality Report\n\nPass.\n")
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
@@ -769,4 +767,6 @@ def test_phase_run_experimental_artifact_quality_phases(
     state = json.loads((tmp_path / "runs" / current / "state.json").read_text(encoding="utf-8"))
     assert state[state_key] is True
     assert state["last_dispatch"]["manual_phase_run"] is True
-    assert (spec_dir / report_name).exists()
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
+    assert (tmp_path / state["spec_dir"] / report_name).exists()
+    assert not (spec_dir / report_name).exists()
