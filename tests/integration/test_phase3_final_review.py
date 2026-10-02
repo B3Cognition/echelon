@@ -9,6 +9,7 @@ import pytest
 from harness.squad_provider import SquadAgentResult
 from harness.squad_executors import ExecutorBlockedResult
 from harness.squad_state import SquadStateStore
+from harness.phase_execution import FinalizedPhaseExecution
 from tests.integration.test_phase3_review_scheduling import scheduling_fixture, advance
 
 
@@ -65,13 +66,75 @@ def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", re
         else:
             assert "Operate in **PLAN2**" in prompt
             calls.append(("PLAN2", False))
-            if not keep_plan:
-                (spec / "tasks.md").write_text("Final task plan")
+            plan_outputs = [spec / name for name in (
+                "tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md",
+            )]
+            for output in plan_outputs:
+                if output.name == "tasks.md" and not keep_plan:
+                    content = b"Final task plan"
+                elif output.exists():
+                    content = output.read_bytes()
+                else:
+                    content = b"T-001 precedes T-002; no external dependency."
+                replacement = output.with_name(f".{output.name}.current")
+                replacement.write_bytes(content)
+                replacement.replace(output)
+            payload["output_files"] = [str(output) for output in plan_outputs]
             payload["verdict"] = "COMPLETE"
         return SquadAgentResult(exit_code=0, echelon_result=payload, raw_output="", duration_ms=0, timed_out=False)
 
     executor._provider.exec_agent.side_effect = dispatch
     return ctrl, store, executor, node, spec, calls
+
+
+@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
+@pytest.mark.parametrize("keep_plan", [False, True])
+def test_final_fixture_publishes_complete_plan2_outputs(tmp_path, mode, keep_plan):
+    _, store, executor, node, spec, calls = final_fixture(
+        tmp_path, mode, keep_plan=keep_plan,
+    )
+    result = executor.execute(node, store)
+
+    assert isinstance(result, FinalizedPhaseExecution)
+    assert calls.count(("PLAN2", False)) == 1
+    plan_receipts = [receipt for receipt in result.receipts
+                     if receipt["assignment_id"].endswith("/echelon.orchestrator:PLAN2")]
+    assert len(plan_receipts) == 1
+    receipt = plan_receipts[0]
+    assert receipt["outcome"] == "published"
+    outputs = {output["path"]: output for output in receipt["outputs"]}
+    assert set(outputs) == {
+        "tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md",
+    }
+    for name, output in outputs.items():
+        assert output["sha256"] == hashlib.sha256((spec / name).read_bytes()).hexdigest()
+        assert output["evidence_kind"] in {"created", "replaced"}
+    assert (spec / "tasks.md").read_text() == (
+        "Original task plan" if keep_plan else "Final task plan"
+    )
+
+
+def test_final_fixture_unclaimed_plan2_mutation_remains_blocked(tmp_path):
+    _, store, executor, node, _, _ = final_fixture(tmp_path, "banzai")
+    original_dispatch = executor._provider.exec_agent.side_effect
+
+    def omit_task_claim(cwd, prompt, **kwargs):
+        result = original_dispatch(cwd, prompt, **kwargs)
+        if "Operate in **PLAN2**" in prompt:
+            result.echelon_result["output_files"] = [
+                path for path in result.echelon_result["output_files"]
+                if Path(path).name != "tasks.md"
+            ]
+        return result
+
+    executor._provider.exec_agent.side_effect = omit_task_claim
+    result = executor.execute(node, store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.result.state_updates["invalid_outputs"] == [
+        {"path": "tasks.md", "reason": "unclaimed output mutation"},
+    ]
 
 
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
