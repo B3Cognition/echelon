@@ -13,7 +13,7 @@ from tests.unit.test_delivery_controller import _make_controller
 def test_delivery_without_llm_provider_blocks_before_ralph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    coordinator = _make_controller(tmp_path)
+    coordinator = _make_controller(tmp_path, published_spec=True)
     coordinator._config.llm.enabled = False
     constructed: list[bool] = []
 
@@ -42,7 +42,7 @@ def test_delivery_without_llm_provider_blocks_before_ralph(
 def test_delivery_controller_passes_context_without_resolving_build_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    coordinator = _make_controller(tmp_path)
+    coordinator = _make_controller(tmp_path, published_spec=True)
     coordinator._config.llm.enabled = True
     monkeypatch.setattr(
         "harness.delivery_controller.AICodingCliProvider", lambda config: object()
@@ -69,4 +69,8 @@ def test_delivery_controller_passes_context_without_resolving_build_prompt(
     ))
 
     assert result.termination_reason == "fixture_stop"
-    assert captured == ["spec spec-001 semi mode\n\nRepair task T-001"]
+    stack_context = coordinator._build_stack_context(
+        tmp_path / "specs/spec-001", project_root=tmp_path, target_root=tmp_path,
+    )
+    assert "cli-artifacts" in stack_context
+    assert captured == [f"spec spec-001 semi mode\n\nRepair task T-001\n\n{stack_context}"]
