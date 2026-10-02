@@ -311,7 +311,7 @@ def test_proven_native_reset_enters_policy_publication_not_clarification(monkeyp
     monkeypatch.setattr(ctrl, "_validate_human_input_resolver", lambda *args: None)
     monkeypatch.setattr(ctrl, "_validate_human_input_resolution_answer", lambda *args: None)
     monkeypatch.setattr(ctrl, "_validate_human_input_route", lambda phase, *args: phase)
-    monkeypatch.setattr(ctrl, "_cleanup_controller_completion_orphans", lambda: True)
+    monkeypatch.setattr(ctrl, "_cleanup_unreferenced_effect_drafts", lambda: True)
     class PrepareReached(Exception):
         pass
     def prepare(*args):

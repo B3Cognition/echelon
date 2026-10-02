@@ -181,7 +181,7 @@ def test_managed_answer_retry_cleans_only_verified_drafts_before_replacement(mon
     monkeypatch.setattr(ctrl, "_policy_for_human_input_decision", lambda value: None)
     monkeypatch.setattr(ctrl, "_validate_human_input_resolver", lambda *args: None)
     monkeypatch.setattr(ctrl, "_validate_human_input_resolution_answer", lambda *args: None)
-    monkeypatch.setattr(ctrl, "_cleanup_controller_completion_orphans", lambda: seen.append("cleanup") or cleanup)
+    monkeypatch.setattr(ctrl, "_cleanup_unreferenced_effect_drafts", lambda: seen.append("cleanup") or cleanup)
     class Prepared(Exception):
         pass
     def prepare(*args):
