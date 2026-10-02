@@ -13,6 +13,7 @@ from echelon.spec_service import (
     _consume_mode_arg,
     _print_squad_summary,
 )
+from harness.squad_state import SquadStateStore
 
 
 def test_consume_mode_arg_accepts_split_form() -> None:
@@ -395,11 +396,13 @@ def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
     state: dict[str, object],
 ) -> None:
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
-    squad_dir.mkdir(parents=True)
-    (squad_dir / "state.json").write_text(
-        json.dumps({"user_message": "build notes", **state}),
-        encoding="utf-8",
-    )
+    store = SquadStateStore(squad_dir)
+    store.initialize(squad_dir.name, "greenfield", "build notes", 0, "phase1-discover")
+    current = store.load()
+    current.pop("spec_authoring_mode", None)
+    current.update(state)
+    store.save(current)
+    before = (squad_dir / "state.json").read_bytes()
     monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.spec_service._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
@@ -420,6 +423,7 @@ def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
 
     assert exc.value.code == 2
     assert "--reset --perfectionist" in capsys.readouterr().err
+    assert (squad_dir / "state.json").read_bytes() == before
 
 
 @pytest.mark.parametrize("policy", ["changed", "target-changed", "target-only"])
