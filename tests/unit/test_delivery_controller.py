@@ -317,7 +317,7 @@ class TestSingleStrategy:
             "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
         }
 
-    @pytest.mark.parametrize("invalid_contract", ["missing", "changed-owner"])
+    @pytest.mark.parametrize("invalid_contract", ["missing", "changed-owner", "wrong-source"])
     def test_verification_admission_preserves_invalid_retained_contract(
         self, tmp_path: Path, invalid_contract: str,
     ) -> None:
@@ -329,6 +329,7 @@ class TestSingleStrategy:
         store.initialize(
             "retained-run", "semi",
             delivery_stack_snapshot=None if invalid_contract == "missing" else snapshot,
+            source_root=str(tmp_path / "undeclared-source") if invalid_contract == "wrong-source" else None,
         )
         store.transition("running")
         if invalid_contract == "changed-owner":
@@ -340,11 +341,11 @@ class TestSingleStrategy:
             coord._resolve_run_context(RunIntent(spec_id="spec-001")), store,
         )
 
-        assert reason == (
-            "verification_prerequisite: retained run has no verification contract; start a new run"
-            if invalid_contract == "missing" else
-            "verification_prerequisite: owner stack contract changed; retained evidence cannot be reused"
-        )
+        assert reason == {
+            "missing": "verification_prerequisite: retained run has no verification contract; start a new run",
+            "changed-owner": "verification_prerequisite: owner stack contract changed; retained evidence cannot be reused",
+            "wrong-source": "verification_prerequisite: source root is not bound to a declared target",
+        }[invalid_contract]
         assert store.state_file.read_bytes() == before
 
     def test_direct_single_target_derives_canonical_targets_and_finalizes(
@@ -1993,15 +1994,26 @@ class TestSmartResumeDetection:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Polyrepo dispatch target metadata is persisted in harness state."""
-        target = tmp_path / "rbf-opta-points"
-        target.mkdir()
+        from harness.spec_frontmatter import write_targets
+
+        target = tmp_path / "sources" / "rbf-opta-points"
+        target.mkdir(parents=True)
+        (tmp_path / "sources" / "api").mkdir()
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "rbf-opta-points")
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/rbf-opta-points")
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/rbf-opta-points,sources/api")
         monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-011,T-012")
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
+        spec_dir = tmp_path / "specs" / "spec-001"
+        write_targets(spec_dir, ["sources/rbf-opta-points", "sources/api"])
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-011 complexity=standard phase=build req=INFRA depends=none target=sources/rbf-opta-points\n"
+            "- [ ] T-012 complexity=standard phase=verify req=INFRA depends=T-011 target=sources/rbf-opta-points\n"
+            "- [ ] T-013 complexity=standard phase=build req=INFRA depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
         with patch("harness.delivery_controller.RalphController") as MockRalph:
