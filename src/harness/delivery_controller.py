@@ -2410,12 +2410,17 @@ class DeliveryController:
 
         except DeliveryConfigurationError as exc:
             state = state_store.read()
-            phase = {
-                "running": "implementation",
-                "validating": "visual",
-                "reviewing": "review",
-                "finalizing": "finalization",
-            }.get(str(state.get("status")), "implementation")
+            phase = self._resume_phase(state)
+            if state.get("status") == "interrupted":
+                # Admission can fail before the normal resume transition. Restore
+                # only the saved phase so its failure can be durably blocked;
+                # this does not authorize any provider or publication work.
+                state_store.transition({
+                    "implementation": "running",
+                    "visual": "validating",
+                    "review": "reviewing",
+                    "finalization": "finalizing",
+                }[phase])
             implementation = self._implementation_from_state(state)
             return self._persist_phase_block(
                 state_store,

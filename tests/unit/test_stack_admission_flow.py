@@ -115,6 +115,71 @@ def test_direct_delivery_rejects_missing_capability_before_dispatch(tmp_path):
     assert not ctrl.state().get("delivery_slice_operation")
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(("status", "phase"), [
+    ("interrupted", "implementation"), ("interrupted", "visual"), ("interrupted", "review"),
+    ("blocked", "implementation"), ("blocked", "visual"), ("blocked", "review"),
+    ("blocked", "finalization"),
+])
+@pytest.mark.parametrize("reset", [False, True])
+def test_paused_delivery_admission_failure_preserves_checkpoint(tmp_path, monkeypatch, status, phase, reset):
+    """Rejected admission must not crash, restart work, or change its saved phase."""
+    from harness.state import StateStore
+
+    custom_stack(tmp_path)
+    select(tmp_path, ["custom"])
+    directory = spec(tmp_path)
+    ctrl = delivery(tmp_path)
+    store = StateStore(ctrl._state_dir, directory.name)
+    store.initialize(
+        "retained-run", "semi", token_budget=1000,
+        enabled_phases=["implementation", "visual", "review", "finalization"],
+        delivery_stack_snapshot=_delivery_stack_snapshot(resolve_verification_stacks(tmp_path, tmp_path)),
+    )
+    store.transition("running")
+    for active in {
+        "implementation": [],
+        "visual": ["verified", "validating"],
+        "review": ["verified", "validating", "reviewing"],
+        "finalization": ["verified", "validating", "reviewing", "finalizing"],
+    }[phase]:
+        store.transition(active)
+    store.transition(status, updates={
+        f"{status}_phase": phase, "outer_iter": 2, "inner_iter": 3, "tokens_used": 91,
+        "last_verify_result": {"passed": True, "failures": [], "duration_s": 0.0, "token_usage": 0},
+        "delivery_slice_operation": {"id": "accepted-operation", "progress_applied": True},
+    })
+    before = store.read()
+    receipt = store.state_dir / "retained-receipt.json"
+    receipt.write_text('{"operation_id":"accepted-operation","accepted":true}\n')
+    receipt_bytes = receipt.read_bytes()
+    select(tmp_path, ["generic"])
+
+    def forbidden_execution(*args, **kwargs):
+        raise AssertionError("Rejected admission must not execute Delivery effects")
+
+    monkeypatch.setattr("harness.llm_provider.AICodingCliProvider.run_agent_result", forbidden_execution)
+    ctrl._gitops.create_worktree.side_effect = forbidden_execution
+    ctrl._gitops.create_draft_pr.side_effect = forbidden_execution
+    ctrl._provider.create.side_effect = forbidden_execution
+
+    for _ in range(2):
+        result = ctrl.run(RunIntent(spec_id=directory.name, resume=True, reset=reset))
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "delivery_configuration_invalid"
+        assert result.blocked_phase == phase
+        after = store.read()
+        assert after["status"] == "blocked"
+        assert after["blocked_phase"] == phase
+        assert after["interrupted_phase"] is None
+        assert "coverage_observer_unavailable" in after["build_reason"]
+        for field in ("run_id", "outer_iter", "inner_iter", "tokens_used", "token_budget",
+                      "last_verify_result", "delivery_stack_snapshot", "delivery_slice_operation"):
+            assert after[field] == before[field]
+        assert receipt.read_bytes() == receipt_bytes
+
+
 def test_spec_terminal_readiness_does_not_trust_stale_ready_status(tmp_path):
     from echelon.spec_service import _phase_a_ready_to_build
 
