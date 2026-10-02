@@ -38,7 +38,17 @@ def _accepted(slice_project, tmp_path, monkeypatch, mode="semi", cli="codex"):
     provider = AICodingCliProvider(config)
 
     class ExternalBackend:
+        # The scripted executor's review steps only emit bound JSON. Only its
+        # implementer branch can write app.py; empty review allowlists are exact.
+        exclusive_write_scope_contract_id = "scripted-empty-review-scope-v1"
+
         def run_agent(self, request):
+            metadata = request.metadata["prompt_metadata"]
+            if metadata.get("tool_write_scope_exclusive") is True:
+                assert metadata.get("tool_write_paths") == []
+                assert request.metadata["delivery_assignment"]["step"] in {
+                    "spec_guard", "code_reviewer", "test_guardian",
+                }
             return executor.run_agent_result(
                 request.cwd, request.prompt, request_metadata=request.metadata,
             )
@@ -57,6 +67,16 @@ def _accepted(slice_project, tmp_path, monkeypatch, mode="semi", cli="codex"):
     )
     executor.calls.clear()
     return controller, store, executor
+
+
+@pytest.mark.parametrize("cli", ["claude", "codex"])
+def test_scripted_provider_completes_initial_build_before_feedback(
+    slice_project, tmp_path, monkeypatch, cli,
+):
+    controller, store, executor = _accepted(slice_project, tmp_path, monkeypatch, cli=cli)
+    assert store.read()["delivery_slice_task_id"] == "T-001"
+    assert controller._llm_provider.supports_exclusive_write_scope
+    assert executor.calls == []
 
 
 def _downstream(controller, root, *, phase="visual", base="Keep the isometric camera."):
