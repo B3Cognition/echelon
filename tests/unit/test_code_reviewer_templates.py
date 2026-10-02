@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.code-reviewer.md"
@@ -19,10 +21,10 @@ class TestCodeReviewerTemplates:
         assert "agent: echelon-code-reviewer (CODE REVIEWER)" in text
         assert "agent: CODE_REVIEWER" not in text
 
-    def test_code_review_phase_uses_canonical_output_path(self) -> None:
-        text = PHASE.read_text(encoding="utf-8")
-
-        assert "Append to `{spec_dir}/code-review-report.md`" in text
+    def test_retained_code_reviewer_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
+        assert "build-4-code-review" not in {phase["id"] for phase in workflow["phases"]}
+        assert not PHASE.exists()
 
     def test_python_style_claims_require_ruff_format_check(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")

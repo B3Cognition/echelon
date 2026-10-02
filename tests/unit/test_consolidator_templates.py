@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "runtime" / "templates"
@@ -40,11 +42,7 @@ class TestConsolidatorTemplates:
             "12.7 Run echelon.scorekeeper"
         )
 
-    def test_build_finalize_dispatches_consolidator_before_scorekeeper(self) -> None:
-        text = BUILD_FINALIZE.read_text(encoding="utf-8")
-
-        assert "echelon.consolidator (CONSOLIDATOR)" in text
-        assert ".echelon/runtime/templates/schema-consolidation-template.md" in text
-        assert text.index("8.3b Run echelon.consolidator") < text.index(
-            "8.4 Run echelon.scorekeeper"
-        )
+    def test_retained_consolidator_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
+        assert "build-8-finalize" not in {phase["id"] for phase in workflow["phases"]}
+        assert not BUILD_FINALIZE.exists()

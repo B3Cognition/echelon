@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.spec-guard.md"
@@ -17,8 +19,7 @@ class TestSpecGuardTemplates:
         assert "agent: echelon-spec-guard (SPEC GUARD)" in text
         assert "agent: SPEC_GUARD" not in text
 
-    def test_spec_guard_phase_uses_canonical_output_paths(self) -> None:
-        text = PHASE.read_text(encoding="utf-8")
-
-        assert "Append to `{spec_dir}/spec-compliance-report.md`" in text
-        assert "Update `{spec_dir}/traceability-matrix.md`" in text
+    def test_retained_spec_guard_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
+        assert PHASE.stem not in {phase["id"] for phase in workflow["phases"]}
+        assert not PHASE.exists()

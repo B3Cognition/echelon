@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.progress-tracker.md"
@@ -19,16 +21,7 @@ class TestProgressTrackerTemplates:
         assert "agent: echelon-progress-tracker (PROGRESS TRACKER)" in text
         assert "agent: PROGRESS_TRACKER" not in text
 
-    def test_progress_phase_uses_canonical_output_paths(self) -> None:
-        text = PHASE.read_text(encoding="utf-8")
-
-        assert "Append to `{spec_dir}/progress-report.md`" in text
-        assert "Update `{spec_dir}/process-metrics.md`" in text
-
-    def test_progress_phase_defers_task_marking_to_ralph_under_harness(self) -> None:
-        text = PHASE.read_text(encoding="utf-8")
-
-        assert "When `HARNESS_BUILD_STATUS_FILE` is set" in text
-        assert "do not execute this section" in text
-        assert "Ralph owns canonical `tasks.md` progress writes" in text
-        assert "never call\n`python -m harness mark-task-progress`" in text
+    def test_retained_progress_tracker_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
+        assert "build-6-progress" not in {phase["id"] for phase in workflow["phases"]}
+        assert not PHASE.exists()

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,7 +105,7 @@ class TestTrackerTemplates:
         assert "intent-alignment-check.md` in `specs/{NNN}-{feature}/`" not in text
         assert "intent-alignment-check.md` in `{spec_dir}/`" in text
 
-    def test_post_build_alignment_dispatch_includes_final_template(self) -> None:
-        text = POST_BUILD.read_text(encoding="utf-8")
-
-        assert ".echelon/runtime/templates/intent-alignment-final-template.md" in text
+    def test_retained_tracker_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+        assert "build-8-finalize" not in {phase["id"] for phase in workflow["phases"]}
+        assert not POST_BUILD.exists()

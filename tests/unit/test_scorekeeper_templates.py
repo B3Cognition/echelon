@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,12 +58,10 @@ class TestScorekeeperTemplates:
         assert "agent: echelon-scorekeeper (SCOREKEEPER)" in text
         assert "agent: SCORE" not in text
 
-    def test_build_finalize_dispatch_includes_scorekeeper_templates(self) -> None:
-        text = BUILD_FINALIZE.read_text(encoding="utf-8")
-
-        assert "agents/control/appendices/scorekeeper-output-template.md" in text
-        assert "agents/control/appendices/scorekeeper-scoring-reference.md" in text
-        assert "using the provided template" in text
+    def test_retained_scorekeeper_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
+        assert "build-8-finalize" not in {phase["id"] for phase in workflow["phases"]}
+        assert not BUILD_FINALIZE.exists()
 
     def test_phase4_document_mentions_scorekeeper_templates(self) -> None:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
