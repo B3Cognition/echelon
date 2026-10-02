@@ -4,15 +4,6 @@ This is a diagnostic companion to the existing quality metrics, not a gate.
 Links expose a possible verification approach; they do not establish that an
 AC adequately verifies its FR/NFR or that the described check was executed.
 Input is the canonical spec projection, not the separate derived lexicon file.
-
-Rationale: NASA's requirements-verification matrix calls for an identified
-verification approach per obligation; Ricca et al. found acceptance examples
-can clarify requirements; Zakeri-Nasrabadi and Parsa studied subjective and
-ambiguous wording as testability smells. None validates this small heuristic
-as a testability classifier, hence shadow-only output and explicit uncertainty.
-https://www.nasa.gov/reference/appendix-d-requirements-verification-matrix/
-https://doi.org/10.1016/j.infsof.2008.01.007
-https://arxiv.org/abs/2403.17479
 """
 
 import re
@@ -75,6 +66,16 @@ def _criterion_path(criterion: RequirementProjection) -> dict[str, object]:
     }
 
 
+# Research rationale: NASA recommends identifying a verification approach for
+# each requirement and tracing acceptance criteria to requirements and methods.
+# Ricca et al. found that acceptance tests can clarify requirements; research
+# on requirement smells motivates flagging subjective outcome wording.
+# None of these sources validates this heuristic as a pass/fail classifier:
+# keep it shadow-only, and leave semantic alignment explicitly unassessed.
+# https://www.nasa.gov/reference/appendix-d-requirements-verification-matrix/
+# https://swehb.nasa.gov/spaces/SWEHBVD/pages/102695413/SWE-034%2B-%2BAcceptance%2BCriteria
+# https://doi.org/10.1016/j.infsof.2008.01.007
+# https://arxiv.org/abs/2403.17479
 def assess_verification_paths(
     projections: tuple[RequirementProjection, ...],
 ) -> dict[str, dict[str, object]]:
