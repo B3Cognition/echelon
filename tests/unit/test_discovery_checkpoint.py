@@ -68,6 +68,19 @@ def test_checkpoint_restart_keeps_one_commit_and_releases_identity(checkpoint_ca
     assert checkpoint_case[2].pending_identity_publication(spec_id="game") is None
 
 
+def assert_uncommitted_checkpoint_failure(case, result, *, effect="checkpoint"):
+    state = case[1].load()
+    assert result.status == "blocked"
+    # Until the single native commit, the old logical state remains intact.
+    # Failed replay belongs to the sealed pending step, not a second dispatch.
+    assert state["last_dispatch"] is None, result
+    assert state["phase"] == "phase1-discover"
+    assert state["token_usage"] == 0
+    pending = state["pending_spec_step"]
+    assert pending["origin"] == "routed" and pending["cursor"] == effect
+    assert pending["failure"]["effect"] == effect
+
+
 @pytest.mark.parametrize("damage", ["ledger_missing", "lock_missing", "ledger_row", "extra_row", "unknown_field",
     "ledger_mode", "lock_content", "directory_mode", "extra_file", "artifact", "symlink"])
 def test_checkpoint_receipt_does_not_authorize_tampering(checkpoint_case, monkeypatch, damage):
@@ -96,9 +109,7 @@ def test_checkpoint_receipt_does_not_authorize_tampering(checkpoint_case, monkey
         else: value["extra"] = "not authorized"
         ledger.write_text(json.dumps(value, indent=2) + "\n")
     result = controller(checkpoint_case, executor).run(managed_discovery=selection(checkpoint_case))
-    assert result.status == "blocked"
-    state = checkpoint_case[1].load()
-    assert state["last_dispatch"]["post_dispatch_complete"] is False, result
+    assert_uncommitted_checkpoint_failure(checkpoint_case, result)
     assert checkpoint_case[2].pending_identity_publication(spec_id="game")["state"] == "applied"
     assert len(executor.calls) == 3
 
@@ -155,8 +166,9 @@ def test_matching_commit_trailers_cannot_certify_wrong_artifact_bytes(checkpoint
     monkeypatch.setattr(phase_checkpoints, "_commit_spec_changes", changed_commit)
     executor = FullDiscoveryExecutor()
     result = controller(checkpoint_case, executor).run(managed_discovery=selection(checkpoint_case), create_managed_discovery=True)
-    assert result.status == "blocked"
-    assert checkpoint_case[1].load()["last_dispatch"]["post_dispatch_complete"] is False
+    # The Git receipt exists, but subsequent source projection must reject its
+    # incorrect tree before context publication and the native state commit.
+    assert_uncommitted_checkpoint_failure(checkpoint_case, result, effect="context")
     assert checkpoint_case[2].pending_identity_publication(spec_id="game")["state"] == "applied"
     assert len(executor.calls) == 3
 
@@ -184,8 +196,7 @@ def test_committed_checkpoint_requires_its_preexisting_lock_before_receipt(check
     interrupt_checkpoint(checkpoint_case, executor, monkeypatch, point)
     (checkpoint_case[0] / "specs/game/.echelon/checkpoints.lock").unlink()
     result = controller(checkpoint_case, executor).run(managed_discovery=selection(checkpoint_case))
-    assert result.status == "blocked"
-    assert checkpoint_case[1].load()["last_dispatch"]["post_dispatch_complete"] is False
+    assert_uncommitted_checkpoint_failure(checkpoint_case, result)
     assert len(executor.calls) == 3
 
 
