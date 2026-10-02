@@ -367,6 +367,7 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
 ):
     from harness.human_input import HumanInputPolicyError
     from harness.squad_completion import prepare_spec_step_effects
+    from harness.spec_step import load_prepared_spec_step, prepare_spec_step
 
     controller, state, provider, _ = managed_controller(tmp_path)
     root = tmp_path.resolve()
@@ -378,14 +379,34 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
         owned_paths={Path("runs/first/specs/demo/spec.md")},
     )
     publication = transaction.seal()
-    prepared = prepare_spec_step_effects(
-        root, state.squad_dir, completion_id="9" * 32, origin="terminal",
+    completion = prepare_spec_step_effects(
+        root, state.squad_dir, completion_id="8" * 32, origin="terminal",
         publication={"kind": "external", "marker": publication.marker.to_dict()},
         route={"kind": "terminal", "terminal_phase": "DONE"}, effect_plan=(),
         checkpoint_prestate={"kind": "none"}, context_reason="retained completion",
         mine_phase_a=False, judgment_payload_sha256=(), judgments=(),
     )
-    state.begin_terminal_controller_completion(prepared, snapshot=state.capture_routing_snapshot())
+    snapshot = state.capture_routing_snapshot()
+    final_state = snapshot.state
+    final_state["status"] = "done"
+    prepared = prepare_spec_step(
+        state.squad_dir, step_id=completion.marker.completion_id, origin="terminal",
+        expected_state_revision=snapshot.state_revision,
+        expected_previous_dispatch_sha256=snapshot.previous_dispatch_sha256,
+        route=completion.intent.route, effects=("publication",),
+        publication={"kind": "external", "marker": publication.marker.to_dict()},
+        final_state=final_state, provenance={
+            "completion_marker": completion.marker.to_dict(),
+            "effect_intent": completion.intent.to_dict(),
+        },
+    )
+    state.begin_spec_step(prepared, snapshot=snapshot)
+    pending = state.load()["pending_spec_step"]
+    assert load_prepared_spec_step(state.squad_dir, pending).intent.publication == {
+        "kind": "external", "marker": publication.marker.to_dict(),
+    }
+    assert "pending_controller_completion" not in state.load()
+    assert "pending_spec_publication" not in state.load()
     remove_managed_metadata(state)
     before = {str(path.relative_to(state.squad_dir)): (path.stat().st_mode, path.read_bytes())
               for path in state.squad_dir.rglob("*") if path.is_file()}
