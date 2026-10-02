@@ -340,17 +340,49 @@ def test_changed_planning_inputs_invalidate_completion_receipt(tmp_path, changed
 
 
 @pytest.mark.parametrize("verdict,exit_code,timed_out", [("BLOCKED", 0, False), ("DONE", 1, False), ("DONE", 0, True)])
-def test_failed_plan_invalidates_older_completion_receipt(tmp_path, verdict, exit_code, timed_out):
-    failure = SquadAgentResult(exit_code=exit_code, echelon_result={"verdict": verdict, "state_updates": {}},
-                              raw_output="Planner failed", duration_ms=0, timed_out=timed_out)
-    _, store, executor, node, _, _ = scheduling_fixture(tmp_path, plan_result=failure)
-    state = store.load()
-    del state["issue_resolution_ledger"]["ISS-B"]
-    state["phase3_plan2_completion"] = {"schema_version": 1, "run_id": "r", "input_manifest": {}, "prompt_sha256": "old"}
-    store.save(state)
+def test_failed_plan_does_not_reuse_previous_final_review(tmp_path, verdict, exit_code, timed_out):
+    from harness.squad_executors import ExecutorBlockedResult
+    from tests.integration.test_phase3_final_review import final_fixture
+
+    controller, store, executor, node, spec, calls = final_fixture(
+        tmp_path, "banzai", keep_plan=True,
+    )
+    assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
+    previous_round = deepcopy(store.load()["phase3_final_review"])
+    (spec / "spec.md").write_text("FR-002: A new authoritative requirement")
+    dispatch = executor._provider.exec_agent.side_effect
+    fail_plan = True
+
+    def attempt(cwd, prompt, **kwargs):
+        result = dispatch(cwd, prompt, **kwargs)
+        if fail_plan and "Operate in **PLAN2**" in prompt:
+            result.echelon_result["verdict"] = verdict
+            result.exit_code = exit_code
+            result.timed_out = timed_out
+        return result
+
+    executor._provider.exec_agent.side_effect = attempt
     result = executor.execute(node, store)
-    assert result.blocked
-    assert not store.load().get("phase3_plan2_completion")
+    failed = result.result if isinstance(result, ExecutorBlockedResult) else result
+    assert failed.blocked
+    assert calls.count(("PLAN2", False)) == 2
+    assert ("WHY3", True) not in calls
+    if isinstance(result, FinalizedPhaseExecution):
+        assert result.state_updates["phase3_final_review"] is None
+    # The input guard revokes the stale round before dispatch. Failed planning
+    # must not install a replacement, and retry must perform planning again.
+    assert not store.load().get("phase3_final_review")
+    fail_plan = False
+
+    retried = executor.execute(node, store)
+
+    assert isinstance(retried, FinalizedPhaseExecution)
+    assert retried.state_updates["phase3_final_review"]
+    assert retried.state_updates["phase3_final_review"] != previous_round
+    assert calls.count(("PLAN2", False)) == 3
+    assert ("WHY3", True) not in calls
+    assert advance(controller, store, retried) == "phase3-consensus"
+    assert store.load()["phase3_final_review"] == retried.state_updates["phase3_final_review"]
 
 
 @pytest.mark.parametrize("changed_input", ["role.md", "implementability-report.md", "spec.md"])
