@@ -259,7 +259,7 @@ def test_clarification_rejects_stale_decision_and_changed_sources_before_writes(
     assert len(executor.calls) == 9
 
 
-@pytest.mark.parametrize("point", ["staged", "resolved", "promoted", "context", "completed", "released"])
+@pytest.mark.parametrize("point", ["staged", "handed_off", "promoted", "context", "completed", "released"])
 def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
     from harness.human_input import AppliedHumanInputResolution
     from harness.element_identity_store import IdentityStore
@@ -271,7 +271,7 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
     answer = AppliedHumanInputResolution(None, "Use arrow keys", "user")
     target, method = {
         "staged": (ctrl, "_prepare_spec_step_effects"),
-        "resolved": (store, "apply_human_input_state_resolution"),
+        "handed_off": (store, "begin_spec_step"),
         "promoted": (IdentityStore, "apply_identity_publication"),
         "context": (ctrl, "_apply_controller_completion_effect"),
         "completed": (store, "complete_spec_step"),
@@ -282,6 +282,14 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
         value = original(*args, **kwargs)
         if point == "staged":
             assert store.load() == before
+            assert not (store.staging_dir / "user-clarifications.md").exists()
+        if point == "handed_off":
+            current = store.load()
+            assert current["pending_spec_step"] == args[0].marker.to_dict()
+            assert current["pending_spec_step"]["origin"] == "resolution"
+            assert current["pending_spec_step"]["cursor"] == "publication"
+            assert current["blocked_decision"] == before["blocked_decision"]
+            assert current["token_usage"] == before["token_usage"]
             assert not (store.staging_dir / "user-clarifications.md").exists()
         if point == "completed":
             current = store.load()
