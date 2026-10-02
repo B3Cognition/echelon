@@ -7,6 +7,7 @@ import pytest
 
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from tests.unit.test_delivery_controller_integration import _controller, _reconstruct, _build
+from tests.unit.test_delivery_controller_integration import _declare_repair_case, _repair_failure
 from tests.unit.test_delivery_documentation import (
     documentation_project, IMPACT, review_report, ProcessLost,
 )
@@ -84,6 +85,7 @@ def test_controlled_no_impact_requires_independent_pass(documentation_project, t
 
 def test_docs_after_accepted_task_retains_source_repair_target_and_empty_id_exemption(documentation_project, tmp_path):
     controller, store, docs, root, spec = _setup(documentation_project, tmp_path)
+    _declare_repair_case((root, spec, None))
     impl = ScriptedExecutor()
     controller._llm_provider = impl
     built = _build(controller, (root, spec, None))
@@ -113,20 +115,30 @@ def test_docs_after_accepted_task_retains_source_repair_target_and_empty_id_exem
     controller._enforce_completed_task_ids(forged, str(root))
     assert not forged["passed"]
     controller._llm_provider = impl
-    repaired = _feedback(controller, root, _failure("test-greeting"))
+    repaired = _feedback(controller, root, _repair_failure())
     assert repaired["passed"] and repaired["task_ids"] == ["T-001"], repaired
 
 
-@pytest.mark.parametrize("ids", [("test-source",), ("documentation-broken", "test-source"), ()])
-def test_source_mixed_and_empty_failures_keep_implementation_route(documentation_project, tmp_path, ids):
-    controller, _, _, root, spec = _setup(documentation_project, tmp_path)
+@pytest.mark.parametrize("ids, repair_allowed", [
+    (("UT-GREETING-001",), True),
+    (("documentation-broken", "UT-GREETING-001"), False),
+    ((), False),
+])
+def test_source_repair_requires_owned_identity_for_every_failure(documentation_project, tmp_path, ids, repair_allowed):
+    controller, store, _, root, spec = _setup(documentation_project, tmp_path)
+    _declare_repair_case((root, spec, None))
     impl = ScriptedExecutor()
     controller._llm_provider = impl
     built = _build(controller, (root, spec, None))
     controller._apply_build_task_progress(worktree_path=str(root), task_ids=built["task_ids"])
     fixed = _feedback(controller, root, _failure(*ids))
-    assert fixed["passed"] and fixed["task_ids"] == ["T-001"], fixed
-    assert [call[0]["step"] for call in impl.calls] == ["implementer", "spec_guard", "code_reviewer", "test_guardian"] * 2
+    assert fixed["passed"] is repair_allowed, fixed
+    if repair_allowed:
+        assert fixed["task_ids"] == ["T-001"]
+    else:
+        assert fixed["build_reason"].startswith("delivery_repair_ownership_required: missing failed test identity")
+        assert store.read()["delivery_slice_task_id"] == "T-001"
+    assert [call[0]["step"] for call in impl.calls] == ["implementer", "spec_guard", "code_reviewer", "test_guardian"] * (2 if repair_allowed else 1)
 
 
 @pytest.mark.parametrize("point", ["intent", "completion", "publication", "progress"])
