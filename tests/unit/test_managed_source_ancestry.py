@@ -191,7 +191,8 @@ def test_ancestry_does_not_hide_current_source_drift(synthesized, damage):
     assert len(executor.calls) == 6
 
 
-def test_ancestor_checkpoint_proof_keeps_its_original_encoding(checkpoint_case, monkeypatch):
+def test_legacy_checkpoint_encoding_cannot_replace_native_ancestor_binding(checkpoint_case, monkeypatch):
+    from harness.discovery_completion import _retained_completion_proof
     from harness.element_identity_store import IdentityStore
     root, store, identity, _ = checkpoint_case
     original_release = IdentityStore.release_identity_publication
@@ -200,6 +201,18 @@ def test_ancestor_checkpoint_proof_keeps_its_original_encoding(checkpoint_case, 
         if not retained:
             proof = json.loads(kwargs["completion_payload"])
             legacy = dict(version=2, completion=proof["completion"], checkpoint=proof["proof"])
+            # The historical reader still accepts an exact legacy binding;
+            # dropping the v4 source cannot authorize this native ancestor.
+            marker, _, _ = _retained_completion_proof(legacy)
+            historical_source = dict(
+                dispatch_id=marker.completion_id,
+                completion_intent_sha256=marker.intent_sha256,
+                completion_receipts_sha256=marker.receipts_sha256,
+                completed_publication_binding_sha256=marker.publication_binding_sha256,
+            )
+            _retained_completion_proof(legacy, source=historical_source)
+            with pytest.raises((CompletionError, ValueError)):
+                _retained_completion_proof(legacy, source=proof["source"])
             kwargs["completion_payload"] = json.dumps(legacy, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
             retained.update(deepcopy(kwargs))
         return original_release(self, **kwargs)
@@ -209,10 +222,9 @@ def test_ancestor_checkpoint_proof_keeps_its_original_encoding(checkpoint_case, 
         patch.setattr(IdentityStore, "release_identity_publication", old_release)
         result = controller(checkpoint_case, executor).run(managed_discovery={**selection(checkpoint_case),
             "through_phase": "phase1-synthesizer"}, create_managed_discovery=True)
-    assert result.phase == "phase1-modeler", result
+    assert result.status == "blocked" and result.phase == "phase1-synthesizer", result
     state = store.load()
-    _, runtime_view = released_discovery_input_projectors(root, store.squad_dir, state, source=source_for(state))
-    with captured(checkpoint_case) as sources:
-        admit_runtime_inputs(root, store.squad_dir, state, runtime_view(sources))
+    with pytest.raises(CompletionError):
+        released_discovery_input_projectors(root, store.squad_dir, state, source=source_for(state))
     assert identity.identity_publication(spec_id="game", operation_id=retained["operation_id"])["completion_payload"] == retained["completion_payload"]
-    assert len(executor.calls) == 6 and store.load() == state
+    assert len(executor.calls) == 3 and store.load() == state

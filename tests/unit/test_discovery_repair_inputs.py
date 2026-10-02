@@ -115,7 +115,7 @@ def test_missing_repair_selection_cannot_read_accepted_inputs(checkpoint_case):
 
 
 @pytest.mark.parametrize("version", [1, 2])
-def test_capture_obeys_retained_legacy_proof_capability(checkpoint_case, monkeypatch, version):
+def test_capture_rejects_legacy_encoding_without_native_source_binding(checkpoint_case, monkeypatch, version):
     from harness.discovery_inputs import DiscoveryInputError
     from harness.element_identity_store import IdentityStore
     root, store, identity, _ = checkpoint_case
@@ -144,12 +144,9 @@ def test_capture_obeys_retained_legacy_proof_capability(checkpoint_case, monkeyp
     unit, = saved["managed_discovery_repairs"]["units"]
     operation = "discovery-completion-" + saved["last_dispatch"]["dispatch_id"]
     retained = identity.identity_publication(spec_id="game", operation_id=operation)["completion_payload"]
-    if version == 1:
-        with pytest.raises(DiscoveryInputError):
-            capture_inputs(root, store, unit)
-    else:
-        captured = capture_inputs(root, store, unit)
-        assert "U-000001" in captured[1]["unknowns.md"]
-        assert "U-000001" in captured[2]["runs/first/context/current-feature-context.md"]
+    # This is a current native run, not a historical legacy source. Neither
+    # old encoding carries the native source hashes used by the repair claim.
+    with pytest.raises(DiscoveryInputError):
+        capture_inputs(root, store, unit)
     assert store.load() == saved and len(executor.calls) == 3
     assert identity.identity_publication(spec_id="game", operation_id=operation)["completion_payload"] == retained

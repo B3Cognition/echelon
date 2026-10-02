@@ -50,9 +50,9 @@ def test_new_completion_retains_full_proof_after_cleanup(prepared, checkpoint_ca
 
 
 @pytest.mark.parametrize("version", [1, 2])
-def test_old_release_retry_preserves_exact_payload(prepared, checkpoint_case, monkeypatch, version):
+def test_downgraded_release_retains_bytes_and_cannot_authorize_native_cleanup(prepared, checkpoint_case, monkeypatch, version):
     from harness.element_identity_store import IdentityStore
-    from harness.discovery_completion import released_discovery_projector
+    from harness.discovery_completion import released_discovery_projector, released_discovery_input_projectors
     from harness.squad_completion import CompletionError
     if version == 1:
         state = prepared[1].load()
@@ -81,13 +81,22 @@ def test_old_release_retry_preserves_exact_payload(prepared, checkpoint_case, mo
     row = prepared[2].identity_publication(spec_id="game",
         operation_id="discovery-completion-" + state["last_dispatch"]["dispatch_id"])
     assert row["completion_payload"] == saved[0]
-    assert not list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
+    # Retain the authentic companion stage for reconciliation: an old payload
+    # fabricated from a native completion is not native cleanup authority.
+    assert list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
     assert len(executor.calls) == 3 and state["token_usage"] == 21
     if version == 1:
         with pytest.raises(CompletionError):
             released_discovery_projector(prepared[0], prepared[1].squad_dir, state)
     else:
+        # Historical v2 bytes remain readable in their own binding domain.
         assert callable(released_discovery_projector(prepared[0], prepared[1].squad_dir, state))
+    from harness.discovery_producer import SOURCE_FIELDS
+    native_source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+    with pytest.raises(CompletionError):
+        released_discovery_input_projectors(prepared[0], prepared[1].squad_dir, state, source=native_source)
+    assert prepared[1].load() == state
+    assert prepared[2].identity_publication(spec_id="game", operation_id="discovery-completion-" + native_source["dispatch_id"])["completion_payload"] == saved[0]
 
 
 def repair_selection(state):
