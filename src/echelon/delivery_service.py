@@ -3069,6 +3069,7 @@ def _run_delivery_under_lease(
             sys.exit(1)
         targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel and not target_env:
+            _block_if_harness_authored_inputs_invalid(spec_dir, rerun_command)
             _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id, project_root=spec_search_root)
             _block_if_spec_task_targets_mismatch(
                 spec_dir,
@@ -3141,45 +3142,11 @@ def _run_delivery_under_lease(
         _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
         sys.exit(1)
 
-    # Validate authored build inputs before Phase A readiness.  A malformed
-    # published task/plan needs its migration guidance, while a well-formed but
-    # incomplete spec needs the Phase A recovery guidance.  Both checks happen
-    # before creating Git or sandbox resources.
     from harness.skills.run_skill import _count_tasks
-    from harness.plan_validation import PlanValidationError, validate_plan_file
-    from harness.task_validation import TaskValidationError
 
-    try:
-        task_count = _count_tasks(spec_id, str(spec_search_root))
-    except TaskValidationError as e:
-        tasks_path = (
-            spec_dir / "tasks.md"
-            if spec_dir is not None
-            else Path("specs") / spec_id / "tasks.md"
-        )
-        print(
-            "✗ tasks.md is not in canonical format.\n"
-            f"  Error: {e}\n"
-            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
-            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
-            f"  Then rerun:        {rerun_command}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if spec_dir is not None and (spec_dir / "plan.md").exists():
-        try:
-            validate_plan_file(spec_dir / "plan.md")
-        except PlanValidationError as e:
-            plan_path = spec_dir / "plan.md"
-            print(
-                "✗ plan.md is not in canonical format.\n"
-                f"  Error: {e}\n"
-                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
-                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
-                f"  Then rerun:        {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    if spec_dir is not None:
+        _block_if_harness_authored_inputs_invalid(spec_dir, rerun_command)
+    task_count = _count_tasks(spec_id, str(spec_search_root))
     if spec_dir is not None:
         _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name, project_root=spec_search_root)
 
@@ -3324,6 +3291,42 @@ def _delivery_outcome_exit_code(outcome: object) -> int:
     if outcome.landing.status == "blocked":
         return 1
     return 0 if any(result.status == "converged" for result in outcome.results) else 1
+
+
+def _block_if_harness_authored_inputs_invalid(spec_dir: Path, rerun_command: str) -> None:
+    """Report malformed authored inputs before static readiness/target dispatch."""
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError, validate_tasks_file
+
+    try:
+        tasks_path = spec_dir / "tasks.md"
+        if tasks_path.exists():
+            validate_tasks_file(tasks_path)
+    except TaskValidationError as exc:
+        tasks_path = spec_dir / "tasks.md"
+        print(
+            "✗ tasks.md is not in canonical format.\n"
+            f"  Error: {exc}\n"
+            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
+            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
+            f"  Then rerun:        {rerun_command}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    plan_path = spec_dir / "plan.md"
+    if plan_path.exists():
+        try:
+            validate_plan_file(plan_path)
+        except PlanValidationError as exc:
+            print(
+                "✗ plan.md is not in canonical format.\n"
+                f"  Error: {exc}\n"
+                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
+                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
+                f"  Then rerun:        {rerun_command}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
 
 
 def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str, *, project_root: Path) -> None:
