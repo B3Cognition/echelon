@@ -274,7 +274,7 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
         "resolved": (store, "apply_human_input_state_resolution"),
         "promoted": (IdentityStore, "apply_identity_publication"),
         "context": (ctrl, "_apply_controller_completion_effect"),
-        "completed": (store, "complete_controller_completion"),
+        "completed": (store, "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
     }[point]
     original = getattr(target, method)
@@ -283,6 +283,11 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
         if point == "staged":
             assert store.load() == before
             assert not (store.staging_dir / "user-clarifications.md").exists()
+        if point == "completed":
+            current = store.load()
+            assert "pending_spec_step" not in current
+            assert current["blocked_decision"]["status"] == "resolved"
+            assert current["last_human_input_completion"]["completion_id"] == args[0].marker.step_id
         raise Interrupted()
     with monkeypatch.context() as patch:
         patch.setattr(target, method, interrupt)
@@ -290,6 +295,21 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
             ctrl.apply_human_input_resolution(before["blocked_decision"]["id"],
                 expected_state_revision=before["state_revision"], resolution=answer)
     assert identity.identity_history(spec_id="game") == old_history
+    if point == "completed":
+        committed = store.load()
+        pending = identity.pending_identity_publication(spec_id="game")
+        completion_id = committed["last_human_input_completion"]["completion_id"]
+        for name in ("intent.json", "receipts.json"):
+            path = store.squad_dir / ".spec-step-effects" / completion_id / name
+            original_bytes = path.read_bytes()
+            path.write_text("{}\n")
+            blocked = controller(checkpoint_case, executor).run(managed_discovery=request)
+            assert blocked.status == "blocked"
+            assert store.load() == committed
+            assert identity.pending_identity_publication(spec_id="game") == pending
+            assert identity.identity_history(spec_id="game") == old_history
+            assert len(executor.calls) == 9
+            path.write_bytes(original_bytes)
     restarted = controller(checkpoint_case, executor)
     if point == "staged":
         assert restarted.run(managed_discovery=request).phase == "phase1-tracker"

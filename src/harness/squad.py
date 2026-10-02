@@ -2219,21 +2219,35 @@ class SquadController:
                 return True
             operation_id = pending["preparation"]["operation_id"]
             dispatch = state.get("last_dispatch") or {}
+            resolution = state.get("last_human_input_completion")
             if (
-                not isinstance(dispatch, Mapping)
-                or dispatch.get("post_dispatch_complete") is not True
-                or operation_id != "discovery-completion-" + str(dispatch.get("spec_step_id") or "")
+                isinstance(resolution, Mapping)
+                and operation_id == "discovery-completion-" + str(resolution.get("completion_id") or "")
             ):
-                return False
-            step = load_prepared_spec_step(self._squad_dir, {
-                "schema_version": 1, "origin": "routed", "cursor": "commit",
-                "step_id": dispatch["spec_step_id"],
-                "intent_sha256": dispatch["completion_intent_sha256"],
-                "receipts_sha256": dispatch["completion_receipts_sha256"],
-                "publication_binding_sha256": dispatch["completed_publication_binding_sha256"],
-                "failure": None,
-            })
-            companion = self._completion_marker_from_spec_step(step)
+                # The native state commit retains companion hashes for human
+                # resolutions. Authenticate those exact bytes; never infer a
+                # resolution from the previous routed dispatch's step hashes.
+                companion = {
+                    key: value for key, value in resolution.items()
+                    if key != "decision_id"
+                }
+                companion.update(origin="resolution", step="complete")
+            else:
+                if (
+                    not isinstance(dispatch, Mapping)
+                    or dispatch.get("post_dispatch_complete") is not True
+                    or operation_id != "discovery-completion-" + str(dispatch.get("spec_step_id") or "")
+                ):
+                    return False
+                step = load_prepared_spec_step(self._squad_dir, {
+                    "schema_version": 1, "origin": "routed", "cursor": "commit",
+                    "step_id": dispatch["spec_step_id"],
+                    "intent_sha256": dispatch["completion_intent_sha256"],
+                    "receipts_sha256": dispatch["completion_receipts_sha256"],
+                    "publication_binding_sha256": dispatch["completed_publication_binding_sha256"],
+                    "failure": None,
+                })
+                companion = self._completion_marker_from_spec_step(step)
             completion = load_prepared_spec_step_effects(
                 self._project_root, self._squad_dir, companion,
             )
