@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -20,6 +21,9 @@ from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from tests.integration.test_squad_controller import (
+    _materialize_canonical_test_config, _select_artifact_publication_stack,
+)
 
 DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
@@ -84,6 +88,8 @@ def _mock_provider() -> MagicMock:
 
 def _controller(tmp_path: Path, provider: MagicMock | None = None) -> tuple[SquadController, SquadStateStore]:
     _ensure_git_repo(tmp_path)
+    _materialize_canonical_test_config(tmp_path)
+    _select_artifact_publication_stack(tmp_path, unit_coverage=True)
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
     (squad_dir / "staging").mkdir(exist_ok=True)
@@ -136,6 +142,22 @@ def test_finalize_published_spec_metadata_can_be_generated(tmp_path: Path) -> No
     assert loaded is not None
     assert loaded.feature_id == "001-photo-album"
     assert loaded.requirements[0].artifact_hash == artifact_hash(spec_file)
+
+
+def test_memory_publication_fixture_declares_artifact_scope_and_unit_observer(tmp_path):
+    _disable_lexicon_gate(tmp_path)
+    ctrl, store = _controller(tmp_path)
+    config = yaml.safe_load((tmp_path / ".echelon/config.yml").read_text())
+    assert config["stacks"]["selected"] == ["publication-fixture"]
+    assert config["lexicon_gate"]["enabled"] is False
+    stack = yaml.safe_load((tmp_path / ".echelon/stacks/publication-fixture/stack.yml").read_text())
+    assert stack["runnability"] == {"classification": "non_runnable", "policy": "not_applicable"}
+    assert stack["coverage_observers"][0]["required"] is True
+    assert stack["coverage_observers"][0]["adapter"] == "vitest-json"
+    before = store.load()
+    assert ctrl._verification_dispatch_admission(before) is None
+    assert store.load() == before
+    ctrl._provider.exec_agent.assert_not_called()
 
 
 def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_path: Path) -> None:
