@@ -13,8 +13,9 @@ from tests.unit.test_controlled_fulfillment_runner import (
 from tests.unit.test_delivery_controller_integration import _controller, _reconstruct
 
 
-def setup_delivery(context, tmp_path, executor, mode="semi"):
-    controller, store = _controller((context.project_root, context.spec_dir, None), tmp_path, executor, mode)
+def setup_delivery(context, tmp_path, executor, mode="semi", *, sandbox_provider=None):
+    controller, store = _controller((context.project_root, context.spec_dir, None),
+        tmp_path, executor, mode, sandbox_provider=sandbox_provider)
     controller._config.fulfillment.refresh_policy = "every_slice"
     state = store.read()
     state.update(workspace_root=str(context.workspace_root), source_id=context.source_id,
@@ -251,7 +252,48 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     from harness.review_artifacts import ReviewArtifactPublisher
     from tests.unit.test_review_artifacts import _stage_one_group
     from tests.unit.test_delivery_documentation import review_report
+    from tests.unit.test_delivery_controller import MockProvider
+    from tests.unit.test_verification_capability_preflight import custom_stack, select
+    from harness.verification_stack_runtime import apply_verification_stacks
     context = runner_context
+    custom_stack(context.workspace_root)
+    select(context.workspace_root, ["custom"])
+    test_file = context.project_root / "tests/test_app.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "from app import hello\n\n"
+        "def test_greeting():\n"
+        '    """reviewed behavior [echelon:TC-000001]"""\n'
+        "    assert hello() == 'hello'\n\n"
+        "def test_legacy_identity():\n"
+        '    """reviewed behavior [echelon:TC-000002]"""\n'
+        "    assert callable(hello)\n\n"
+        "def test_large_identity():\n"
+        '    """reviewed behavior [echelon:TC-000003]"""\n'
+        "    assert isinstance(hello(), str)\n", encoding="utf-8")
+
+    class ReviewCoverageProvider(MockProvider):
+        """Script the sandbox process, retaining real report parsing and gates."""
+        def __init__(self):
+            super().__init__()
+            self.reports = {}
+            self.observer_calls = []
+
+        def exec(self, handle, cmd, cwd=None, env=None, timeout_ms=1_200_000):
+            if env and "ECHELON_COVERAGE_REPORT" in env:
+                self.observer_calls.append((handle.session_id, cmd))
+                self.reports[env["ECHELON_COVERAGE_REPORT"]] = json.dumps({
+                    "testResults": [{"name": "tests/test_app.py", "projectName": "default",
+                        "assertionResults": [
+                            {"title": f"reviewed behavior [echelon:TC-{index:06d}]", "status": "passed"}
+                            for index in range(1, 4)
+                        ]}]
+                }).encode()
+            return super().exec(handle, cmd, cwd=cwd, env=env, timeout_ms=timeout_ms)
+
+        def read_file(self, handle, path):
+            return self.reports[path]
+
     class ReviewedExecutor(SemanticExecutor):
         def run_inspection_turn(self, *args, **kwargs):
             result = super().run_inspection_turn(*args, **kwargs)
@@ -265,7 +307,10 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
                 return replace(result, stdout=json.dumps(payload))
             return result
     executor = ReviewedExecutor(inspect_source=True)
-    controller, store = setup_delivery(context, tmp_path, executor, mode)
+    sandbox = ReviewCoverageProvider()
+    controller, store = setup_delivery(context, tmp_path, executor, mode, sandbox_provider=sandbox)
+    apply_verification_stacks(controller._config, project_root=context.workspace_root,
+                              target_root=context.source_root)
     controller._config.verify_command = "python -m pytest"
     review = ReviewLoopController(controller._gitops, controller._config, "001",
         base_dir=str(context.workspace_root), build_id="review-acceptance", spec_dir=context.spec_dir)
@@ -305,6 +350,7 @@ def test_completed_review_batch_reaches_real_verification_and_durable_effects(
     ordinary = controller._exec_verify(None, worktree_path=str(context.project_root))
     assert ordinary.passed, ordinary.failures
     result = controller._apply_post_verify_gates(ordinary, str(context.project_root))
+    assert len(sandbox.observer_calls) == 1
     assert result.passed is passing, result.failures
     assert executor.dispatch_count == 3
     if passing:

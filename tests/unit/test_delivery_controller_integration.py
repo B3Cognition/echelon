@@ -54,7 +54,7 @@ def _repair_failure(*, token_usage=0):
     )], token_usage=token_usage)
 
 
-def _controller(fixture, tmp_path, executor, mode="semi"):
+def _controller(fixture, tmp_path, executor, mode="semi", *, sandbox_provider=None):
     project, spec, _ = fixture
     config = HarnessConfig()
     config.llm.enabled = True
@@ -65,7 +65,8 @@ def _controller(fixture, tmp_path, executor, mode="semi"):
     store.initialize("test-run", mode)
     store.transition("running")
     controller = RalphController(
-        provider=MockProvider(), gitops=gitops, state_store=store,
+        provider=sandbox_provider if sandbox_provider is not None else MockProvider(),
+        gitops=gitops, state_store=store,
         mode_controller=ModeController(mode), escalation_handler=EscalationHandler(str(tmp_path / "escalation")),
         spec_id="001", config=config, llm_provider=executor,
         build_id="build-test",
