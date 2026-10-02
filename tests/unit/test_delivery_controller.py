@@ -26,9 +26,6 @@ from harness.run_intent import RunIntent
 from harness.state import StateStore
 from harness.stacks.renderer import resolved_to_dict
 from harness.stacks.resolver import (
-    ResolvedLocalRunner,
-    ResolvedRunnability,
-    ResolvedStacks,
     resolved_coverage_observer_plan_sha256,
     resolved_stack_contract_sha256,
 )
@@ -259,28 +256,16 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A later local verifier must not re-resolve mutable project stacks."""
-        coord = _make_controller(tmp_path)
-        resolved = ResolvedStacks(
-            selected_ids=["browser-3d-game"],
-            resolved_ids=["browser-3d-game", "game-persistence-postgres"],
-            implied_by={"game-persistence-postgres": "browser-3d-game"},
-            capabilities={},
-            tools={},
-            required_commands=[],
-            required_registries=[],
-            context_files=[],
-            runnability=ResolvedRunnability(
-                classification="user_facing",
-                policy="required",
-                local_runner=ResolvedLocalRunner(
-                    profiles=("macos-compose-v1",),
-                    allowed_services=("postgres",),
-                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
-                    sources=("browser-3d-game", "game-persistence-postgres"),
-                ),
-            ),
+        coord = _make_controller(tmp_path, published_spec=True)
+        resolved = coord._config.resolved_stacks
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
         )
-        coord._config.resolved_stacks = resolved
 
         with patch(
             "harness.delivery_controller.RalphController.run_loop",
@@ -298,6 +283,36 @@ class TestSingleStrategy:
             "resolved_stack_hash": resolved_stack_contract_sha256(resolved),
             "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
         }
+
+    @pytest.mark.parametrize("invalid_contract", ["missing", "changed-owner"])
+    def test_verification_admission_preserves_invalid_retained_contract(
+        self, tmp_path: Path, invalid_contract: str,
+    ) -> None:
+        from harness.delivery_controller import _delivery_stack_snapshot
+
+        coord = _make_controller(tmp_path, published_spec=True)
+        store = StateStore(coord._state_dir, "spec-001")
+        snapshot = _delivery_stack_snapshot(coord._config.resolved_stacks)
+        store.initialize(
+            "retained-run", "semi",
+            delivery_stack_snapshot=None if invalid_contract == "missing" else snapshot,
+        )
+        store.transition("running")
+        if invalid_contract == "changed-owner":
+            path = tmp_path / ".echelon" / "stacks" / "cli-artifacts" / "stack.yml"
+            path.write_text(path.read_text().replace("markdown", "json"), encoding="utf-8")
+        before = store.state_file.read_bytes()
+
+        reason = coord._verification_admission(
+            coord._resolve_run_context(RunIntent(spec_id="spec-001")), store,
+        )
+
+        assert reason == (
+            "verification_prerequisite: retained run has no verification contract; start a new run"
+            if invalid_contract == "missing" else
+            "verification_prerequisite: owner stack contract changed; retained evidence cannot be reused"
+        )
+        assert store.state_file.read_bytes() == before
 
     def test_direct_single_target_derives_canonical_targets_and_finalizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
