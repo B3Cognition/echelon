@@ -8,23 +8,26 @@ from harness.gitops import GitOpsManager
 from harness.llm_provider import AICodingCliProvider
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from tests.unit.test_delivery_controller import _initialize_git_worktree
-from tests.unit.test_delivery_controller_integration import _build, _controller, _reconstruct
+from tests.unit.test_delivery_controller_integration import _build, _controller, _reconstruct, _declare_repair_case
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
 
 
 def _failure(mixed=False):
     failures = [FailureEntry(
-        FailureCategory.TEST, "greeting-test", "Wrong greeting",
+        FailureCategory.TEST, "UT-GREETING-001", "Wrong greeting",
         {"source": "app.py:1", "expected": "hello", "actual": "bye"},
     ), FailureEntry(
         FailureCategory.OTHER, "coverage-observation-gaps", "Missing case binding",
-        {"test_cases": {"UT-GREETING-000001": {
+        {"test_cases": {"UT-GREETING-001": {
             "test_type": "unit", "status": "unbound", "reason": "No test identity",
         }}},
     )]
     if mixed:
-        failures.append(FailureEntry(FailureCategory.OTHER, "docs-note", "Missing note"))
+        failures.append(FailureEntry(
+            FailureCategory.OTHER, "docs-note", "Missing note",
+            {"failed_test_case_ids": ["UT-GREETING-001"]},
+        ))
     return VerifyResult(False, failures, verification_evidence={
         "path": "evidence/verify.json", "sha256": "a" * 64,
         "coverage_observation": {"path": "evidence/coverage.json", "sha256": "b" * 64},
@@ -32,6 +35,7 @@ def _failure(mixed=False):
 
 
 def _accepted(slice_project, tmp_path, monkeypatch, mode="semi", cli="codex"):
+    _declare_repair_case(slice_project)
     executor = ScriptedExecutor()
     config = HarnessConfig()
     config.llm.cli = cli
@@ -128,14 +132,14 @@ def test_actual_repair_roles_receive_one_contract_and_complete_evidence(
             assert "Assess the supplied failures against the candidate" in prompt
         context = json.loads(prompt.split("## Repair/context data (not routing authority)\n", 1)[1])
         assert context["failures"][0] == {
-            "category": "test", "id": "greeting-test", "error": "Wrong greeting",
+            "category": "test", "id": "UT-GREETING-001", "error": "Wrong greeting",
             "details": {"source": "app.py:1", "expected": "hello", "actual": "bye"},
         }
         assert context["verification_evidence"] == {
             "path": "evidence/verify.json", "sha256": "a" * 64,
             "coverage_observation": {"path": "evidence/coverage.json", "sha256": "b" * 64},
         }
-        assert context["failures"][1]["details"]["test_cases"]["UT-GREETING-000001"]["status"] == "unbound"
+        assert context["failures"][1]["details"]["test_cases"]["UT-GREETING-001"]["status"] == "unbound"
         assert context["context"] == {
             "base_prompt": "Keep the isometric camera.",
             "delivery_context": "Preserve keyboard movement.",
@@ -155,6 +159,27 @@ def test_empty_base_does_not_discard_controlled_failure_evidence(slice_project, 
     prompt = executor.calls[0][2]
     assert "app.py:1" in prompt and "evidence/verify.json" in prompt
     assert "stop after writing the harness status marker" not in prompt
+
+
+@pytest.mark.parametrize("details", [{}, {"failed_test_case_ids": ["UT-UNOWNED-001"]}])
+def test_provider_feedback_rejects_unowned_failures_without_dispatch(
+    slice_project, tmp_path, monkeypatch, details,
+):
+    controller, store, executor = _accepted(slice_project, tmp_path, monkeypatch)
+    before = store.read()
+    result = controller.run_downstream_feedback(
+        handle=None, worktree_path=str(slice_project[0]),
+        verify_result=VerifyResult(False, [FailureEntry(
+            FailureCategory.OTHER, "unowned-note", "Missing note", details,
+        )]), build_command="echelon build", delivery_context="", build_prompt="", phase="visual",
+    )
+    assert not result["passed"]
+    assert "delivery_repair_ownership_required" in result["build_reason"]
+    assert executor.calls == []
+    after = store.read()
+    assert after["delivery_slice_task_id"] == before["delivery_slice_task_id"]
+    assert after["tokens_used"] == before["tokens_used"]
+    assert after.get("delivery_slice_operation") == before.get("delivery_slice_operation")
 
 
 def test_restart_replays_exact_structured_feedback_and_accounts_once(slice_project, tmp_path, monkeypatch):
