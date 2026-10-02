@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +47,6 @@ def test_learning_artifact_templates_have_required_structure(
         ("prosaic/subagents/echelon.adaptive.md", "bias-check-template.md"),
         ("prosaic/subagents/echelon.architect.md", "constitution-amendment-candidates-template.md"),
         ("prosaic/subagents/echelon.auditor.md", "feedback-report-template.md"),
-        ("runtime/workflow/phases/appendices/build-8-feedback-reference.md", "drift-escalation-template.md"),
         ("prosaic/subagents/echelon.auditor.md", "evolution-signals-review-template.md"),
         ("prosaic/subagents/echelon.auditor.md", "prompt-version-observations-template.md"),
         ("prosaic/subagents/echelon.auditor.md", "calibration-analytics-template.md"),
@@ -67,3 +67,11 @@ def test_experiment_results_reference_is_consistently_markdown() -> None:
     assert 'artifact: "experiment-results.md"' in investigator
     assert "experiment-results.json" not in investigator
     assert "experiment-results.json" not in workflow
+
+
+def test_retained_drift_template_does_not_restore_legacy_feedback_dispatch() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / "runtime/workflow/definition.yaml").read_text(encoding="utf-8")
+    )
+    assert "build-8-feedback" not in {phase["id"] for phase in workflow["phases"]}
+    assert not (ROOT / "runtime/workflow/phases/appendices/build-8-feedback-reference.md").exists()

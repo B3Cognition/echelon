@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.integrator.md"
@@ -15,7 +17,9 @@ class TestIntegratorTemplates:
         assert "{spec_dir}/integration-report.md" in text
         assert "agent: echelon-integrator (INTEGRATOR)" in text
 
-    def test_integration_phase_uses_canonical_output_path(self) -> None:
-        text = PHASE.read_text(encoding="utf-8")
-
-        assert "Write `{spec_dir}/integration-report.md`" in text
+    def test_retained_integrator_prose_does_not_restore_legacy_delivery_routing(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / "runtime/workflow/definition.yaml").read_text(encoding="utf-8")
+        )
+        assert "build-7-integration" not in {phase["id"] for phase in workflow["phases"]}
+        assert not PHASE.exists()
