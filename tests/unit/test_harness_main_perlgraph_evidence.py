@@ -229,7 +229,7 @@ def test_delivery_commands_finalize_exact_run_local_topology_receipt(
         "run_dir": "runs/verify-spec-909-20260804-120000",
     }
     assert list(receipt["providers"]) == ["codegraph", "perlgraph"]
-    assert receipt["providers"]["codegraph"]["tool_version"] == "1.4.1"
+    assert receipt["providers"]["codegraph"]["tool_version"] == "1.6.0"
     assert receipt["providers"]["codegraph"]["status"] == "complete"
     assert receipt["providers"]["codegraph"]["complete"] is True
     assert receipt["providers"]["perlgraph"]["tool_version"] == "0.1.0"
