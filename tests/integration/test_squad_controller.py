@@ -1265,6 +1265,29 @@ def _write_phase_a_build_inputs(
         (spec_dir / name).write_text(content, encoding="utf-8")
 
 
+def _select_artifact_publication_stack(project_root: Path) -> None:
+    """Declare these publication fixtures as artifacts, not runnable products."""
+    stack_dir = project_root / ".echelon" / "stacks" / "publication-fixture"
+    stack_dir.mkdir(parents=True, exist_ok=True)
+    (stack_dir / "stack.yml").write_text(yaml.safe_dump({
+        "schema_version": "1.4",
+        "stack": {"id": "publication-fixture", "name": "Artifact publication fixture",
+                  "version": "1", "kind": "capability"},
+        "applies_to": {"archetypes": ["custom"]},
+        "provides": {"x.publication.artifacts": "markdown"},
+        "context": {"files": ["context.md"]},
+        "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
+    }), encoding="utf-8")
+    (stack_dir / "context.md").write_text(
+        "# Artifact publication fixture\nNo product runtime or coverage cases are declared.\n",
+        encoding="utf-8",
+    )
+    config_path = project_root / ".echelon" / "config.yml"
+    config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    config.setdefault("stacks", {})["selected"] = ["publication-fixture"]
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def _sealed_publication_fixture(
     ctrl: SquadController,
 ) -> tuple[PreparedSquadPublication, dict[str, Path]]:
@@ -3263,6 +3286,7 @@ class TestAgentResultIntegrity:
         self, tmp_path,
     ):
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
@@ -3422,6 +3446,7 @@ class TestAgentResultIntegrity:
         self, tmp_path,
     ):
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
@@ -3464,6 +3489,7 @@ class TestAgentResultIntegrity:
     def test_done_run_reconciles_newer_run_local_artifacts_to_published_spec(
         self, tmp_path,
     ):
+        _select_artifact_publication_stack(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "DONE", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
