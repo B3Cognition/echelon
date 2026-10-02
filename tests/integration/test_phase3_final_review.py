@@ -651,16 +651,47 @@ def test_final_review_requires_its_implementability_report(tmp_path):
 
 
 def test_final_receipt_state_commit_failure_cannot_advance(tmp_path, monkeypatch):
-    ctrl, store, executor, node, _, _ = final_fixture(tmp_path, "banzai")
-    original = store.commit_routing_snapshot_state
+    from harness.squad_state import StateAdvanceError
 
-    def reject_receipt(snapshot, state):
-        if state.get("phase3_final_review"):
-            return False
-        return original(snapshot, state)
+    ctrl, store, executor, node, _, calls = final_fixture(tmp_path, "banzai")
+    original = store.complete_spec_step
+    attempts = 0
 
-    monkeypatch.setattr(store, "commit_routing_snapshot_state", reject_receipt)
+    def reject_receipt(prepared_step):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise StateAdvanceError("injected final-review commit failure",
+                                    json_path="$.state", validator="state_finalize")
+        return original(prepared_step)
+
+    monkeypatch.setattr(store, "complete_spec_step", reject_receipt)
     result = executor.execute(node, store)
-    assert isinstance(result, ExecutorBlockedResult)
-    assert result.reason == "repair_review_stale"
-    assert not store.load().get("phase3_final_review")
+    assert isinstance(result, FinalizedPhaseExecution)
+    assert result.state_updates["phase3_final_review"]
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+    routing = ctrl._construct_routing_decision_or_block(
+        node, prepared, snapshot,
+        projected_state_updates=dict(result.state_updates), execution=result,
+    )
+    assert routing is not None and routing.human_input is None
+    assert ctrl._advance_prepared_result_or_block(
+        node, routing.decision, execution=routing.execution,
+    ) is None
+    pending = store.load()
+    assert pending["phase"] == "phase3-consensus"
+    assert pending["pending_spec_step"]["cursor"] == "commit"
+    assert not pending.get("phase3_final_review")
+    dispatched = list(calls)
+
+    recovery = ctrl._drain_pending_spec_step()
+
+    assert recovery.recovered and not recovery.blocked
+    assert attempts == 2
+    assert calls == dispatched
+    completed = store.load()
+    assert "pending_spec_step" not in completed
+    assert completed["phase3_final_review"] == result.state_updates["phase3_final_review"]
+    assert completed["phase"] == "phase3-consensus"
+    assert completed["iteration"] == 1
