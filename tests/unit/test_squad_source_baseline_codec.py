@@ -153,6 +153,31 @@ def test_decode_returns_only_exact_immutable_sequences_and_bytes():
     assert type(restored.trees[0].files[0].content) is bytes
 
 
+def test_publication_source_claim_performs_one_canonical_round_trip(monkeypatch):
+    from harness import squad_source_baseline_codec as codec
+    from harness.element_identity_publication import (
+        PublicationSourceClaim, PublicationIntentError, _source_baseline,
+    )
+
+    encoded = []
+    original = codec.encode_initial_publication_sources
+
+    def counted(snapshot):
+        encoded.append(snapshot)
+        return original(snapshot)
+
+    monkeypatch.setattr(codec, "encode_initial_publication_sources", counted)
+    claim = PublicationSourceClaim("source", "operation", EXPECTED_WIRE)
+    assert len(encoded) == 1
+    assert _source_baseline(claim) == _wire_snapshot()
+    assert len(encoded) == 2
+    # Validation must still reject altered caller values and noncanonical bytes.
+    object.__setattr__(claim, "baseline_payload", " " + EXPECTED_WIRE)
+    with pytest.raises(PublicationIntentError):
+        _source_baseline(claim)
+    assert len(encoded) == 3
+
+
 def test_empty_operations_missing_and_empty_sources_are_valid():
     from harness.squad_source_baseline_codec import (
         decode_initial_publication_sources,

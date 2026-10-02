@@ -28,18 +28,15 @@ class PublicationSourceClaim:
 
 
 def _source_baseline(claim):
-    from harness.squad_source_baseline_codec import (
-        encode_initial_publication_sources, decode_initial_publication_sources,
-    )
+    from harness.squad_source_baseline_codec import decode_initial_publication_sources
     try:
         if type(claim) is not PublicationSourceClaim:
             raise ValueError("invalid source claim type")
         text(claim.context_id, "context_id")
         text(claim.expected_operation_id, "expected_operation_id")
-        baseline = decode_initial_publication_sources(claim.baseline_payload)
-        if encode_initial_publication_sources(baseline) != claim.baseline_payload:
-            raise ValueError("noncanonical source baseline")
-        return baseline
+        # The decoder already validates every field and the exact canonical
+        # round trip. Re-encoding here repeats that work for every ancestry read.
+        return decode_initial_publication_sources(claim.baseline_payload)
     except (PublicationError, ValueError, TypeError, AttributeError, KeyError, RecursionError, OverflowError):
         raise PublicationIntentError("invalid publication source claim") from None
 
