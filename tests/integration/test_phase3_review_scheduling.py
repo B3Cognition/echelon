@@ -300,11 +300,13 @@ def test_workspace_references_survive_legacy_inline_revalidation(tmp_path):
 
     executor._provider.exec_agent.side_effect = dispatch
     result = executor.execute(node, store)
+    assert isinstance(result, FinalizedPhaseExecution)
     assert result.blocked  # Preserve PLAN2's separate failure, not a path rejection.
     assert len(reviews) == 2
-    entry = store.load()["issue_resolution_ledger"]["ISS-A"]
+    entry = result.state_updates["issue_resolution_ledger"]["ISS-A"]
     assert entry["status"] == "validated"
-    receipt = store.load()["phase3_issue_reviews"][entry["last_review_dispatch_id"]]
+    assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+    receipt = result.state_updates["phase3_issue_reviews"][entry["last_review_dispatch_id"]]
     manifest, _ = capture_review_inputs(spec, project_root=tmp_path)
     assert receipt["reviewed_artifacts"] == manifest
 
