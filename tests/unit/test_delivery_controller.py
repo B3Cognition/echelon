@@ -310,7 +310,11 @@ class TestSingleStrategy:
             monkeypatch.delenv(name, raising=False)
         coord = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-direct"
-        spec_dir.mkdir(parents=True)
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.verification_stack_runtime import apply_verification_stacks
+
+        _write_phase_a_build_inputs(spec_dir)
+        apply_verification_stacks(coord._config, project_root=tmp_path, target_root=tmp_path)
         (spec_dir / "spec.md").write_text(
             "---\nstatus: In Progress\ntargets:\n  - .\n---\n# Direct\n",
             encoding="utf-8",
