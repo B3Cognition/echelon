@@ -428,6 +428,9 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A crash between completed review and finalization resumes at finalization."""
+    class ProcessInterrupted(BaseException):
+        """Bypass handled failure recording, as a process exit would."""
+
     workspace = tmp_path / "workspace"
     harness_root = workspace / "runs" / "targets" / "api"
     spec_dir = workspace / "specs" / "912-review-checkpoint"
@@ -482,10 +485,10 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
     with patch("harness.delivery_controller.AICodingCliProvider", return_value=object()), \
          patch("harness.delivery_controller.RalphController") as ralph, \
          patch("harness.delivery_controller.ReviewLoopController") as review, \
-         patch.object(first, "_finalize_delivery", side_effect=RuntimeError("crash")):
+         patch.object(first, "_finalize_delivery", side_effect=ProcessInterrupted("crash")):
         ralph.return_value.run_loop.return_value = implementation
         review.return_value.run_loop.return_value = completed_review
-        with pytest.raises(RuntimeError, match="crash"):
+        with pytest.raises(ProcessInterrupted, match="crash"):
             first.run(intent)
 
         state_store = StateStore(
