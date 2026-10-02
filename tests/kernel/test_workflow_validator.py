@@ -1,6 +1,7 @@
 """Tests for deterministic workflow/definition.yaml validation."""
 
 from pathlib import Path
+from copy import deepcopy
 
 import pytest
 import yaml
@@ -24,6 +25,23 @@ def _write_definition(
     controller_state_contracts_file: str | None = None,
 ) -> Path:
     path = tmp_path / "definition.yaml"
+    phases = deepcopy(phases)
+    for phase in phases:
+        # These fixtures test routing and state policies, not artifact writes.
+        # They still need real, compiled provider assignment declarations.
+        if phase.get("type", "agent") == "agent":
+            phase.setdefault("agent", "test.provider")
+            phase.setdefault("artifact_contract", {"mode": "result_only"})
+        for collection in ("agents", "pre_dispatch"):
+            entries = phase.get(collection, [])
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                agent = entry.get("agent", entry.get("id") if collection == "agents" else None)
+                if isinstance(agent, str) and agent:
+                    entry.setdefault("artifact_contract", {"mode": "result_only"})
     definition: dict[str, object] = {"phases": phases}
     if controller_state_contracts_file is not None:
         definition["controller_state_contracts_file"] = (
@@ -174,7 +192,7 @@ def _human_input_gate_policy() -> dict:
     }
 
 
-def test_workflow_validator_keeps_a_legacy_workflow_without_declarations_valid(tmp_path: Path) -> None:
+def test_workflow_validator_keeps_workflow_without_human_input_declarations_valid(tmp_path: Path) -> None:
     definition = _write_definition(
         tmp_path,
         [
@@ -193,6 +211,20 @@ def test_workflow_validator_keeps_a_legacy_workflow_without_declarations_valid(t
     )
 
     assert report.ok, report.format()
+
+
+@pytest.mark.parametrize("field,message", [
+    ("agent", "requires a non-empty agent id"),
+    ("artifact_contract", "contract must be a mapping"),
+])
+def test_provider_fixture_does_not_mask_invalid_assignment(tmp_path, field, message):
+    definition = _write_definition(tmp_path, [
+        {"id": "provider", "type": "agent", field: None,
+            "transitions": [{"to": "done", "condition": "always"}]},
+        {"id": "done", "type": "terminal"},
+    ])
+    report = validate_workflow_definition(definition_path=definition)
+    assert not report.ok and any(message in issue.message for issue in report.issues), report.format()
 
 
 def test_workflow_validator_allows_provider_policy_without_static_options(tmp_path: Path) -> None:
