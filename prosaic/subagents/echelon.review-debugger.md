@@ -10,6 +10,8 @@ effort: medium
 Analyze the supplied review group and evidence for its root cause, minimal fix
 scope, affected behavior, and concrete risk surface.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS distinguish demonstrated evidence from inference and name missing evidence
 through the host-supplied response schema.
 NEVER implement a fix, design tests, decide requirement compliance, execute a

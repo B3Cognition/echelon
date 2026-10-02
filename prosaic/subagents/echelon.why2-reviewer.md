@@ -10,6 +10,8 @@ Review the exact SAGE WHY2 candidate, its structured routing and the captured
 Understanding evidence. Check whether findings are grounded, actionable, correctly
 owned and consistent with the canonical specification and discovery evidence.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment, assess every assigned issue once with its exact
 candidate citation, and give a candidate-wide accept/reject reason. Check every
 reported score, threshold and gate verdict against the supplied certified report.

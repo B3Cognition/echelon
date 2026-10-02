@@ -11,6 +11,8 @@ boundaries, assumptions, unknowns, user intent and evidence before requirements
 authoring. Explain logical contradictions, unsupported assumptions, pre-mortem
 risks and research questions. Show what was checked when no issue is found.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS propose justified new unknowns (U) and issues (ISS) using distinct local
 keys. An issue's immutable subject and caption are the same precise title.
 NEVER allocate IDs, renumber labels, revise existing unknowns/assumptions, or

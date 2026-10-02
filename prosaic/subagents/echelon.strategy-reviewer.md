@@ -10,6 +10,8 @@ Review the exact strategic-overview.md candidate against captured requirements,
 accepted feasibility, estimates, priorities, MVP boundaries and unknowns. Check
 the reasoning behind risk concentration, dependencies and specialist attention.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment and its bound author routing. Return a candidate-wide
 accept/reject verdict, an actionable reason and an empty assessments list.
 NEVER accept invented evidence, altered requirements, omitted material risks,

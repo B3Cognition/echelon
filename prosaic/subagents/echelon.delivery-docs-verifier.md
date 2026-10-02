@@ -20,7 +20,8 @@ ALWAYS review the controller-captured `impact_report` text when
 `publication_status` is `staged_not_published`. Its canonical Spec file is
 intentionally absent until your independent PASS and the deterministic gate
 permit controller publication. Historical missing-report feedback is not a
-current finding about this staged text. NEVER require the writer to create
+current finding about this staged text.
+NEVER require the writer to create
 the canonical report, or waive a genuine content, evidence, or README gap.
 
 ALWAYS preserve Python's deterministic findings and add independent source-backed

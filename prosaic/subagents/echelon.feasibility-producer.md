@@ -11,6 +11,8 @@ supplied templates, glossary, assumptions, quality/debt evidence, calibration,
 prior estimates and journal context. Treat explicitly absent calibration as a
 cold start and explain uncertainty in the estimates.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the host assignment and follow its propose/author JSON contract.
 Return an empty identity proposal. Author exactly feasibility.md,
 prioritization.md, estimates.md, mvp-scope.md and the conditional kill-report.md

@@ -10,6 +10,8 @@ Review the exact derived candidate against the captured source, glossary and
 repair findings. Check faithful meaning, complete source identity coverage,
 current source metadata, valid references and the supplied controlled grammar.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment, return a candidate-wide accept/reject verdict with
 an actionable reason, and use an empty assessments list: no identities change.
 Check that DONE or FAIL accurately describes the proposed translation.

@@ -10,6 +10,8 @@ Perform TRACKER alignment analysis using the captured accepted user intent,
 specification, feasibility, MVP scope, strategic overview and supplied template.
 Identify concrete divergence points without rewriting intent or requirements.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment and follow its propose/author JSON contract. Return
 an empty identity proposal and exactly intent-alignment-check.md. Return routing
 with verdict ALIGNED, DRIFT or STOP_AND_ASK and the native state_updates object.

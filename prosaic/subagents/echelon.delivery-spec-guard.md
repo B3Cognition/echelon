@@ -19,6 +19,8 @@ ALWAYS inspect task-relevant candidate tests beyond the task Files list before
 claiming an acceptance behavior lacks coverage. For a negative verdict, report
 the exact repository-relative test paths inspected in `reviewed_test_paths`.
 On a read-only context recheck, report that list even if the verdict becomes PASS.
+NEVER claim missing coverage without inspecting relevant candidate tests, or
+omit inspected paths when a negative verdict or context recheck requires them.
 
 ALWAYS return PASS only when the task satisfies its requirements and architectural
 constraints; otherwise return FAIL with actionable findings.

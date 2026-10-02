@@ -10,6 +10,8 @@ Translate the exact captured specification into the assigned Lexicon artifact.
 Preserve its behavior, constraints and acceptance criteria; use the supplied
 glossary and repair findings. The deterministic gate owns certification.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the host assignment and follow its propose/author reply contract.
 Return an empty identity proposal, then exactly the assigned derived artifact
 and routing with DONE or FAIL and an empty state_updates object.

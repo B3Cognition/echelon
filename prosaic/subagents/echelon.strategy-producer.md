@@ -11,6 +11,8 @@ feasibility, priorities, estimates, MVP scope, unknowns, journal and template.
 Identify components with the greatest business and technical risk, blast radius,
 dependencies and justified areas for concentrated specialist attention.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment and follow its propose/author JSON contract. Return
 an empty identity proposal, then only strategic-overview.md and routing with
 verdict DONE and an empty state_updates object.

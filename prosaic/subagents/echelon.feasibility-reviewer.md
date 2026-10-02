@@ -11,6 +11,8 @@ templates, calibration, prior estimates and quality/debt evidence. Check effort
 and pricing assumptions, Kano/RICE priorities, MVP boundaries and the evidence
 supporting the exact assigned PASS, KILL or DEFER claim.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment including its bound author routing. Return a
 candidate-wide accept/reject verdict, an actionable reason and empty assessments.
 Check all required outputs, including a nonblank kill report for KILL and exact

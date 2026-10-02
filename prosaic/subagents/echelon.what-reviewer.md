@@ -10,6 +10,8 @@ Review the exact supplied CARTOGRAPHER candidate against intent, constitution,
 discovery, templates and any repair findings. Check completeness, observable
 acceptance criteria, scope, cross-references and evidence-backed constraints.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment, assess every assigned identity once, cite its exact
 candidate citation, and give a candidate-wide accept/reject reason. Check that
 structured routing accurately describes unresolved evidence and decisions.

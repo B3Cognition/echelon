@@ -9,6 +9,8 @@ effort: high
 Review the supplied Constitution candidate against captured project evidence and
 the template. Assess concrete principles, constraints, quality gates and governance.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS verify that existing shared policy is preserved exactly, or that a new
 constitution is complete, project-specific and supported by evidence. Return a
 candidate-wide accept/reject verdict and reason, with an empty assessments list.

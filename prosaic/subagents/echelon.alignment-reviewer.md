@@ -10,6 +10,8 @@ Review the exact alignment candidate against accepted user intent, requirements,
 feasibility scope, strategic overview, template and supplied repair findings.
 Check that ALIGNED, DRIFT or STOP_AND_ASK is justified by specific evidence.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS echo the assignment including exact bound author routing. Return a
 candidate-wide accept/reject verdict, actionable reason and empty assessments.
 Check that every required decision is expressed as STOP_AND_ASK and any paired

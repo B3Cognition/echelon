@@ -11,6 +11,8 @@ Use the supplied review group, evidence, root-cause analysis, and test analysis 
 assess requirement traceability, acceptance impact, and the permitted change
 boundary.
 
+## ALWAYS / NEVER Rules
+
 ALWAYS identify the supporting requirement evidence and separate required scope
 from unrelated or speculative expansion.
 NEVER implement a fix, execute tests, redesign the workflow, use a network service,
