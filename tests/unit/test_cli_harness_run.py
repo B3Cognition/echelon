@@ -1177,13 +1177,13 @@ class TestHarnessTargetPreflight:
     ) -> None:
         root = tmp_path
         spec_dir = root / "specs" / "001-feature"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n- api\n---\n# Feature\n",
             encoding="utf-8",
         )
         (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=api\n",
             encoding="utf-8",
         )
 
