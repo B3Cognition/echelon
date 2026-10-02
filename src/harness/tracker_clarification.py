@@ -439,16 +439,16 @@ def require_alignment_author_effects(state, binding, answer, completion, run):
     """One native author handoff after v41; no reset of evidence or budgets."""
     from harness.discovery_completion import _require, _json, _read_receipt
     from harness.discovery_turns import _validate, _usage
-    from harness.squad_state import SquadStateStore
     recovery, parent = binding.recovery, answer.recovery
     _require(recovery["version"] == 42 and parent["version"] == 41
         and _json(recovery["resolution"]["decision"]) == _json(parent["resolution"])
         and recovery["predecessor"] == parent["operation"]["binding"]["operation_id"])
     observed = dict(_alignment_answer_entry_state(state, parent))
-    for key in ("spec_step_publication_failure", "spec_step_effect_failure"):
-        if key in observed:
-            _require((state.get("_spec_step_effect_plan") or {}).get("completion_id") == recovery["completion_id"])
-            SquadStateStore._restore_failure_lifecycle(observed, diagnostic_key=key)
+    # Native recovery provides a sealed final-state view. Retired lifecycle
+    # diagnostics must not replace its status or authorize an author handoff.
+    _require(not any(key in observed for key in (
+        "spec_step_publication_failure", "spec_step_effect_failure",
+    )))
     expected = {**parent["before"], **parent["effects"]["state_updates"],
         "blocked_decision": parent["resolution"], "last_human_input_completion": recovery["resolution"]["completion"],
         "phase": "phase2-intent-alignment-structural", "intent_alignment_verdict": binding.candidate["routing"]["verdict"]}

@@ -74,6 +74,23 @@ def test_native_alignment_effect_guard_rejects_equal_valued_type_changes(tmp_pat
     assert not commits
 
 
+@pytest.mark.parametrize("diagnostic", ["spec_step_publication_failure", "spec_step_effect_failure"])
+def test_alignment_author_rejects_retired_failure_lifecycle_without_mutating(diagnostic, tmp_path):
+    from harness.tracker_clarification import require_alignment_author_effects
+    completion_id = "a" * 32
+    answer = SimpleNamespace(recovery=dict(version=41, resolution={}, before={},
+        operation=dict(binding=dict(operation_id="parent"))))
+    binding = SimpleNamespace(recovery=dict(version=42, completion_id=completion_id,
+        resolution=dict(decision={}), predecessor="parent"))
+    state = {"_spec_step_effect_plan": {"completion_id": completion_id},
+        diagnostic: dict(schema_version=1, code="stage_io", resume_status="running")}
+    before = deepcopy(state)
+    with pytest.raises(ValueError):
+        require_alignment_author_effects(state, binding, answer, None, tmp_path)
+    assert state == before
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize("mode,resolver,status", [
     ("guided", "user", "awaiting_human"), ("semi", "user", "awaiting_human"),
     ("banzai", "COMMANDER", "resolving"),
