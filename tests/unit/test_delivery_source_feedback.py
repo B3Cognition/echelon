@@ -205,17 +205,47 @@ def test_restart_replays_exact_structured_feedback_and_accounts_once(slice_proje
 
 def test_old_pending_source_repair_blocks_without_rewriting_records(slice_project, tmp_path, monkeypatch):
     controller, store, executor = _accepted(slice_project, tmp_path, monkeypatch)
+    from harness.delivery_slice_runner import DeliverySliceRunner, delivery_slice_binding, delivery_role_inputs
+    from harness.delivery_slice_journal import DeliverySliceJournal
+
+    root, spec, _ = slice_project
+    legacy_feedback = "Fix source or stop after writing the harness status marker."
+    operation = {
+        "id": "retained-legacy-source-repair", "feedback": legacy_feedback,
+        "repair_task_id": "T-001", "accounted_tokens": 0,
+        "worktree_path": str(root.resolve()), "source_binding": None,
+        "outer_iter": store.read().get("outer_iter", 0), "progress_applied": False,
+    }
+
+    def remember_retained_operation():
+        state = store.read()
+        state["delivery_slice_operation"] = operation
+        store.write(state)
+
     # Create a genuine pre-fix-style journal with its original binding, rather
-    # than corrupting a new journal and merely testing the binding validator.
+    # than corrupting a new journal or asking Ralph to admit a new legacy repair.
     with monkeypatch.context() as patch:
         _crash_after_receipt(patch, 2)
         with pytest.raises(ProcessLost):
-            controller._exec_controlled_slice(
-                str(slice_project[0]), "Fix source or stop after writing the harness status marker.",
-                repair=True,
+            DeliverySliceRunner(controller._llm_provider, root).run(
+                worktree=root, spec_dir=spec,
+                evidence_root=controller._delivery_operation_evidence_root(),
+                operation_id=operation["id"], feedback=legacy_feedback,
+                repair_task_id="T-001", on_journal_ready=remember_retained_operation,
             )
     saved = store.read()
     journals = {path: path.read_bytes() for path in store.state_dir.rglob("journal.json")}
+    legacy_journal = DeliverySliceJournal(
+        controller._delivery_operation_evidence_root(), operation["id"],
+    ).path
+    retained = json.loads(journals[legacy_journal])
+    assert len(retained["records"]) == 2
+    assert retained["task_id"] == "T-001"
+    assert retained["binding"] == delivery_slice_binding(
+        worktree=root, spec_dir=spec, roles=delivery_role_inputs(root),
+        allowed_task_ids=None, repair_task_id="T-001", feedback=legacy_feedback,
+        implementation_target=None, declared_targets=None,
+    )
     executor.calls.clear()
     result = _build(_reconstruct(controller, store, controller._llm_provider), slice_project)
     assert not result["passed"] and "reconciliation_required" in result["build_reason"]
