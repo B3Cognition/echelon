@@ -148,8 +148,11 @@ def test_actual_repair_roles_receive_one_contract_and_complete_evidence(
         }
         if route != "inner":
             assert context["failures"][2]["id"] == "docs-note"
-        if metadata["tool_write_paths"] == []:
+        if assignment["step"] != "implementer":
+            assert metadata["tool_write_paths"] == []
             assert metadata["tool_write_scope_exclusive"] is True
+        else:
+            assert metadata["tool_write_scope_exclusive"] is False
 
 
 def test_empty_base_does_not_discard_controlled_failure_evidence(slice_project, tmp_path, monkeypatch):
