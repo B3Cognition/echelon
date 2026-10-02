@@ -153,6 +153,19 @@ Common invariants in both modes:
 - Never invent thresholds, entities, quality attributes, lifecycle stages,
   product behavior, or scope to populate a template or increase document size.
 
+### Controlled Wording (STE-Inspired, Not ASD-STE100 Compliance)
+
+For FR/NFR and acceptance-criterion prose, prefer short active sentences.
+State evidence-backed conditions and observable outcomes explicitly; do not
+invent a condition for an unconditional obligation. Use one glossary term for
+each domain concept instead of alternating source aliases or synonyms.
+Preserve the exact form of requirement IDs, `MUST`/`SHALL` obligations,
+Given/When/Then markers, comparators, units, and names that are part of the
+observable product contract. Do not copy an implementation term merely
+because a source uses it, or simplify wording when that would change a
+product obligation. These are writing preferences, not a claim of ASD-STE100
+compliance or a new quality gate.
+
 ### Proportional Mode
 
 Produce the smallest complete evidence-backed specification. Classify the
