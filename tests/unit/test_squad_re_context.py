@@ -11,6 +11,7 @@ from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout
 from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
+from tests.integration.test_squad_controller import _materialize_canonical_test_config
 
 
 class _TerminalGraph:
@@ -155,6 +156,7 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
 
 def test_squad_initialization_attaches_published_re_snapshot(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
+    _materialize_canonical_test_config(root)
     _write_source(root, "original-a")
     profile = ReFingerprintProfile()
     _publish_source(root, "original-a", profile)
@@ -257,6 +259,7 @@ def test_squad_initialization_attaches_published_re_snapshot(tmp_path: Path) -> 
 
 def test_squad_initialization_can_ignore_published_re(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
+    _materialize_canonical_test_config(root)
     _write_source(root, "api")
     _publish_source(root, "api", ReFingerprintProfile())
     squad_dir = root / "runs/run-1"
@@ -284,6 +287,7 @@ def test_squad_initialization_can_ignore_published_re(tmp_path: Path) -> None:
 
 def test_squad_initialization_records_absent_re_without_blocking(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
+    _materialize_canonical_test_config(root)
     squad_dir = root / "runs" / "run-1"
     store = SquadStateStore(squad_dir)
     controller = SquadController(
