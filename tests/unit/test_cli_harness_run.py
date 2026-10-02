@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
@@ -76,6 +77,24 @@ def test_delivery_outcome_exit_code_reports_blocked_typed_outcome() -> None:
 
 
 def _write_phase_a_build_inputs(spec_dir: Path) -> None:
+    # These dispatch fixtures publish artifacts only; execution is mocked at
+    # the run adapter, not at readiness admission.
+    root = spec_dir.parent.parent
+    stack_dir = root / ".echelon" / "stacks" / "cli-artifacts"
+    stack_dir.mkdir(parents=True, exist_ok=True)
+    (stack_dir / "stack.yml").write_text(yaml.safe_dump({
+        "schema_version": "1.4",
+        "stack": {"id": "cli-artifacts", "name": "CLI artifacts",
+                  "version": "1", "kind": "capability"},
+        "applies_to": {"archetypes": ["custom"]},
+        "provides": {"x.cli.artifacts": "markdown"},
+        "context": {"files": ["context.md"]},
+        "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
+    }), encoding="utf-8")
+    (stack_dir / "context.md").write_text("# CLI artifact dispatch fixture\n", encoding="utf-8")
+    (root / ".echelon" / "local.yml").write_text(
+        "stacks:\n  selected: [cli-artifacts]\n", encoding="utf-8",
+    )
     spec_dir.mkdir(parents=True, exist_ok=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
         if name == "plan.md":
@@ -910,7 +929,7 @@ class TestHarnessTargetPreflight:
             encoding="utf-8",
         )
         config_file = root / ".echelon" / "config.yml"
-        config_file.parent.mkdir(parents=True)
+        config_file.parent.mkdir(parents=True, exist_ok=True)
         config_file.write_text("harness:\n  target_repo: sources/api\n", encoding="utf-8")
         harness_base = root / "runs" / "targets" / "api"
         mirror = harness_base / "runs" / "mirror.git"
@@ -1016,7 +1035,7 @@ class TestHarnessTargetPreflight:
             encoding="utf-8",
         )
         config_file = root / ".echelon" / "config.yml"
-        config_file.parent.mkdir(parents=True)
+        config_file.parent.mkdir(parents=True, exist_ok=True)
         config_file.write_text("harness:\n  target_repo: sources/api\n", encoding="utf-8")
         harness_base = root / "runs" / "targets" / "api"
         mirror = harness_base / "runs" / "mirror.git"
