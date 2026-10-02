@@ -12,7 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.support.temp_storage import copy_package_build_tree
-from tests.integration.test_squad_controller import _materialize_canonical_test_config
+from tests.integration.test_squad_controller import _materialize_canonical_test_config, _publish_mock_outputs
 
 from echelon.spec_service import (
     _cmd_continue,
@@ -453,27 +453,32 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            constitution = Path(project_root) / "specs" / "001-demo" / "constitution.md"
-            constitution.parent.mkdir(parents=True, exist_ok=True)
-            constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
-            return SquadAgentResult(
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {"constitution_status": "complete"},
+                    "state_updates": {},
                     "journal_entries": [],
                 },
                 raw_output="",
                 duration_ms=10,
                 timed_out=False,
-            )
+            ), _kwargs, content="# Constitution\n\nReal governance.\n")
 
     monkeypatch.setattr("echelon.phase_service.enforce_project_config_compatibility", fail_if_called)
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
     run_phase(tmp_path, "phase1-constitution", spec_id="001")
 
-    assert (spec_dir / "constitution.md").exists()
+    current = (tmp_path / "runs/.current").read_text(encoding="utf-8").strip()
+    state = SquadStateStore(tmp_path / "runs" / current).load()
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
+    assert "phase1-constitution" in state["completed_phases"]
+    canonical = tmp_path / ".echelon/constitution.md"
+    assert canonical.read_bytes() == (tmp_path / "runs" / current / "constitution.draft.md").read_bytes()
+    assert state["constitution_status"] == "exists"
+    assert not (tmp_path / state["spec_dir"] / "constitution.md").exists()
+    assert not (spec_dir / "constitution.md").exists()
 
 
 def test_phase_run_plan_enforces_task_lexicon_config(
@@ -664,20 +669,17 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            constitution = Path(project_root) / "specs" / "001-demo" / "constitution.md"
-            constitution.parent.mkdir(parents=True, exist_ok=True)
-            constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
-            return SquadAgentResult(
+            return _publish_mock_outputs(SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {"constitution_status": "complete"},
+                    "state_updates": {},
                     "journal_entries": [],
                 },
                 raw_output="",
                 duration_ms=10,
                 timed_out=False,
-            )
+            ), _kwargs, content="# Constitution\n\nReal governance.\n")
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
 
@@ -694,7 +696,8 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
     assert state["last_dispatch"]["manual_phase_run"] is True
     assert state["manual_phase_runs"][0]["phase_id"] == "phase1-constitution"
     assert "phase1-constitution" in state["completed_phases"]
-    assert (spec_dir / "constitution.md").read_text(encoding="utf-8").startswith("# Constitution")
+    assert (tmp_path / ".echelon/constitution.md").read_text(encoding="utf-8").startswith("# Constitution")
+    assert not (spec_dir / "constitution.md").exists()
     # Manual Phase A replays operate on a private run-local copy and must not
     # publish controller-owned artifact indexes into the visible spec.
     assert not (spec_dir / "ARTIFACTS.md").exists()
