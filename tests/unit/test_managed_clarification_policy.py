@@ -74,7 +74,9 @@ def test_managed_clarification_applies_native_quality_reset(monkeypatch, tmp_pat
         assert effects.state_removals == frozenset({"quality_gate_remediation", "proportional_quality_candidate_evidence"})
     else:
         assert "phase1_quality_repair" not in effects.state_updates and not effects.state_removals
-    assert effects.completion == "prepared" and effects.route == ("phase1-what" if native_default else "phase1-why2")
+    # Preparation returns companion input, not a second durable state owner.
+    assert effects.legacy_completion == "prepared" and effects.completion is None
+    assert effects.route == ("phase1-what" if native_default else "phase1-why2")
 
 
 @pytest.mark.parametrize("producer", ["tracker", "why1"])
