@@ -2214,14 +2214,30 @@ class SquadController:
         from harness import discovery_completion
 
         try:
-            pending = IdentityStore.open(self._project_root).pending_identity_publication(
+            identity = IdentityStore.open(self._project_root)
+            pending = identity.pending_identity_publication(
                 spec_id=str(state.get("spec_id") or ""),
             )
-            if pending is None:
-                return True
-            operation_id = pending["preparation"]["operation_id"]
             dispatch = state.get("last_dispatch") or {}
             resolution = state.get("last_human_input_completion")
+            if pending is None:
+                # Release is durable before staging disposal. A crash in that
+                # gap leaves no pending identity row, but the exact committed
+                # owner still binds the staged companion. Never scan unrelated
+                # transactions or infer cleanup authority from old releases.
+                candidates = (
+                    resolution.get("completion_id") if isinstance(resolution, Mapping) else None,
+                    dispatch.get("spec_step_id") if isinstance(dispatch, Mapping) else None,
+                )
+                retained_id = next((candidate for candidate in candidates
+                    if type(candidate) is str
+                    and re.fullmatch(r"[0-9a-f]{32}", candidate) is not None
+                    and os.path.lexists(self._squad_dir / ".spec-step-effects" / candidate)), None)
+                if retained_id is None:
+                    return True
+                operation_id = "discovery-completion-" + retained_id
+            else:
+                operation_id = pending["preparation"]["operation_id"]
             if (
                 isinstance(resolution, Mapping)
                 and operation_id == "discovery-completion-" + str(resolution.get("completion_id") or "")
@@ -2234,6 +2250,9 @@ class SquadController:
                     if key != "decision_id"
                 }
                 companion.update(origin="resolution", step="complete")
+                completion = load_prepared_spec_step_effects(
+                    self._project_root, self._squad_dir, companion,
+                )
             else:
                 if (
                     not isinstance(dispatch, Mapping)
@@ -2241,18 +2260,16 @@ class SquadController:
                     or operation_id != "discovery-completion-" + str(dispatch.get("spec_step_id") or "")
                 ):
                     return False
-                step = load_prepared_spec_step(self._squad_dir, {
-                    "schema_version": 1, "origin": "routed", "cursor": "commit",
-                    "step_id": dispatch["spec_step_id"],
-                    "intent_sha256": dispatch["completion_intent_sha256"],
-                    "receipts_sha256": dispatch["completion_receipts_sha256"],
-                    "publication_binding_sha256": dispatch["completed_publication_binding_sha256"],
-                    "failure": None,
-                })
-                companion = self._completion_marker_from_spec_step(step)
-            completion = load_prepared_spec_step_effects(
-                self._project_root, self._squad_dir, companion,
-            )
+                completion = self._committed_managed_routed_completion(state)
+            if pending is None:
+                if "managed_discovery" not in completion.intent.publication:
+                    return True
+                retained = identity.identity_publication(
+                    spec_id=str(state.get("spec_id") or ""), operation_id=operation_id,
+                )
+                if (retained is None or retained["state"] != "released"
+                        or discovery_completion._document(retained["completion_payload"])["version"] != 4):
+                    return False
             discovery_completion.release(
                 self._project_root, self._squad_dir, self._state_store, completion,
             )

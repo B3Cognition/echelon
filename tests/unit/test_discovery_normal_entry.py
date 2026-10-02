@@ -129,6 +129,56 @@ def test_normal_restart_replays_receipts_without_dispatch_or_usage_duplication(p
     assert state["token_usage"] == 21
     assert len(executor.calls) == calls == 3
     assert prepared[2].pending_identity_publication(spec_id="game") is None
+    if point in {"completed", "released"}:
+        assert not list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
+        assert not list((prepared[1].squad_dir / ".spec-step-outbox").iterdir())
+
+
+@pytest.mark.parametrize("damage", ["none", "native_receipts", "companion_receipts", "legacy_release"])
+def test_released_discovery_cleanup_requires_exact_current_proof(prepared, monkeypatch, damage):
+    from harness.element_identity_store import IdentityStore
+    executor = FullDiscoveryExecutor()
+    root, store, identity, _ = prepared
+    release = IdentityStore.release_identity_publication
+
+    def interrupt_after_release(self, **kwargs):
+        if damage == "legacy_release":
+            payload = json.loads(kwargs["completion_payload"])
+            payload.pop("source")
+            payload["version"] = 3
+            kwargs["completion_payload"] = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        release(self, **kwargs)
+        raise Interrupted()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(IdentityStore, "release_identity_publication", interrupt_after_release)
+        with pytest.raises(Interrupted):
+            controller(prepared, executor).run(
+                managed_discovery=selection(prepared), create_managed_discovery=True,
+            )
+    before = store.load()
+    step_id = before["last_dispatch"]["spec_step_id"]
+    if damage in {"native_receipts", "companion_receipts"}:
+        directory = ".spec-step-outbox" if damage == "native_receipts" else ".spec-step-effects"
+        (store.squad_dir / directory / step_id / "receipts.json").write_text("{}\n")
+    outboxes = [store.squad_dir / name for name in (".spec-step-effects", ".spec-step-outbox")]
+    retained = {path: path.read_bytes() for outbox in outboxes for path in outbox.rglob("*") if path.is_file()}
+    history = identity.identity_history(spec_id="game")
+    operation_id = "discovery-completion-" + step_id
+    row = identity.identity_publication(spec_id="game", operation_id=operation_id)
+    assert row["state"] == "released"
+    assert identity.pending_identity_publication(spec_id="game") is None
+    ctrl = controller(prepared, executor)
+    assert ctrl._cleanup_spec_step_orphans() is (damage == "none")
+    assert store.load() == before
+    assert identity.identity_history(spec_id="game") == history
+    assert identity.identity_publication(spec_id="game", operation_id=operation_id) == row
+    assert len(executor.calls) == 3
+    if damage == "none":
+        assert all(not list(outbox.iterdir()) for outbox in outboxes)
+        assert ctrl._cleanup_spec_step_orphans()
+    else:
+        assert {path: path.read_bytes() for outbox in outboxes for path in outbox.rglob("*") if path.is_file()} == retained
 
 
 def test_exhausted_outer_phase_budget_cannot_dispatch_managed_discovery(prepared):
