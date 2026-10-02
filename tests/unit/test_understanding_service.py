@@ -192,6 +192,34 @@ def test_parse_requirements_is_compatibility_view_of_canonical_projection() -> N
 
 
 @pytest.mark.unit
+def test_bundle_serializes_shadow_verification_path_without_a_new_gate(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "- **FR-001**: The page MUST show one canvas.\n"
+        "- **AC-001**: Given initialization, when the visitor opens the page, "
+        "then exactly one canvas is visible, verifying FR-001.\n",
+        encoding="utf-8",
+    )
+
+    payload = analyze_spec_bundle(
+        spec, thresholds=DEFAULT_QUALITY_GATES, enhanced=False, use_nlp=False
+    ).to_dict()
+
+    requirement = next(
+        item for item in payload["per_requirement"]
+        if item["requirement_id"] == "FR-001"
+    )
+    assert requirement["verification_path"]["linked_acceptance_criteria"][0][
+        "then"
+    ] == "exactly one canvas is visible"
+    assert "verification_path" not in payload["gates"]
+    assert "verification_path" not in payload["scores"]
+    assert "verification_path" not in payload["per_requirement"][1]
+
+
+@pytest.mark.unit
 def test_bundle_uses_shared_roles_for_semantic_gate_and_every_identifier_family(
     tmp_path: Path,
 ) -> None:

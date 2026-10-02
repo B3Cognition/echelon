@@ -17,6 +17,7 @@ from .constraint_metrics import ConstraintAnalyzer
 from .requirement_projection import RequirementProjection, project_requirements
 from .role_detection import detect_requirement_roles
 from .semantic_metrics import SemanticAnalyzer, classify_ears_pattern
+from .verification_paths import assess_verification_paths
 
 
 DEFAULT_QUALITY_GATES: dict[str, float] = {
@@ -361,6 +362,7 @@ def analyze_spec_bundle(
         _replace_category_metrics(analysis, depth_analysis, "depth")
         analysis["depth_analysis"] = depth_analysis.get("depth_analysis", {})
     per_requirement: list[dict[str, object]] = []
+    verification_paths = assess_verification_paths(projections)
     semantic_analyzer = SemanticAnalyzer(use_spacy=use_nlp)
     constraint_analyzer = ConstraintAnalyzer()
     for projection in projections:
@@ -409,6 +411,8 @@ def analyze_spec_bundle(
                 "constraint_diagnostics": constraint_analyzer.diagnose_requirement(testability_input),
             }
         )
+        if projection.requirement_id in verification_paths:
+            item["verification_path"] = verification_paths[projection.requirement_id]
         per_requirement.append(item)
 
     scores, gates, passed = evaluate_quality_gates(
