@@ -1507,16 +1507,20 @@ class TestDeliveryStateMigration:
         """Phase 1's verified checkpoint records both immutable provenance fields."""
         from harness.ralph import RalphController
 
-        coordinator = _make_controller(tmp_path)
+        coordinator = _make_controller(tmp_path, published_spec=True)
         coordinator._gitops.get_latest_worktree.return_value = str(tmp_path)
+        commit = coordinator._worktree_head(tmp_path)
+        (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
+        )
         verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
-        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
-             patch.object(RalphController, "run_loop", return_value=verified):
-            coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+        with patch.object(RalphController, "run_loop", return_value=verified):
+            result = coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
+        assert result.status == "converged"
         state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
         assert state["registered_worktree"] == str(tmp_path)
-        assert state["verified_commit"] == "verified-head"
+        assert state["verified_commit"] == commit
 
     def test_publish_recovery_keeps_its_exact_registered_worktree(
         self, tmp_path: Path
