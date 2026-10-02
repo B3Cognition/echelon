@@ -4863,6 +4863,7 @@ class TestAgentResultIntegrity:
 
     def test_checkpoint_plan_semi_auto_routes_without_commander_judgment(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path)
         provider = MagicMock()
         provider.exec_agent.side_effect = AssertionError(
             "checkpoint-plan should not dispatch COMMANDER judgment in semi"
@@ -5378,6 +5379,7 @@ class TestSquadControllerBasics:
     ):
         """phase3-consensus can legitimately repeat up to max_iterations."""
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path)
         provider = _mock_provider("PASS")
         default_result = provider.exec_agent.return_value
 
