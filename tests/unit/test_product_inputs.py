@@ -2276,13 +2276,182 @@ def test_controller_product_effect_seals_exact_mixed_mode_old_tree(
     assert stat.S_IMODE((staged_old / "private-tools/runner").stat().st_mode) == 0o751
 
 
-def _authorize_controller_product_publication(controller, store, prepared) -> None:
-    from harness.state_transaction_namespace import SPEC_STEP_PUBLICATION_PLAN_KEY
+def _begin_native_controller_product_publication(controller, store, prepared, *, tamper=None):
+    """Exercise the publication effect through the real native step owner."""
+    from harness.spec_step import prepare_spec_step
+    from harness.product_input_step import controller_product_input_provenance
 
+    snapshot = store.capture_routing_snapshot(expected_phase="phase3-plan")
+    final_state = snapshot.state
+    final_state.update(controller._product_input_publication_state_updates(prepared))
+    final_state["last_dispatch"] = {
+        "dispatch_id": prepared.marker.transaction_id,
+        "phase_id": "phase3-plan",
+        "next_phase": "phase3-plan",
+    }
+    provenance = controller_product_input_provenance(
+        controller._project_root, final_state, prepared.marker.to_dict(),
+    )
+    if tamper is not None:
+        tamper(final_state, provenance)
+    step = prepare_spec_step(
+        store.squad_dir,
+        step_id=prepared.marker.transaction_id,
+        origin="routed",
+        expected_state_revision=snapshot.state_revision,
+        expected_previous_dispatch_sha256=snapshot.previous_dispatch_sha256,
+        route={"kind": "routed", "from_phase": "phase3-plan", "to_phase": "phase3-plan"},
+        effects=("publication",),
+        publication={"kind": "external", "marker": prepared.marker.to_dict()},
+        final_state=final_state,
+        provenance=provenance,
+    )
+    store.begin_spec_step(step, snapshot=snapshot)
+    return step
+
+
+def test_native_controller_product_publication_rejects_unowned_drift(tmp_path: Path) -> None:
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result, "phase3-plan", store.load(), manual_phase_run=False,
+    )
+    assert prepared is not None
+    _begin_native_controller_product_publication(controller, store, prepared)
+    (visible[0].parent / "unowned-drift.bin").write_bytes(b"tampered")
+    before = {path: path.read_bytes() for path in visible}
+
+    outcome = controller._drain_pending_spec_step()
+
+    assert outcome.blocked
+    assert {path: path.read_bytes() for path in visible} == before
+    assert "pending_spec_step" in store.load()
+
+
+@pytest.mark.parametrize("fault", ["missing", "missing_unchanged_state", "root", "marker", "postimage", "retired_alias"])
+def test_native_controller_product_publication_rejects_changed_proof(
+    tmp_path: Path, fault: str,
+) -> None:
+    from harness.state_transaction_namespace import PRODUCT_INPUT_MUTATION_KEY
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    publication = controller._prepare_external_phase_effects(
+        result, "phase3-plan", store.load(), manual_phase_run=False,
+    )
+    assert publication is not None
+    previous_inputs = store.load()["product_inputs"]
+
+    def tamper(final, provenance):
+        proof = provenance["controller_product_input_mutation"]
+        if fault in {"missing", "missing_unchanged_state"}:
+            provenance.clear()
+            if fault == "missing_unchanged_state":
+                final["product_inputs"] = previous_inputs
+        elif fault == "root":
+            proof["project_root"] = str(tmp_path / "another-project")
+        elif fault == "marker":
+            proof["mutation"]["operation_id"] = "0" * 32
+        elif fault == "postimage":
+            final["product_inputs"]["tree_hash"] = previous_inputs["tree_hash"]
+        elif fault == "retired_alias":
+            final[PRODUCT_INPUT_MUTATION_KEY] = proof["mutation"]
+
+    _begin_native_controller_product_publication(controller, store, publication, tamper=tamper)
+    before = {path: path.read_bytes() for path in visible}
+
+    assert controller._drain_pending_spec_step().blocked
+    assert {path: path.read_bytes() for path in visible} == before
+    assert store.load()["product_inputs"] == previous_inputs
+
+
+def test_controller_native_preparation_seals_mutation_without_durable_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.phase_graph import PhaseNode
+    from harness.prepared_phase_result import prepare_phase_result
+    from harness.spec_step import load_prepared_spec_step
+    from harness.state_transaction_namespace import (
+        PRODUCT_INPUT_MUTATION_KEY, SPEC_STEP_EFFECT_PLAN_KEY, SPEC_STEP_PUBLICATION_PLAN_KEY,
+    )
+
+    controller, store, result, _ = _product_effect_staging_fixture(tmp_path)
+    root = controller._project_root
+    for command in (
+        ["git", "init"], ["git", "add", "."],
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"],
+    ):
+        subprocess.run(command, cwd=root, check=True, capture_output=True)
+    snapshot = store.capture_routing_snapshot(expected_phase="phase3-plan")
+    publication = controller._prepare_external_phase_effects(
+        result, "phase3-plan", snapshot.state, manual_phase_run=False,
+    )
+    assert publication is not None
+    node = PhaseNode(id="phase3-plan", type="agent", allowed_state_updates=[])
+    prepared = prepare_phase_result(node, result, controller_updates={})
+    completion = controller._prepare_spec_step_effects(
+        from_phase=node.id, to_phase=node.id, snapshot=snapshot,
+        manual_phase_run=False, conditional_skip=False, record_completion=True,
+        publication_marker=publication.marker.to_dict(),
+        completion_id=publication.marker.transaction_id,
+    )
+    updates = controller._product_input_publication_state_updates(publication)
+    updates[SPEC_STEP_PUBLICATION_PLAN_KEY] = publication.marker.to_dict()
+    updates[SPEC_STEP_EFFECT_PLAN_KEY] = completion.marker.to_dict()
+    decision = store.prepare_routing_decision(
+        prepared, snapshot=snapshot, from_phase=node.id, to_phase=node.id,
+        transaction_state_updates=updates, dispatch_id=publication.marker.transaction_id,
+    )
+    original = store.begin_spec_step
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupt(*args, **kwargs):
+        original(*args, **kwargs)
+        raise Interrupted()
+
+    monkeypatch.setattr(store, "begin_spec_step", interrupt)
+    with pytest.raises(Interrupted):
+        controller._advance_prepared_result_or_block(node, decision, prepared_publication=publication)
     state = store.load()
-    state.update(controller._product_input_publication_state_updates(prepared))
-    state[SPEC_STEP_PUBLICATION_PLAN_KEY] = prepared.marker.to_dict()
-    store.save(state)
+    step = load_prepared_spec_step(store.squad_dir, state["pending_spec_step"])
+    assert state["product_inputs"]["tree_hash"] == snapshot.state["product_inputs"]["tree_hash"]
+    assert step.intent.provenance["controller_product_input_mutation"]["mutation"] == updates[PRODUCT_INPUT_MUTATION_KEY]
+    assert PRODUCT_INPUT_MUTATION_KEY not in state
+    assert PRODUCT_INPUT_MUTATION_KEY not in step.intent.final_state
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in state
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in step.intent.final_state
+
+
+def test_native_controller_product_publication_rechecks_receipted_postimage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    publication = controller._prepare_external_phase_effects(
+        result, "phase3-plan", store.load(), manual_phase_run=False,
+    )
+    assert publication is not None
+    step = _begin_native_controller_product_publication(controller, store, publication)
+    original = store.complete_spec_step
+
+    def interrupt(_prepared):
+        raise OSError("crash before commit")
+
+    monkeypatch.setattr(store, "complete_spec_step", interrupt)
+    with pytest.raises(OSError, match="crash before commit"):
+        controller._drain_pending_spec_step()
+    assert store.load()["pending_spec_step"]["cursor"] == "commit"
+    mutation = step.intent.provenance["controller_product_input_mutation"]["mutation"]
+    assert immutable_product_input_tree_digest(visible[0].parent) == mutation["new_tree_hash"]
+    visible[0].write_bytes(b"post-receipt tamper")
+    before = {path: path.read_bytes() for path in visible}
+    monkeypatch.setattr(store, "complete_spec_step", original)
+
+    assert controller._drain_pending_spec_step().blocked
+    assert {path: path.read_bytes() for path in visible} == before
+    assert store.load()["product_inputs"]["tree_hash"] == mutation["old_tree_hash"]
+    assert store.load()["pending_spec_step"]["cursor"] == "commit"
 
 
 def test_controller_product_effect_clean_publication_commits_hash_and_receipt(
@@ -2302,16 +2471,14 @@ def test_controller_product_effect_clean_publication_commits_hash_and_receipt(
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
+    _begin_native_controller_product_publication(controller, store, prepared)
 
-    assert controller._publish_and_finalize(
-        prepared,
-        prepared.marker.to_dict(),
-    )
+    assert not controller._drain_pending_spec_step().blocked
 
     state = store.load()
     assert SPEC_STEP_PUBLICATION_PLAN_KEY not in state
     assert PRODUCT_INPUT_MUTATION_KEY not in state
+    assert "pending_spec_step" not in state
     assert state["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(visible[0].parent)
     )
@@ -2337,7 +2504,7 @@ def test_controller_product_effect_replays_exact_crash_prefix(
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
+    step = _begin_native_controller_product_publication(controller, store, prepared)
     original_publish = PreparedSquadPublication.publish
     operations = list(prepared._manifest["operations"])
     changed = next(
@@ -2355,21 +2522,19 @@ def test_controller_product_effect_replays_exact_crash_prefix(
         return original_publish(self, fault_hook=crash)
 
     monkeypatch.setattr(PreparedSquadPublication, "publish", crash_publish)
-    assert not controller._publish_and_finalize(
-        prepared,
-        prepared.marker.to_dict(),
-    )
+    assert controller._drain_pending_spec_step().blocked
     interrupted = store.load()
-    assert SPEC_STEP_PUBLICATION_PLAN_KEY in interrupted
-    assert PRODUCT_INPUT_MUTATION_KEY in interrupted
+    assert "pending_spec_step" in interrupted
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
+    assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
 
     monkeypatch.setattr(PreparedSquadPublication, "publish", original_publish)
-    assert controller._recover__spec_step_publication_plan()
+    assert not controller._drain_pending_spec_step().blocked
     recovered = store.load()
     assert SPEC_STEP_PUBLICATION_PLAN_KEY not in recovered
     assert PRODUCT_INPUT_MUTATION_KEY not in recovered
     assert recovered["product_inputs"]["tree_hash"] != (
-        interrupted[PRODUCT_INPUT_MUTATION_KEY]["old_tree_hash"]
+        step.intent.provenance["controller_product_input_mutation"]["mutation"]["old_tree_hash"]
     )
 
 
@@ -2391,8 +2556,8 @@ def test_controller_product_effect_replays_after_postimage_before_state_finalize
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
-    original_complete = store.complete_external_publication
+    step = _begin_native_controller_product_publication(controller, store, prepared)
+    original_complete = store.complete_spec_step
     calls = 0
 
     def crash_complete(*args, **kwargs):
@@ -2402,19 +2567,18 @@ def test_controller_product_effect_replays_after_postimage_before_state_finalize
             raise OSError("injected state-finalize crash")
         return original_complete(*args, **kwargs)
 
-    monkeypatch.setattr(store, "complete_external_publication", crash_complete)
-    assert not controller._publish_and_finalize(
-        prepared,
-        prepared.marker.to_dict(),
-    )
+    monkeypatch.setattr(store, "complete_spec_step", crash_complete)
+    with pytest.raises(OSError, match="state-finalize crash"):
+        controller._drain_pending_spec_step()
     interrupted = store.load()
-    assert SPEC_STEP_PUBLICATION_PLAN_KEY in interrupted
-    assert PRODUCT_INPUT_MUTATION_KEY in interrupted
+    assert "pending_spec_step" in interrupted
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
+    assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
     assert immutable_product_input_tree_digest(visible[0].parent) == (
-        interrupted[PRODUCT_INPUT_MUTATION_KEY]["new_tree_hash"]
+        step.intent.provenance["controller_product_input_mutation"]["mutation"]["new_tree_hash"]
     )
 
-    assert controller._recover__spec_step_publication_plan()
+    assert not controller._drain_pending_spec_step().blocked
     recovered = store.load()
     assert SPEC_STEP_PUBLICATION_PLAN_KEY not in recovered
     assert PRODUCT_INPUT_MUTATION_KEY not in recovered
@@ -2436,14 +2600,14 @@ def test_controller_product_effect_recovery_rejects_unrelated_package_drift(
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
+    _begin_native_controller_product_publication(controller, store, prepared)
     (visible[0].parent / "unowned-drift.bin").write_bytes(b"tampered")
 
-    assert not controller._recover__spec_step_publication_plan()
+    assert controller._drain_pending_spec_step().blocked
     retained = store.load()
-    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
-    assert PRODUCT_INPUT_MUTATION_KEY in retained
-    assert retained["spec_step_publication_failure"]["code"] == "target_drift"
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in retained
+    assert PRODUCT_INPUT_MUTATION_KEY not in retained
+    assert retained["pending_spec_step"]["failure"]["effect"] == "publication"
 
 
 def _install_publication_operation(project_root: Path, prepared, operation: dict) -> None:
@@ -2665,7 +2829,7 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
+    _begin_native_controller_product_publication(controller, store, prepared)
     operations = list(prepared._manifest["operations"])
     changed = [
         (index, operation)
@@ -2681,7 +2845,7 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
         if path.is_file()
     }
 
-    assert not controller._recover__spec_step_publication_plan()
+    assert controller._drain_pending_spec_step().blocked
 
     assert {
         path: (path.read_bytes(), path.stat().st_mode & 0o777)
@@ -2689,8 +2853,9 @@ def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_
         if path.is_file()
     } == before_attempt
     retained = store.load()
-    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
-    assert PRODUCT_INPUT_MUTATION_KEY in retained
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in retained
+    assert PRODUCT_INPUT_MUTATION_KEY not in retained
+    assert "pending_spec_step" in retained
 
 
 def test_controller_product_effect_recovers_every_exact_manifest_prefix(
@@ -2720,7 +2885,7 @@ def test_controller_product_effect_recovers_every_exact_manifest_prefix(
             manual_phase_run=False,
         )
         assert prepared is not None
-        _authorize_controller_product_publication(controller, store, prepared)
+        _begin_native_controller_product_publication(controller, store, prepared)
         for operation in prepared._manifest["operations"][:boundary]:
             _install_publication_operation(
                 controller._project_root,
@@ -2728,7 +2893,7 @@ def test_controller_product_effect_recovers_every_exact_manifest_prefix(
                 operation,
             )
 
-        assert controller._recover__spec_step_publication_plan()
+        assert not controller._drain_pending_spec_step().blocked
         assert store.load()["product_inputs"]["tree_hash"] == (
             immutable_product_input_tree_digest(visible[0].parent)
         )
@@ -2750,7 +2915,7 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
         manual_phase_run=False,
     )
     assert prepared is not None
-    _authorize_controller_product_publication(controller, store, prepared)
+    _begin_native_controller_product_publication(controller, store, prepared)
     package = visible[0].parent
     drifted = package / "manifest.json"
     drifted.chmod(0o640)
@@ -2760,7 +2925,7 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
         if path.is_file()
     }
 
-    assert not controller._recover__spec_step_publication_plan()
+    assert controller._drain_pending_spec_step().blocked
 
     assert {
         path: (path.read_bytes(), path.stat().st_mode & 0o777)
@@ -2768,5 +2933,6 @@ def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writ
         if path.is_file()
     } == before_attempt
     retained = store.load()
-    assert SPEC_STEP_PUBLICATION_PLAN_KEY in retained
-    assert PRODUCT_INPUT_MUTATION_KEY in retained
+    assert SPEC_STEP_PUBLICATION_PLAN_KEY not in retained
+    assert PRODUCT_INPUT_MUTATION_KEY not in retained
+    assert "pending_spec_step" in retained

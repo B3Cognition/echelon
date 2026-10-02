@@ -5567,6 +5567,25 @@ class SquadStateStore:
                         json_path="$.state",
                         validator="stale_state",
                     )
+                if loaded.intent.origin in {"routed", "terminal"}:
+                    from harness.product_input_step import controller_product_input_step_view
+                    from echelon.product_input_transaction import require_product_input_mutation_postimage
+                    proof = loaded.intent.provenance.get("controller_product_input_mutation")
+                    try:
+                        # With no mutation, the product-input contract must stay
+                        # unchanged. With one, verify the live postimage even if
+                        # publication already has a durable receipt.
+                        root = Path(proof["project_root"]) if isinstance(proof, dict) else self._squad_dir.parent.parent
+                        view = controller_product_input_step_view(loaded, root, state)
+                        if view is not None:
+                            require_product_input_mutation_postimage(
+                                root, view, view[SPEC_STEP_PUBLICATION_PLAN_KEY],
+                            )
+                    except Exception as exc:
+                        raise StateAdvanceError(
+                            "controller product input step postimage changed",
+                            json_path="$.product_inputs", validator="completion_binding",
+                        ) from exc
                 saved = self._save_exact_state_unlocked(
                     state,
                     final_state,

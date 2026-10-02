@@ -4520,9 +4520,11 @@ class TestAgentResultIntegrity:
         assert PENDING_SPEC_STEP_KEY not in completed
         assert completed["last_terminal_completion"]["completion_id"]
 
+    @pytest.mark.parametrize("origin", ["routed", "terminal"])
     def test_phase_a_publication_staging_uses_staged_product_evidence(
         self,
         tmp_path: Path,
+        origin: str,
     ) -> None:
         from echelon.product_inputs import (
             parse_input_declaration,
@@ -4617,7 +4619,30 @@ class TestAgentResultIntegrity:
         )
         assert stale_operation["action"] == "delete"
 
-        prepared.publish()
+        from harness.product_input_step import controller_product_input_provenance
+        from harness.spec_step import prepare_spec_step
+
+        snapshot = store.capture_routing_snapshot(expected_phase="phase4-document")
+        final_state = snapshot.state
+        final_state.update(ctrl._product_input_publication_state_updates(prepared))
+        provenance = controller_product_input_provenance(
+            tmp_path, final_state, prepared.marker.to_dict(),
+        )
+        route = (
+            {"kind": "terminal", "terminal_phase": "phase4-document"}
+            if origin == "terminal"
+            else {"kind": "routed", "from_phase": "phase4-document", "to_phase": "phase4-document"}
+        )
+        step = prepare_spec_step(
+            ctrl._squad_dir, step_id=prepared.marker.transaction_id, origin=origin,
+            expected_state_revision=snapshot.state_revision,
+            expected_previous_dispatch_sha256=snapshot.previous_dispatch_sha256,
+            route=route, effects=("publication",),
+            publication={"kind": "external", "marker": prepared.marker.to_dict()},
+            final_state=final_state, provenance=provenance,
+        )
+        store.begin_spec_step(step, snapshot=snapshot)
+        ctrl._apply_spec_step_publication(step, store.load())
 
         visible_ledger = json.loads(
             resolution.traceability_path.read_text(encoding="utf-8")

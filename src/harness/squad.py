@@ -2687,11 +2687,25 @@ class SquadController:
             self._squad_dir,
             marker,
         )
+        from harness.product_input_step import controller_product_input_step_view
+        product_view = controller_product_input_step_view(prepared, self._project_root, state)
+        if product_view is None and (staged._transaction_root / "work/product-inputs-old").exists():
+            raise PublicationError("manifest_invalid")
+        product_mutation = authenticate_pending_product_input_mutation(
+            self._project_root,
+            product_view if product_view is not None else state,
+            marker,
+            staged._manifest["operations"],
+            staged_inputs=(staged._transaction_root / "work/product-inputs"),
+        )
         if (
             prepared.intent.origin == "terminal"
             or prepared.intent.route.get("from_phase") == "phase4-document"
         ):
-            self._authenticate_phase_a_product_input_snapshot(staged, state)
+            self._authenticate_phase_a_product_input_snapshot(
+                staged, product_view if product_view is not None else state,
+                authenticated_mutation=product_mutation,
+            )
         managed = None
         completion = None
         companion = prepared.intent.provenance.get("completion_marker")
@@ -2726,13 +2740,6 @@ class SquadController:
             state,
             managed_binding=managed,
         )
-        authenticate_pending_product_input_mutation(
-            self._project_root,
-            state,
-            marker,
-            staged._manifest["operations"],
-            staged_inputs=(staged._transaction_root / "work/product-inputs"),
-        )
         if managed is None:
             staged.publish()
         else:
@@ -2745,7 +2752,7 @@ class SquadController:
             )
         require_product_input_mutation_postimage(
             self._project_root,
-            state,
+            product_view if product_view is not None else state,
             marker,
         )
         if (
@@ -10521,6 +10528,8 @@ class SquadController:
         self,
         prepared: PreparedSquadPublication,
         state: Mapping[str, object],
+        *,
+        authenticated_mutation: Mapping[str, object] | None = None,
     ) -> None:
         """Reauthenticate read-only Phase 4 source and its sealed snapshot."""
         metadata = state.get("product_inputs")
@@ -10533,10 +10542,12 @@ class SquadController:
             )
         source_inputs = self._absolute_project_path(inputs_ref)
         self._require_run_local_product_inputs(source_inputs)
-        expected_hash = authenticate_product_input_contract(
-            self._project_root,
-            metadata,
-            source_inputs,
+        expected_hash = (
+            authenticated_mutation["new_tree_hash"]
+            if authenticated_mutation is not None
+            else authenticate_product_input_contract(
+                self._project_root, metadata, source_inputs,
+            )
         )
         snapshot = prepared._transaction_root / "work/product-inputs"
         if immutable_product_input_tree_digest(snapshot) != expected_hash:
@@ -10839,10 +10850,16 @@ class SquadController:
         )
         final_state = snapshot.state
         final_state.update(planned_updates)
+        if prepared is not None:
+            final_state.update(self._product_input_publication_state_updates(prepared))
         final_state["status"] = "done"
         final_state.pop("blocked_reason", None)
         final_state.pop(SPEC_STEP_EFFECT_PLAN_KEY, None)
         final_state.pop(SPEC_STEP_PUBLICATION_PLAN_KEY, None)
+        from harness.product_input_step import controller_product_input_provenance
+        product_provenance = controller_product_input_provenance(
+            self._project_root, final_state, publication_marker,
+        )
         effects = list(completion.intent.effect_plan)
         if prepared is not None:
             effects.insert(0, "publication")
@@ -10865,6 +10882,7 @@ class SquadController:
             provenance={
                 "completion_marker": completion.marker.to_dict(),
                 "effect_intent": completion.intent.to_dict(),
+                **product_provenance,
             },
         )
         try:
@@ -14248,6 +14266,11 @@ class SquadController:
             )
             final_state.pop(SPEC_STEP_EFFECT_PLAN_KEY, None)
             final_state.pop(SPEC_STEP_PUBLICATION_PLAN_KEY, None)
+            from harness.product_input_step import controller_product_input_provenance
+            product_provenance = controller_product_input_provenance(
+                self._project_root, final_state,
+                prepared_publication.marker.to_dict() if prepared_publication is not None else None,
+            )
             dispatch = final_state.get("last_dispatch")
             if not isinstance(dispatch, dict):
                 raise StateAdvanceError(
@@ -14310,6 +14333,7 @@ class SquadController:
                 provenance={
                     "completion_marker": dict(completion_marker),
                     "effect_intent": completion.intent.to_dict(),
+                    **product_provenance,
                     "prepared_result_sha256": (
                         decision.prepared_result.preparation_sha256
                     ),
