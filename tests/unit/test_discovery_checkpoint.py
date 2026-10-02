@@ -219,12 +219,17 @@ def test_checkpoint_release_recovery_retains_projection_proof(checkpoint_case, m
     from harness.discovery_completion import released_checkpoint_projector
     from harness.squad_source_snapshot import inspect_project_tree
     executor = FullDiscoveryExecutor()
-    target, method = {"completed": (checkpoint_case[1], "complete_controller_completion"),
+    target, method = {"completed": (checkpoint_case[1], "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
         "publication_disposed": (PreparedSquadPublication, "discard")}[point]
     original = getattr(target, method)
     def stop_after(*args, **kwargs):
         result = original(*args, **kwargs)
+        if point == "completed":
+            current = checkpoint_case[1].load()
+            assert "pending_spec_step" not in current
+            assert current["last_dispatch"]["spec_step_id"] == args[0].marker.step_id
+            assert current["last_dispatch"]["post_dispatch_complete"] is True
         if point != "publication_disposed" or (checkpoint_case[1].load().get("last_dispatch") or {}).get("post_dispatch_complete"):
             raise Interrupted()
         return result
