@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -166,7 +167,9 @@ def test_official_playwright_image_does_not_fallback_on_docker_failure(tmp_path)
         env={}, secrets_env={}, post_create_command=None, forward_ports=[],
     )
 
-    with patch("harness.docker_provider._run_docker") as docker:
+    with patch("harness.docker_provider._run_docker") as docker, patch(
+        "harness.docker_provider.subprocess.run"
+    ) as process:
         def docker_result(args, **_kwargs):
             if args[:2] == ["info", "--format"]:
                 return MagicMock(returncode=0, stdout="aarch64\n", stderr="")
@@ -181,6 +184,94 @@ def test_official_playwright_image_does_not_fallback_on_docker_failure(tmp_path)
             provider.create(spec)
 
     assert len([call for call in docker.call_args_list if call.args[0][:2] == ["run", "--rm"]]) == 1
+    # No resources exist before the platform probe succeeds. Never touch the
+    # host Docker CLI to remove a merely planned network.
+    process.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("cleanup_failure", ["missing_cli", "timeout", "nonzero"])
+def test_failed_creation_preserves_error_and_continues_cleanup(
+    tmp_path, caplog, cleanup_failure,
+) -> None:
+    """A failed removal must not hide the copy failure or leak later resources."""
+    generated_conf = tmp_path / "generated-squid.conf"
+    generated_conf.write_text("test", encoding="utf-8")
+    provider = DockerWorktreeProvider()
+    spec = SandboxSpec(
+        image="playwright:test", image_source="playwright",
+        worktree_mount=str(tmp_path / "candidate"), container_mount="/workspace",
+        resource_limits=ResourceLimits(), network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+        isolate_candidate=True,
+    )
+    commands = []
+
+    def process_result(command, **_kwargs):
+        commands.append(command)
+        if command[:2] == ["docker", "exec"]:
+            return subprocess.CompletedProcess(command, 1, "", "copy failed")
+        if command == ["docker", "rm", "-f", "sandbox-id"]:
+            if cleanup_failure == "missing_cli":
+                raise FileNotFoundError("docker disappeared")
+            if cleanup_failure == "timeout":
+                raise subprocess.TimeoutExpired(command, 10)
+            return subprocess.CompletedProcess(command, 1, b"", b"daemon unavailable")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    with patch("harness.docker_provider._run_docker") as docker, patch(
+        "harness.docker_provider.subprocess.run", side_effect=process_result,
+    ), patch(
+        "harness.docker_provider._generate_squid_conf", return_value=str(generated_conf),
+    ):
+        docker.side_effect = [
+            subprocess.CompletedProcess([], 0, "network-id\n", ""),
+            subprocess.CompletedProcess([], 0, "proxy-id\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, "sandbox-id\n", ""),
+        ]
+        with pytest.raises(SandboxCreationError, match="isolated candidate copy failed"):
+            provider.create(spec)
+
+    assert commands[1:3] == [
+        ["docker", "rm", "-f", "sandbox-id"],
+        ["docker", "rm", "-f", "proxy-id"],
+    ]
+    assert commands[3][:3] == ["docker", "network", "rm"]
+    assert commands[4][:4] == ["docker", "volume", "rm", "-f"]
+    assert len(commands) == 5
+    assert not generated_conf.exists()
+    assert provider._containers == {}
+    assert "cleanup" in caplog.text.lower()
+
+
+@pytest.mark.unit
+def test_failed_config_cleanup_preserves_creation_error(tmp_path, caplog) -> None:
+    """A temporary-file permission error is secondary to failed proxy creation."""
+    generated_conf = tmp_path / "generated-squid.conf"
+    generated_conf.write_text("test", encoding="utf-8")
+    original_error = SandboxCreationError("proxy image unavailable")
+    provider = DockerWorktreeProvider()
+    spec = SandboxSpec(
+        image="playwright:test", image_source="playwright",
+        worktree_mount=str(tmp_path / "candidate"), container_mount="/workspace",
+        resource_limits=ResourceLimits(), network_policy=NetworkPolicy(),
+        env={}, secrets_env={}, post_create_command=None, forward_ports=[],
+    )
+    with patch("harness.docker_provider._run_docker", side_effect=[
+        subprocess.CompletedProcess([], 0, "network-id\n", ""), original_error,
+    ]), patch("harness.docker_provider.subprocess.run", return_value=
+        subprocess.CompletedProcess([], 0, b"", b""),
+    ), patch("harness.docker_provider._generate_squid_conf", return_value=str(generated_conf)), patch(
+        "harness.docker_provider.Path.unlink", side_effect=PermissionError("cannot remove config"),
+    ):
+        with pytest.raises(SandboxCreationError) as raised:
+            provider.create(spec)
+
+    assert raised.value is original_error
+    assert generated_conf.exists()
+    assert str(generated_conf) in caplog.text
+    assert "cleanup" in caplog.text.lower()
 
 
 @pytest.mark.unit

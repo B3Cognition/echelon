@@ -28,6 +28,8 @@ source ~/.zshrc   # or restart terminal
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
 This is enough to author specs and run the default delivery strategy.
+Prosaic 0.3.0 is pinned as a Python dependency in that same environment;
+workspace bundle deployment and prompt inspection do not require Node.js/npm.
 
 | Tool | Purpose |
 | ---- | ------- |
@@ -792,6 +794,10 @@ build execution remains unsupported.
 The HTTP transport, streaming parser, tool loop, compaction and file-tool
 implementation come from the pinned
 [Prosaic Runtime](https://github.com/B3Cognition/prosaic-runtime) dependency.
+Echelon pins Python Prosaic 0.3.0 and Prosaic Runtime 0.5.1 to immutable release
+commits; both are installed into the same Python environment. Prosaic itself no
+longer requires Node.js/npm. Runtime's optional custom-tool catalogue and staged
+acquisition features are not automatically enabled by this dependency update.
 Echelon supplies its RE tools, execution policy, result contracts and transcript
 location discovery. Explicit read-only roles and exclusive empty write scopes
 cannot write files. Echelon's provider selection and model configuration remain

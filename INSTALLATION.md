@@ -28,8 +28,8 @@ bash ~/echelon/scripts/install.sh
 
 The default installer:
 
-1. Creates a venv at `~/.echelon/venv/` and installs the core Echelon and understanding CLIs, including delivery/harness subcommands
-2. When Node.js and npm are available, installs the pinned Prosaic, Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
+1. Creates a venv at `~/.echelon/venv/` and installs the core Echelon and understanding CLIs, including delivery/harness subcommands, Python Prosaic 0.3.0 and Prosaic Runtime 0.5.1 pinned to immutable release commits
+2. When Node.js and npm are available, installs Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
 3. Adds `~/.echelon/venv/bin` to your PATH
 4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
 
@@ -48,8 +48,9 @@ cd ~/work/my-project
 echelon workspace init --llm claude
 ```
 
-The normal Echelon installer installs the pinned Prosaic CLI into Echelon's
-managed Node runtime. Workspace initialization stages the Echelon-owned package
+The normal Echelon installer installs the pinned Python Prosaic CLI into
+`~/.echelon/venv/bin/prosaic`; Node.js/npm are not needed for Prosaic.
+Workspace initialization stages the Echelon-owned package
 sources under `.echelon/packages/` and uses that CLI to deploy:
 
 ```text
@@ -140,6 +141,19 @@ bash ~/echelon/scripts/install.sh   # re-runs installer and rebuilds the venv
 ```
 
 To upgrade the MemPalace or understanding model versions, update the relevant URLs in `pyproject.toml` and re-run the installer.
+
+Upgrading from Node-based Prosaic replaces Echelon's old launcher with the Python
+entry point automatically. No npm installation of Prosaic is needed. Check that
+your shell selects the Echelon-managed executable:
+
+```bash
+command -v prosaic    # ~/.echelon/venv/bin/prosaic
+prosaic --version     # 0.3.0
+```
+
+If an old global npm CLI shadows it, put `~/.echelon/venv/bin` first on PATH (or
+restart the terminal). The installer does not uninstall unrelated global npm
+packages or delete the old, now-unused `~/.echelon/node/prosaic` directory.
 
 ---
 

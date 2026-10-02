@@ -1,299 +1,97 @@
-"""E2E test: Ralph loop convergence (E2E-01).
-
-Per T048 task specification:
-- Full ralph-loop against Python fixture repo with stub LLM
-- Stub provides correct fix on first feedback iteration
-- Loop converges within 3 outer iterations
-- PR created as draft, promoted to ready
-- State file shows converged status
-- Iteration log has correct entries
-- Zero host pollution
-
-Per SC-004: converge within 3 outer iterations.
-"""
-
-from __future__ import annotations
-
+"""Controlled roles, real candidate verification, and host-owned publication."""
 import json
-import os
 from pathlib import Path
 
 import pytest
 
-from harness.config import HarnessConfig, NetworkConfig, ResourceLimits
-from harness.delivery_results import ImplementationResult
-from harness.state import StateStore
-
-from tests.e2e.conftest import MockGitOps, make_ralph_controller
-from tests.e2e.stub_llm import StubLLM
+from tests.e2e.controlled_ralph import CHAIN
 
 
 @pytest.mark.e2e
 class TestRalphConvergence:
-    """E2E-01: Full ralph-loop convergence with stub LLM."""
-
-    def test_converges_within_3_outer_iterations(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Loop converges on first outer iteration with correct fix."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        # Initialize and run
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        # Verify convergence
-        assert result.status == "verified"
+    def test_converges_within_3_outer_iterations(self, controlled_ralph):
+        run = controlled_ralph(mode="semi")
+        run.initialize(budget=100_000)
+        result = run.run(budget=100_000)
+        assert result.status == "verified", (result, run.store.read())
         assert result.termination_reason == "converged"
-        assert result.outer_iterations <= 3, (
-            f"Expected convergence within 3 iterations, got {result.outer_iterations}"
-        )
-        assert gitops.local_merges, "Verified branch must be merged into default branch"
-        assert gitops.local_merges[-1]["default_branch"] == "main"
+        assert result.outer_iterations <= 3
+        assert run.steps == CHAIN + ["tech_writer", "docs_verifier"]
+        assert run.gitops.local_merges[-1]["default_branch"] == "main"
+        assert run.legacy_stub.call_count == 0
 
-    def test_pr_created_and_promoted(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Draft PR created on first iteration, promoted on convergence."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
+    def test_pr_created_and_promoted_only_after_complete_evidence(self, controlled_ralph):
+        run = controlled_ralph(mode="semi")
+        run.initialize()
+        result = run.run()
         assert result.status == "verified"
-        assert gitops.pr_created, "Draft PR should have been created"
-        assert gitops.pr_promoted, "PR should have been promoted after convergence"
-        assert gitops.local_merges, "Default branch merge must happen before convergence"
-        assert result.pr_url is not None
+        assert run.gitops.pr_created and run.gitops.pr_promoted
+        assert result.pr_url == run.gitops.pr_url
+        assert "return a / b" in (run.gitops.source / "app.py").read_text()
+        spec = run.root / "specs/test-spec"
+        assert "| FR-001 | IMPLEMENTED |" in (spec / "fulfillment-report.md").read_text()
+        assert "verdict: PASS" in (spec / "docs-verification-report.md").read_text()
+        assert (spec / "verified-fulfillment-ledger.json").is_file()
+        assert run.provider.executions and all(call[1] == 0 for call in run.provider.executions)
+        assert set(run.provider.created) == set(run.provider.destroyed)
 
-    def test_state_file_keeps_delivery_state_running_after_verification(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Phase 1 writes evidence without transitioning delivery state."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
+    def test_phase_result_keeps_delivery_state_running(self, controlled_ralph):
+        run = controlled_ralph()
+        run.initialize()
+        result = run.run()
+        assert result.status == "verified"
+        state = run.store.read()
+        assert state["status"] == "running"
+        assert state["termination_reason"] == "converged"
+        assert state["build"]["completed_tasks"] == 1
 
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        # Read state file directly
-        final_state = state_store.read()
-        assert final_state["status"] == "running"
-        assert final_state.get("termination_reason") == "converged"
-
-    def test_iteration_log_has_correct_entries(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Iteration log records build, verify, and fix phases."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        final_state = state_store.read()
-        log = final_state.get("iteration_log", [])
-        assert len(log) > 0, "Iteration log should have entries"
-
-        # First entry should be build
-        phases = [entry["phase"] for entry in log]
-        assert "build" in phases, "Should have a build phase entry"
-        assert "verify" in phases, "Should have a verify phase entry"
-
-        # Each entry should have required fields
+    def test_iteration_log_records_actual_build_verify_and_docs_repair(self, controlled_ralph):
+        run = controlled_ralph()
+        run.initialize()
+        assert run.run().status == "verified"
+        log = run.store.read()["iteration_log"]
+        assert {entry["phase"] for entry in log} >= {"build", "verify", "fix"}
         for entry in log:
-            assert "outer_iter" in entry
-            assert "phase" in entry
-            assert "exit_code" in entry
-            assert "passed" in entry
-            assert "duration_s" in entry
-            assert "tokens" in entry
-            assert "timestamp" in entry
+            assert {"outer_iter", "phase", "exit_code", "passed", "duration_s", "tokens", "timestamp"} <= entry.keys()
+        receipts = list((run.root / "runs/evidence/verification").glob("attempt-*.json"))
+        assert len(receipts) == len(run.provider.executions)
+        assert all(json.loads(path.read_text())["status"] == "passed" for path in receipts)
 
-    def test_tokens_tracked(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Token usage is tracked across the loop."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        assert result.tokens_used > 0, "Should have used some tokens"
-        # RalphController estimates tokens from stdout length (len/4),
-        # not from the stub's internal counter. Just verify positive and
-        # consistent with state.
-        final_state = state_store.read()
-        assert final_state.get("tokens_used", 0) == result.tokens_used, (
-            "ImplementationResult tokens should match state file tokens"
-        )
-
-    def test_zero_host_pollution(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """No files created outside .specify/ directory."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        # Record files before run
-        specify_dir = tmp_harness_dir / ".specify"
-        worktree_dir = tmp_harness_dir / "worktrees"
-
-        # Get initial top-level contents (excluding .specify and worktrees)
-        initial_contents = {
-            p.name for p in tmp_harness_dir.iterdir()
-            if p.name not in (".specify", "worktrees", "runs")
-        }
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        # Check no new top-level files/dirs (besides .specify and worktrees)
-        post_contents = {
-            p.name for p in tmp_harness_dir.iterdir()
-            if p.name not in (".specify", "worktrees", "runs")
-        }
-        new_items = post_contents - initial_contents
-        assert not new_items, f"Host pollution detected: new items {new_items}"
-
-    def test_converges_on_inner_loop(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Loop converges after inner loop fix cycle."""
-        stub = StubLLM(mode="converge_on_inner", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, _ = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=100_000,
-        )
-
+    def test_exact_usage_includes_fulfillment_and_verifier_without_double_charging(self, controlled_ralph):
+        run = controlled_ralph(tokens=37)
+        run.initialize()
+        result = run.run()
         assert result.status == "verified"
-        assert result.inner_iterations > 0, "Should have used inner loop"
+        assert run.executor.inspections, "Fulfillment inspection must actually execute"
+        model_usage = 37 * (len(run.executor.calls) + len(run.executor.inspections))
+        verifier_usage = sum((len(stdout) + len(stderr)) // 4
+                             for _, _, stdout, stderr in run.provider.executions)
+        expected = model_usage + verifier_usage
+        assert result.tokens_used == run.store.read()["tokens_used"] == expected
+
+    def test_no_source_or_host_changes_before_verified_landing(self, controlled_ralph):
+        run = controlled_ralph(reject_reviews=True)
+        source = (run.gitops.source / "app.py").read_bytes()
+        roles = {path: path.read_bytes() for path in (run.root / ".echelon").rglob("*.md")}
+        run.initialize()
+        assert run.run().status == "blocked"
+        assert (run.gitops.source / "app.py").read_bytes() == source
+        assert all(path.read_bytes() == body for path, body in roles.items())
+        assert not run.gitops.local_merges
+        assert not (run.root / "app.py").exists()
+
+    def test_authoritative_verifier_catches_accepted_bad_candidate_then_repair_converges(self, controlled_ralph):
+        # Script an optimistic model review; only the real verifier decides acceptance.
+        run = controlled_ralph(wrong_builds=1, mode="semi")
+        run.initialize(budget=100_000)
+        result = run.run(budget=100_000)
+        assert result.status == "verified", (result, run.store.read())
+        assert result.inner_iterations >= 2
+        assert run.steps == CHAIN * 2 + ["tech_writer", "docs_verifier"]
+        assert run.provider.executions[0][1] != 0
+        assert "20 != 5" in run.provider.executions[0][3]
+        assert run.provider.executions[-1][1] == 0
+        repair_prompt = run.executor.calls[4][1]
+        assert "controlled_source_repair_v1" in repair_prompt
+        assert "20 != 5" in repair_prompt
+        assert "return a / b" in Path(run.gitops.source, "app.py").read_text()

@@ -1,203 +1,81 @@
-"""E2E test: Same-failure escalation (E2E-02).
-
-Per T049 task specification:
-- Ralph-loop with stub LLM returning same wrong fix 3 times
-- Same-failure detection triggers after 3rd identical failure
-- State set to blocked
-- Escalation file written with correct structure
-
-Per FR-LOOP-003a: same failure 3x triggers escalation.
-Per SC-006: escalation file written within 60 seconds.
-"""
-
-from __future__ import annotations
-
+"""Escalation from real verification failures, distinct from controlled gate blocks."""
 import time
-from pathlib import Path
-
 import pytest
 
-from harness.config import HarnessConfig
-from harness.delivery_results import ImplementationResult
-
-from tests.e2e.conftest import MockGitOps, make_ralph_controller
-from tests.e2e.stub_llm import StubLLM
+from tests.e2e.controlled_ralph import CHAIN, FINDING
 
 
 @pytest.mark.e2e
 class TestRalphEscalation:
-    """E2E-02: Same-failure escalation with stub LLM."""
+    def test_escalation_triggers_after_3x_same_failure(self, controlled_ralph):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        run.initialize(budget=100_000)
+        result = run.run(budget=100_000)
+        assert result.status == "blocked"
+        assert result.termination_reason == "blocker_escalation", (result, run.store.read())
+        assert len(run.provider.executions) == 3
+        assert all(call[1] != 0 and "20 != 5" in call[3] for call in run.provider.executions)
+        assert run.steps == CHAIN * 3
+        assert not run.gitops.pr_promoted and not run.gitops.local_merges
+        assert not run.executor.inspections, "Failed tests must not enter fulfillment"
 
-    def test_escalation_triggers_after_3x_same_failure(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Same failure 3x triggers escalation and blocks loop."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,  # More inner iterations to accumulate 3 same failures
-            token_budget=500_000,
-        )
-
-        start_time = time.monotonic()
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-        elapsed = time.monotonic() - start_time
-
-        assert result.status == "blocked", (
-            f"Expected blocked status, got {result.status} "
-            f"(reason: {result.termination_reason})"
-        )
+    def test_state_keeps_delivery_status_after_phase_escalation(self, controlled_ralph):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        run.initialize()
+        result = run.run()
         assert result.termination_reason == "blocker_escalation"
+        state = run.store.read()
+        assert state["status"] == "running"
+        assert state["termination_reason"] == "blocker_escalation"
+        assert state["last_verify_result"]["passed"] is False
+        assert state["tokens_used"] == result.tokens_used
 
-    def test_state_keeps_delivery_status_after_phase_escalation(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Phase escalation records evidence without delivery-state transition."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        final_state = state_store.read()
-        assert final_state["status"] == "running"
-
-    def test_escalation_file_created(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Escalation file is written with correct structure."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        # Check escalation directory for files
-        esc_dir = tmp_harness_dir / "runs" / "escalations"
-        esc_files = list(esc_dir.glob("*.md"))
-        assert len(esc_files) > 0, "Escalation file should have been created"
-
-        # Verify escalation file content structure
-        content = esc_files[0].read_text(encoding="utf-8")
+    def test_escalation_file_has_actual_failure_and_no_answer(self, controlled_ralph):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        run.initialize()
+        assert run.run().termination_reason == "blocker_escalation"
+        files = list(run.escalation.escalations_dir.glob("*.md"))
+        assert len(files) == 1
+        content = files[0].read_text()
         assert "# Escalation:" in content
         assert "same_failure_repeat" in content
-        assert "## Question" in content
-        assert "## Context" in content
+        assert "## Question" in content and "## Context" in content
+        assert "20 != 5" in content
+        assert run.escalation.check_resume(str(files[0])) is None
+        assert run.store.read()["escalation_file"] == str(files[0])
 
-    def test_escalation_within_timeout(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Escalation completes within 60 seconds (SC-006)."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
+    def test_escalation_and_cleanup_within_timeout(self, controlled_ralph):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        run.initialize()
         start = time.monotonic()
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-        elapsed = time.monotonic() - start
+        result = run.run()
+        assert result.termination_reason == "blocker_escalation"
+        assert time.monotonic() - start < 60
+        assert len(run.provider.created) == 3
+        assert set(run.provider.created) == set(run.provider.destroyed)
 
+    def test_banzai_skips_optional_escalation_not_authoritative_verification(self, controlled_ralph):
+        run = controlled_ralph(wrong_builds=100, mode="banzai")
+        run.initialize(max_outer=2, max_inner=3)
+        result = run.run(max_outer=2, max_inner=3)
         assert result.status == "blocked"
-        assert elapsed < 60.0, (
-            f"Escalation should complete within 60 seconds, took {elapsed:.1f}s"
-        )
+        assert result.termination_reason == "outer_cap", (result, run.store.read())
+        assert len(run.provider.executions) >= 3
+        assert all(call[1] != 0 for call in run.provider.executions)
+        assert not list(run.escalation.escalations_dir.glob("*.md"))
+        assert not run.gitops.local_merges and not run.gitops.pr_promoted
 
-    def test_banzai_mode_skips_same_failure_escalation(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Banzai mode does not escalate on same_failure_repeat."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="banzai",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="banzai",
-            max_outer=2,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=2,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        # Banzai mode reaches the ordinary outer cap, not same-failure escalation.
-        assert result.status == "blocked"
-        assert result.termination_reason == "outer_cap"
+    @pytest.mark.parametrize("mode", ["semi", "banzai"])
+    def test_controlled_gate_repair_limit_cannot_be_skipped(self, controlled_ralph, mode):
+        run = controlled_ralph(reject_reviews=True, mode=mode)
+        run.initialize()
+        result = run.run()
+        assert result.status == "blocked" and result.termination_reason == "build_blocked"
+        assert run.steps == CHAIN * 5
+        assert "delivery_gate_repair_limit" in run.store.read()["build_reason"]
+        assert all(FINDING in record["result"]["findings"]
+                   for journal in run.journals() for record in journal["records"]
+                   if record["assignment"]["step"] == "spec_guard")
+        assert not run.provider.executions
+        assert not run.gitops.pr_created
+        assert not list(run.escalation.escalations_dir.glob("*.md"))

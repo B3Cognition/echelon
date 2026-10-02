@@ -12,6 +12,7 @@ import pytest
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
 from harness.ai_cli_backends.claude import ClaudeCliBackend
 from harness.config import HarnessConfig
+from harness.delivery_slice_journal import MAX_GATE_ROUNDS
 from tests.unit.test_delivery_slice_runner import slice_project
 
 
@@ -276,8 +277,11 @@ print(json.dumps({"type": "result", "usage": {"input_tokens": 3, "output_tokens"
     if reject:
         assert not result.succeeded
         assert "repair_limit" in result.reason
-        assert seen == ["implementer", "spec_guard"] * 3
-        assert result.token_usage == 42
+        # The controller gathers all independent reviews before requesting a
+        # repair; later passing reviews must not erase the spec guard's FAIL.
+        expected_round = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
+        assert seen == expected_round * MAX_GATE_ROUNDS
+        assert result.token_usage == 7 * len(expected_round) * MAX_GATE_ROUNDS
     else:
         assert result.succeeded, result.reason
         assert result.task_ids == ["T-001"]

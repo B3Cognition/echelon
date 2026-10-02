@@ -655,7 +655,9 @@ def _workspace_sandbox_profile(
                 f"(require-not (subpath {quoted}))",
             )
         )
-    allowed_files = f"(require-all {' '.join(exclusions)})"
+    # Seatbelt rejects an empty require-all. An absent exclusion list means
+    # an unfiltered allow rule, not an invalid sandbox profile.
+    allowed_files = f"(require-all {' '.join(exclusions)})" if exclusions else ""
     write_exclusions = list(exclusions)
     for root in read_only_roots:
         quoted = json.dumps(root)
@@ -663,7 +665,7 @@ def _workspace_sandbox_profile(
             f"(require-not (literal {quoted}))",
             f"(require-not (subpath {quoted}))",
         ))
-    writable_files = f"(require-all {' '.join(write_exclusions)})"
+    writable_files = f"(require-all {' '.join(write_exclusions)})" if write_exclusions else ""
     read_rules = []
     for root in (*read_roots, *operational_roots):
         scope = f"(subpath {json.dumps(root)})"

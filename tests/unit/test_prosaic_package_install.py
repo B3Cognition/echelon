@@ -14,6 +14,54 @@ import pytest
 from tests.support.temp_storage import copy_package_build_tree, package_checkout_files
 
 
+def test_python_prosaic_deploys_and_inspects_without_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.prosaic_packages import install_prosaic_bundle
+    from harness.prosaic_prompt_loader import ProsaicPromptLoader
+
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    executable = Path(sys.executable).parent / "prosaic"
+    assert executable.is_file(), "Python environment must install Echelon's Prosaic dependency"
+    (commands / "prosaic").symlink_to(executable)
+    git = shutil.which("git")
+    assert git is not None
+    (commands / "git").symlink_to(git)
+    monkeypatch.setenv("PATH", str(commands))
+    assert shutil.which("node") is None
+    assert shutil.which("npm") is None
+    source = tmp_path / "source"
+    _write_bundle_source(source)
+    agent = source / "prosaic/subagents/echelon.demo.md"
+    agent.parent.mkdir()
+    agent.write_text(
+        "---\nname: echelon.demo\ndescription: Review the supplied task\n"
+        "model_tier: balanced\ntools: [read_file]\n---\nReview {{args}}.\n",
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+
+    install_prosaic_bundle(workspace, echelon_root=source)
+    # Repeated installation must retain the same managed deployment contract.
+    install_prosaic_bundle(workspace, echelon_root=source)
+    loader = ProsaicPromptLoader(workspace)
+    command = loader.load_command("echelon.demo")
+    assert command is not None and command.body == "# Demo\n"
+    inspected = loader.load_subagent("echelon.demo")
+    assert inspected is not None and inspected.frontmatter == {
+        "name": "echelon.demo", "description": "Review the supplied task",
+        "model_tier": "balanced", "tools": ["read_file"],
+    }
+    assert inspected.body == "Review {{args}}.\n"
+    assert loader.render_command(inspected, "requirements", preamble="").prompt == "Review requirements.\n"
+    assert (workspace / ".echelon/runtime/workflow/definition.yaml").read_text() == "phases: []\n"
+    assert not (workspace / "prosaic.config.yaml").exists()
+    assert not (workspace / ".echelon/packages").exists()
+
+
 def _write_bundle_source(root: Path) -> None:
     (root / "prosaic" / "commands").mkdir(parents=True)
     (root / "prosaic" / "commands" / "echelon.demo.md").write_text(

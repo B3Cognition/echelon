@@ -1,225 +1,111 @@
-"""E2E test: Resume after escalation (E2E-03).
-
-Per T050 task specification:
-- Run ralph-loop until escalation
-- Simulate user answer via resume
-- Loop resumes from where it stopped
-- Stub LLM returns correct fix after resume
-- Loop converges after resume
-
-Tests the full escalation -> resume -> convergence flow.
-"""
-
-from __future__ import annotations
-
+"""Restart through DeliveryController, with real pending role receipts."""
+import json
 from pathlib import Path
 
 import pytest
 
-from harness.config import HarnessConfig
 from harness.escalation import EscalationHandler
-from harness.delivery_results import ImplementationResult
-from harness.mode import ModeController
-from harness.ralph import RalphController
-from harness.state import StateStore
+from harness.run_intent import RunIntent
 
-from tests.e2e.conftest import MockGitOps, make_ralph_controller
-from tests.e2e.stub_llm import StubLLM, StubSandboxProvider
+
+def intent(*, mode="semi", resume=False):
+    return RunIntent("test-spec", mode=mode, resume=resume, token_budget=100_000,
+                     max_outer=5, max_inner=5, auto_merge=mode != "guided")
 
 
 @pytest.mark.e2e
 class TestRalphResume:
-    """E2E-03: Escalation -> resume -> convergence flow."""
+    def test_block_answer_restart_and_converge(self, controlled_ralph, monkeypatch):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        first = run.delivery(monkeypatch)
+        blocked = first.run(intent())
+        assert blocked.status == "blocked"
+        assert blocked.termination_reason == "blocker_escalation", (blocked, first.state())
+        state = first.state()
+        escalation = Path(state["escalation_file"])
+        assert escalation.is_file()
+        operation = state["delivery_slice_operation"]["id"]
+        before_usage = state["tokens_used"]
+        handler = EscalationHandler(str(escalation.parent.parent))
+        handler.resume(str(escalation), "Fix divide without changing the assertion.")
+        assert "Fix divide without changing the assertion." in handler.check_resume(str(escalation))
+        run.executor.wrong_builds = 0
+        second = run.delivery(monkeypatch)
+        result = second.run(intent(resume=True))
+        assert result.status == "converged", (result, second.state())
+        assert second.state()["tokens_used"] > before_usage
+        assert second.state()["delivery_slice_operation"]["id"] != operation
+        assert len(run.gitops.worktrees_created) == 1
+        assert "return a / b" in (run.gitops.source / "app.py").read_text()
+        assert run.gitops.pr_promoted
 
-    def test_block_resume_converge(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Full flow: block on escalation, resume with answer, converge."""
-        # Phase 1: Run until blocked
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
+    def test_pending_unanswered_escalation_blocks_implicit_restart(self, controlled_ralph, monkeypatch):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        first = run.delivery(monkeypatch)
+        assert first.run(intent()).termination_reason == "blocker_escalation"
+        state_path = first._state_store.state_file
+        before = state_path.read_bytes()
+        calls = len(run.executor.calls)
+        second = run.delivery(monkeypatch)
+        with pytest.raises(RuntimeError, match="escalation pending"):
+            second.run(intent())
+        assert state_path.read_bytes() == before
+        assert len(run.executor.calls) == calls
+        assert not run.gitops.pr_promoted and not run.gitops.local_merges
 
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-            spec_id="test-spec",
-                    )
+    def test_explicit_continue_without_answer_is_not_an_implicit_restart(self, controlled_ralph, monkeypatch):
+        run = controlled_ralph(wrong_builds=100, mode="semi")
+        first = run.delivery(monkeypatch)
+        assert first.run(intent()).termination_reason == "blocker_escalation"
+        escalation = Path(first.state()["escalation_file"])
+        assert "## Answer" not in escalation.read_text()
+        run.executor.wrong_builds = 0
+        second = run.delivery(monkeypatch)
+        result = second.run(intent(resume=True))
+        assert result.status == "converged", (result, second.state())
+        assert "## Answer" not in escalation.read_text()
+        assert second.state()["status"] == "converged"
+        assert second.state()["blocked_phase"] is None
+        assert len(run.gitops.worktrees_created) == 1
 
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
+    def test_guided_restart_preserves_receipts_and_mode(self, controlled_ralph, monkeypatch):
+        run = controlled_ralph(mode="guided")
+        first = run.delivery(monkeypatch)
+        blocked = first.run(intent(mode="guided"))
+        assert blocked.status == "blocked"
+        state = first.state()
+        assert state["blocked_phase"] == "implementation"
+        assert state["build"]["completed_tasks"] == 1
+        assert not run.provider.executions, "The guided build boundary precedes verification"
+        assert run.executor.build_count == 1
+        journals = {path: path.read_bytes() for path in first._state_dir.rglob("journal.json")}
+        assert journals
+        second = run.delivery(monkeypatch)
+        resumed = second.run(intent(mode="guided", resume=True))
+        assert resumed.status == "blocked", (resumed, second.state())
+        assert second.state()["mode"] == "guided"
+        assert run.executor.build_count == 1, "Accepted implementation must not be replayed"
+        assert all(path.read_bytes() == raw for path, raw in journals.items())
+        assert not run.gitops.local_merges and not run.gitops.pr_promoted
 
-        result1 = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        assert result1.status == "blocked"
-
-        # Record iteration counters from blocked state
-        blocked_state = state_store.read()
-        blocked_outer = blocked_state.get("outer_iter", 0)
-
-        # Phase 2: Find escalation file and add answer
-        esc_dir = tmp_harness_dir / "runs" / "escalations"
-        esc_files = list(esc_dir.glob("*.md"))
-        assert len(esc_files) > 0, "Should have escalation file"
-
-        esc_file = str(esc_files[0])
-        escalation.resume(esc_file, "Try a different approach: fix the divide function")
-
-        # Update state to record escalation file path
-        state = state_store.read()
-        state["escalation_file"] = esc_file
-        state_store.write(state)
-
-        # Phase 3: Resume - switch stub to converge mode
-        stub2 = StubLLM(mode="converge_on_first", tokens_per_call=500)
-        provider2 = StubSandboxProvider(stub2)
-
-        # Create new controller with same state_store but convergent stub
-        controller2 = RalphController(
-            provider=provider2,
-            gitops=gitops,
-            state_store=state_store,
-            mode_controller=ModeController("semi"),
-            escalation_handler=escalation,
-            spec_id="test-spec",
-                        config=harness_config,
-        )
-
-        result2 = controller2.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        assert result2.status == "verified", (
-            f"Expected converged after resume, got {result2.status} "
-            f"(reason: {result2.termination_reason})"
-        )
-
-    def test_resume_without_answer_raises(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Resume on blocked state without answer raises clear error."""
-        stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="semi",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="semi",
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        result = controller.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        assert result.status == "blocked"
-
-        # Find escalation file and record it in state (without adding answer)
-        esc_dir = tmp_harness_dir / "runs" / "escalations"
-        esc_files = list(esc_dir.glob("*.md"))
-        assert len(esc_files) > 0
-
-        state = state_store.read()
-        state["escalation_file"] = str(esc_files[0])
-        state_store.write(state)
-
-        # Try to resume without answer — should raise
-        controller2 = RalphController(
-            provider=provider,
-            gitops=gitops,
-            state_store=state_store,
-            mode_controller=ModeController("semi"),
-            escalation_handler=escalation,
-            spec_id="test-spec",
-                        config=harness_config,
-        )
-
-        result2 = controller2.run_loop(
-            max_outer=5,
-            max_inner=5,
-            token_budget=500_000,
-        )
-
-        # Now should return ImplementationResult with status="blocked" instead of raising
-        assert result2.status == "blocked"
-        assert result2.termination_reason == "blocker_escalation"
-
-    def test_guided_mode_pause_and_resume(
-        self, tmp_harness_dir: Path, harness_config: HarnessConfig,
-    ) -> None:
-        """Guided mode pauses at boundary, resume continues loop."""
-        stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
-
-        controller, state_store, gitops, provider, escalation = make_ralph_controller(
-            stub_llm=stub,
-            tmp_dir=tmp_harness_dir,
-            harness_config=harness_config,
-            mode="guided",
-        )
-
-        state_store.acquire_lock("test-run")
-        state_store.initialize(
-            run_id="test-run",
-            mode="guided",
-            max_outer=5,
-            max_inner=3,
-            token_budget=500_000,
-        )
-
-        # First run: should pause at boundary
-        result1 = controller.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=500_000,
-        )
-
-        assert result1.status == "blocked", (
-            f"Guided mode should pause at boundary, got {result1.status}"
-        )
-
-        # Resume: no escalation file, just guided pause
-        stub2 = StubLLM(mode="converge_on_first", tokens_per_call=500)
-        provider2 = StubSandboxProvider(stub2)
-
-        controller2 = RalphController(
-            provider=provider2,
-            gitops=gitops,
-            state_store=state_store,
-            mode_controller=ModeController("guided"),
-            escalation_handler=escalation,
-            spec_id="test-spec",
-                        config=harness_config,
-        )
-
-        result2 = controller2.run_loop(
-            max_outer=5,
-            max_inner=3,
-            token_budget=500_000,
-        )
-
-        # It may pause again or converge - either is valid for guided mode
-        assert result2.status in ("verified", "blocked"), (
-            f"Expected verified or blocked after guided resume, got {result2.status}"
-        )
+    def test_explicit_budget_increase_replays_known_roles_without_double_charging(self, controlled_ralph, monkeypatch):
+        run = controlled_ralph(tokens=2000, mode="semi")
+        small = RunIntent("test-spec", mode="semi", token_budget=5000, max_outer=5, max_inner=5)
+        first = run.delivery(monkeypatch)
+        blocked = first.run(small)
+        assert blocked.status == "blocked" and blocked.termination_reason == "budget_exhausted"
+        assert run.steps == ["implementer", "spec_guard", "code_reviewer"]
+        assert first.state()["tokens_used"] == 6000
+        journal_path, = first._state_dir.rglob("journal.json")
+        initial = json.loads(journal_path.read_text())["records"]
+        second = run.delivery(monkeypatch)
+        result = second.run(intent(resume=True))
+        assert result.status == "converged", (result, second.state())
+        final = json.loads(journal_path.read_text())["records"]
+        assert final[:3] == initial
+        assert len(final) == 4 and final[3]["assignment"]["step"] == "test_guardian"
+        assert run.executor.build_count == 1
+        assert second.state()["token_budget"] == 100_000
+        expected = 2000 * (len(run.executor.calls) + len(run.executor.inspections))
+        expected += sum((len(stdout) + len(stderr)) // 4 for _, _, stdout, stderr in run.provider.executions)
+        assert result.tokens_used == second.state()["tokens_used"] == expected

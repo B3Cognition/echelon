@@ -20,6 +20,9 @@ from prosaic_runtime.openai_compatible import (
 from harness.llm_tool_policy import inject_llm_tool_policy_preamble
 from harness.ai_cli_backends.openai_compatible_transcript import open_provider_transcript
 
+# Tool-use guidance only. Final-response contracts belong to the caller's
+# rendered prose; artifact reads and assignment-bound delivery are not legacy
+# COMMANDER dispatches and must not be instructed to emit echelon_result YAML.
 _OPENAI_COMPATIBLE_TOOL_GUIDANCE = (
     "Prefer bulk context tools first when inspecting Echelon RE or artifact runs. "
     "Use read_re_analysis_pack for run-level context, read_domain_pack for one "
@@ -31,9 +34,7 @@ _OPENAI_COMPATIBLE_TOOL_GUIDANCE = (
     "especially after writing or editing that source. "
     "Treat rejected out-of-scope reads and empty search results as authoritative; do "
     "not retry them or broaden scope. When owned tests are absent, report them as "
-    "not-observed instead of searching elsewhere. "
-    "The `echelon_result` control payload is final YAML response text, never a tool or "
-    "function call. Once artifacts are complete, stop calling tools and emit that block."
+    "not-observed instead of searching elsewhere."
 )
 
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -30,14 +33,71 @@ def test_installer_has_no_codegen_opt_in() -> None:
     assert "exit 2" in script[parser:uv_check]
 
 
-def test_installer_provisions_pinned_prosaic_runtime_and_launcher() -> None:
-    script = _installer()
-
-    assert 'PROSAIC_GIT_SPEC="git+ssh://git@github.com/B3Cognition/prosaic.git#b6c9701"' in script
-    assert 'PROSAIC_NODE_DIR="$NODE_RUNTIME_ROOT/prosaic"' in script
-    assert 'npm install --prefix "$PROSAIC_NODE_DIR" --no-audit --no-fund "$PROSAIC_GIT_SPEC"' in script
-    assert 'PROSAIC_LAUNCHER="$VENV_DIR/bin/prosaic"' in script
-    assert 'exec node "$PROSAIC_NODE_DIR/node_modules/prosaic/dist/cli/index.js" "\\$@"' in script
+def test_installer_preserves_python_prosaic_without_node(tmp_path: Path) -> None:
+    """The old Node-optional branch deleted the Python-installed entry point."""
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    (isolated_home / ".bashrc").touch()
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / "runtime/workflow").mkdir(parents=True)
+    installer = checkout / "scripts/install.sh"
+    shutil.copy2(INSTALLER, installer)
+    shutil.copy2(
+        ROOT / "runtime/workflow/journal-entry-types.yaml",
+        checkout / "runtime/workflow/journal-entry-types.yaml",
+    )
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    for name in ("bash", "dirname", "grep", "mkdir", "chmod", "rm"):
+        executable = shutil.which(name)
+        assert executable is not None
+        (commands / name).symlink_to(executable)
+    # Model the package manager's entry-point installation, without fetching
+    # Echelon's heavy dependencies or warming the real shared memory store.
+    python_code = (
+        f"#!{sys.executable}\nimport os, sys\n"
+        'if "import chromadb" in sys.argv[-1]: sys.exit(1)\n'
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
+    )
+    fake_uv = commands / "uv"
+    fake_uv.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib, sys\n"
+        "if sys.argv[1] == 'venv': sys.exit(0)\n"
+        "assert sys.argv[1:3] == ['pip', 'install']\n"
+        "bin_dir = pathlib.Path(os.environ['HOME']) / '.echelon/venv/bin'\n"
+        "bin_dir.mkdir(parents=True, exist_ok=True)\n"
+        f"(bin_dir / 'python').write_text({python_code!r})\n"
+        "(bin_dir / 'python').chmod(0o755)\n"
+        "for name, version in [('echelon', '4.1.1'), ('prosaic', '0.3.0')]:\n"
+        f"    (bin_dir / name).write_text('#!{sys.executable}\\nprint(' + repr(version) + ')\\n')\n"
+        "    (bin_dir / name).chmod(0o755)\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    environment = {
+        **os.environ,
+        "HOME": str(isolated_home),
+        "SHELL": "/bin/bash",
+        "PATH": str(commands),
+        "ECHELON_HOME": str(isolated_home / ".echelon"),
+    }
+    assert shutil.which("node", path=environment["PATH"]) is None
+    result = subprocess.run(
+        [str(commands / "bash"), str(installer)],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    prosaic = isolated_home / ".echelon/venv/bin/prosaic"
+    assert prosaic.is_file(), "installer removed the Python Prosaic entry point"
+    checked = subprocess.run([str(prosaic), "--version"], capture_output=True, text=True)
+    assert checked.returncode == 0 and checked.stdout.strip() == "0.3.0"
+    assert not (isolated_home / ".echelon/node/prosaic").exists()
 
 
 def test_installer_finishes_with_prosaic_first_workspace_setup() -> None:
