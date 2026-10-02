@@ -3544,6 +3544,7 @@ class TestAgentResultIntegrity:
     def _phase_a_publication_staging_fixture(
         tmp_path: Path,
     ) -> tuple[SquadController, SquadStateStore, SquadAgentResult, Path, Path]:
+        _select_artifact_publication_stack(tmp_path, unit_coverage=True)
         ctrl, store = _controller(tmp_path)
         store.initialize(
             "r",
@@ -3562,6 +3563,17 @@ class TestAgentResultIntegrity:
             prefix="active ",
             include_fr=True,
         )
+        (active_spec_dir / "tasks.md").write_text(
+            "# active tasks.md\n\n"
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "depends=none target=sources/app\n"
+            "  **Test Tasks:**\n"
+            "  - UT-001 verifies the published artifacts.\n",
+            encoding="utf-8",
+        )
+        from harness.spec_frontmatter import write_targets
+
+        write_targets(active_spec_dir, ["sources/app"])
         (active_spec_dir / "contracts").mkdir()
         (active_spec_dir / "contracts" / "api.md").write_text(
             "# Active API contract\n",
@@ -3634,7 +3646,9 @@ class TestAgentResultIntegrity:
         )["units"][0]["id"]
         (active_spec_dir / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 "
-            "depends=none target=sources/app\n",
+            "depends=none target=sources/app\n"
+            "  **Test Tasks:**\n"
+            "  - UT-001 verifies the published artifacts.\n",
             encoding="utf-8",
         )
         apply_product_input_updates(
@@ -3884,6 +3898,28 @@ class TestAgentResultIntegrity:
 
         assert self._visible_tree_bytes(published) == before
         assert "_spec_step_publication_plan" not in store.load()
+
+    def test_phase_a_publication_rejects_unowned_coverage_case(self, tmp_path):
+        from harness.squad import _PhaseAReadinessCommitError
+
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+        tasks = active / "tasks.md"
+        tasks.write_text(tasks.read_text().replace(
+            "  **Test Tasks:**\n  - UT-001 verifies the published artifacts.\n", "",
+        ), encoding="utf-8")
+
+        with pytest.raises(_PhaseAReadinessCommitError) as caught:
+            ctrl._prepare_external_phase_effects(
+                result, "phase4-document", store.load(), manual_phase_run=False,
+            )
+
+        assert caught.value.readiness.blockers == [
+            "verification_ownership_unresolved: unowned coverage cases: UT-001",
+        ]
+        assert self._visible_tree_bytes(published) == before
 
     def test_phase_a_publication_staging_manifest_is_exact_and_preserves_note(
         self,
@@ -4511,7 +4547,9 @@ class TestAgentResultIntegrity:
         )["units"][0]["id"]
         (active / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 "
-            "depends=none target=sources/app\n",
+            "depends=none target=sources/app\n"
+            "  **Test Tasks:**\n"
+            "  - UT-001 verifies the published artifacts.\n",
             encoding="utf-8",
         )
         state = store.load()
