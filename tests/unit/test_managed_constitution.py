@@ -127,21 +127,35 @@ def test_constitution_interrupted_boundaries_keep_one_dispatch(checkpoint_case, 
     ctrl = controller(checkpoint_case, executor)
     request = {**selection(checkpoint_case), "through_phase": "phase1-constitution"}
     targets = [(store, "advance_discovery_operation", "accepted"),
-        (ctrl, "_prepare_spec_step_effects", "staged"), (store, "advance", "routed"),
+        (ctrl, "_prepare_spec_step_effects", "staged"), (store, "begin_spec_step", "routed"),
         (IdentityStore, "apply_identity_publication", "promoted"),
         (ctrl, "_apply_controller_completion_effect", "context"),
-        (store, "complete_controller_completion", "completed"),
+        (store, "complete_spec_step", "completed"),
         (IdentityStore, "release_identity_publication", "released")]
     for target, method, point in targets:
         original = getattr(target, method)
         def interrupt(*args, **kwargs):
             value = original(*args, **kwargs)
-            selected = ((kwargs.get("producer") == "constitution" and args[1] == "finish") if point == "accepted" else
-                kwargs.get("from_phase") == "phase1-constitution" if point == "staged" else
-                (store.load().get("last_dispatch") or {}).get("phase_id") == "phase1-constitution")
+            current = store.load()
+            selected = {
+                "accepted": lambda: kwargs.get("producer") == "constitution" and args[1] == "finish",
+                "staged": lambda: kwargs.get("from_phase") == "phase1-constitution",
+                "routed": lambda: args[0].intent.route["from_phase"] == "phase1-constitution",
+                "promoted": lambda: current["phase"] == "phase1-constitution" and "pending_spec_step" in current,
+                "context": lambda: args[0].intent.route["from_phase"] == "phase1-constitution",
+                "completed": lambda: args[0].intent.route["from_phase"] == "phase1-constitution",
+                "released": lambda: (current.get("last_dispatch") or {}).get("phase_id") == "phase1-constitution",
+            }[point]()
             if point == "context":
                 selected = selected and args[0].marker.step == "context"
             if selected:
+                if point == "routed":
+                    assert current["pending_spec_step"] == args[0].marker.to_dict()
+                    assert current["phase"] == "phase1-constitution" and current["token_usage"] == 84
+                elif point == "completed":
+                    assert "pending_spec_step" not in current
+                    assert current["last_dispatch"]["spec_step_id"] == args[0].marker.step_id
+                    assert current["phase"] == "phase1-what" and current["token_usage"] == 105
                 raise Interrupted()
             return value
         with monkeypatch.context() as patch:
