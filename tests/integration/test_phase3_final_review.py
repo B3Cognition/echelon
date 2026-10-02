@@ -555,6 +555,8 @@ def test_banzai_final_gate_admits_reused_issue_id_and_routes_its_owner(tmp_path)
         node,
         prepared,
         snapshot,
+        projected_state_updates=dict(result.state_updates),
+        execution=result,
     )
 
     assert routing is not None
@@ -566,6 +568,7 @@ def test_banzai_final_gate_admits_reused_issue_id_and_routes_its_owner(tmp_path)
         snapshot,
         routing,
         None,
+        execution=routing.execution,
     )
 
     persisted = store.load()
