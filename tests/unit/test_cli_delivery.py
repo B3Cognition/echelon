@@ -582,7 +582,10 @@ def test_delivery_provisioning_allows_external_database_url_to_reach_harness_bou
         "echelon.delivery_service._apply_target_verify_command_detection",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr("echelon.delivery_service._block_if_harness_phase_a_not_ready", lambda *_args: None)
+    monkeypatch.setattr(
+        "echelon.delivery_service._block_if_harness_phase_a_not_ready",
+        lambda _spec_dir, _spec_id, *, project_root: None,
+    )
     monkeypatch.setattr("echelon.delivery_service._prepare_delivery_build_state", lambda **_kwargs: "build-test")
 
     config = HarnessConfig(
