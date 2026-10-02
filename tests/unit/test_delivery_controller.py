@@ -113,6 +113,7 @@ def _initialize_git_worktree(path: Path) -> Path:
 
 def _make_controller(
     tmp_path: Path, should_pass: bool = True, *, published_spec: bool = False,
+    spec_name: str = "spec-001",
 ) -> DeliveryController:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
@@ -124,7 +125,7 @@ def _make_controller(
         from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
         from harness.verification_stack_runtime import apply_verification_stacks
 
-        _write_phase_a_build_inputs(tmp_path / "specs" / "spec-001")
+        _write_phase_a_build_inputs(tmp_path / "specs" / spec_name)
         apply_verification_stacks(config, project_root=tmp_path, target_root=tmp_path)
     gitops = MagicMock()
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
@@ -135,7 +136,7 @@ def _make_controller(
             ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
             capture_output=True, text=True,
         ).stdout.strip()
-        (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+        (tmp_path / "specs" / spec_name / "fulfillment-report.md").write_text(
             f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
         )
     gitops.get_latest_worktree.return_value = str(tmp_path)
@@ -2046,11 +2047,16 @@ class TestSmartResumeDetection:
         """Targeted dispatch recovers task scope from canonical tasks.md."""
         target = tmp_path / "sources" / "prosaic"
         target.mkdir(parents=True)
+        coord = _make_controller(
+            tmp_path, should_pass=True, published_spec=True, spec_name="spec-001-demo",
+        )
+        from harness.spec_frontmatter import write_targets
+
         spec_dir = tmp_path / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
+        write_targets(spec_dir, ["sources/prosaic"])
         (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none target=sources/prosaic\n"
-            "- [ ] T-002 complexity=standard phase=verify req=FR-002 depends=T-001 target=sources/prosaic\n",
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=sources/prosaic\n"
+            "- [ ] T-002 complexity=standard phase=verify req=INFRA depends=T-001 target=sources/prosaic\n",
             encoding="utf-8",
         )
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
@@ -2060,7 +2066,6 @@ class TestSmartResumeDetection:
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/prosaic")
         monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
 
-        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
         with patch("harness.delivery_controller.RalphController") as MockRalph:
@@ -2079,14 +2084,12 @@ class TestSmartResumeDetection:
 
     def test_spec_artifact_paths_are_recorded_in_state(self, tmp_path: Path) -> None:
         """Harness Context must be populated from Python-owned spec paths."""
+        coord = _make_controller(
+            tmp_path, should_pass=True, published_spec=True, spec_name="spec-001-demo",
+        )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
         spec_file = spec_dir / "spec.md"
         tasks_file = spec_dir / "tasks.md"
-        spec_file.write_text("# Spec\n", encoding="utf-8")
-        tasks_file.write_text("# Tasks\n", encoding="utf-8")
-
-        coord = _make_controller(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
 
         with patch("harness.delivery_controller.RalphController") as MockRalph:
