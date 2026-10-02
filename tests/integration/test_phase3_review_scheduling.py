@@ -25,6 +25,20 @@ def scheduling_node(controller, agents):
     return replace(base, agents=agents, nested_provider_assignments=assignments)
 
 
+def publish_plan_outputs(spec, task_content=None):
+    outputs = [spec / name for name in (
+        "tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md",
+    )]
+    for output in outputs:
+        content = (task_content.encode() if output.name == "tasks.md" and task_content is not None
+                   else output.read_bytes() if output.exists()
+                   else b"T-001 precedes T-002; no external dependency.")
+        replacement = output.with_name(f".{output.name}.current")
+        replacement.write_bytes(content)
+        replacement.replace(output)
+    return [str(output) for output in outputs]
+
+
 def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=False, plan_result=None, during_plan=None, spec_ref="specs/008-test"):
     controller, store = _controller(tmp_path)
     run = tmp_path / "squad/run-test"
@@ -66,12 +80,15 @@ def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=F
         else:
             assert "Operate in **PLAN2**" in prompt
             calls.append(("plan", None))
-            if mutate_plan:
-                (spec / "tasks.md").write_text(f"New task plan {len(calls)}")
+            payload["output_files"] = publish_plan_outputs(
+                spec, f"New task plan {len(calls)}" if mutate_plan else None,
+            )
             if during_plan is not None:
                 during_plan()
             if plan_result is not None:
-                return plan_result
+                failure = deepcopy(plan_result)
+                failure.echelon_result["output_files"] = payload["output_files"]
+                return failure
             payload["verdict"] = "DONE"
         return SquadAgentResult(exit_code=0, echelon_result=payload, raw_output="", duration_ms=0, timed_out=False)
 
@@ -103,6 +120,29 @@ def advance(controller, store, result):
         node, routing.decision, execution=routing.execution,
     ) is not None
     return routing.decision.to_phase
+
+
+@pytest.mark.parametrize("mutate_plan", [False, True])
+def test_scheduling_plan_publishes_fresh_complete_outputs(tmp_path, mutate_plan):
+    _, store, executor, node, spec, _ = scheduling_fixture(
+        tmp_path, mode="semi", verdict="FAIL", mutate_plan=mutate_plan,
+    )
+    result = executor.execute(node, store)
+
+    assert isinstance(result, FinalizedPhaseExecution)
+    planner = [receipt for receipt in result.receipts
+               if receipt["assignment_id"].endswith("/echelon.orchestrator:PLAN2")]
+    assert len(planner) == 1
+    assert planner[0]["outcome"] == "published"
+    outputs = {output["path"]: output for output in planner[0]["outputs"]}
+    assert set(outputs) == {
+        "tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md",
+    }
+    assert all(output["evidence_kind"] in {"created", "replaced"}
+               for output in outputs.values())
+    assert (spec / "tasks.md").read_text() == (
+        "New task plan 2" if mutate_plan else "Original task plan"
+    )
 
 
 @pytest.mark.parametrize("verdict", ["PASS", "FAIL"])
@@ -190,6 +230,7 @@ def test_sage_review_metadata_is_ignored_when_no_issue_is_selected(tmp_path):
         else:
             assert "Operate in **PLAN2**" in prompt
             payload["verdict"] = "DONE"
+            payload["output_files"] = publish_plan_outputs(spec)
         return SquadAgentResult(
             exit_code=0,
             echelon_result=payload,
