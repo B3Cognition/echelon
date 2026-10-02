@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from echelon.phase_a_start import PhaseAStartOutcome, start_phase_a_spec
 from harness.phase_checkpoints import create_phase_checkpoint
@@ -74,7 +74,30 @@ def _init_repo(tmp_path: Path) -> Path:
     )
     (repo / "README.md").write_text("base\n", encoding="utf-8")
     (repo / "package.json").write_text("{}\n", encoding="utf-8")
-    _git(repo, "add", ".gitignore", "README.md", "package.json")
+    # The fixture contains lifecycle artifacts, not a runnable product. Keep
+    # the real capability gate and declare that disposition explicitly.
+    stack = repo / ".echelon" / "stacks" / "lifecycle"
+    stack.mkdir(parents=True)
+    (stack / "stack.yml").write_text(yaml.safe_dump({
+        "schema_version": "1.4",
+        "stack": {"id": "lifecycle", "name": "Git lifecycle fixture",
+                  "version": "1", "kind": "capability"},
+        "applies_to": {"archetypes": ["custom"]},
+        "provides": {"x.lifecycle.artifacts": "git"},
+        "context": {"files": ["context.md"]},
+        "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
+    }), encoding="utf-8")
+    (stack / "context.md").write_text(
+        "# Git lifecycle fixture\nNo product runtime or coverage cases are declared.\n",
+        encoding="utf-8",
+    )
+    (repo / ".echelon" / "config.yml").write_text(
+        "stacks:\n  selected:\n    - lifecycle\n"
+        "harness:\n  provider: docker\n  pr_host: none\n"
+        "llm:\n  cli: claude\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".gitignore", "README.md", "package.json", ".echelon")
     _git(repo, "commit", "-m", "base")
     return repo
 
@@ -129,20 +152,10 @@ def _dispatch_delivery(
 ):
     from echelon.delivery_service import _run_delivery
 
-    config_file = repo / ".echelon" / "config.yml"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
     mirror = repo / "runs" / "mirror.git"
     mirror.mkdir(parents=True, exist_ok=True)
     monkeypatch.chdir(repo)
-    config = SimpleNamespace(
-        buffer_limit_bytes=1024 * 1024,
-        target_repo=str(repo),
-        target_default_branch="main",
-        provider="docker",
-    )
     with (
-        patch("harness.config.load_config", return_value=config),
         patch("harness.paths.mirror_path", return_value=mirror),
         patch("harness.gitops.GitOpsManager"),
         patch("harness.docker_provider.DockerWorktreeProvider"),
@@ -158,6 +171,7 @@ def _dispatch_delivery(
 def test_checkpointed_nonfinal_a_allows_sibling_b_and_isolated_delivery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo = _init_repo(tmp_path)
     main_commit = _git(repo, "rev-parse", "main^{commit}")
@@ -191,5 +205,6 @@ def test_checkpointed_nonfinal_a_allows_sibling_b_and_isolated_delivery(
     assert failure_b is not None
     assert failure_b.code == 1
     runner_b.assert_not_called()
+    assert "constitution.md absent" in capsys.readouterr().err
     assert _git(repo, "branch", "--show-current") == b.bootstrap.feature_branch
     assert (repo / "runs" / ".current").read_text(encoding="utf-8") == "run-b\n"
