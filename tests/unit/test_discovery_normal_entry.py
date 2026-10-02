@@ -129,7 +129,7 @@ def test_normal_restart_replays_receipts_without_dispatch_or_usage_duplication(p
     assert state["token_usage"] == 21
     assert len(executor.calls) == calls == 3
     assert prepared[2].pending_identity_publication(spec_id="game") is None
-    if point in {"completed", "released"}:
+    if point in {"sealed_completion", "completed", "released"}:
         assert not list((prepared[1].squad_dir / ".spec-step-effects").iterdir())
         assert not list((prepared[1].squad_dir / ".spec-step-outbox").iterdir())
 

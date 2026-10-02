@@ -2297,6 +2297,11 @@ class SquadController:
             return False
         if not self._release_committed_managed_publication(state):
             return False
+        # Retire authenticated never-routed companions before replay can
+        # replace their publication sources. This does not promote drafts or
+        # grant them durable authority; receipt-bearing stages stay retained.
+        if not self._cleanup_unreferenced_effect_drafts():
+            return False
         outbox = self._squad_dir / ".spec-step-outbox"
         try:
             metadata = os.lstat(outbox)
