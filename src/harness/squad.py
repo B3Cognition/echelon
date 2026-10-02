@@ -4928,19 +4928,7 @@ class SquadController:
                 proof = _document(retained["completion_payload"])
                 binding = decode_binding(proof["proof"]["intent"]["publication"], completion_id=source["dispatch_id"], state=state)
             else:
-                marker = state.get(SPEC_STEP_EFFECT_PLAN_KEY)
-                if marker is None:
-                    if dispatch.get("post_dispatch_complete") is not True:
-                        return False
-                    marker = dict(schema_version=1, completion_id=source["dispatch_id"],
-                        intent_sha256=source["completion_intent_sha256"], receipts_sha256=source["completion_receipts_sha256"],
-                        publication_binding_sha256=source["completed_publication_binding_sha256"], origin="routed", step="complete")
-                prepared = load_prepared_spec_step_effects(self._project_root, self._squad_dir, marker)
-                if SPEC_STEP_EFFECT_PLAN_KEY in state:
-                    self._state_store._require_controller_completion_provenance(state, marker, prepared.intent.to_dict())
-                # A completed marker above is bound by all four durable
-                # completion receipt fields. The pending-only provenance
-                # validator deliberately requires post_dispatch_complete=False.
+                prepared = self._committed_managed_routed_completion(state)
                 binding = authenticate(self._project_root, self._squad_dir, state, prepared)
             from harness.tracker_clarification import question_claim, require_question_default
             matches = (binding.producer == producer and not binding.clarification
@@ -4951,6 +4939,41 @@ class SquadController:
             return matches
         except Exception:
             return False
+
+    def _committed_managed_routed_completion(self, state):
+        """Read the exact companion bound by a committed native routed step.
+
+        State stores native step hashes, not companion-effect hashes. Derive the
+        latter only from authenticated ordered receipts, without writing stages
+        or granting authority to an inferred or legacy pending marker.
+        """
+        dispatch = state["last_dispatch"]
+        if (dispatch.get("post_dispatch_complete") is not True
+                or dispatch.get("dispatch_id") != dispatch.get("spec_step_id")):
+            raise CompletionError("intent_mismatch")
+        step = load_prepared_spec_step(self._squad_dir, {
+            "schema_version": 1, "origin": "routed", "cursor": "commit",
+            "step_id": dispatch["spec_step_id"],
+            "intent_sha256": dispatch["completion_intent_sha256"],
+            "receipts_sha256": dispatch["completion_receipts_sha256"],
+            "publication_binding_sha256": dispatch["completed_publication_binding_sha256"],
+            "failure": None,
+        })
+        marker = step.intent.provenance.get("completion_marker")
+        if not isinstance(marker, Mapping):
+            raise CompletionError("intent_mismatch")
+        for receipt in step.receipts:
+            candidate = receipt.payload.get("completion_marker")
+            if isinstance(candidate, Mapping):
+                marker = candidate
+            elif marker.get("step") == receipt.effect:
+                raise CompletionError("intent_mismatch")
+        if marker.get("completion_id") != step.marker.step_id or marker.get("step") != "complete":
+            raise CompletionError("intent_mismatch")
+        completion = load_prepared_spec_step_effects(self._project_root, self._squad_dir, dict(marker))
+        if completion.intent.to_dict() != step_effect_intent(step).to_dict():
+            raise CompletionError("intent_mismatch")
+        return completion
 
     def _managed_alignment_human_input(self, state):
         """Admit only the released question or its exact native answer recovery."""

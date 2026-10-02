@@ -415,16 +415,33 @@ def test_tracker_stop_restart_preserves_decision_and_charge(checkpoint_case, mon
     request = {**selection(checkpoint_case), "through_phase": "phase1-tracker"}
     target, method = {
         "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_spec_step_effects"),
-        "routed": (store, "advance"), "promoted": (IdentityStore, "apply_identity_publication"),
-        "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_controller_completion"),
+        "routed": (store, "begin_spec_step"), "promoted": (IdentityStore, "apply_identity_publication"),
+        "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
     }[point]
     original = getattr(target, method)
     def interrupt(*args, **kwargs):
         value = original(*args, **kwargs)
-        if (store.load().get("last_dispatch") or {}).get("phase_id") == "phase1-tracker" or (
-                point == "accepted" and kwargs.get("producer") == "tracker" and args[1] == "finish") or (
-                point == "staged" and kwargs.get("from_phase") == "phase1-tracker"):
+        current = store.load()
+        selected = {
+            "accepted": lambda: kwargs.get("producer") == "tracker" and args[1] == "finish",
+            "staged": lambda: kwargs.get("from_phase") == "phase1-tracker",
+            "routed": lambda: args[0].intent.route["from_phase"] == "phase1-tracker",
+            "promoted": lambda: current["phase"] == "phase1-tracker" and "pending_spec_step" in current,
+            "context": lambda: args[0].intent.route["from_phase"] == "phase1-tracker",
+            "completed": lambda: args[0].intent.route["from_phase"] == "phase1-tracker",
+            "released": lambda: (current.get("last_dispatch") or {}).get("phase_id") == "phase1-tracker",
+        }[point]()
+        if selected:
+            if point == "routed":
+                assert current["pending_spec_step"]["origin"] == "routed"
+                assert current["phase"] == "phase1-tracker"
+                assert current["token_usage"] == 42
+            elif point == "completed":
+                assert "pending_spec_step" not in current
+                assert current["last_dispatch"]["spec_step_id"] == args[0].marker.step_id
+                assert current["last_dispatch"]["post_dispatch_complete"] is True
+                assert current["token_usage"] == 63
             raise Interrupted()
         return value
     with monkeypatch.context() as patch:
@@ -432,6 +449,33 @@ def test_tracker_stop_restart_preserves_decision_and_charge(checkpoint_case, mon
         with pytest.raises(Interrupted):
             ctrl.run(managed_discovery=request, create_managed_discovery=True)
     prior_decision = deepcopy(store.load().get("blocked_decision"))
+    if point == "completed":
+        from harness.spec_step import SpecStepError
+        from harness.squad_completion import CompletionError
+        committed = store.load()
+        pending = identity.pending_identity_publication(spec_id="game")
+        history = identity.identity_history(spec_id="game")
+        for field in ("dispatch_id", "spec_step_id", "completion_intent_sha256",
+                "completion_receipts_sha256", "completed_publication_binding_sha256"):
+            changed = deepcopy(committed)
+            changed["last_dispatch"][field] = "0" * (32 if field.endswith("_id") else 64)
+            with pytest.raises((CompletionError, SpecStepError)):
+                ctrl._committed_managed_routed_completion(changed)
+        retained = store.squad_dir / ".spec-step-outbox" / committed["last_dispatch"]["spec_step_id"]
+        for name in ("intent.json", "receipts.json"):
+            path = retained / name
+            original_bytes = path.read_bytes()
+            try:
+                path.write_text("{}\n")
+                rejected = controller(checkpoint_case, executor).run(managed_discovery=request)
+                assert rejected.status == "blocked"
+                assert rejected.summary == "managed_discovery_selection_requires_reconciliation"
+                assert store.load() == committed
+                assert identity.pending_identity_publication(spec_id="game") == pending
+                assert identity.identity_history(spec_id="game") == history
+                assert len(executor.calls) == 9
+            finally:
+                path.write_bytes(original_bytes)
     result = controller(checkpoint_case, executor).run(managed_discovery=request)
     saved = store.load()
     assert result.phase == "phase1-tracker" and saved["last_dispatch"]["post_dispatch_complete"] is True, result
