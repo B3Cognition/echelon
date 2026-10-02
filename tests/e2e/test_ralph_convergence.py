@@ -1,10 +1,36 @@
 """Controlled roles, real candidate verification, and host-owned publication."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from tests.e2e.controlled_ralph import CHAIN
+from tests.e2e.controlled_ralph import CHAIN, ControlledGitOps
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("missing_case", ["zero", "skipped"])
+def test_controlled_observer_never_reports_an_unexecuted_case_as_passed(tmp_path, missing_case):
+    root = tmp_path / "project"
+    root.mkdir()
+    ControlledGitOps._write_project(root)
+    test_file = root / "tests/test_app.py"
+    if missing_case == "zero":
+        test_file.write_text("import unittest\n")
+    else:
+        test_file.write_text(test_file.read_text().replace(
+            "    def test_divide(self):", "    @unittest.skip('not executed')\n    def test_divide(self):",
+        ))
+    report = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [sys.executable, "-B", "tests/emit_coverage_json.py", str(report)],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode != 0
+    assert json.loads(report.read_text())["testResults"][0]["assertionResults"][0]["status"] != "passed"
 
 
 @pytest.mark.e2e
@@ -17,6 +43,7 @@ class TestRalphConvergence:
         assert result.termination_reason == "converged"
         assert result.outer_iterations <= 3
         assert run.steps == CHAIN + ["tech_writer", "docs_verifier"]
+        assert getattr(run.provider, "observer_executions", []), "Required coverage observer must run"
         assert run.gitops.local_merges[-1]["default_branch"] == "main"
         assert run.legacy_stub.call_count == 0
 

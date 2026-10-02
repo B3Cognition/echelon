@@ -13,11 +13,13 @@ import yaml
 from harness.ai_cli_backend import CliRunResult
 from tests.e2e.conftest import MockGitOps, make_ralph_controller
 from tests.e2e.stub_llm import StubLLM
+from harness.verification_stack_runtime import apply_verification_stacks
 
 
 CHAIN = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
 FINDING = "app.py:1 FR-001 division is incorrect"
 VERIFY_COMMAND = "python -B -m unittest discover -s tests -v"
+OBSERVER_COMMAND = 'python -B tests/emit_coverage_json.py "$ECHELON_COVERAGE_REPORT"'
 ROLES = [f"echelon.delivery-{role}.md" for role in (
     "implementer", "spec-guard", "code-reviewer", "test-guardian", "tech-writer", "docs-verifier"
 )] + [f"echelon.fulfillment-{role}.md" for role in ("mapper", "judge")]
@@ -29,6 +31,28 @@ def install_roles(root):
     source = Path(__file__).resolve().parents[2] / "prosaic/subagents"
     for name in ROLES:
         shutil.copyfile(source / name, agents / name)
+
+
+def install_test_stack(root):
+    """Select a fixture-owned observer; the production capability gate stays real."""
+    stack = root / ".echelon/stacks/controlled-unit"
+    stack.mkdir(parents=True)
+    (stack / "stack.yml").write_text(yaml.safe_dump({
+        "schema_version": "1.4",
+        "stack": {"id": "controlled-unit", "name": "Controlled unit test",
+                  "version": "1", "kind": "capability"},
+        "applies_to": {"archetypes": ["custom"]},
+        "provides": {"x.test.observer": "controlled-unit"},
+        "context": {"files": ["context.md"]},
+        "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
+        "coverage_observers": [{
+            "id": "controlled-unit", "test_types": ["unit"],
+            "command": OBSERVER_COMMAND,
+            "report_path": ".echelon/coverage-reports/unit.json",
+            "adapter": "vitest-json", "mode": "isolated", "required": True,
+        }],
+    }))
+    (stack / "context.md").write_text("# Controlled unit-test observer\n")
 
 
 class ControlledGitOps(MockGitOps):
@@ -61,6 +85,7 @@ class ControlledGitOps(MockGitOps):
         (spec / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
             "  **Files:**\n  - `app.py` - Division implementation.\n"
+            "  **Named Test Ownership:** TC-001\n"
             "  **Acceptance Criteria:**\n  - [ ] divide(10, 2) returns 5.\n"
         )
         (root / "app.py").write_text("def divide(a, b): return a * b\n")
@@ -69,13 +94,55 @@ class ControlledGitOps(MockGitOps):
         (tests / "test_app.py").write_text(
             "import unittest\nfrom app import divide\n"
             "class DivisionTest(unittest.TestCase):\n"
-            "    def test_divide(self):\n        self.assertEqual(divide(10, 2), 5)\n"
+            "    # test_divide [echelon:TC-001]\n"
+            "    def test_divide(self):\n"
+            "        \"\"\"[echelon:TC-001] divides numbers\"\"\"\n"
+            "        self.assertEqual(divide(10, 2), 5)\n"
+        )
+        (tests / "emit_coverage_json.py").write_text(
+            "import json\nimport sys\nimport unittest\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+            "class RecordingResult(unittest.TextTestResult):\n"
+            "    def __init__(self, *args, **kwargs):\n"
+            "        super().__init__(*args, **kwargs)\n"
+            "        self.passed_ids = []\n"
+            "    def addSuccess(self, test):\n"
+            "        super().addSuccess(test)\n"
+            "        self.passed_ids.append(test.id())\n"
+            "suite = unittest.defaultTestLoader.discover('tests')\n"
+            "result = unittest.TextTestRunner(stream=sys.stderr, verbosity=2, "
+            "resultclass=RecordingResult).run(suite)\n"
+            "passed = (result.wasSuccessful() and result.testsRun == 1 and "
+            "result.passed_ids == ['test_app.DivisionTest.test_divide'])\n"
+            "report = {'testResults': [{'name': 'tests/test_app.py', 'assertionResults': ["
+            "{'title': 'test_divide [echelon:TC-001]', "
+            "'status': 'passed' if passed else 'failed', "
+            "'failureMessages': [str(error) for _, error in result.failures + result.errors] "
+            "or ([] if passed else ['TC-001 was not executed'])}]}]}\n"
+            "path = Path(sys.argv[1])\npath.parent.mkdir(parents=True, exist_ok=True)\n"
+            "path.write_text(json.dumps(report))\n"
+            "raise SystemExit(0 if passed else 1)\n"
         )
         (spec / "coverage-map.md").write_text(
             "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
             "|---|---|---|---|---|---|---|\n"
             "| FR-001 | TC-001 | unit | automated | automated | tests/test_app.py | none |\n"
         )
+        for name, content in {
+            "00-overview.md": "# Division fixture\nA single division correction.\n",
+            "requirements-overview.md": "# Requirements\nFR-001 requires correct division.\n",
+            "plan.md": "# Plan\nImplement T-001 and verify TC-001.\n",
+            "plan-conformance.md": "# Plan conformance\nThe plan covers FR-001.\n",
+            "research.md": "# Research\nPython unittest supplies the unit assertion.\n",
+            "data-model.md": "# Data model\nNo persisted data model.\n",
+            "constitution.md": "# Constitution\nP1: Verify the division result.\n",
+            "test-strategy.md": "# Test strategy\nRun TC-001 with the controlled unit observer.\n",
+            "test-architecture.md": "# Test architecture\nOne unit test binds TC-001 to FR-001.\n",
+        }.items():
+            (spec / name).write_text(content)
+        (spec / "plan-conformance.json").write_text(json.dumps({
+            "status": "pass", "findings": [], "sources": ["spec.md", "tasks.md"],
+        }))
         (root / "README.md").write_text("# Division fixture\nInternal test fixture.\n")
 
     def create_worktree(self, spec_id, outer_iter, *, build_id, **kwargs):
@@ -196,6 +263,8 @@ class VerificationSandbox:
     """
     def __init__(self):
         self.created, self.destroyed, self.executions = {}, [], []
+        self.observer_executions = []
+        self.reports = {}
 
     def create(self, spec):
         from harness.provider import SandboxHandle
@@ -206,14 +275,25 @@ class VerificationSandbox:
     def exec(self, handle, cmd, **kwargs):
         from harness.exec_result import ExecResult
         assert handle.id not in self.destroyed
-        assert cmd == VERIFY_COMMAND, f"Unregistered fixture command: {cmd}"
+        assert cmd in {VERIFY_COMMAND, OBSERVER_COMMAND}, f"Unregistered fixture command: {cmd}"
         root = self.created[handle.id]
         started = time.monotonic()
-        result = subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"],
-                                cwd=root, capture_output=True, text=True, timeout=10)
-        self.executions.append((root, result.returncode, result.stdout, result.stderr))
+        if cmd == OBSERVER_COMMAND:
+            sandbox_path = kwargs["env"]["ECHELON_COVERAGE_REPORT"]
+            report = root.parent / "observer-reports" / handle.id / Path(sandbox_path).name
+            self.reports[(handle.id, sandbox_path)] = report
+            command = [sys.executable, "-B", "tests/emit_coverage_json.py", str(report)]
+        else:
+            command = [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
+        calls = self.observer_executions if cmd == OBSERVER_COMMAND else self.executions
+        calls.append((root, result.returncode, result.stdout, result.stderr))
         return ExecResult(result.returncode, result.stdout, result.stderr,
                           int((time.monotonic() - started) * 1000), None)
+
+    def read_file(self, handle, path):
+        assert handle.id not in self.destroyed
+        return self.reports[(handle.id, path)].read_bytes()
 
     def destroy(self, handle):
         self.destroyed.append(handle.id)
@@ -223,9 +303,13 @@ class ControlledRun:
     def __init__(self, root, config, *, tokens=50, reject_reviews=False, wrong_builds=0, mode="banzai"):
         self.root = Path(root)
         install_roles(self.root)
+        install_test_stack(self.root)
         (self.root / ".echelon/config.yml").write_text(
             "workspace:\n  sources:\n    - id: app\n      path: sources/app\n"
+            "stacks:\n  selected:\n    - controlled-unit\n"
         )
+        apply_verification_stacks(config, project_root=self.root,
+                                  target_root=self.root / "sources/app")
         config.verify_command = VERIFY_COMMAND
         self.executor = ControlledExecutor(tokens=tokens, reject_reviews=reject_reviews, wrong_builds=wrong_builds)
         self.legacy_stub = StubLLM()

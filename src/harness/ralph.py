@@ -4515,6 +4515,7 @@ class RalphController:
                         details=_failed_test_case_details(
                             stdout.decode("utf-8", errors="replace"),
                             stderr.decode("utf-8", errors="replace"),
+                            command=self._config.verify_command,
                         ),
                     ))
             except _sp.TimeoutExpired as exc:
@@ -4684,6 +4685,7 @@ class RalphController:
                         details=_failed_test_case_details(
                             stdout.decode("utf-8", errors="replace"),
                             stderr.decode("utf-8", errors="replace"),
+                            command=cmd,
                         ),
                     ))
                     # Don't run further stages if install or test fails

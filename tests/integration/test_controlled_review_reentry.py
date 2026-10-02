@@ -4,20 +4,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig
-from harness.delivery_controller import DeliveryController
+from harness.delivery_controller import DeliveryController, _delivery_stack_snapshot
 from harness.escalation import EscalationHandler
 from harness.llm_provider import AICodingCliProvider
 from harness.mode import ModeController
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.ralph import RalphController
 from harness.review_loop import ApprovalState, ReviewComment, ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.state import StateStore
+from harness.verification_stack_runtime import apply_verification_stacks
 from tests.unit.test_delivery_controller import MockProvider, _initialize_git_worktree
 from tests.unit.test_delivery_slice_recovery import ProcessLost, _crash_after_receipt
 from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_project
@@ -26,6 +30,74 @@ from tests.unit.test_delivery_slice_runner import ScriptedExecutor, slice_projec
 @pytest.fixture
 def review_handoff(slice_project, monkeypatch, request):
     root, spec, _ = slice_project
+    # This fixture exercises review reentry, not final product verification. It
+    # still needs a published Phase A contract for Delivery resume admission.
+    for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+        path = spec / name
+        if not path.exists():
+            path.write_text(f"# {name}\n")
+    (spec / "plan-conformance.json").write_text(json.dumps({
+        "status": "pass", "findings": [], "sources": ["spec.md", "tasks.md"],
+    }))
+    (spec / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-1 | TC-1 | unit | deferred-automation | planned | none | Review-only fixture; verification is out of scope. |\n"
+        "| FR-2 | TC-2 | unit | deferred-automation | planned | none | Pending task outside the review slice. |\n"
+    )
+    stack = root / ".echelon/stacks/review-unit"
+    stack.mkdir(parents=True)
+    (stack / "stack.yml").write_text(yaml.safe_dump({
+        "schema_version": "1.4",
+        "stack": {"id": "review-unit", "name": "Review fixture unit tests",
+                  "version": "1", "kind": "capability"},
+        "applies_to": {"archetypes": ["custom"]},
+        "provides": {"x.test.observer": "review-unit"},
+        "context": {"files": ["context.md"]},
+        "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
+        "coverage_observers": [{
+            "id": "review-unit", "test_types": ["unit"],
+            "command": 'python -B tests/emit_coverage_json.py "$ECHELON_COVERAGE_REPORT"',
+            "report_path": ".echelon/coverage-reports/unit.json",
+            "adapter": "vitest-json", "mode": "isolated", "required": True,
+        }],
+    }))
+    (stack / "context.md").write_text("# Review fixture unit observer\n")
+    (root / ".echelon/config.yml").write_text(
+        "stacks:\n  selected:\n    - review-unit\n"
+    )
+    tests = root / "tests"
+    tests.mkdir()
+    (tests / "test_app.py").write_text(
+        "import unittest\nfrom app import hello\n"
+        "class GreetingTest(unittest.TestCase):\n"
+        "    def test_greeting(self):\n"
+        "        \"\"\"[echelon:TC-1] returns a greeting\"\"\"\n"
+        "        self.assertTrue(hello().startswith('hello '))\n"
+    )
+    (tests / "emit_coverage_json.py").write_text(
+        "import json\nimport sys\nimport unittest\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+        "class RecordingResult(unittest.TextTestResult):\n"
+        "    def __init__(self, *args, **kwargs):\n"
+        "        super().__init__(*args, **kwargs)\n"
+        "        self.passed_ids = []\n"
+        "    def addSuccess(self, test):\n"
+        "        super().addSuccess(test)\n"
+        "        self.passed_ids.append(test.id())\n"
+        "suite = unittest.defaultTestLoader.discover('tests')\n"
+        "result = unittest.TextTestRunner(stream=sys.stderr, verbosity=2, "
+        "resultclass=RecordingResult).run(suite)\n"
+        "passed = (result.wasSuccessful() and result.testsRun == 1 and "
+        "result.passed_ids == ['test_app.GreetingTest.test_greeting'])\n"
+        "report = {'testResults': [{'name': 'tests/test_app.py', 'assertionResults': ["
+        "{'title': 'test_greeting [echelon:TC-1]', 'status': 'passed' if passed else 'failed', "
+        "'failureMessages': [str(error) for _, error in result.failures + result.errors] "
+        "or ([] if passed else ['TC-1 was not executed'])}]}]}\n"
+        "path = Path(sys.argv[1])\npath.parent.mkdir(parents=True, exist_ok=True)\n"
+        "path.write_text(json.dumps(report))\n"
+        "raise SystemExit(0 if passed else 1)\n"
+    )
     inspect_subagent = subprocess.run
     def inspect(argv, **kwargs):
         result = inspect_subagent(argv, **kwargs)
@@ -52,6 +124,7 @@ def review_handoff(slice_project, monkeypatch, request):
     config.llm.features["delivery_gate_controller"] = True
     config.review_loop.enabled = True
     config.pr_host = "github"
+    apply_verification_stacks(config, project_root=root, target_root=root)
     gitops = MagicMock()
     gitops.base_dir = str(root)
     gitops.get_latest_worktree.return_value = str(root)
@@ -61,6 +134,8 @@ def review_handoff(slice_project, monkeypatch, request):
     executor = ScriptedExecutor()
 
     class ExternalBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
+
         def run_agent(self, request):
             return executor.run_agent_result(request.cwd, request.prompt, request_metadata=request.metadata)
 
@@ -104,9 +179,10 @@ def review_handoff(slice_project, monkeypatch, request):
                                    orchestration_root=root, build_id="review-acceptance")
 
     store = StateStore(coordinator()._state_dir, "001")
-    mode = request.node.callspec.params.get("mode", "banzai")
+    mode = getattr(getattr(request.node, "callspec", None), "params", {}).get("mode", "banzai")
     store.initialize("review-acceptance", mode, enabled_phases=["implementation", "review", "finalization"],
-                     target_task_ids=["T-001"], spec_dir=str(spec), tasks_file=str(tasks), spec_file=str(spec / "spec.md"))
+                     target_task_ids=["T-001"], spec_dir=str(spec), tasks_file=str(tasks), spec_file=str(spec / "spec.md"),
+                     delivery_stack_snapshot=_delivery_stack_snapshot(config.resolved_stacks))
     store.transition("running")
     initial = RalphController(
         provider=MockProvider(), gitops=gitops, state_store=store,
@@ -128,6 +204,25 @@ def review_handoff(slice_project, monkeypatch, request):
                      "pr_url": "https://github.com/example/game/pull/1", "tokens_used": 100})
     store.transition("reviewing")
     return coordinator, store, executor, triage_calls, effects, spec, config
+
+
+@pytest.mark.parametrize("rename_case", [False, True])
+def test_review_fixture_observer_reports_only_the_owned_case(review_handoff, tmp_path, rename_case):
+    _, _, _, _, _, spec, _ = review_handoff
+    root = spec.parents[1]
+    test_file = root / "tests/test_app.py"
+    if rename_case:
+        test_file.write_text(test_file.read_text().replace("def test_greeting", "def test_other"))
+    report = tmp_path / "coverage.json"
+
+    result = subprocess.run(
+        [sys.executable, "-B", "tests/emit_coverage_json.py", str(report)],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+
+    assert (result.returncode == 0) is not rename_case
+    status = json.loads(report.read_text())["testResults"][0]["assertionResults"][0]["status"]
+    assert status == ("failed" if rename_case else "passed")
 
 
 @pytest.mark.parametrize("cli", ["claude", "codex"])

@@ -70,15 +70,50 @@ _FAILURE_CONTEXT_MARKERS = (
 )
 
 
-def _failed_test_case_details(stdout: str, stderr: str) -> dict[str, object]:
-    """Read Playwright's final failed list, excluding progress/retried tests.
+def _failed_test_case_details(
+    stdout: str, stderr: str, *, command: str | None = None,
+) -> dict[str, object]:
+    """Read tagged final test failures, excluding progress and log mentions.
 
     An incomplete or untagged list retains uncertainty instead of authorizing
     repair from whichever test IDs happen to appear in a log excerpt.
     """
-    output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", f"{stdout}\n{stderr}")
+    streams = tuple(
+        re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+        for value in (stdout, stderr)
+    )
+    # Captured streams have no cross-stream ordering. An explicit runner command
+    # selects its own terminal report, not a nested tool's report in the other
+    # stream. Unknown commands retain the conservative mixed-output behavior.
+    runner = _explicit_test_runner(command)
+    if runner == "unittest":
+        candidates = [
+            (stream, matches[0])
+            for stream in streams
+            if (matches := list(re.finditer(r"(?m)^FAILED \(([^\n)]*)\)[ \t]*$", stream)))
+        ]
+        if len(candidates) != 1:
+            return {}
+        return _unittest_failed_test_case_details(*candidates[0])
+    if runner == "playwright":
+        candidates = [
+            stream for stream in streams
+            if re.search(r"(?m)^\s*\d+ failed[ \t]*$", stream)
+        ]
+        if len(candidates) != 1:
+            return {}
+        output = candidates[0]
+    else:
+        output = f"{streams[0]}\n{streams[1]}"
     summaries = list(re.finditer(r"(?m)^\s*(\d+) failed[ \t]*$", output))
-    if len(summaries) != 1:
+    unittest_summaries = list(re.finditer(r"(?m)^FAILED \(([^\n)]*)\)[ \t]*$", output))
+    if not summaries:
+        if len(unittest_summaries) != 1:
+            return {}
+        return _unittest_failed_test_case_details(output, unittest_summaries[0])
+    if len(summaries) != 1 or (
+        unittest_summaries and unittest_summaries[-1].start() > summaries[0].start()
+    ):
         return {}
     summary = summaries[-1]
     total = int(summary.group(1))
@@ -109,6 +144,102 @@ def _failed_test_case_details(stdout: str, stderr: str) -> dict[str, object]:
         "failed_test_case_ids": sorted(cases),
         "unidentified_test_failures": abs(total - entries) + entries - identified,
         "identity_source": "playwright_failed_summary",
+    }
+
+
+def _explicit_test_runner(command: str | None) -> str | None:
+    if not command:
+        return None
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        return None
+    if not args:
+        return None
+    executable = Path(args[0]).name.lower()
+    if executable in {"playwright", "playwright.cmd"}:
+        return "playwright"
+    if executable in {"npx", "bunx", "pnpm", "yarn"} and len(args) > 1:
+        if Path(args[1]).name.lower() in {"playwright", "playwright.cmd"}:
+            return "playwright"
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)?)?(?:\.exe)?", executable):
+        for index, arg in enumerate(args[1:], start=1):
+            if arg == "-m":
+                module_index = index + 1
+                if module_index < len(args) and args[module_index] in {"unittest", "playwright"}:
+                    return args[module_index]
+                return None
+            # A script or -c operand ends Python's interpreter options; later
+            # -m text belongs to the script and cannot identify its runner.
+            if arg in {"-c", "--"} or not arg.startswith("-"):
+                break
+    return None
+
+
+def _unittest_failed_test_case_details(output: str, summary: re.Match[str]) -> dict[str, object]:
+    """Trust only unittest's terminal failure blocks and their short descriptions."""
+    if output[summary.end():].strip():
+        return {}
+    counts: dict[str, int] = {}
+    for part in summary.group(1).split(", "):
+        match = re.fullmatch(r"(failures|errors|skipped|expected failures|unexpected successes)=(\d+)", part)
+        if match is None or match.group(1) in counts:
+            return {}
+        counts[match.group(1)] = int(match.group(2))
+    total = sum(counts.get(key, 0) for key in ("failures", "errors", "unexpected successes"))
+    if total < 1:
+        return {}
+
+    before_summary = output[:summary.start()]
+    footers = list(re.finditer(r"(?m)^Ran (\d+) tests? in [^\n]+$", before_summary))
+    if not footers:
+        return {}
+    footer = footers[-1]
+    if before_summary[footer.end():].strip() or int(footer.group(1)) < total:
+        return {}
+
+    lines = before_summary[:footer.start()].splitlines()
+    cases: set[str] = set()
+    entries = 0
+    identified = 0
+    observed_kinds = {"failures": 0, "errors": 0}
+    for index, line in enumerate(lines[:-1]):
+        if re.fullmatch(r"={10,}", line.strip()) is None:
+            continue
+        header = re.fullmatch(r"(FAIL|ERROR): .+", lines[index + 1])
+        if header is None:
+            continue
+        entries += 1
+        observed_kinds["failures" if header.group(1) == "FAIL" else "errors"] += 1
+        description: list[str] = []
+        separator_found = False
+        for value in lines[index + 2:]:
+            if re.fullmatch(r"-{10,}", value.strip()):
+                separator_found = True
+                break
+            if re.fullmatch(r"={10,}", value.strip()):
+                description = []
+                break
+            description.append(value)
+        if not separator_found:
+            continue
+        description_text = "\n".join(description)
+        tags = re.findall(r"\[echelon:[^\]]*\]", description_text, re.IGNORECASE)
+        if len(re.findall(r"\[echelon:", description_text, re.IGNORECASE)) != 1 or len(tags) != 1:
+            continue
+        try:
+            cases.update(parse_echelon_case_tags(tags[0]))
+        except TestExecutionEvidenceError:
+            continue
+        identified += 1
+    count_gap = sum(
+        abs(counts.get(kind, 0) - observed_kinds[kind])
+        for kind in ("failures", "errors")
+    ) + counts.get("unexpected successes", 0)
+    return {
+        "failed_test_case_ids": sorted(cases),
+        "unidentified_test_failures": max(abs(total - entries), count_gap) + entries - identified,
+        "identity_source": "unittest_failed_summary",
     }
 
 
@@ -299,7 +430,9 @@ class CandidateEvidenceRunner:
                                 category=FailureCategory.TEST,
                                 id="verify-command",
                                 error=_failure_excerpt(result.stdout, result.stderr),
-                                details=_failed_test_case_details(result.stdout, result.stderr),
+                                details=_failed_test_case_details(
+                                    result.stdout, result.stderr, command=command,
+                                ),
                             )
                         ],
                         duration_s=result.duration_ms / 1000.0,
@@ -444,7 +577,9 @@ class CandidateEvidenceRunner:
                             else "verify-command"
                         ),
                         error=_failure_excerpt(result.stdout, result.stderr),
-                        details=_failed_test_case_details(result.stdout, result.stderr),
+                        details=_failed_test_case_details(
+                            result.stdout, result.stderr, command=command,
+                        ),
                     )
                 )
             return self._attach_receipt(
