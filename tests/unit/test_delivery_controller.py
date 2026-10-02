@@ -130,6 +130,14 @@ def _make_controller(
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
     _initialize_git_worktree(tmp_path)
+    if published_spec:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
+        )
     gitops.get_latest_worktree.return_value = str(tmp_path)
 
     # Create strategy dir for default
@@ -1735,32 +1743,23 @@ class TestStickyEscalationBlock:
     """Guard in _run_strategy must refuse to wipe active escalation block unless --reset."""
 
     def _make_state_file(self, tmp_path: Path, esc_file: str) -> None:
-        """Write a blocked state.json with an escalation_file set."""
-        state_dir = tmp_path / "runs" / "state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        state = {
-            "spec_id": "spec-001",
-            "run_id": "old-run",
-            "status": "blocked",
-            "mode": "semi",
-            "outer_iter": 2,
-            "max_outer": 5,
-            "inner_iter": 1,
-            "max_inner": 3,
-            "token_budget": 0,
-            "tokens_used": 5000,
-            "cancel_requested": False,
-            "pr_url": None,
-            "branch_name": None,
-            "last_verify_result": None,
-            "termination_reason": None,
-            "escalation_file": esc_file,
-            "iteration_log": [],
-            "started_at": "2026-01-01T00:00:00+00:00",
-            "updated_at": "2026-01-01T00:00:00+00:00",
-        }
-        state_file = state_dir / "delivery.json"
-        state_file.write_text(json.dumps(state), encoding="utf-8")
+        """Create a current retained run with an unresolved escalation."""
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.verification_stack_runtime import resolve_verification_stacks
+        from harness.delivery_controller import _delivery_stack_snapshot
+
+        _write_phase_a_build_inputs(tmp_path / "specs" / "spec-001")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001")
+        store.initialize(
+            "old-run", "semi", max_outer=5, max_inner=3,
+            delivery_stack_snapshot=_delivery_stack_snapshot(
+                resolve_verification_stacks(tmp_path, tmp_path),
+            ),
+        )
+        store.transition("running", updates={"outer_iter": 2, "inner_iter": 1, "tokens_used": 5000})
+        store.transition("blocked", updates={
+            "blocked_phase": "implementation", "escalation_file": esc_file,
+        })
 
     def test_sticky_escalation_block_refuses_without_reset(self, tmp_path: Path) -> None:
         """If state is blocked with escalation_file and no answer file, raises RuntimeError."""
@@ -1771,7 +1770,7 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=False)
 
         with pytest.raises(RuntimeError, match="escalation pending"):
@@ -1786,7 +1785,7 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=True)
 
         with patch(
@@ -1810,7 +1809,7 @@ class TestStickyEscalationBlock:
 
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=False)
 
         # Should NOT raise — the answer is present
@@ -1830,7 +1829,7 @@ class TestStickyEscalationBlock:
         esc_path.write_text("# Escalation\n", encoding="utf-8")
         self._make_state_file(tmp_path, str(esc_path))
 
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
         intent = RunIntent(
             spec_id="spec-001",
             max_outer=3,
