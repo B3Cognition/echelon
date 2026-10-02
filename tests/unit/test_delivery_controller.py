@@ -1180,13 +1180,20 @@ class TestDeliveryStateMigration:
         ("visual_required", "semantic_required"),
         [("yes", True), ("no", False)],
     )
-    def test_published_browser_gate_enables_visual_phase_without_selected_stack(
+    def test_published_browser_gate_requires_visual_without_bypassing_admission(
         self, tmp_path: Path, visual_required: str, semantic_required: bool,
     ) -> None:
         """A greenfield browser spec must not silently skip its Playwright gate."""
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.delivery_controller import _published_semantic_visual_gate_required
+        from harness.delivery_errors import DeliveryConfigurationError
+
         coordinator = _make_controller(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-browser"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
+        (tmp_path / ".echelon" / "local.yml").write_text(
+            "stacks:\n  selected: []\n", encoding="utf-8",
+        )
         (spec_dir / "coverage-map.md").write_text(
             "# Coverage Map\n\n"
             "## Browser App Gates\n\n"
@@ -1201,15 +1208,16 @@ class TestDeliveryStateMigration:
         assert coordinator._enabled_phases(None, spec_dir=spec_dir) == [
             "implementation", "visual", "finalization",
         ]
+        assert _published_semantic_visual_gate_required(spec_dir) is semantic_required
         with patch(
             "harness.delivery_controller.RalphController.run_loop",
             return_value=_controlled_implementation(verified=False),
-        ):
-            coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+        ) as implementation:
+            with pytest.raises(DeliveryConfigurationError, match="stack_selection_required"):
+                coordinator.run(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
 
-        state = StateStore(tmp_path / "runs" / "state", "spec-001").read()
-        assert state["enabled_phases"] == ["implementation", "visual", "finalization"]
-        assert state["semantic_visual_gate_required"] is semantic_required
+        implementation.assert_not_called()
+        assert StateStore(tmp_path / "runs" / "state", "spec-001").read() == {}
 
     def test_visual_phase_is_required_with_llm_coding_provider(
         self, tmp_path: Path
