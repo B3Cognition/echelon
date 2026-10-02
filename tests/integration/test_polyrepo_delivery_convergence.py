@@ -28,8 +28,8 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _target_checkout(tmp_path: Path) -> tuple[Path, str]:
-    target = tmp_path / "target-repository"
-    target.mkdir()
+    target = tmp_path / "workspace" / "sources" / "api"
+    target.mkdir(parents=True)
     _git(target, "init", "-b", "main")
     _git(target, "config", "user.name", "Integration Test")
     _git(target, "config", "user.email", "integration@example.invalid")
@@ -37,6 +37,11 @@ def _target_checkout(tmp_path: Path) -> tuple[Path, str]:
     _git(target, "add", "README.md")
     _git(target, "commit", "-m", "initial target")
     return target, _git(target, "rev-parse", "HEAD")
+
+
+def _publish_build_inputs(spec_dir: Path) -> None:
+    from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+    _write_phase_a_build_inputs(spec_dir)
 
 
 def _commit_worktree_changes(
@@ -177,12 +182,13 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
     harness_root.mkdir(parents=True)
     spec_dir.mkdir(parents=True)
     target, verified_commit = _target_checkout(tmp_path)
+    _publish_build_inputs(spec_dir)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: planned\ntargets:\n  - sources/api\n---\n# Three-root delivery\n",
         encoding="utf-8",
     )
     (spec_dir / "tasks.md").write_text(
-        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none "
+        "- [ ] T-001 complexity=standard phase=build req=INFRA depends=none "
         "target=sources/api\n",
         encoding="utf-8",
     )
@@ -210,6 +216,8 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
         review_loop=ReviewLoopConfig(enabled=True, max_fix_iterations=2),
     )
     config.llm.enabled = True
+    from harness.verification_stack_runtime import apply_verification_stacks
+    apply_verification_stacks(config, project_root=workspace, target_root=target)
     gitops = MagicMock()
     gitops.get_latest_worktree.return_value = str(target)
     intent = RunIntent(
@@ -426,12 +434,13 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
     harness_root.mkdir(parents=True)
     spec_dir.mkdir(parents=True)
     target, verified_commit = _target_checkout(tmp_path)
+    _publish_build_inputs(spec_dir)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: planned\ntargets:\n  - sources/api\n---\n# Review checkpoint\n",
         encoding="utf-8",
     )
     (spec_dir / "tasks.md").write_text(
-        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none "
+        "- [ ] T-001 complexity=standard phase=build req=INFRA depends=none "
         "target=sources/api\n",
         encoding="utf-8",
     )
@@ -452,6 +461,8 @@ def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
         review_loop=ReviewLoopConfig(enabled=True, max_fix_iterations=1),
     )
     config.llm.enabled = True
+    from harness.verification_stack_runtime import apply_verification_stacks
+    apply_verification_stacks(config, project_root=workspace, target_root=target)
     gitops = MagicMock()
     gitops.get_latest_worktree.return_value = str(target)
     intent = RunIntent(spec_id="912", mode="semi", max_outer=1, max_inner=1)
