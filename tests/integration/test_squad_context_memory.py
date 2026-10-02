@@ -160,7 +160,12 @@ def test_memory_publication_fixture_declares_artifact_scope_and_unit_observer(tm
     ctrl._provider.exec_agent.assert_not_called()
 
 
-def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_path: Path) -> None:
+@pytest.mark.parametrize("inventory_interrupted", [False, True])
+def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inventory_interrupted: bool,
+) -> None:
     _disable_lexicon_gate(tmp_path)
     memory_config = (
         tmp_path
@@ -221,7 +226,7 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
         plan_canonical_requirement_drawer_ids,
     )
 
-    calls = []
+    calls, verifications = [], []
 
     class FakeAdapter:
         wing = "demo-wing"
@@ -260,6 +265,7 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
             artifact_metadata,
             drawer_ids,
         ):
+            verifications.append((content, source, artifact_metadata, drawer_ids))
             return drawer_ids == self.plan_canonical_bytes(
                 content,
                 source=source,
@@ -270,7 +276,17 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
         "echelon.mempalace_requirements.create_requirement_memory_adapter",
         return_value=FakeAdapter(),
     ) as mock_create_adapter:
+        if inventory_interrupted:
+            inventory = ctrl._phase_a_inventory_digests
+            monkeypatch.setattr(ctrl, "_phase_a_inventory_digests", lambda state: None)
         result = ctrl.run("msg", "banzai")
+        if inventory_interrupted:
+            assert result.status == "blocked"
+            assert store.load()["pending_spec_step"]["cursor"] == "mining"
+            assert store.load().get("last_dispatch") is None
+            assert len(calls) == 1
+            monkeypatch.setattr(ctrl, "_phase_a_inventory_digests", inventory)
+            result = ctrl.run("msg", "banzai")
 
     assert result.status == "done"
 
@@ -282,13 +298,32 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
     spec_file = published_dir / "spec.md"
     assert artifact_hash(spec_file) == expected_metadata["artifact_hash"]
 
-    mock_create_adapter.assert_called_once_with(tmp_path, "run-test")
+    assert mock_create_adapter.call_count == (2 if inventory_interrupted else 1)
+    for factory_call in mock_create_adapter.call_args_list:
+        assert factory_call.args == (tmp_path, "run-test")
     assert calls == [(spec_file.read_bytes(), source, expected_metadata)]
+    drawer_ids = plan_canonical_requirement_drawer_ids(
+        spec_file.read_bytes(), source=source, artifact_metadata=expected_metadata,
+        wing="photo-album",
+    )
+    assert verifications == [
+        (spec_file.read_bytes(), source, expected_metadata, drawer_ids)
+    ] * (2 if inventory_interrupted else 1)
     assert calls[0][1] == "specs/001-photo-album/spec.md"
     assert calls[0][2]["canonical"] is True
     dispatch = store.load()["last_dispatch"]
     assert dispatch["post_dispatch_complete"] is True
     assert len(dispatch["completion_receipts_sha256"]) == 64
+    assert (
+        store.load()["phase_a_active_source_sha256"],
+        store.load()["phase_a_published_postimage_sha256"],
+    ) == ctrl._phase_a_inventory_digests(store.load())
+    with patch(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        side_effect=AssertionError("unchanged publication must not mine again"),
+    ):
+        fresh, _ = _controller(tmp_path)
+        assert fresh.run("msg", "banzai").status == "done"
 
 
 def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Path) -> None:

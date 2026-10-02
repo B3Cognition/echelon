@@ -5434,6 +5434,20 @@ class SquadStateStore:
                     ),
                 }
             )
+            if route.get("from_phase") == "phase4-document" and "publication" in loaded.intent.effects:
+                inventory = loaded.receipts[-1].payload.get("phase_a_inventory_digests")
+                if (
+                    not isinstance(inventory, list)
+                    or len(inventory) != 2
+                    or any(not _valid_completion_sha256(value) for value in inventory)
+                ):
+                    raise StateAdvanceError(
+                        "routed Phase A publication inventory is incomplete",
+                        json_path="$.phase_a_active_source_sha256",
+                        validator="completion_binding",
+                    )
+                final_state["phase_a_active_source_sha256"] = inventory[0]
+                final_state["phase_a_published_postimage_sha256"] = inventory[1]
         elif loaded.intent.origin == "resolution" and route.get("kind") == "product_input_mutation":
             from harness.product_input_step import product_input_step_view
             from echelon.product_input_transaction import require_product_input_mutation_postimage

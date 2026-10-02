@@ -2525,7 +2525,7 @@ class SquadController:
                 **dict(publication_receipt),
                 "completion_marker": next_marker,
             }
-            if prepared.intent.origin == "terminal" and next_step == "complete":
+            if self._spec_step_records_phase_a_inventory(prepared) and next_step == "complete":
                 digests = self._phase_a_inventory_digests(
                     prepared.intent.final_state
                 )
@@ -2576,7 +2576,7 @@ class SquadController:
             "completion_receipt": one_ahead.receipts["effects"][prepared.marker.cursor],
             "completion_marker": next_marker,
         }
-        if prepared.intent.origin == "terminal" and next_step == "complete":
+        if self._spec_step_records_phase_a_inventory(prepared) and next_step == "complete":
             digests = self._phase_a_inventory_digests(
                 prepared.intent.final_state
             )
@@ -2584,6 +2584,14 @@ class SquadController:
                 raise CompletionError("receipts_mismatch")
             result["phase_a_inventory_digests"] = list(digests)
         return result
+
+    @staticmethod
+    def _spec_step_records_phase_a_inventory(prepared: PreparedSpecStep) -> bool:
+        return prepared.intent.origin == "terminal" or (
+            prepared.intent.origin == "routed"
+            and prepared.intent.route.get("from_phase") == "phase4-document"
+            and "publication" in prepared.intent.effects
+        )
 
     def _bridge_step_owned_completion_receipt(
         self,
