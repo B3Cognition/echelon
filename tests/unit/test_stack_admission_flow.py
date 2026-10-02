@@ -50,6 +50,7 @@ def test_service_rejects_unowned_required_runnability_before_allocating_delivery
 def test_all_target_admission_reports_unsupported_sibling(tmp_path, capsys, reverse, monkeypatch):
     from echelon.delivery_service import _run_delivery
     from tests.unit.test_delivery_controller import _initialize_git_worktree
+    from tests.unit.test_cli_harness_run import VALID_PLAN
 
     custom_stack(tmp_path)
     targets = ["sources/a", "sources/b"]
@@ -58,6 +59,7 @@ def test_all_target_admission_reports_unsupported_sibling(tmp_path, capsys, reve
     select(tmp_path / "sources/a", ["custom"])
     select(tmp_path / "sources/b", ["generic"])
     directory = spec(tmp_path, targets=targets, types=("unit", "unit"))
+    (directory / "plan.md").write_text(VALID_PLAN, encoding="utf-8")
     _initialize_git_worktree(tmp_path)
     monkeypatch.setattr("echelon.cli._require_provider_capability", lambda *a, **k: None)
     launches = []
