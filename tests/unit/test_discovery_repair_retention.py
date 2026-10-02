@@ -33,7 +33,9 @@ def test_new_completion_retains_full_proof_after_cleanup(prepared, checkpoint_ca
         prepared[1].save(state)
     state, row, _ = released(prepared)
     proof = json.loads(row["completion_payload"])
-    assert proof["version"] == 3
+    assert proof["version"] == 4
+    from harness.discovery_producer import SOURCE_FIELDS
+    assert proof["source"] == {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
     from harness.discovery_completion import released_discovery_projector
     from harness.squad_source_snapshot import inspect_project_tree
     project = released_discovery_projector(prepared[0], prepared[1].squad_dir, state)

@@ -198,7 +198,12 @@ def test_retained_completion_proof_rejects_changed_intent_receipts_or_marker(che
     row = checkpoint_case[2].identity_publication(spec_id="game",
         operation_id="discovery-completion-" + state["last_dispatch"]["dispatch_id"])
     saved = json.loads(row["completion_payload"])
-    assert saved["version"] == 3
+    assert saved["version"] == 4
+    from harness.discovery_producer import SOURCE_FIELDS
+    from harness.discovery_completion import _retained_completion_proof
+    source = {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
+    assert saved["source"] == source
+    _retained_completion_proof(saved, source=source)
     for damage in ("parent", "route", "receipt", "missing_effect", "marker", "extra"):
         proof = deepcopy(saved)
         checkpoint = proof["proof"]
@@ -210,6 +215,10 @@ def test_retained_completion_proof_rejects_changed_intent_receipts_or_marker(che
         else: checkpoint["intent"]["unexpected"] = True
         with pytest.raises(CompletionError):
             validate_retained_completion_proof(proof["completion"], checkpoint["intent"], checkpoint["receipts"])
+    changed_source = deepcopy(saved)
+    changed_source["source"]["completion_receipts_sha256"] = "a" * 64
+    with pytest.raises(ValueError):
+        _retained_completion_proof(changed_source, source=source)
 
 
 @pytest.mark.parametrize("point", ["completed", "released", "publication_disposed"])
