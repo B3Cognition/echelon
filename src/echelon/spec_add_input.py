@@ -23,12 +23,9 @@ from echelon.strict_json import loads_strict_json
 from echelon.product_input_transaction import (
     ProductInputMutationError,
     add_complete_product_input_publication,
-    authenticate_pending_product_input_mutation,
     authenticate_product_input_contract,
     build_product_input_mutation,
-    pending_product_input_mutation,
     product_input_request_sha256,
-    require_product_input_mutation_postimage,
     restore_product_input_directory_modes,
 )
 from echelon.spec_lifecycle import (
@@ -38,12 +35,10 @@ from echelon.spec_lifecycle import (
 )
 from harness.squad_state import SquadStateStore
 from harness.squad_publication import (
-    PublicationError,
     SquadPublicationTransaction,
-    load_prepared_publication,
 )
 from harness.state_transaction_namespace import (
-    SPEC_STEP_PUBLICATION_PLAN_KEY,
+    PENDING_SPEC_STEP_KEY,
     is_valid_product_input_attachment_id,
 )
 
@@ -398,6 +393,7 @@ def _add_input_locked(
         store.begin_product_input_publication(
             marker,
             mutation,
+            project_root=project_root,
             snapshot=snapshot,
             state_updates=state_updates,
         )
@@ -407,27 +403,7 @@ def _add_input_locked(
             f"cannot persist product input mutation intent: {exc}"
         ) from exc
     try:
-        persisted = store.confirm_durable_state(store.load())
-        authenticate_pending_product_input_mutation(
-            project_root,
-            persisted,
-            marker,
-            prepared._manifest.get("operations"),
-            staged_inputs=prepared._transaction_root / "work/product-inputs",
-        )
-        prepared.publish()
-        persisted = store.load()
-        verified_hash = require_product_input_mutation_postimage(
-            project_root,
-            persisted,
-            marker,
-        )
-        store.complete_external_publication(
-            marker,
-            verified_product_input_tree_hash=verified_hash,
-        )
-        store.confirm_durable_state(store.load())
-        prepared.discard()
+        _recover_pending_mutation(project_root, store)
     except Exception as exc:
         raise SpecAddInputError(
             f"product input mutation remains pending: {exc}"
@@ -441,8 +417,12 @@ def _discard_publication_without_authority(
 ) -> None:
     try:
         marker = prepared.marker.to_dict()
-        if store.load().get(SPEC_STEP_PUBLICATION_PLAN_KEY) == marker:
-            return
+        pending = store.load().get(PENDING_SPEC_STEP_KEY)
+        if pending is not None:
+            from harness.spec_step import load_prepared_spec_step
+            step = load_prepared_spec_step(store.squad_dir, pending)
+            if step.intent.publication == {"kind": "external", "marker": marker}:
+                return
         prepared.discard()
     except Exception:
         return
@@ -452,43 +432,10 @@ def _recover_pending_mutation(
     project_root: Path,
     store: SquadStateStore,
 ) -> dict[str, object] | None:
-    state = store.load()
+    from harness.product_input_step import recover_product_input_step
     try:
-        mutation = pending_product_input_mutation(state)
-    except ProductInputMutationError as exc:
-        raise SpecAddInputError(str(exc)) from exc
-    if mutation is None:
-        return None
-    marker = state[SPEC_STEP_PUBLICATION_PLAN_KEY]
-    try:
-        durable = store.confirm_durable_state(state)
-        prepared = load_prepared_publication(
-            project_root,
-            store.squad_dir,
-            marker,
-        )
-        authenticate_pending_product_input_mutation(
-            project_root,
-            durable,
-            marker,
-            prepared._manifest.get("operations"),
-            staged_inputs=prepared._transaction_root / "work/product-inputs",
-        )
-        prepared.publish()
-        persisted = store.load()
-        verified_hash = require_product_input_mutation_postimage(
-            project_root,
-            persisted,
-            marker,
-        )
-        store.complete_external_publication(
-            marker,
-            verified_product_input_tree_hash=verified_hash,
-        )
-        store.confirm_durable_state(store.load())
-        prepared.discard()
-        return mutation
-    except (OSError, PublicationError, ProductInputMutationError, ValueError) as exc:
+        return recover_product_input_step(project_root, store)
+    except Exception as exc:
         raise SpecAddInputError(
             f"product input mutation recovery failed with evidence retained: {exc}"
         ) from exc

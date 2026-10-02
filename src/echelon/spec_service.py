@@ -7516,11 +7516,9 @@ def _cmd_repair_traceability_locked(
     from echelon.product_input_transaction import (
         ProductInputMutationError,
         add_complete_product_input_publication,
-        authenticate_pending_product_input_mutation,
         authenticate_product_input_contract,
         build_product_input_mutation,
         product_input_tree_identity,
-        require_product_input_mutation_postimage,
         restore_product_input_directory_modes,
     )
     from echelon.product_inputs import (
@@ -7695,6 +7693,7 @@ def _cmd_repair_traceability_locked(
         store.begin_traceability_repair_publication(
             marker,
             mutation,
+            project_root=project_root,
             snapshot=snapshot,
             desired_state=repaired,
         )
@@ -7706,26 +7705,7 @@ def _cmd_repair_traceability_locked(
         print(f"✗ Cannot persist traceability repair intent: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     try:
-        durable = store.confirm_durable_state(store.load())
-        authenticate_pending_product_input_mutation(
-            project_root,
-            durable,
-            marker,
-            prepared._manifest["operations"],
-            staged_inputs=staged_inputs,
-        )
-        prepared.publish()
-        verified_hash = require_product_input_mutation_postimage(
-            project_root,
-            store.load(),
-            marker,
-        )
-        store.complete_external_publication(
-            marker,
-            verified_product_input_tree_hash=verified_hash,
-        )
-        store.confirm_durable_state(store.load())
-        prepared.discard()
+        _recover_pending_mutation(project_root, store)
     except Exception as exc:
         print(
             f"✗ Traceability repair remains pending with evidence retained: {exc}",

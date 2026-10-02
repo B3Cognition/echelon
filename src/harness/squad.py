@@ -2554,6 +2554,9 @@ class SquadController:
         state: Mapping[str, object],
     ) -> dict[str, object]:
         """Authenticate and publish one step-bound external transaction."""
+        if prepared.intent.route.get("kind") == "product_input_mutation":
+            from harness.product_input_step import apply_product_input_publication
+            return apply_product_input_publication(prepared, self._project_root)
         publication = prepared.intent.publication
         if publication is None:
             raise PublicationError("manifest_invalid")

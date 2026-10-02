@@ -1307,7 +1307,7 @@ def test_traceability_repair_recovers_transaction_crash_prefixes(
 
         monkeypatch.setattr(PreparedSquadPublication, "publish", fail_first)
     else:
-        original = SquadStateStore.complete_external_publication
+        original = SquadStateStore.complete_spec_step
         calls = 0
 
         def fail_first(self, *args, **kwargs):
@@ -1319,7 +1319,7 @@ def test_traceability_repair_recovers_transaction_crash_prefixes(
 
         monkeypatch.setattr(
             SquadStateStore,
-            "complete_external_publication",
+            "complete_spec_step",
             fail_first,
         )
 
@@ -1367,5 +1367,7 @@ def test_traceability_repair_authenticates_staged_package_before_copy(
 
     assert traceability.read_bytes() == before
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert "_spec_step_publication_plan" in state
-    assert "product_input_mutation" in state
+    assert state["pending_spec_step"]["cursor"] == "publication"
+    assert state["pending_spec_step"]["failure"]["code"] == "stage_corrupt"
+    assert "_spec_step_publication_plan" not in state
+    assert "product_input_mutation" not in state

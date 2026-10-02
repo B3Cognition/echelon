@@ -143,10 +143,12 @@ def test_spec_add_input_rejects_preexisting_unindexed_tree_tamper(
     "fault_boundary",
     ["before_intent", "before_write", "partial_write", "before_state_finalize"],
 )
+@pytest.mark.parametrize("recovery_backend", ["cli", "controller"])
 def test_spec_add_input_recovers_every_mutation_commit_boundary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fault_boundary: str,
+    recovery_backend: str,
 ) -> None:
     from echelon.product_inputs import (
         immutable_product_input_tree_digest,
@@ -159,6 +161,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     from harness.state_transaction_namespace import (
         SPEC_STEP_PUBLICATION_PLAN_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
+        PENDING_SPEC_STEP_KEY,
     )
 
     project = tmp_path / "workspace"
@@ -215,7 +218,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
             fail_first_publish,
         )
     else:
-        original_complete = SquadStateStore.complete_external_publication
+        original_complete = SquadStateStore.complete_spec_step
         attempts = 0
 
         def fail_first_complete(self, *args, **kwargs):
@@ -227,7 +230,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
 
         monkeypatch.setattr(
             SquadStateStore,
-            "complete_external_publication",
+            "complete_spec_step",
             fail_first_complete,
         )
 
@@ -236,12 +239,37 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
 
     interrupted = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     if fault_boundary == "before_intent":
+        assert PENDING_SPEC_STEP_KEY not in interrupted
         assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
         assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
         assert immutable_product_input_tree_digest(resolution.inputs_dir) == old_hash
     else:
-        assert interrupted[SPEC_STEP_PUBLICATION_PLAN_KEY]["transaction_id"]
-        assert interrupted[PRODUCT_INPUT_MUTATION_KEY]["kind"] == "add_input"
+        from harness.spec_step import load_prepared_spec_step
+        step = load_prepared_spec_step(run_dir, interrupted[PENDING_SPEC_STEP_KEY])
+        assert step.intent.provenance["product_input_mutation"]["kind"] == "add_input"
+        assert SPEC_STEP_PUBLICATION_PLAN_KEY not in interrupted
+        assert PRODUCT_INPUT_MUTATION_KEY not in interrupted
+        # Publication has not committed a logical post-state prematurely.
+        assert interrupted["status"] == "blocked"
+        assert interrupted["product_inputs"]["tree_hash"] == old_hash
+
+    if recovery_backend == "controller" and fault_boundary != "before_intent":
+        from unittest.mock import MagicMock
+        from harness.phase_graph import PhaseGraph
+        from harness.squad import SquadController
+        from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
+        repo = Path(__file__).resolve().parents[2]
+        provider = MagicMock()
+        controller = SquadController(
+            provider, SquadStateStore(run_dir),
+            PhaseGraph(repo / "runtime/workflow/definition.yaml"),
+            repo, project, squad_dir=run_dir,
+        )
+        with PhaseAExecutionLock.acquire(project, "test-add-input-recovery"):
+            with SpecRunExecutionLock.acquire(run_dir, "test-add-input-recovery"):
+                outcome = controller._drain_pending_spec_step()
+                assert outcome.recovered and not outcome.blocked
+        provider.exec_agent.assert_not_called()
 
     recovered = add_input_to_active_run(
         project,
@@ -253,6 +281,7 @@ def test_spec_add_input_recovers_every_mutation_commit_boundary(
     assert recovered.attachment_id == "001"
     assert SPEC_STEP_PUBLICATION_PLAN_KEY not in final
     assert PRODUCT_INPUT_MUTATION_KEY not in final
+    assert PENDING_SPEC_STEP_KEY not in final
     assert final["product_inputs"]["tree_hash"] == (
         immutable_product_input_tree_digest(resolution.inputs_dir)
     )
@@ -293,6 +322,48 @@ def test_spec_add_input_completed_retry_is_operation_idempotent(
         for path in resolution.inputs_dir.rglob("*")
         if path.is_file()
     } == first_package
+
+
+def test_pending_add_input_rechecks_live_postimage_before_state_commit(tmp_path, monkeypatch):
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
+    from harness.squad_state import SquadStateStore
+    from harness.state_transaction_namespace import PENDING_SPEC_STEP_KEY
+
+    project = tmp_path / "workspace"
+    source = project / "sources"
+    source.mkdir(parents=True)
+    (source / "base.md").write_text("base\n")
+    (source / "added.md").write_text("added\n")
+    resolution = resolve_product_inputs(
+        project, project / "runs/run-1", [parse_input_declaration("reference:sources/base.md")],
+    )
+    run_dir = _write_current_run(project, _base_state(resolution.inputs_dir))
+
+    def interrupted(*args, **kwargs):
+        raise OSError("interrupt before commit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SquadStateStore, "complete_spec_step", interrupted)
+        with pytest.raises(SpecAddInputError):
+            add_input_to_active_run(project, ["reference:sources/added.md"])
+    state_path = run_dir / "state.json"
+    before = state_path.read_bytes()
+    state = json.loads(before)
+    assert state[PENDING_SPEC_STEP_KEY]["cursor"] == "commit"
+    assert state["status"] == "blocked"
+    ledger = resolution.inputs_dir / "attachment-ledger.json"
+    original = ledger.read_bytes()
+    ledger.write_text("{}")
+    with pytest.raises(SpecAddInputError, match="postimage changed"):
+        add_input_to_active_run(project, ["reference:sources/added.md"])
+    assert state_path.read_bytes() == before
+    ledger.write_bytes(original)
+    recovered = add_input_to_active_run(project, ["reference:sources/added.md"])
+    assert recovered.attachment_id == "001"
+    final = json.loads(state_path.read_bytes())
+    assert final["status"] == "running"
+    assert PENDING_SPEC_STEP_KEY not in final
     ledger = json.loads(
         (resolution.inputs_dir / "attachment-ledger.json").read_text(encoding="utf-8")
     )

@@ -5434,6 +5434,20 @@ class SquadStateStore:
                     ),
                 }
             )
+        elif loaded.intent.origin == "resolution" and route.get("kind") == "product_input_mutation":
+            from harness.product_input_step import product_input_step_view
+            from echelon.product_input_transaction import require_product_input_mutation_postimage
+            try:
+                root = Path(loaded.intent.provenance["project_root"])
+                view = product_input_step_view(loaded, root)
+                require_product_input_mutation_postimage(
+                    root, view, view[SPEC_STEP_PUBLICATION_PLAN_KEY],
+                )
+            except Exception as exc:
+                raise StateAdvanceError(
+                    "product input step postimage changed",
+                    json_path="$.product_inputs", validator="completion_binding",
+                ) from exc
         elif loaded.intent.origin == "resolution":
             decision = final_state.get("blocked_decision")
             if (
@@ -6228,6 +6242,7 @@ class SquadStateStore:
         marker: object,
         mutation: object,
         *,
+        project_root: Path,
         snapshot: RoutingStateSnapshot,
         state_updates: dict[str, object],
     ) -> None:
@@ -6371,7 +6386,8 @@ class SquadStateStore:
             revision = state.get("state_revision", 0)
             current_product_inputs = state.get("product_inputs")
             if (
-                state.get("phase") != snapshot.phase
+                state != snapshot.state
+                or state.get("phase") != snapshot.phase
                 or type(revision) is not int
                 or revision != snapshot.state_revision
                 or _last_dispatch_sha256(state)
@@ -6389,20 +6405,42 @@ class SquadStateStore:
                 )
             desired = deepcopy(state)
             desired.update(updates)
-            desired[SPEC_STEP_PUBLICATION_PLAN_KEY] = expected_marker
-            desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
+            self._begin_product_input_step_unlocked(
+                state, desired, project_root, snapshot, expected_marker, expected_mutation,
+            )
+
+    def _begin_product_input_step_unlocked(
+        self, state, final_state, project_root, snapshot, marker, mutation,
+    ) -> None:
+        from harness.product_input_step import prepare_product_input_step
+        if PENDING_SPEC_STEP_KEY in state:
+            raise StateAdvanceError(
+                "another spec step is pending", json_path=f"$.{PENDING_SPEC_STEP_KEY}",
+                validator="ownership",
+            )
+        step = prepare_product_input_step(
+            self._squad_dir, project_root, snapshot, marker, mutation, final_state,
+        )
+        desired = deepcopy(state)
+        desired[PENDING_SPEC_STEP_KEY] = step.marker.to_dict()
+        try:
             self._save_exact_state_unlocked(
                 state,
                 desired,
-                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                json_path=f"$.{PENDING_SPEC_STEP_KEY}",
                 error_message="atomic product input publication state save failed",
             )
+        except BaseException:
+            if self._load_unlocked().get(PENDING_SPEC_STEP_KEY) != step.marker.to_dict():
+                step.discard()
+            raise
 
     def begin_traceability_repair_publication(
         self,
         marker: object,
         mutation: object,
         *,
+        project_root: Path,
         snapshot: RoutingStateSnapshot,
         desired_state: dict[str, object],
     ) -> None:
@@ -6467,7 +6505,8 @@ class SquadStateStore:
                 else None
             )
             if (
-                state.get("phase") != snapshot.phase
+                state != snapshot.state
+                or state.get("phase") != snapshot.phase
                 or type(revision) is not int
                 or revision != snapshot.state_revision
                 or _last_dispatch_sha256(state) != snapshot.previous_dispatch_sha256
@@ -6499,13 +6538,8 @@ class SquadStateStore:
                     validator="transaction_binding",
                 )
             desired = deepcopy(desired_input)
-            desired[SPEC_STEP_PUBLICATION_PLAN_KEY] = expected_marker
-            desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
-            self._save_exact_state_unlocked(
-                state,
-                desired,
-                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
-                error_message="atomic traceability repair state save failed",
+            self._begin_product_input_step_unlocked(
+                state, desired, project_root, snapshot, expected_marker, expected_mutation,
             )
 
     def _save_exact_completion_state_unlocked(
