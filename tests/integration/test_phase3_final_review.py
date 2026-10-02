@@ -477,9 +477,12 @@ def test_final_review_cannot_rewrite_its_candidate(tmp_path, mode, path):
 def test_failed_final_gate_does_not_claim_success_or_replan_in_same_dispatch(tmp_path, mode):
     ctrl, store, executor, node, _, calls = final_fixture(tmp_path, mode, final_verdict="FAIL")
     assert advance(ctrl, store, executor.execute(node, store)) == "phase3-consensus"
+    before = store.load()
     result = executor.execute(node, store)
+    assert isinstance(result, FinalizedPhaseExecution)
     assert result.verdict == "FAIL"
-    assert not store.load().get("phase3_final_review")
+    assert result.state_updates["phase3_final_review"] is None
+    assert store.load() == before  # Only the controller may commit the retirement.
     assert calls.count(("PLAN2", False)) == 1
 
 
@@ -586,13 +589,18 @@ def test_fresh_nonclosure_retires_review_round_instead_of_looping(tmp_path, outc
         if store.load().get("phase3_final_review"):
             break
         assert advance(ctrl, store, executor.execute(node, store)) == "phase3-consensus"
+    before = store.load()
     result = executor.execute(node, store)
-    assert not store.load().get("phase3_final_review")
+    assert isinstance(result, FinalizedPhaseExecution)
+    assert store.load() == before
+    assert result.state_updates["phase3_final_review"] is None
     assert result.verdict == "FAIL"
-    assert store.load()["why3_verdict"] == "FAIL"
+    assert result.state_updates["why3_verdict"] == "FAIL"
     if mode == "banzai":
         assert advance(ctrl, store, result) == "terminal-blocked"
         assert store.load()["blocked_reason"] == "repair_budget_exhausted"
+        assert not store.load().get("phase3_final_review")
+        assert store.load()["why3_verdict"] == "FAIL"
 
 
 @pytest.mark.parametrize("input_name", ["spec.md", "estimates.md", "result-contract", "role"])
