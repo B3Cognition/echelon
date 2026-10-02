@@ -163,18 +163,23 @@ def test_final_planning_change_is_reviewed_without_another_rewrite(tmp_path, res
     controller, store, executor, node, spec, calls = scheduling_fixture(tmp_path, mutate_plan=True)
     if real_workflow:
         node = controller._graph.get("phase3-consensus")
+    else:
+        # Compact context is useful, but a complete consensus still requires
+        # both WHY3 and ASSESS2. A two-role toy graph cannot certify that gate.
+        agents = deepcopy(controller._graph.get("phase3-consensus").agents)
+        for agent in agents:
+            agent["context_pack"] = []
+        node = scheduling_node(controller, agents)
     assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
     assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
     if restart:
         store = SquadStateStore(tmp_path / "squad/run-test")
-    if real_workflow:
-        # The full workflow reviews both gates in a separate fixed round;
-        # one selected-issue closure is recorded per review dispatch.
-        assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
+    # Both graph variants review both gates in a separate fixed round;
+    # one selected-issue closure is recorded per review dispatch.
+    assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
     assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus-tasks-lexicon"
     assert calls == [("review", "ISS-A"), ("review", "ISS-B"), ("plan", None),
-                     *(([("review", "ISS-A"), ("review", "ISS-B")]) if real_workflow else
-                       [("review", "ISS-B"), ("review", "ISS-A")])]
+                     ("review", "ISS-A"), ("review", "ISS-B")]
     final = store.load()
     manifest, _ = capture_review_inputs(spec, project_root=tmp_path)
     for entry in final["issue_resolution_ledger"].values():
