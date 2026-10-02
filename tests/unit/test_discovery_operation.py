@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from harness.squad_state import StateAdvanceError
 from tests.unit.test_discovery_bootstrap import case
@@ -27,7 +28,9 @@ def prepared(turn_prepared):
     for name in ("unknowns", "assumptions", "glossary", "mental-model", "boundaries", "reference-architectures"):
         filename = name + "-template.md"
         (templates / filename).write_bytes((repo / "runtime/templates" / filename).read_bytes())
-    (root / ".echelon/config.yml").write_bytes((repo / "runtime/config-template.yml").read_bytes())
+    config = yaml.safe_load((repo / "runtime/config-template.yml").read_text())
+    config["stacks"]["selected"] = ["generic"]
+    (root / ".echelon/config.yml").write_text(yaml.safe_dump(config), encoding="utf-8")
     build_run_context(root, turn_prepared[1].squad_dir, user_request="Create an isometric game")
     return turn_prepared
 

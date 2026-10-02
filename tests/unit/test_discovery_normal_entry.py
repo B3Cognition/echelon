@@ -36,6 +36,22 @@ def selection(prepared):
     return {"bootstrap": prepared[3], "input_tree": "inputs"}
 
 
+def test_discovery_admission_requires_explicit_stack_without_state_change(prepared):
+    import yaml
+    path = prepared[0] / ".echelon/config.yml"
+    config = yaml.safe_load(path.read_text())
+    config["stacks"]["selected"] = []
+    path.write_text(yaml.safe_dump(config))
+    before = prepared[1].load()
+    executor = FullDiscoveryExecutor()
+    result = controller(prepared, executor)._verification_dispatch_admission(before)
+    assert result is not None
+    assert result.status == "blocked"
+    assert "stack_selection_required" in result.summary
+    assert prepared[1].load() == before
+    assert executor.calls == []
+
+
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 @pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
 def test_normal_entry_publishes_all_discovery_and_stops_at_real_successor(prepared, provider, mode):
