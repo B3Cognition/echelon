@@ -202,6 +202,83 @@ def test_spec_step_accepts_all_manifest_statuses_and_repeated_occurrences(
     assert prepared.intent.provenance == provenance
 
 
+@pytest.mark.parametrize("changed_bytes", [False, True])
+@pytest.mark.parametrize("runtime_overlay", [False, True])
+def test_spec_step_accepts_republished_output_from_same_assignment(
+    tmp_path: Path, changed_bytes: bool, runtime_overlay: bool,
+) -> None:
+    initial = _receipt("why3/initial")
+    final = _receipt("why3/final-revalidation")
+    if runtime_overlay:
+        final["contract_sha256"] = "f" * 64
+    output = {
+        "root": "active_spec", "path": "issues.md", "kind": "file",
+        "requirement": "required", "sha256": "5" * 64,
+        "preimage_identity_sha256": None, "postimage_identity_sha256": "6" * 64,
+        "evidence_kind": "created", "members": [],
+    }
+    initial["outputs"] = [dict(output)]
+    final["outputs"] = [{**output, "sha256": "7" * 64 if changed_bytes else "5" * 64,
+                         "preimage_identity_sha256": "6" * 64,
+                         "postimage_identity_sha256": "8" * 64,
+                         "evidence_kind": "replaced"}]
+    provenance = _provider_execution_provenance([
+        _manifest("why3/initial", status="executed", receipt=initial),
+        _manifest("why3/final-revalidation", status="executed", receipt=final,
+                  contract_sha256=str(final["contract_sha256"])),
+    ], [initial, final])
+
+    prepared = _prepare(tmp_path, provenance=provenance)
+    loaded = load_prepared_spec_step(tmp_path, prepared.marker.to_dict())
+
+    assert loaded.intent.provenance == provenance
+    assert len(loaded.intent.provenance["provider_execution"]["receipts"]) == 2
+
+
+@pytest.mark.parametrize("conflict", ["assignment", "kind"])
+def test_spec_step_rejects_conflicting_republished_output(tmp_path: Path, conflict: str) -> None:
+    initial = _receipt("why3/initial")
+    final = _receipt("why3/final-revalidation")
+    output = {
+        "root": "active_spec", "path": "issues.md", "kind": "file",
+        "requirement": "required", "sha256": "5" * 64,
+        "preimage_identity_sha256": None, "postimage_identity_sha256": "6" * 64,
+        "evidence_kind": "created", "members": [],
+    }
+    initial["outputs"] = [dict(output)]
+    final["outputs"] = [dict(output)]
+    if conflict == "assignment":
+        final["assignment_id"] = "phase3-consensus/agents/1/echelon.gatekeeper:ASSESS2"
+    else:
+        final["outputs"][0]["kind"] = "directory"
+    provenance = _provider_execution_provenance([
+        _manifest("why3/initial", status="executed", receipt=initial),
+        _manifest("why3/final-revalidation", status="executed", receipt=final,
+                  assignment_id=str(final["assignment_id"]),
+                  contract_sha256=str(final["contract_sha256"])),
+    ], [initial, final])
+
+    with pytest.raises(SpecStepError, match="intent_invalid"):
+        _prepare(tmp_path, provenance=provenance)
+
+
+def test_spec_step_rejects_duplicate_output_in_one_receipt(tmp_path: Path) -> None:
+    receipt = _receipt("why3/initial")
+    output = {
+        "root": "active_spec", "path": "issues.md", "kind": "file",
+        "requirement": "required", "sha256": "5" * 64,
+        "preimage_identity_sha256": None, "postimage_identity_sha256": "6" * 64,
+        "evidence_kind": "created", "members": [],
+    }
+    receipt["outputs"] = [dict(output), dict(output)]
+    provenance = _provider_execution_provenance([
+        _manifest("why3/initial", status="executed", receipt=receipt),
+    ], [receipt])
+
+    with pytest.raises(SpecStepError, match="intent_invalid"):
+        _prepare(tmp_path, provenance=provenance)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

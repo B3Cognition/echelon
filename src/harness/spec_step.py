@@ -591,13 +591,24 @@ def validate_provider_execution_provenance(value: object) -> dict[str, object]:
         ):
             _raise("intent_invalid")
         normalized_receipts.append(receipt)
-    output_targets = [
-        (output["root"], output["path"])
-        for receipt in normalized_receipts
-        for output in receipt["outputs"]
-    ]
-    if len(output_targets) != len(set(output_targets)):
-        _raise("intent_invalid")
+    # A provider may republish its own report during ordered revalidation.
+    # Retain both receipts; completion proofs select the last postimage. A
+    # repeated path must not change assignment or artifact kind. Runtime
+    # overlays may change the contract digest; each occurrence remains bound
+    # to its own exact manifest/receipt digest above.
+    output_owners: dict[tuple[str, str], tuple[str, str]] = {}
+    for receipt in normalized_receipts:
+        receipt_targets: set[tuple[str, str]] = set()
+        for output in receipt["outputs"]:
+            target = (output["root"], output["path"])
+            if target in receipt_targets:
+                _raise("intent_invalid")
+            receipt_targets.add(target)
+            owner = (receipt["assignment_id"], output["kind"])
+            previous = output_owners.get(target)
+            if previous is not None and previous != owner:
+                _raise("intent_invalid")
+            output_owners[target] = owner
     cost = value["cost_usd_delta"]
     if (
         type(cost) not in (int, float)
