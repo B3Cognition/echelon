@@ -1265,11 +1265,13 @@ def _write_phase_a_build_inputs(
         (spec_dir / name).write_text(content, encoding="utf-8")
 
 
-def _select_artifact_publication_stack(project_root: Path) -> None:
+def _select_artifact_publication_stack(
+    project_root: Path, *, unit_coverage: bool = False,
+) -> None:
     """Declare these publication fixtures as artifacts, not runnable products."""
     stack_dir = project_root / ".echelon" / "stacks" / "publication-fixture"
     stack_dir.mkdir(parents=True, exist_ok=True)
-    (stack_dir / "stack.yml").write_text(yaml.safe_dump({
+    stack = {
         "schema_version": "1.4",
         "stack": {"id": "publication-fixture", "name": "Artifact publication fixture",
                   "version": "1", "kind": "capability"},
@@ -1277,9 +1279,18 @@ def _select_artifact_publication_stack(project_root: Path) -> None:
         "provides": {"x.publication.artifacts": "markdown"},
         "context": {"files": ["context.md"]},
         "runnability": {"classification": "non_runnable", "policy": "not_applicable"},
-    }), encoding="utf-8")
+    }
+    if unit_coverage:
+        stack["coverage_observers"] = [{
+            "id": "publication-unit", "test_types": ["unit"],
+            "command": 'npm run test:unit -- --reporter=json --outputFile="$ECHELON_COVERAGE_REPORT"',
+            "report_path": ".echelon/coverage-reports/unit.json",
+            "adapter": "vitest-json", "mode": "isolated", "required": True,
+        }]
+    (stack_dir / "stack.yml").write_text(yaml.safe_dump(stack), encoding="utf-8")
     (stack_dir / "context.md").write_text(
-        "# Artifact publication fixture\nNo product runtime or coverage cases are declared.\n",
+        "# Artifact publication fixture\nNon-runnable Markdown artifacts; "
+        "declared unit cases use a structured Vitest observer.\n",
         encoding="utf-8",
     )
     config_path = project_root / ".echelon" / "config.yml"
@@ -3334,6 +3345,7 @@ class TestAgentResultIntegrity:
         self, tmp_path,
     ):
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path, unit_coverage=True)
         ctrl, store = _controller(tmp_path)
         store.initialize(
             "r", "banzai", "msg", 0, "phase4-document", max_iterations=5
@@ -3386,6 +3398,7 @@ class TestAgentResultIntegrity:
         self, tmp_path,
     ):
         _disable_lexicon_gate(tmp_path)
+        _select_artifact_publication_stack(tmp_path, unit_coverage=True)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "terminal-blocked")
         _mark_constitution_complete(tmp_path, store)
