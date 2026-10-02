@@ -82,11 +82,11 @@ def managed_controller(tmp_path, *, mode="semi", graph=None):
 
 def observe_legacy_entry(monkeypatch, controller):
     calls = []
-    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", lambda: (
+    monkeypatch.setattr(controller, "_drain_pending_spec_step", lambda: (
         calls.append("recovery") or SimpleNamespace(recovered=False, manual_phase_run=False)
     ))
     monkeypatch.setattr(controller, "_emit_pending_retarget_comparison", lambda: calls.append("retarget"))
-    monkeypatch.setattr(controller, "_cleanup_controller_completion_orphans", lambda: calls.append("cleanup") or True)
+    monkeypatch.setattr(controller, "_cleanup_spec_step_orphans", lambda: calls.append("cleanup") or True)
 
     def execute(*args, **kwargs):
         calls.append("execute")
@@ -163,7 +163,7 @@ def test_rejection_preserves_budget_dispatch_and_repair_state_with_real_phase_en
         pytest.fail("legacy writes must not be reached")
     for name in ("save", "claim_failed_automatic_decision_for_manual_phase_replay"):
         monkeypatch.setattr(state, name, unexpected)
-    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
+    monkeypatch.setattr(controller, "_drain_pending_spec_step", unexpected)
     result = controller.run() if entry == "run" else controller.run_single_phase("DONE")
     assert result.summary == BLOCKED
     assert touched == []
@@ -222,6 +222,8 @@ def test_genuine_legacy_control_reaches_execution_without_registry_writes(
     tmp_path, monkeypatch, authority_present, entry,
 ):
     root = tmp_path.resolve()
+    from tests.unit.test_verification_capability_preflight import select
+    select(root, ["generic"])
     state = SquadStateStore(root / "runs/legacy")
     state.initialize("legacy", "greenfield", "Legacy content", 1000, "DONE")
     if authority_present:
@@ -236,7 +238,9 @@ def test_genuine_legacy_control_reaches_execution_without_registry_writes(
     calls = observe_legacy_entry(monkeypatch, controller)
     result = controller.run() if entry == "run" else controller.run_single_phase("DONE")
     assert result.status == "completed"
-    assert calls == ["recovery", "retarget", "cleanup", "execute"]
+    # No pending step means recovery is not entered. The next dispatch still
+    # passes through retarget/cleanup and real stack admission in that order.
+    assert calls == ["retarget", "cleanup", "execute"]
     if authority_present:
         assert sql_state(root) == before_sql
     else:
@@ -336,7 +340,7 @@ def test_human_input_boundaries_raise_handled_refusal_before_decision_effects(
     for name in ("set_human_input_decision", "apply_human_input_state_resolution",
                  "reopen_failed_proportional_controller_decision", "recover_interrupted_human_input_decision"):
         monkeypatch.setattr(state, name, unexpected)
-    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
+    monkeypatch.setattr(controller, "_drain_pending_spec_step", unexpected)
     with pytest.raises(HumanInputPolicyError) as raised:
         if entry == "handle":
             controller.handle_human_input(request)
@@ -390,7 +394,7 @@ def test_removed_metadata_preserves_real_pending_completion_and_publication_stag
     def unexpected():
         calls.append("drain")
         pytest.fail("retained managed stages must not reach recovery")
-    monkeypatch.setattr(controller, "_drain__spec_step_effect_plan", unexpected)
+    monkeypatch.setattr(controller, "_drain_pending_spec_step", unexpected)
     if entry == "run":
         assert controller.run().summary == BLOCKED
     else:
