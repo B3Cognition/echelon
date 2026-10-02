@@ -157,6 +157,26 @@ def _controlled_implementation(*, verified: bool = True) -> ImplementationResult
     )
 
 
+def _publication_checkpoint_fixture(tmp_path: Path) -> tuple[DeliveryController, StateStore]:
+    from harness.delivery_controller import _delivery_stack_snapshot
+
+    coord = _make_controller(tmp_path, published_spec=True)
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+        f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
+    )
+    store = StateStore(coord._state_dir, "spec-001")
+    store.initialize(
+        "run-1", "semi",
+        delivery_stack_snapshot=_delivery_stack_snapshot(coord._config.resolved_stacks),
+    )
+    store.transition("running")
+    return coord, store
+
+
 @pytest.mark.unit
 class TestSingleStrategy:
     """Test N=1 passthrough."""
@@ -397,10 +417,7 @@ class TestSingleStrategy:
     def test_verified_publish_resume_skips_ralph_build_dispatch(
         self, tmp_path: Path
     ) -> None:
-        coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize("run-1", "semi")
-        store.transition("running")
+        coord, store = _publication_checkpoint_fixture(tmp_path)
         store.transition(
             "blocked",
             updates={
@@ -442,10 +459,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A verified publication checkpoint must not redispatch review repair."""
-        coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize("run-1", "semi")
-        store.transition("running")
+        coord, store = _publication_checkpoint_fixture(tmp_path)
         store.transition(
             "blocked",
             updates={
@@ -498,10 +512,7 @@ class TestSingleStrategy:
         self, tmp_path: Path
     ) -> None:
         """A failed publication resume attempts exactly one review repair."""
-        coord = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize("run-1", "semi")
-        store.transition("running")
+        coord, store = _publication_checkpoint_fixture(tmp_path)
         store.transition(
             "blocked",
             updates={
