@@ -303,6 +303,34 @@ def test_clarification_restart_is_exact(checkpoint_case, monkeypatch, point):
             ctrl.apply_human_input_resolution(before["blocked_decision"]["id"],
                 expected_state_revision=before["state_revision"], resolution=answer)
     assert identity.identity_history(spec_id="game") == old_history
+    if point in {"promoted", "context"}:
+        pending_state = store.load()
+        pending_publication = identity.pending_identity_publication(spec_id="game")
+        assert pending_state["pending_spec_step"]["origin"] == "resolution"
+        if point == "promoted":
+            changed_state = deepcopy(pending_state)
+            changed_state["blocked_decision"]["question"] = "An unrelated question"
+            assert not ctrl._pending_managed_resolution_replay(changed_state)
+            step_id = pending_state["pending_spec_step"]["step_id"]
+            for name in ("intent.json", "receipts.json"):
+                path = store.squad_dir / ".spec-step-outbox" / step_id / name
+                original_bytes = path.read_bytes()
+                path.write_text("{}\n")
+                blocked = controller(checkpoint_case, executor).run(managed_discovery=request)
+                assert blocked.summary == "managed_discovery_selection_requires_reconciliation"
+                assert store.load() == pending_state
+                assert identity.pending_identity_publication(spec_id="game") == pending_publication
+                assert len(executor.calls) == 9
+                path.write_bytes(original_bytes)
+        for changed_request in (
+            {**request, "input_tree": "foreign-input"},
+            {**request, "bootstrap": {**request["bootstrap"], "spec_path": "specs/foreign"}},
+        ):
+            blocked = controller(checkpoint_case, executor).run(managed_discovery=changed_request)
+            assert blocked.summary == "managed_discovery_selection_requires_reconciliation"
+            assert store.load() == pending_state
+            assert identity.pending_identity_publication(spec_id="game") == pending_publication
+            assert len(executor.calls) == 9
     if point == "completed":
         committed = store.load()
         pending = identity.pending_identity_publication(spec_id="game")

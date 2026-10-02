@@ -7305,6 +7305,53 @@ class SquadController:
         return SquadResult("blocked", str(state.get("phase") or "unknown"),
             self._squad_dir.name, reason)
 
+    def _pending_managed_resolution_replay(self, state):
+        """Admit only replay of a sealed answer, never a fresh human decision.
+
+        A partially published answer no longer has its parent's live preimage.
+        Independent selection remains mandatory, and the normal effect loop
+        still authenticates all sources before publishing or committing.
+        """
+        try:
+            marker = state.get(PENDING_SPEC_STEP_KEY)
+            if not isinstance(marker, Mapping) or marker.get("origin") != "resolution":
+                return False
+            step = load_prepared_spec_step(self._squad_dir, marker)
+            route = step.intent.route
+            decision = validate_blocked_decision(state["blocked_decision"])
+            final = step.intent.final_state
+            resolved = validate_blocked_decision(final["blocked_decision"])
+            if (
+                route.get("kind") != "resolution"
+                or route.get("decision_id") != decision["id"]
+                or route.get("from_phase") != state.get("phase")
+                or route.get("to_phase") != final.get("phase")
+                or route.get("to_phase") not in self._graph.all_phase_ids()
+                or resolved["status"] != "resolved"
+                or final.get("managed_identity") != state.get("managed_identity")
+            ):
+                return False
+            answer = AppliedHumanInputResolution(
+                resolved["selected_option_id"], resolved["answer_text"], resolved["resolved_by"],
+                rationale=resolved.get("resolution_rationale"),
+                confidence=resolved.get("resolution_confidence"),
+            )
+            if build_human_input_resolution_postimage(
+                decision, answer, resolved_at=resolved["resolved_at"],
+            ) != resolved:
+                return False
+            companion = self._completion_marker_from_spec_step(step)
+            completion = load_prepared_spec_step_effects(
+                self._project_root, self._squad_dir, companion,
+            )
+            return (
+                completion.intent.origin == "resolution"
+                and "managed_discovery" in completion.intent.publication
+                and completion.intent.to_dict() == step_effect_intent(step).to_dict()
+            )
+        except Exception:
+            return False
+
     def _admit_managed_discovery(self, selected, create):
         """Authenticate independent selection before recovery; caller owns leases."""
         from harness.discovery_bootstrap import bootstrap_discovery
@@ -7336,7 +7383,8 @@ class SquadController:
                 raise ValueError("checkpoint target differs from selected spec")
         if (create == (retained is not None) or (retained is not None and retained["selection"] != claim)
                 or (self._unresolved_human_input_decision(state) is not None
-                    and not ((selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what"} and self._managed_tracker_human_input(state))
+                    and not (self._pending_managed_resolution_replay(state)
+                        or (selected.get("through_phase") in {"phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what"} and self._managed_tracker_human_input(state))
                         or (through_why2 and self._managed_why2_completion_wait(state))
                         or (through_checkpoint and self._managed_checkpoint_human_input(state))))
                 or "retarget" in state):
