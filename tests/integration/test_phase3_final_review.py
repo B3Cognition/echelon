@@ -138,6 +138,24 @@ def test_final_fixture_unclaimed_plan2_mutation_remains_blocked(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
+def test_final_review_round_survives_controller_handoff(tmp_path, mode):
+    ctrl, store, executor, node, _, calls = final_fixture(tmp_path, mode)
+    result = executor.execute(node, store)
+    assert isinstance(result, FinalizedPhaseExecution)
+    assert result.state_updates["phase3_final_review"]
+
+    assert advance(ctrl, store, result) == "phase3-consensus"
+
+    persisted = store.load()
+    assert persisted["phase"] == "phase3-consensus"
+    assert persisted["why3_verdict"] == "PASS"
+    assert persisted["assess2_verdict"] == "PASS"
+    assert persisted["phase3_final_review"] == result.state_updates["phase3_final_review"]
+    assert persisted["iteration"] == 1
+    assert calls == [("WHY3", False), ("ASSESS2", False), ("PLAN2", False)]
+
+
+@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("repairs", [False, True])
 def test_final_review_completes_without_report_revision_replanning(tmp_path, mode, restart, repairs):

@@ -8,6 +8,7 @@ import pytest
 from harness.phase3_repair import RepairIdentity
 from harness.phase3_repair_context import capture_review_inputs
 from harness.phase_graph import PhaseNode
+from harness.phase_execution import FinalizedPhaseExecution
 from harness.squad_executors import StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
@@ -78,10 +79,17 @@ def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=F
 def advance(controller, store, result):
     node = controller._graph.get("phase3-consensus")
     snapshot = store.capture_routing_snapshot()
+    execution = result if isinstance(result, FinalizedPhaseExecution) else None
     prepared = controller._prepare_phase_result(node, result, snapshot)
-    routing = controller._construct_routing_decision_or_block(node, prepared, snapshot)
+    routing = controller._construct_routing_decision_or_block(
+        node, prepared, snapshot,
+        projected_state_updates=dict(execution.result.state_updates) if execution else {},
+        execution=execution,
+    )
     assert routing is not None and routing.human_input is None
-    assert controller._advance_prepared_result_or_block(node, routing.decision) is not None
+    assert controller._advance_prepared_result_or_block(
+        node, routing.decision, execution=routing.execution,
+    ) is not None
     return routing.decision.to_phase
 
 
