@@ -15,7 +15,7 @@ from tests.unit.test_managed_alignment_question import (
 
 @pytest.mark.parametrize("damage", ["integer_as_float", "boolean_as_integer"])
 def test_native_alignment_effect_guard_rejects_equal_valued_type_changes(tmp_path, monkeypatch, damage):
-    """Shape-only CAS guard: proof admission is stubbed and persistence forbidden."""
+    """Shape-only preparation guard: proof is stubbed; persistence is forbidden."""
     from contextlib import nullcontext
     from pathlib import Path
     from harness import squad_state, discovery_completion
@@ -47,7 +47,7 @@ def test_native_alignment_effect_guard_rejects_equal_valued_type_changes(tmp_pat
     marker = dict(origin="resolution", step="awaiting_publication", completion_id="a" * 32)
     intent = dict(route=dict(kind="resolution", decision_id=decision["id"], from_phase=phase, to_phase=phase),
         publication=dict(managed_discovery={}, marker={}))
-    monkeypatch.setattr(squad_state, "_validate_prepared_controller_completion",
+    monkeypatch.setattr(squad_state, "_validate_prepared_spec_step_effects",
         lambda prepared: (marker, intent, {}, "", "bound"))
     monkeypatch.setattr(discovery_completion, "decode_binding", lambda *args, **kwargs: binding)
     monkeypatch.setattr(store, "_lock", lambda **kwargs: nullcontext())
@@ -60,15 +60,18 @@ def test_native_alignment_effect_guard_rejects_equal_valued_type_changes(tmp_pat
     with pytest.raises(squad_state.StateAdvanceError, match="native.*effects changed"):
         store.apply_human_input_state_resolution(decision["id"], expected_state_revision=2,
             resolution=answer, state_updates=changed, state_removals=(), prepared_completion=object(),
-            resolved_at=resolved_at, resolved_decision_postimage=resolved)
+            resolved_at=resolved_at, resolved_decision_postimage=resolved, prepare_only=True)
     assert not commits
-    # The same transaction with correctly typed effects must reach the native
-    # persistence boundary; this guard must not merely reject every v41 answer.
-    with pytest.raises(AssertionError, match="effects reached intercepted persistence"):
-        store.apply_human_input_state_resolution(decision["id"], expected_state_revision=2,
-            resolution=answer, state_updates=effects, state_removals=(), prepared_completion=object(),
-            resolved_at=resolved_at, resolved_decision_postimage=resolved)
-    assert len(commits) == 1 and commits[0]["blocked_decision"] == resolved
+    # Correctly typed effects return the detached candidate used to seal the
+    # native step, without writing companion state or rejecting every answer.
+    desired = store.apply_human_input_state_resolution(decision["id"], expected_state_revision=2,
+        resolution=answer, state_updates=effects, state_removals=(), prepared_completion=object(),
+        resolved_at=resolved_at, resolved_decision_postimage=resolved, prepare_only=True)
+    assert desired["blocked_decision"] == resolved
+    assert json.dumps(desired["feature_policy"], sort_keys=True) == json.dumps(effects["feature_policy"], sort_keys=True)
+    assert json.dumps(desired["feature_policy_reconciliation"]) == json.dumps(effects["feature_policy_reconciliation"])
+    assert "_spec_step_effect_plan" not in desired and "_spec_step_publication_plan" not in desired
+    assert not commits
 
 
 @pytest.mark.parametrize("mode,resolver,status", [
