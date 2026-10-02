@@ -7,11 +7,13 @@ from harness.squad_provider import SquadAgentResult
 import json
 from pathlib import Path
 from dataclasses import asdict
+from copy import deepcopy
 from unittest.mock import MagicMock
 import pytest
 
 from harness.phase3_repair import RepairIdentity
-from harness.phase_graph import PhaseNode
+from harness.phase_execution import FinalizedPhaseExecution
+from tests.integration.test_phase3_review_scheduling import scheduling_node, publish_plan_outputs
 from harness.squad_executors import AgentExecutor, StagedParallelExecutor, DeterministicLexiconExecutor, DeterministicUnderstandingExecutor, _render_issue_resolution_context
 from harness.squad_state import SquadStateStore
 from tests.kernel.test_phase3_work_assessment import ISSUES
@@ -100,10 +102,16 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
             for name in ("plan.md", "research.md", "data-model.md"):
                 (spec / name).write_text("B observation uses the existing scene fixture; preserve requirements.")
             payload["verdict"] = "COMPLETE"
+            payload["output_files"] = [str(spec / name) for name in (
+                "plan.md", "research.md", "data-model.md", "contracts/api.md",
+            )]
         elif "Operate in **ASSESS2**" in prompt:
             feasibility.append("ASSESS2")
             (spec / "implementability-report.md").write_text("Feasible with the retained scene fixture.")
             payload["verdict"] = "PASS"
+            payload["output_files"] = [str(spec / "implementability-report.md")]
+            payload["state_updates"] = dict(gate_decision="PASS", phase_recommendation="proceed-to-build",
+                implementability_metrics={})
         elif "## Phase 3 work assessment envelope" in prompt:
             envelope = json.loads(prompt.split("## Phase 3 work assessment envelope\n```json\n")[1].split("\n```", 1)[0])
             classifications.append(envelope["issue_id"])
@@ -115,8 +123,12 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
             marker = "## Phase 3 selected-issue review envelope\n```json\n"
             if marker not in prompt:
                 assert "## Fixed-candidate final review" in prompt
+                (spec / "issues.md").write_text("No issues")
+                (spec / "quality-gates.md").write_text("Final candidate checked")
                 return SquadAgentResult(exit_code=0, echelon_result={"verdict": "PASS", "state_updates": {},
-                    "journal_entries": []}, raw_output="Final candidate checked", duration_ms=0, timed_out=False)
+                    "journal_entries": [], "output_files": [str(spec / name) for name in (
+                        "issues.md", "quality-gates.md",
+                    )]}, raw_output="Final candidate checked", duration_ms=0, timed_out=False)
             envelope = json.loads(prompt.split(marker)[1].split("\n```", 1)[0])
             reviews.append(envelope["selected_issue"])
             if entry_phase == "phase3-plan" and len(reviews) == 1:
@@ -130,10 +142,14 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
             payload["phase3_issue_review"] = {"schema_version": 1, "identity": envelope["identity"],
                 "outcome": "resolved", "reviewed_artifacts": envelope["input_manifest"],
                 "rationale": "Checked the actual contract against the retained requirement."}
+            (spec / "issues.md").write_text("No issues" if fixed else ISSUES)
+            (spec / "quality-gates.md").write_text(f"WHY3 {payload['verdict']}")
+            payload["output_files"] = [str(spec / name) for name in ("issues.md", "quality-gates.md")]
         else:
             assert "Operate in **PLAN2**" in prompt
             planning.append("PLAN2")
             payload["verdict"] = "DONE" if "reproducible" in (spec / "contracts/api.md").read_text() else "BLOCKED"
+            payload["output_files"] = publish_plan_outputs(spec)
         return SquadAgentResult(exit_code=0, echelon_result=payload, raw_output="", duration_ms=0, timed_out=False)
 
     provider = MagicMock()
@@ -142,16 +158,17 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
     graph.agent_file.return_value = None
     graph.all_phase_ids.return_value = []
     executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, run)
-    consensus = PhaseNode(id="phase3-consensus", type="staged_parallel", agents=[
-        {"id": "echelon.sage", "mode": "WHY3", "stage": 1, "context_pack": []},
-        {"id": "echelon.gatekeeper", "mode": "ASSESS2", "stage": 1, "context_pack": []},
-        {"id": "echelon.orchestrator", "mode": "PLAN2", "stage": 2, "context_pack": []}])
+    agents = deepcopy(controller._graph.get("phase3-consensus").agents)
+    for agent in agents:
+        agent["context_pack"] = []
+    consensus = scheduling_node(controller, agents)
 
     def advance(result):
         node = controller._graph.get(store.load()["phase"])
         snapshot = store.capture_routing_snapshot()
         prepared = controller._prepare_phase_result(node, result, snapshot)
-        routed = controller._construct_routing_decision_or_block(node, prepared, snapshot)
+        routed = controller._construct_routing_decision_or_block(node, prepared, snapshot,
+            projected_state_updates=dict(result.state_updates) if isinstance(result, FinalizedPhaseExecution) else {})
         assert routed is not None and routed.human_input is None
         assert controller._advance_prepared_result_or_block(node, routed.decision) is not None
         return routed.decision.to_phase
@@ -163,10 +180,12 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
     result = executor.execute(consensus, store)
     assert result.verdict == "FAIL"
     assert planning == []  # Classify the unresolved owner before dependent planning.
-    assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
+    assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+    assert result.state_updates["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
     if restart:
         controller, store = _controller(tmp_path, squad_dir=run)
     assert advance(result) == "phase3-how"
+    assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
     owner_prompt = _render_issue_resolution_context(store.load())
     assert "Design B observation protocol" in owner_prompt
     assert "Missing enum" not in owner_prompt
