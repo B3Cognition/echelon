@@ -8,7 +8,7 @@ from tests.unit.test_discovery_turns import case, enrolled
 
 @pytest.mark.parametrize("stopped", [False, True])
 @pytest.mark.parametrize("diagnostic_key", ["spec_step_publication_failure", "spec_step_effect_failure"])
-def test_resolved_policy_checks_native_failure_resume_state_without_mutating(stopped, diagnostic_key):
+def test_resolved_policy_rejects_retired_failure_authority_without_mutating(stopped, diagnostic_key):
     from harness.discovery_policy_resolution import _require_resolved_effects
     from harness.squad_state import StateAdvanceError
     marker = dict(schema_version=1, transaction_id="b" * 32, manifest_sha256="c" * 64)
@@ -25,7 +25,8 @@ def test_resolved_policy_checks_native_failure_resume_state_without_mutating(sto
         state.pop("_spec_step_publication_plan")
         state["blocked_reason"] = "controller_completion_pending"
     before = deepcopy(state)
-    _require_resolved_effects(state, recovery, dict(marker=marker))
+    with pytest.raises((ValueError, StateAdvanceError)):
+        _require_resolved_effects(state, recovery, dict(marker=marker))
     assert state == before
     for change in (dict(_spec_step_effect_plan=dict(completion_id="d" * 32)),
             *((dict(_spec_step_publication_plan={**marker, "transaction_id": "d" * 32}),)
@@ -34,6 +35,27 @@ def test_resolved_policy_checks_native_failure_resume_state_without_mutating(sto
             {diagnostic_key: {**state[diagnostic_key], "resume_status": "failed"}}):
         with pytest.raises((ValueError, StateAdvanceError)):
             _require_resolved_effects({**state, **change}, recovery, dict(marker=marker))
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_resolved_policy_checks_exact_committed_effects_without_mutating(stopped):
+    from harness.discovery_policy_resolution import _require_resolved_effects
+    updates = dict(status="blocked" if stopped else "running",
+                   phase="terminal-blocked" if stopped else "checkpoint-assess")
+    if stopped:
+        updates["blocked_reason"] = "proportional_quality_debt_declined"
+    recovery = dict(completion_id="a" * 32,
+                    effects=dict(state_updates=updates, state_removals=["quality_gate_remediation"]))
+    state = {**updates, "tokens_used": 91, "unrelated": {"preserved": True}}
+    before = deepcopy(state)
+    _require_resolved_effects(state, recovery, {})
+    assert state == before
+    for change in (dict(status="failed"), dict(phase="phase3-plan"), dict(quality_gate_remediation={})):
+        damaged = {**state, **change}
+        expected = deepcopy(damaged)
+        with pytest.raises(ValueError):
+            _require_resolved_effects(damaged, recovery, {})
+        assert damaged == expected
 
 
 def test_debt_creation_stage_requires_the_exact_authenticated_resolution(tmp_path):

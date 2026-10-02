@@ -179,20 +179,16 @@ def prepare(controller, state, decision, selected, resolution, effects, *, quali
 
 
 def _require_resolved_effects(state, recovery, publication):
-    """Check effects through native pending-publication/completion failures."""
+    """Check the sealed resolved-state view, never restore a retired lifecycle."""
     from harness.discovery_completion import _require
-    from harness.squad_state import SquadStateStore
-    observed = dict(state)
-    for key in ("spec_step_publication_failure", "spec_step_effect_failure"):
-        if key not in observed:
-            continue
-        _require((state.get("_spec_step_effect_plan") or {}).get("completion_id") == recovery["completion_id"])
-        if key == "spec_step_publication_failure":
-            _require(state.get("_spec_step_publication_plan") == publication["marker"])
-        SquadStateStore._restore_failure_lifecycle(observed, diagnostic_key=key)
+    # Native recovery uses pending_spec_step and supplies its authenticated
+    # final-state view. Old diagnostics cannot grant substitute resume state.
+    _require(not any(key in state for key in (
+        "spec_step_publication_failure", "spec_step_effect_failure",
+    )))
     payload = recovery["effects"]
-    _require(all(observed.get(key) == value for key, value in payload["state_updates"].items())
-        and not any(key in observed for key in payload["state_removals"]))
+    _require(all(state.get(key) == value for key, value in payload["state_updates"].items())
+        and not any(key in state for key in payload["state_removals"]))
 
 
 def decode_policy_binding(publication, request, recovery, completion_id, state):
