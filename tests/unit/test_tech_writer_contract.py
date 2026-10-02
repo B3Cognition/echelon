@@ -38,41 +38,17 @@ def test_docs_verifier_agent_has_canonical_prosaic_metadata() -> None:
     assert verifier["tools"] == "write"
 
 
-def test_tech_writer_phase_is_routed_before_build_finalize() -> None:
+def test_delivery_documentation_uses_controller_roles_not_retired_graph_routes() -> None:
+    from harness.delivery_documentation_contract import STEPS
+
     phases = {phase["id"]: phase for phase in _definition()["phases"]}
-
-    docs_phase = phases["build-8-documentation"]
-    assert docs_phase["type"] == "agent"
-    assert docs_phase["agent"] == "echelon.tech-writer"
-    assert "documentation-impact-report.md" in docs_phase["outputs"]
-    assert "shadow_output_recovered" in docs_phase["allowed_state_updates"]
-    assert docs_phase["transitions"] == [{"to": "build-8-verify-docs", "condition": "always"}]
-
-    verify_docs = phases["build-8-verify-docs"]
-    assert verify_docs["type"] == "agent"
-    assert verify_docs["agent"] == "echelon.docs-verifier"
-    assert "docs-verification-report.md" in verify_docs["outputs"]
-    assert "documentation-impact-report.md" in verify_docs["context_pack"]
-    assert "README.md" in verify_docs["context_pack"]
-    assert "CHANGELOG.md" in verify_docs["context_pack"]
-    assert verify_docs["transitions"] == [
-        {"to": "build-8-finalize", "condition": "verdict = PASS"},
-        {"to": "build-8-documentation", "condition": "verdict = FAIL"},
-        {"to": "build-8-documentation", "condition": "verdict = BLOCKED"},
-    ]
-
-    progress_targets = {
-        transition["to"]
-        for transition in phases["build-6-progress"]["transitions"]
-        if transition.get("condition") == "all_tasks_complete AND no_more_phase_checkpoints"
-    }
-    integration_targets = {
-        transition["to"]
-        for transition in phases["build-7-integration"]["transitions"]
-        if transition.get("condition") == "verdict = PASS AND all_phase_groups_complete"
-    }
-    assert progress_targets == {"build-8-documentation"}
-    assert integration_targets == {"build-8-documentation"}
+    assert not {phase for phase in phases if phase.startswith("build-")}
+    assert STEPS == ("tech_writer", "docs_verifier")
+    for role, tools in (("delivery-tech-writer", "write"), ("delivery-docs-verifier", "read")):
+        metadata = _agent_metadata(role)
+        assert metadata["name"] == f"echelon.{role}"
+        assert metadata["execution"] == "agent"
+        assert metadata["tools"] == tools
 
 
 def test_tech_writer_agent_declares_required_result_contract() -> None:
@@ -143,28 +119,31 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "state_updates:" in text
 
 
-def test_docs_verifier_phase_spec_defines_repair_loop() -> None:
-    text = (ROOT / "runtime/workflow/phases/build-8-verify-docs.md").read_text(
+def test_delivery_docs_verifier_returns_findings_without_owning_repair_routing() -> None:
+    text = (ROOT / "prosaic/subagents/echelon.delivery-docs-verifier.md").read_text(
         encoding="utf-8"
     )
+    assert "Required Repair" in text
+    assert "source evidence and concrete required repair" in text
+    assert "report_markdown" in text
+    assert "assignment-bound JSON" in text
+    assert "verdict PASS/FAIL/BLOCKED" in text
+    assert "prescribe retries, publication or workflow routing" in text
+    assert not (ROOT / "runtime/workflow/phases/build-8-verify-docs.md").exists()
 
-    assert "build-8-documentation" in text
-    assert "build-8-finalize" in text
-    assert "docs-verification-report.md" in text
-    assert "structured repair findings" in text
-    assert "safe harness smoke" in text
-    assert "python -m harness verify-docs" in text
 
+def test_delivery_documentation_keeps_report_publication_under_controller_ownership() -> None:
+    from harness.delivery_documentation_contract import DOCS, REPORTS
 
-def test_build_finalize_consumes_documentation_gate() -> None:
-    text = (ROOT / "runtime/workflow/phases/build-8-finalize.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert "documentation-impact-report.md" in text
-    assert "docs-verification-report.md" in text
-    assert "TECH WRITER" in text
-    assert "Documentation Convergence Gate" in text
+    assert DOCS == ("README.md", "CHANGELOG.md")
+    assert REPORTS == ("documentation-impact-report.md", "docs-verification-report.md")
+    writer = (ROOT / "prosaic/subagents/echelon.delivery-tech-writer.md").read_text(encoding="utf-8")
+    verifier = (ROOT / "prosaic/subagents/echelon.delivery-docs-verifier.md").read_text(encoding="utf-8")
+    assert "publishes the" in writer and "canonical Spec report only after a passing review and deterministic gate" in writer
+    assert "NEVER write the report to disk" in writer
+    assert "ALWAYS operate read-only and return the report text" in verifier
+    assert "staged_not_published" in verifier
+    assert not (ROOT / "runtime/workflow/phases/build-8-finalize.md").exists()
 
 
 def test_tech_writer_uses_current_runnability_evidence_without_inventing_commands() -> None:
@@ -189,11 +168,14 @@ def test_docs_verifier_requires_current_runnability_digest_for_final_pass() -> N
     assert "provisional" in text.lower()
 
 
-def test_build_finalize_blocks_missing_failed_stale_or_provisional_runnability() -> None:
-    text = (ROOT / "runtime/workflow/phases/build-8-finalize.md").read_text(
+def test_delivery_docs_verifier_blocks_missing_failed_stale_or_provisional_runnability() -> None:
+    text = (ROOT / "prosaic/subagents/echelon.delivery-docs-verifier.md").read_text(
         encoding="utf-8"
     )
 
-    assert "user-runnability" in text
+    assert "current immutable passing runnability report" in text
     for state in ("missing", "failed", "stale", "provisional"):
         assert state in text.lower()
+    assert "commands_current must be true" in text
+    assert "evidence digest" in text
+    assert "exactly match the supplied current report" in text
