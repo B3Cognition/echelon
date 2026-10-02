@@ -32,6 +32,18 @@ def test_shared_detector_skips_intervening_adverbs_before_the_action() -> None:
 
 
 @pytest.mark.unit
+def test_incidental_given_when_then_words_do_not_suppress_formal_modal_roles() -> None:
+    roles = detect_requirement_roles(
+        "Given valid input, the server must log when validation fails, then "
+        "notify the operator."
+    )
+
+    assert roles.actor == "the server"
+    assert roles.action == "log"
+    assert roles.object == "when validation fails, then notify the operator"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("text", "action", "object"),
     [
@@ -90,3 +102,132 @@ def test_shared_detector_skips_post_modal_auxiliary_constructions(
     )
     assert structure.actor_action_complete == 1
     assert structure.actor_action_incomplete == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("text", "actor", "action", "object"),
+    [
+        (
+            "Given a supported graphics environment, when the visitor opens "
+            "the page, then the scene contains exactly one visible cube mesh.",
+            "the scene",
+            "contains",
+            "exactly one visible cube mesh",
+        ),
+        (
+            "Given an initialized page, when the viewport changes, then "
+            "the primary canvas remains visible after resize.",
+            "the primary canvas",
+            "remains",
+            "visible after resize",
+        ),
+        (
+            "Given the page is active, when its interactions are observed, then "
+            "no runtime network request supports that behavior.",
+            "no runtime network request",
+            "supports",
+            "that behavior",
+        ),
+        (
+            "Given exactly 1 delivered script and an available Python runtime, "
+            "when the Invoker performs 1 Program invocation, then exactly 1 "
+            "delivered artifact runs as a script through that Python runtime.",
+            "exactly 1 delivered artifact",
+            "runs",
+            "as a script through that python runtime",
+        ),
+        (
+            "Given the page is ready, when the user clicks the Then button, "
+            "then the scene shows the cube.",
+            "the scene",
+            "shows",
+            "the cube",
+        ),
+        (
+            "Given the page is ready, when the user visits it, then the Open "
+            "button is visible.",
+            "the open button",
+            "is",
+            "visible",
+        ),
+        (
+            "Given the page is ready, when the user visits it, then the Return "
+            "button is visible.",
+            "the return button",
+            "is",
+            "visible",
+        ),
+        (
+            "Given the page is ready, when the user visits it, then the primary "
+            "Open button is visible.",
+            "the primary open button",
+            "is",
+            "visible",
+        ),
+        (
+            "Given the page is ready, when the user visits it, then the primary "
+            "open button is visible.",
+            "the primary open button",
+            "is",
+            "visible",
+        ),
+        (
+            "Given the request is valid\nWhen the server processes it\n"
+            "Then the response includes an error code.",
+            "the response",
+            "includes",
+            "an error code",
+        ),
+        (
+            "Given the page is ready, when the user opens it, then the app "
+            "shows button status.",
+            "the app",
+            "shows",
+            "button status",
+        ),
+        (
+            "Given the scene is ready, when the user starts it, then the scene "
+            "shows the cube, then emits light.",
+            "the scene",
+            "shows",
+            "the cube, then emits light",
+        ),
+    ],
+)
+def test_gwt_then_clause_supplies_explicit_roles_without_modal(
+    text: str, actor: str, action: str, object: str
+) -> None:
+    """Valid acceptance paths must not fail formal modal-only role detection."""
+    shared = detect_requirement_roles(text)
+    semantic = SemanticAnalyzer(use_spacy=False).extract_roles_as_dict(text)
+    structure = RequirementsAnalyzer()._analyze_structure([text])
+
+    assert (shared.actor, shared.action, shared.object) == (actor, action, object)
+    assert semantic["actors"] == [actor]
+    assert semantic["actions"] == [action]
+    assert semantic["objects"] == [object]
+    assert structure.actor_action_complete == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Given the system must log a request, when the page opens, then an error.",
+        "Given the page is ready, when the visitor opens it, then a visible cube.",
+        "Given the page is ready, when the visitor opens it, then there is a cube.",
+        "Given the system must log a request\nWhen the page opens\nThen an error.",
+        "Given the page is ready, when the user visits it, then the primary load button.",
+        "Given the page is ready, when the user visits it, then the primary stop button.",
+        "The scene contains a cube.",
+    ],
+)
+def test_gwt_role_detection_does_not_borrow_context_or_accept_missing_action(
+    text: str,
+) -> None:
+    """Only an explicit then-clause predicate satisfies acceptance role evidence."""
+    roles = detect_requirement_roles(text)
+
+    assert roles.action is None
+    assert roles.object is None

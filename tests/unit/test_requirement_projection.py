@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from understanding.requirement_projection import project_requirements
+from understanding.role_detection import detect_requirement_roles
 from understanding.service import (
     DEFAULT_QUALITY_GATES,
     analyze_spec_bundle,
@@ -88,6 +89,12 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
         "1 delivered artifact runs as a script through that Python runtime."
     )
     assert projections[0].traceability_references == ("FR-001",)
+    ac001_roles = detect_requirement_roles(projections[0].normative_text)
+    assert (ac001_roles.actor, ac001_roles.action, ac001_roles.object) == (
+        "exactly 1 delivered artifact",
+        "runs",
+        "as a script through that python runtime",
+    )
     assert projections[1].normative_text == (
         "Given the script required by FR-001 and observable execution-output "
         "channels, when 1 Program invocation succeeds, then the Standard output "
@@ -131,10 +138,10 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
         "behavioral": 0.55,
     }
     assert bundle.scores == {
-        "overall": pytest.approx(0.69784725, abs=1e-12),
-        "structure": 0.7269,
+        "overall": pytest.approx(0.74233275, abs=1e-12),
+        "structure": 0.8192,
         "testability": 0.7356,
-        "semantic": 0.5126,
+        "semantic": 0.7169,
         "cognitive": 0.7578,
         "readability": 0.6996,
         "depth": 0.7448,
@@ -142,7 +149,7 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
     }
     assert {
         name for name, gate in bundle.gates.items() if not gate["pass"]
-    } == {"overall", "structure", "testability", "semantic"}
+    } == {"overall", "testability"}
 
     for evidence in bundle.per_requirement:
         shared = evidence["shared_roles"]
