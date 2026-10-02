@@ -6837,6 +6837,8 @@ def test_commander_real_provider_has_one_physical_call_per_durable_claim(
     tmp_path: Path,
 ) -> None:
     class FakeBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
+
         def __init__(self) -> None:
             self.requests: list[CliRunRequest] = []
 
@@ -6844,6 +6846,10 @@ def test_commander_real_provider_has_one_physical_call_per_durable_claim(
             raise AssertionError("decision resolution must use run_agent")
 
         def run_agent(self, request: CliRunRequest) -> CliRunResult:
+            permissions = request.metadata["prompt_metadata"]
+            assert permissions["tool_read_roots"] == []
+            assert permissions["tool_write_paths"] == []
+            assert permissions["tool_write_scope_exclusive"] is True
             self.requests.append(request)
             if len(self.requests) == 1:
                 return CliRunResult(
@@ -6898,6 +6904,8 @@ def test_commander_real_provider_has_one_physical_call_per_durable_claim(
     assert controller.handle_human_input(_request(controller, store, policy))
 
     state = store.load()
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["blocked_decision"]["selected_option_id"] == "approve"
     assert len(backend.requests) == 2
     assert claims == [1, 2]
     assert state["blocked_decision"]["attempts"] == 2
@@ -6920,6 +6928,8 @@ def test_commander_duplicate_physical_envelope_consumes_one_claim(
     )
 
     class FakeBackend:
+        exclusive_write_scope_contract_id = "echelon.exclusive-write-scope.v1"
+
         def __init__(self) -> None:
             self.requests: list[CliRunRequest] = []
 
@@ -6927,6 +6937,10 @@ def test_commander_duplicate_physical_envelope_consumes_one_claim(
             raise AssertionError("decision resolution must use run_agent")
 
         def run_agent(self, request: CliRunRequest) -> CliRunResult:
+            permissions = request.metadata["prompt_metadata"]
+            assert permissions["tool_read_roots"] == []
+            assert permissions["tool_write_paths"] == []
+            assert permissions["tool_write_scope_exclusive"] is True
             self.requests.append(request)
             return CliRunResult(
                 exit_code=0,
@@ -6966,6 +6980,7 @@ def test_commander_duplicate_physical_envelope_consumes_one_claim(
     assert controller.handle_human_input(_request(controller, store, policy))
 
     state = store.load()
+    assert state["blocked_decision"]["status"] == "resolved"
     assert len(backend.requests) == 2
     assert state["blocked_decision"]["attempts"] == 2
     assert state["blocked_decision"]["selected_option_id"] == "approve"
