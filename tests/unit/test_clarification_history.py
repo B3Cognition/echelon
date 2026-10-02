@@ -52,7 +52,8 @@ def test_history_rejects_gaps_substitution_duplicates_and_invalid_resolutions(da
 
 
 @pytest.mark.parametrize("damage", [None, "source", "request", "unreleased", "cycle", "root", "unsupported"])
-def test_nondecoding_history_walk_requires_exact_native_proofs(monkeypatch, damage):
+@pytest.mark.parametrize("proof_version", [2, 3, 4])
+def test_nondecoding_history_walk_requires_exact_native_proofs(monkeypatch, damage, proof_version):
     """Only native proof validation is stubbed; request codecs and records are real."""
     from harness.tracker_clarification import retained_clarification_records
     from harness.element_identity_publication import PublicationIntentRequest, encode_publication_request
@@ -78,8 +79,16 @@ def test_nondecoding_history_walk_requires_exact_native_proofs(monkeypatch, dama
         request = encode_publication_request(PublicationIntentRequest("f" * 64, _json(recovery)))
         intent = dict(publication=dict(managed_discovery=dict(version=1, request=request)),
             origin="resolution" if digit in "bd" else "routed", route=dict(decision_id=recovery.get("resolution", {}).get("id")))
+        marker = source(digit)
+        if proof_version == 4:
+            # Current state binds step receipts, not the companion receipt hash.
+            marker["completion_receipts_sha256"] = "e" * 64
+        proof = dict(version=proof_version, completion=marker)
+        proof["checkpoint" if proof_version == 2 else "proof"] = dict(intent=intent, receipts={})
+        if proof_version == 4:
+            proof["source"] = source(digit)
         rows["discovery-completion-" + digit * 32] = dict(state="released", request=request,
-            completion_payload=_json(dict(version=3, completion=source(digit), proof=dict(intent=intent, receipts={}))))
+            completion_payload=_json(proof))
     if damage == "unreleased":
         rows["discovery-completion-" + "c" * 32]["state"] = "applied"
     elif damage == "request":

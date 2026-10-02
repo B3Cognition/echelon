@@ -135,14 +135,18 @@ def retained_clarification_records(store, *, spec_id, source):
         row = store.identity_publication(spec_id=spec_id, operation_id=operation_id)
         _require(row is not None and row["state"] == "released")
         proof = _document(row["completion_payload"])
-        _require(type(proof["version"]) is int and proof["version"] in {2, 3})
+        _require(type(proof["version"]) is int and proof["version"] in {2, 3, 4})
         field = "checkpoint" if proof["version"] == 2 else "proof"
-        _closed(proof, ("version", "completion", field))
+        _closed(proof, ("version", "completion", field, "source")
+            if proof["version"] == 4 else ("version", "completion", field))
         _closed(proof[field], ("intent", "receipts"))
         marker, intent, _ = validate_retained_completion_proof(proof["completion"],
             proof[field]["intent"], proof[field]["receipts"])
-        _require(source == dict(dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
-            completion_receipts_sha256=marker.receipts_sha256, completed_publication_binding_sha256=marker.publication_binding_sha256))
+        expected_source = proof["source"] if proof["version"] == 4 else dict(
+            dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
+            completion_receipts_sha256=marker.receipts_sha256,
+            completed_publication_binding_sha256=marker.publication_binding_sha256)
+        _require(source == expected_source and source["dispatch_id"] == marker.completion_id)
         _require(intent.publication["managed_discovery"] == dict(version=1, request=row["request"]))
         request = decode_publication_request(row["request"])
         recovery = _document(request.recovery_payload)

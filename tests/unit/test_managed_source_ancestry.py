@@ -48,6 +48,37 @@ def source_for(state):
     return {key: state["last_dispatch"][key] for key in SOURCE_FIELDS}
 
 
+def test_clarification_history_binds_current_released_source(synthesized, monkeypatch):
+    from harness.tracker_clarification import retained_clarification_records
+
+    case, executor = synthesized
+    _, state_store, identity, _ = case
+    before = state_store.load()
+    source = source_for(before)
+    operation_id = "discovery-completion-" + source["dispatch_id"]
+    original_read = identity.identity_publication
+    retained = original_read(spec_id="game", operation_id=operation_id)
+    proof = json.loads(retained["completion_payload"])
+    assert proof["version"] == 4 and proof["source"] == source
+    assert retained_clarification_records(identity, spec_id="game", source=source) == ()
+
+    for key in SOURCE_FIELDS:
+        altered = deepcopy(proof)
+        altered["source"][key] = "0" * len(source[key])
+        def read(*, spec_id, operation_id, altered=altered):
+            row = original_read(spec_id=spec_id, operation_id=operation_id)
+            if operation_id == "discovery-completion-" + source["dispatch_id"]:
+                return {**row, "completion_payload": json.dumps(altered)}
+            return row
+        with monkeypatch.context() as patch:
+            patch.setattr(identity, "identity_publication", read)
+            with pytest.raises(ValueError):
+                retained_clarification_records(identity, spec_id="game", source=source)
+    assert state_store.load() == before
+    assert original_read(spec_id="game", operation_id=operation_id) == retained
+    assert len(executor.calls) == 6
+
+
 @pytest.mark.parametrize("checkpoint", [False, True])
 def test_synthesis_context_traces_to_original_input_without_rewriting_live_sources(checkpoint_case, checkpoint):
     case = checkpoint_case
