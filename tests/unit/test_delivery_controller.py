@@ -114,13 +114,21 @@ def _initialize_git_worktree(path: Path) -> Path:
     return path
 
 
-def _make_controller(tmp_path: Path, should_pass: bool = True) -> DeliveryController:
+def _make_controller(
+    tmp_path: Path, should_pass: bool = True, *, published_spec: bool = False,
+) -> DeliveryController:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
         llm=LlmConfig(enabled=True),
     )
+    if published_spec:
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.verification_stack_runtime import apply_verification_stacks
+
+        _write_phase_a_build_inputs(tmp_path / "specs" / "spec-001")
+        apply_verification_stacks(config, project_root=tmp_path, target_root=tmp_path)
     gitops = MagicMock()
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
@@ -344,7 +352,7 @@ class TestSingleStrategy:
         assert result.status == "converged"
 
     def test_single_strategy_fails(self, tmp_path: Path) -> None:
-        coord = _make_controller(tmp_path, should_pass=False)
+        coord = _make_controller(tmp_path, should_pass=False, published_spec=True)
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
         with patch(
             "harness.delivery_controller.RalphController.run_loop",
@@ -1053,7 +1061,7 @@ class TestSingleStrategy:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_controller(tmp_path)
+        coordinator = _make_controller(tmp_path, published_spec=True)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         worktree = tmp_path / "worktree"
         worktree.mkdir()
@@ -1643,7 +1651,7 @@ class TestTaskDescriptionInBuildPrompt:
 
             mock_controller.run_loop.side_effect = capture_run_loop
 
-            coord = _make_controller(tmp_path, should_pass=True)
+            coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
             intent = RunIntent(
                 spec_id="spec-001",
                 max_outer=1,
