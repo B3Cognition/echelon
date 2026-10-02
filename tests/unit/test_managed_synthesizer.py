@@ -145,7 +145,7 @@ def test_synthesis_restart_preserves_charges_and_checkpoint_prefix(accepted, mon
         "sealed": (ctrl, "_prepare_spec_step_effects"),
         "routed": (case[1], "advance"),
         "context": (squad, "install_or_verify_completion_context"),
-        "completed": (case[1], "complete_controller_completion"),
+        "completed": (case[1], "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
         "cleanup": (PreparedSquadPublication, "discard"),
     }[point]
@@ -153,6 +153,11 @@ def test_synthesis_restart_preserves_charges_and_checkpoint_prefix(accepted, mon
     def interrupted(*args, **kwargs):
         value = original(*args, **kwargs)
         if point == "accepted" and args[1] != "finish": return value
+        if point == "completed":
+            current = case[1].load()
+            assert "pending_spec_step" not in current
+            assert current["last_dispatch"]["spec_step_id"] == args[0].marker.step_id
+            assert current["phase"] == "phase1-modeler" and current["token_usage"] == 42
         if point == "cleanup":
             current = case[1].load()
             if current["phase"] != "phase1-modeler" or not current["last_dispatch"]["post_dispatch_complete"]:
