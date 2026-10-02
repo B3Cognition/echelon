@@ -1582,6 +1582,10 @@ class TestOuterLoopConvergence:
         canonical = project / ".echelon" / "constitution.md"
         canonical.parent.mkdir(parents=True)
         canonical.write_text("# Real Constitution\n", encoding="utf-8")
+        from tests.unit.test_verification_capability_preflight import custom_stack, select
+
+        custom_stack(project)
+        select(project, ["custom"])
 
         worktree = tmp_path / "worktree"
         stale = worktree / "specs" / "spec-001-demo"
@@ -1654,6 +1658,10 @@ class TestOuterLoopConvergence:
         canonical = project / ".echelon" / "constitution.md"
         canonical.parent.mkdir(parents=True)
         canonical.write_text("# Real Constitution\n", encoding="utf-8")
+        from tests.unit.test_verification_capability_preflight import custom_stack, select
+
+        custom_stack(project)
+        select(project, ["custom"])
 
         state = state_store.read()
         state["spec_dir"] = str(source)
