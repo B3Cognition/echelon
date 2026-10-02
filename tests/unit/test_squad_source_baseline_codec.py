@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -159,6 +160,7 @@ def test_publication_source_claim_performs_one_canonical_round_trip(monkeypatch)
         PublicationSourceClaim, PublicationIntentError, _source_baseline,
     )
 
+    codec._cached_initial_publication_sources.cache_clear()
     encoded = []
     original = codec.encode_initial_publication_sources
 
@@ -170,12 +172,74 @@ def test_publication_source_claim_performs_one_canonical_round_trip(monkeypatch)
     claim = PublicationSourceClaim("source", "operation", EXPECTED_WIRE)
     assert len(encoded) == 1
     assert _source_baseline(claim) == _wire_snapshot()
-    assert len(encoded) == 2
+    assert len(encoded) == 1
     # Validation must still reject altered caller values and noncanonical bytes.
     object.__setattr__(claim, "baseline_payload", " " + EXPECTED_WIRE)
     with pytest.raises(PublicationIntentError):
         _source_baseline(claim)
-    assert len(encoded) == 3
+    assert len(encoded) == 2
+
+
+def test_repeated_canonical_decode_reuses_validation_but_detaches_every_value(monkeypatch):
+    from harness import squad_source_baseline_codec as codec
+
+    payload = EXPECTED_WIRE.replace("2" * 32, "6" * 32)
+    calls = []
+    original = codec.strict_json
+
+    def counted(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(codec, "strict_json", counted)
+    first = codec.decode_initial_publication_sources(payload)
+    # Frozen Python objects are not a safe shared cache value: a hostile caller
+    # can deliberately bypass their setters, including on nested descriptors.
+    object.__setattr__(first.publication.marker, "manifest_sha256", "0" * 64)
+    object.__setattr__(first.publication.operations[0].preimage, "mode", 0)
+    object.__setattr__(first.trees[0].files[0], "content", b"forged")
+    object.__setattr__(first.files[0].image, "sha256", "0" * 64)
+    second = codec.decode_initial_publication_sources(payload)
+    assert second is not first
+    assert codec.encode_initial_publication_sources(second) == payload
+    assert len(calls) == 1
+
+
+def test_decode_cache_is_bounded_and_does_not_retain_invalid_or_large_payloads(monkeypatch):
+    from harness import squad_source_baseline_codec as codec
+
+    cached = codec._cached_initial_publication_sources
+    cached.cache_clear()
+    for index in range(codec._DECODE_CACHE_ENTRIES + 1):
+        codec.decode_initial_publication_sources(
+            EXPECTED_WIRE.replace("2" * 32, f"{index:032x}")
+        )
+    assert cached.cache_info().currsize == codec._DECODE_CACHE_ENTRIES
+    calls = []
+    original = codec.strict_json
+
+    def counted(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(codec, "strict_json", counted)
+    for _ in range(2):
+        with pytest.raises(publication.PublicationError):
+            codec.decode_initial_publication_sources(" " + EXPECTED_WIRE)
+    assert len(calls) == 2
+    assert cached.cache_info().currsize == codec._DECODE_CACHE_ENTRIES
+    value = json.loads(EXPECTED_WIRE)
+    content = b"x" * codec._DECODE_CACHE_PAYLOAD_LIMIT
+    image = value["files"][0]["image"]
+    image["content_base64"] = base64.b64encode(content).decode("ascii")
+    image["sha256"] = hashlib.sha256(content).hexdigest()
+    large = _canonical_wire(value)
+    assert len(large) > codec._DECODE_CACHE_PAYLOAD_LIMIT
+    for _ in range(2):
+        assert codec.decode_initial_publication_sources(large).files[0].content == content
+    assert len(calls) == 4
+    assert cached.cache_info().currsize == codec._DECODE_CACHE_ENTRIES
+    cached.cache_clear()
 
 
 def test_empty_operations_missing_and_empty_sources_are_valid():

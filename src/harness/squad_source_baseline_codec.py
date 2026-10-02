@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+from copy import deepcopy
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
@@ -411,8 +413,8 @@ def _decode_snapshot(value: object) -> PublicationSourcesSnapshot:
     return PublicationSourcesSnapshot(sealed, tuple(trees), tuple(files))
 
 
-def decode_initial_publication_sources(payload: str) -> PublicationSourcesSnapshot:
-    """Decode only the exact canonical v1 representation into detached values."""
+def _decode_initial_publication_sources(payload: str) -> PublicationSourcesSnapshot:
+    """Validate exact canonical bytes; this pure conversion grants no authority."""
     try:
         value = strict_json(payload)
         snapshot = _decode_snapshot(value)
@@ -426,3 +428,24 @@ def decode_initial_publication_sources(payload: str) -> PublicationSourcesSnapsh
         RecursionError, MalformedJSON, json.JSONDecodeError,
     ):
         _invalid()
+
+
+_DECODE_CACHE_ENTRIES = 32
+_DECODE_CACHE_PAYLOAD_LIMIT = 64 * 1024
+_cached_initial_publication_sources = lru_cache(maxsize=_DECODE_CACHE_ENTRIES)(
+    _decode_initial_publication_sources
+)
+
+
+def decode_initial_publication_sources(payload: str) -> PublicationSourcesSnapshot:
+    """Return a detached observation, never cached filesystem authentication.
+
+    Bound both payload size and entry count. Cache only successful pure decodes,
+    and never expose the cached graph: even frozen dataclasses can be mutated
+    through Python's low-level setters. Large observations remain uncached.
+    """
+    if type(payload) is not str:
+        _invalid()
+    if len(payload) > _DECODE_CACHE_PAYLOAD_LIMIT:
+        return _decode_initial_publication_sources(payload)
+    return deepcopy(_cached_initial_publication_sources(payload))
