@@ -157,7 +157,10 @@ def _controlled_implementation(*, verified: bool = True) -> ImplementationResult
     )
 
 
-def _publication_checkpoint_fixture(tmp_path: Path) -> tuple[DeliveryController, StateStore]:
+def _publication_checkpoint_fixture(
+    tmp_path: Path, *, enabled_phases: list[str] | None = None,
+    semantic_visual_gate_required: bool = False,
+) -> tuple[DeliveryController, StateStore]:
     from harness.delivery_controller import _delivery_stack_snapshot
 
     coord = _make_controller(tmp_path, published_spec=True)
@@ -172,6 +175,8 @@ def _publication_checkpoint_fixture(tmp_path: Path) -> tuple[DeliveryController,
     store.initialize(
         "run-1", "semi",
         delivery_stack_snapshot=_delivery_stack_snapshot(coord._config.resolved_stacks),
+        enabled_phases=enabled_phases,
+        semantic_visual_gate_required=semantic_visual_gate_required,
     )
     store.transition("running")
     return coord, store
@@ -1318,27 +1323,22 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_controller(tmp_path)
-        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1",
-            "semi",
-            enabled_phases=["implementation", "visual", "finalization"],
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path, enabled_phases=["implementation", "visual", "finalization"],
         )
-        store.transition("running")
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        commit = coordinator._worktree_head(tmp_path)
         store.transition(
             "verified",
             updates={
                 "last_completed_phase": "implementation",
                 "registered_worktree": str(tmp_path),
-                "verified_commit": "verified-head",
+                "verified_commit": commit,
             },
         )
         store.transition("validating")
 
-        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
-             patch.object(RalphController, "run_loop") as implementation, patch.object(
+        with patch.object(RalphController, "run_loop") as implementation, patch.object(
             VisualRalphController,
             "run_loop",
             return_value=VisualResult("passed", "converged", 1, 0, None),
@@ -1357,19 +1357,17 @@ class TestDeliveryStateMigration:
         """A required published visual gate must not enter Phase 2 without its reviewer."""
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1", "semi",
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path,
             enabled_phases=["implementation", "visual", "finalization"],
             semantic_visual_gate_required=True,
         )
-        store.transition("running")
+        commit = coordinator._worktree_head(tmp_path)
         store.transition(
             "verified", updates={
                 "last_completed_phase": "implementation",
                 "registered_worktree": str(tmp_path),
-                "verified_commit": "verified-head",
+                "verified_commit": commit,
             },
         )
         store.transition("validating")
@@ -1379,8 +1377,7 @@ class TestDeliveryStateMigration:
             observed.append(callable(self._semantic_validator))
             return VisualResult("blocked", "semantic_visual_validator_unavailable", 1, 0, None)
 
-        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
-             patch.object(VisualRalphController, "run_loop", visual_attempt):
+        with patch.object(VisualRalphController, "run_loop", visual_attempt):
             result = coordinator.run(
                 RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
             )
@@ -1396,21 +1393,17 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_controller(tmp_path)
-        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1",
-            "semi",
-            enabled_phases=["implementation", "visual", "finalization"],
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path, enabled_phases=["implementation", "visual", "finalization"],
         )
-        store.transition("running")
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        commit = coordinator._worktree_head(tmp_path)
         store.transition(
             "verified",
             updates={
                 "last_completed_phase": "implementation",
                 "registered_worktree": str(tmp_path),
-                "verified_commit": "verified-head",
+                "verified_commit": commit,
                 "verified_product_fingerprint": "before-repair",
             },
         )
@@ -1434,7 +1427,6 @@ class TestDeliveryStateMigration:
         )
 
         with (
-            patch.object(coordinator, "_worktree_head", return_value="verified-head"),
             patch(
                 "harness.delivery_controller.product_evidence_fingerprint",
                 return_value="after-repair",
@@ -1482,15 +1474,12 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.visual_ralph import VisualRalphController
 
-        coordinator = _make_controller(tmp_path)
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path, enabled_phases=["implementation", "visual", "finalization"],
+        )
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
         worktree = tmp_path / "worktree"
         worktree.mkdir()
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1", "semi", enabled_phases=["implementation", "visual", "finalization"]
-        )
-        store.transition("running")
         updates = {"last_completed_phase": "implementation", "verified_commit": "verified-head"}
         if registered is not None:
             updates["registered_worktree"] = str(worktree if registered == "worktree" else tmp_path / registered)
@@ -1572,14 +1561,11 @@ class TestDeliveryStateMigration:
         from harness.ralph import RalphController
         from harness.review_loop import ReviewLoopController
 
-        coordinator = _make_controller(tmp_path)
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path, enabled_phases=["implementation", "review", "finalization"],
+        )
         coordinator._config.pr_host = "github"
         coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1", "semi", enabled_phases=["implementation", "review", "finalization"]
-        )
-        store.transition("running")
         store.transition(
             "verified",
             updates={"last_completed_phase": "implementation", "verified_commit": "verified-head"},
@@ -1605,12 +1591,9 @@ class TestDeliveryStateMigration:
         """A corrupted review checkpoint is never routed through implementation."""
         from harness.ralph import RalphController
 
-        coordinator = _make_controller(tmp_path)
-        store = StateStore(tmp_path / "runs" / "state", "spec-001")
-        store.initialize(
-            "run-1", "semi", enabled_phases=["implementation", "finalization"]
+        coordinator, store = _publication_checkpoint_fixture(
+            tmp_path, enabled_phases=["implementation", "finalization"],
         )
-        store.transition("running")
         store.transition("verified", updates={"last_completed_phase": "implementation"})
         store.transition("reviewing")
 
