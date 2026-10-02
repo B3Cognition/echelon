@@ -222,9 +222,14 @@ class TestSingleStrategy:
     ) -> None:
         from echelon.delivery_service import _delivery_status_fields, _delivery_status_summary
 
-        coord = _make_controller(tmp_path)
+        coord = _make_controller(tmp_path, published_spec=True)
         store = StateStore(coord._state_dir, "spec-001")
-        store.initialize("original-run", "banzai", max_outer=1, token_budget=50)
+        from harness.delivery_controller import _delivery_stack_snapshot
+
+        store.initialize(
+            "original-run", "banzai", max_outer=1, token_budget=50,
+            delivery_stack_snapshot=_delivery_stack_snapshot(coord._config.resolved_stacks),
+        )
         store.transition("running")
         state = store.read()
         state.update(
