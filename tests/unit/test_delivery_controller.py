@@ -347,7 +347,15 @@ class TestSingleStrategy:
         assert resumed.final_verify is not None and resumed.final_verify.passed
 
     def test_single_strategy_converges(self, tmp_path: Path) -> None:
-        coord = _make_controller(tmp_path, should_pass=True)
+        coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (tmp_path / "specs" / "spec-001" / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
+        )
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1)
         with patch(
             "harness.delivery_controller.RalphController.run_loop",
