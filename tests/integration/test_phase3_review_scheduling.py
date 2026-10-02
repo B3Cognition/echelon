@@ -1,5 +1,6 @@
 """Review scheduling uses real executor, store and sealed controller routing."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from copy import deepcopy
 import json
 from unittest.mock import MagicMock
 
@@ -7,12 +8,21 @@ import pytest
 
 from harness.phase3_repair import RepairIdentity
 from harness.phase3_repair_context import capture_review_inputs
-from harness.phase_graph import PhaseNode
+from harness.phase_graph import _compile_phase_provider_assignments
 from harness.phase_execution import FinalizedPhaseExecution
 from harness.squad_executors import StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 from tests.integration.test_squad_controller import _controller
+
+
+def scheduling_node(controller, agents):
+    """Compile a reduced scheduling graph with the real provider contracts."""
+    base = controller._graph.get("phase3-consensus")
+    _, _, assignments = _compile_phase_provider_assignments(
+        {"id": base.id, "type": base.type, "agents": agents},
+    )
+    return replace(base, agents=agents, nested_provider_assignments=assignments)
 
 
 def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=False, plan_result=None, during_plan=None, spec_ref="specs/008-test"):
@@ -70,9 +80,11 @@ def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=F
     graph.agent_file.return_value = None
     graph.all_phase_ids.return_value = []
     executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, run)
-    node = PhaseNode(id="phase3-consensus", type="staged_parallel", agents=[
-        {"id": "echelon.sage", "mode": "WHY3", "stage": 1, "context_pack": []},
-        {"id": "echelon.orchestrator", "mode": "PLAN2", "stage": 2, "context_pack": []}])
+    canonical = controller._graph.get("phase3-consensus")
+    agents = [deepcopy(canonical.agents[index]) for index in (0, 2)]
+    for agent in agents:
+        agent["context_pack"] = []
+    node = scheduling_node(controller, agents)
     return controller, store, executor, node, spec, calls
 
 
@@ -195,19 +207,14 @@ def test_sage_review_metadata_is_ignored_when_no_issue_is_selected(tmp_path):
 
 
 def test_non_sage_cannot_submit_issue_review_metadata(tmp_path):
-    _, store, executor, node, _, _ = scheduling_fixture(tmp_path)
+    controller, store, executor, node, _, _ = scheduling_fixture(tmp_path)
     state = store.load()
     state["selected_issue_resolution"] = None
     state["issue_resolution_ledger"] = {}
     store.save(state)
-    node.agents = [
-        {
-            "id": "echelon.gatekeeper",
-            "mode": "ASSESS2",
-            "stage": 1,
-            "context_pack": [],
-        }
-    ]
+    node = scheduling_node(controller, [
+        deepcopy(controller._graph.get("phase3-consensus").agents[1]),
+    ])
     executor._provider.exec_agent.side_effect = None
     executor._provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
