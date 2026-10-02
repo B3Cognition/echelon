@@ -765,7 +765,8 @@ def test_visual_dependency_bootstrap_failure_is_actionable(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-            )
+        base_dir=str(tmp_path),
+    )
 
     result = controller.run_loop(worktree_path=str(tmp_path))
 
@@ -1018,7 +1019,7 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime(tmp_path: Path):
     assert executed[4] == "npx nx reset"
 
 
-def test_run_loop_reports_fix_applied_after_visual_feedback():
+def test_run_loop_reports_fix_applied_after_visual_feedback(tmp_path: Path):
     """A visual fix is handed back to Phase 1 for re-verification."""
     from harness.visual_ralph import VisualRalphController
 
@@ -1038,7 +1039,7 @@ def test_run_loop_reports_fix_applied_after_visual_feedback():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-                base_dir=".",
+        base_dir=str(tmp_path),
         feedback_runner=lambda *args: {
             "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
         },
@@ -1052,7 +1053,7 @@ def test_run_loop_reports_fix_applied_after_visual_feedback():
     assert "npx nx reset" in executed
 
 
-def test_run_loop_reports_failure_when_command_app_never_ready():
+def test_run_loop_reports_failure_when_command_app_never_ready(tmp_path: Path):
     """readiness failure returns structured visual_failed and still cleans up."""
     from harness.visual_ralph import VisualRalphController
 
@@ -1070,7 +1071,7 @@ def test_run_loop_reports_failure_when_command_app_never_ready():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-                base_dir=".",
+        base_dir=str(tmp_path),
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -1082,7 +1083,7 @@ def test_run_loop_reports_failure_when_command_app_never_ready():
     provider.destroy.assert_called_once()
 
 
-def test_run_loop_reports_failure_when_setup_command_fails():
+def test_run_loop_reports_failure_when_setup_command_fails(tmp_path: Path):
     """setup command failure returns structured app_runtime_failed."""
     from harness.visual_ralph import VisualRalphController
 
@@ -1098,7 +1099,7 @@ def test_run_loop_reports_failure_when_setup_command_fails():
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
-                base_dir=".",
+        base_dir=str(tmp_path),
     )
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
@@ -1110,7 +1111,7 @@ def test_run_loop_reports_failure_when_setup_command_fails():
     provider.destroy.assert_called_once()
 
 
-def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
+def test_run_loop_reports_fix_applied_without_retrying_visual_evidence(tmp_path: Path):
     """run_loop returns the first applied fix instead of accepting a later pass."""
     from harness.visual_ralph import VisualRalphController
 
@@ -1125,7 +1126,7 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
         provider=provider,
         config=_make_config(max_iterations=2),
         spec_id="001",
-                base_dir=".",
+        base_dir=str(tmp_path),
         feedback_runner=lambda *args: {
             "exit_code": 0, "passed": True, "duration_s": 0.0, "tokens": 0,
         },
@@ -1164,13 +1165,16 @@ def test_visual_feedback_uses_configured_provider_repair_runner(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-                feedback_runner=repair_runner,
+        base_dir=str(tmp_path),
+        feedback_runner=repair_runner,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
         result = controller.run_loop(worktree_path=str(tmp_path))
 
     assert result.status == "fix_applied"
+    assert result.evidence is not None
+    assert result.evidence.path.is_relative_to(tmp_path)
     assert result.tokens_used >= 42
     repair_runner.assert_called_once()
     assert repair_runner.call_args.args[1] == str(tmp_path)
@@ -1215,7 +1219,8 @@ def test_changed_visual_repair_can_defer_host_browser_verification(
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-                feedback_runner=defer_after_change,
+        base_dir=str(tmp_path),
+        feedback_runner=defer_after_change,
     )
 
     with patch.object(controller, "_retrieve_screenshots", return_value=[]):
@@ -1225,7 +1230,7 @@ def test_changed_visual_repair_can_defer_host_browser_verification(
     assert (worktree / "playwright.config.ts").read_text() == "screenshot: 'on'\n"
 
 
-def test_run_loop_blocks_when_visual_feedback_fails():
+def test_run_loop_blocks_when_visual_feedback_fails(tmp_path: Path):
     """A failed feedback command cannot be reported as an applied visual fix."""
     from harness.visual_ralph import VisualRalphController
 
@@ -1239,7 +1244,8 @@ def test_run_loop_blocks_when_visual_feedback_fails():
         provider=provider,
         config=_make_config(max_iterations=1),
         spec_id="001",
-                feedback_runner=lambda *args: {
+        base_dir=str(tmp_path),
+        feedback_runner=lambda *args: {
             "exit_code": 1,
             "passed": False,
             "duration_s": 0.0,
