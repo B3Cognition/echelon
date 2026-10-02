@@ -5339,6 +5339,7 @@ class TestSquadControllerBasics:
         assert result.status != "budget_exhausted"
 
     def test_budget_exhausted_when_exceeded(self, tmp_path):
+        _materialize_canonical_test_config(tmp_path)
         provider = _mock_provider()
         graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         store = SquadStateStore(tmp_path / "squad" / "run-test")
