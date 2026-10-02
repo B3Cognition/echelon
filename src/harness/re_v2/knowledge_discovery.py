@@ -16,6 +16,12 @@ from harness.re_v2.knowledge_evidence import (
     screen_provider_output, security_policy_id,
     validate_provider_output,
 )
+from harness.re_v2.knowledge_structure import (
+    StructuralEvidenceCatalogV1,
+    StructuralQueryV1,
+    project_structural_overview,
+    project_structural_query,
+)
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
 from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
 from harness.re_v2.protocol_22.schema import digest_value, safe_id
@@ -163,7 +169,38 @@ def _load(payload):
 
 
 def _selector(value):
-    return EvidenceSelectorV1(**_obj(value, ("source_id", "path", "byte_start", "byte_end")))
+    if isinstance(value, dict) and value.get("kind") == "structural-query":
+        row = _obj(
+            value,
+            (
+                "kind", "schema_version", "source_id", "operation", "selector",
+                "direction", "relations", "depth", "limit",
+            ),
+        )
+        relations = _rows(row["relations"], 32)
+        if any(not isinstance(item, str) for item in relations):
+            raise DiscoveryError("invalid-discovery-selector")
+        return StructuralQueryV1(
+            row["schema_version"],
+            row["source_id"],
+            row["operation"],
+            row["selector"],
+            row["direction"],
+            tuple(relations),
+            row["depth"],
+            row["limit"],
+        )
+    return EvidenceSelectorV1(
+        **_obj(value, ("source_id", "path", "byte_start", "byte_end"))
+    )
+
+
+def _selector_json(selector):
+    if isinstance(selector, StructuralQueryV1):
+        return selector.to_selector_json_dict()
+    if isinstance(selector, EvidenceSelectorV1):
+        return selector.to_json_dict()
+    raise DiscoveryError("invalid-discovery-selector")
 
 
 def _validate_replay_bytes(payload):
@@ -182,6 +219,7 @@ class DiscoveryBoundary:
         source_id: str, depth: str, origin_obligation_id: str,
         objects: ObjectStore, quarantine: ObjectStore,
         selected_domain_keys: tuple[str, ...] | None = None,
+        structural_catalog: StructuralEvidenceCatalogV1 | None = None,
     ) -> None:
         safe_id(source_id, "source")
         digest_value(origin_obligation_id, "origin")
@@ -199,6 +237,15 @@ class DiscoveryBoundary:
         self._source_ids = tuple(source.source_id for source in partition.sources)
         self._partition = partition
         self._selected_domain_keys = selected_domain_keys
+        if (
+            structural_catalog is not None
+            and (
+                structural_catalog.snapshot_id != snapshot.snapshot_id
+                or source_id not in {row.source_id for row in structural_catalog.sources}
+            )
+        ):
+            raise DiscoveryError("structural-evidence-scope-mismatch")
+        self._structural = structural_catalog
 
     def run_authority(self):
         """Frozen snapshot/partition and declared sources; account may select a subset."""
@@ -221,7 +268,10 @@ class DiscoveryBoundary:
         }
 
     @classmethod
-    def from_catalog(cls, catalog, partition, selection, source_id, depth, origin, objects):
+    def from_catalog(
+        cls, catalog, partition, selection, source_id, depth, origin, objects,
+        structural_catalog=None,
+    ):
         """Reconstruct the public admission boundary for read-only L4 replay."""
         safe_id(source_id, "source")
         digest_value(origin, "origin")
@@ -237,12 +287,27 @@ class DiscoveryBoundary:
         result._source_ids = tuple(source.source_id for source in partition.sources)
         result._partition = partition
         result._selected_domain_keys = selection.domain_keys or None
+        if (
+            structural_catalog is not None
+            and (
+                not isinstance(structural_catalog, StructuralEvidenceCatalogV1)
+                or structural_catalog.snapshot_id != catalog.source_snapshot_id
+                or source_id not in {row.source_id for row in structural_catalog.sources}
+            )
+        ):
+            raise DiscoveryError("structural-evidence-scope-mismatch")
+        result._structural = structural_catalog
         return result
 
     @property
     def partition_authority(self):
         """Frozen local inventory authority; never serialize into provider input."""
         return self._partition
+
+    @property
+    def structural_authority(self):
+        """Authenticated optional graph catalogue used by this boundary."""
+        return self._structural
 
     def _context(self, selectors, *, persist=True, schema_version=2):
         if type(schema_version) is not int or schema_version not in {1, 2, 3}:
@@ -251,9 +316,13 @@ class DiscoveryBoundary:
             raise DiscoveryError("discovery-evidence-bound")
         normalized = []
         for selector in selectors:
-            if not isinstance(selector, EvidenceSelectorV1) or selector.source_id != self._source_id:
+            if (
+                not isinstance(selector, (EvidenceSelectorV1, StructuralQueryV1))
+                or selector.source_id != self._source_id
+                or isinstance(selector, StructuralQueryV1) and self._structural is None
+            ):
                 raise DiscoveryError("discovery-source-mismatch")
-            normalized.append(selector.to_json_dict())
+            normalized.append(_selector_json(selector))
         normalized.sort(key=canonical_json_bytes)
         if len({canonical_json_bytes(row) for row in normalized}) != len(normalized):
             raise DiscoveryError("duplicate-discovery-selector")
@@ -263,18 +332,44 @@ class DiscoveryBoundary:
             EvidenceSelectorV1(self._source_id, record.source_relative_path, 0, 0)
             inventory.append({"path": record.source_relative_path, "byte_count": record.byte_count,
                               "object_kind": record.object_kind, "text_status": record.text_status})
-        evidence, mappings = [], []
+        evidence, structural_evidence, mappings = [], [], []
         for row in normalized:
-            project = self._evidence.project if persist else self._evidence.read_projection
-            projection = project(_selector(row))
-            evidence.append({"projection_id": projection.projection_id,
-                             "projection": _load(projection.provider_bytes())})
+            selector = _selector(row)
+            if isinstance(selector, StructuralQueryV1):
+                assert self._structural is not None
+                projection = project_structural_query(
+                    self._structural, self._objects, selector, persist=persist
+                )
+            else:
+                project = self._evidence.project if persist else self._evidence.read_projection
+                projection = project(selector)
+            target = (
+                structural_evidence
+                if isinstance(selector, StructuralQueryV1)
+                else evidence
+            )
+            target.append({"projection_id": projection.projection_id,
+                           "projection": _load(projection.provider_bytes())})
+            mappings.append(projection.mapping_receipt_id)
+        if self._structural is not None:
+            projection = project_structural_overview(
+                self._structural,
+                self._objects,
+                self._source_id,
+                25 if self._depth == "quick" else 75 if self._depth == "standard" else 100,
+                persist=persist,
+            )
+            structural_evidence.append({
+                "projection_id": projection.projection_id,
+                "projection": _load(projection.provider_bytes()),
+            })
             mappings.append(projection.mapping_receipt_id)
         context_value = {
             "schema_version": schema_version, "kind": "untrusted_discovery_context", "source_id": self._source_id,
             "depth": self._depth, "origin_obligation_id": self._origin,
             "security_policy_id": security_policy_id(),
             "inventory": sorted(inventory, key=lambda r: r["path"]), "evidence": evidence,
+            **({"structural_evidence": structural_evidence} if self._structural is not None else {}),
             "required_categories": {"source": list(SOURCE_CATEGORIES), "domain": list(DOMAIN_CATEGORIES)},
         }
         if schema_version in {2, 3}:
@@ -295,6 +390,7 @@ class DiscoveryBoundary:
             "snapshot_id": self._snapshot_id, "partition_id": self._partition_id,
             "source_id": self._source_id, "depth": self._depth, "origin_obligation_id": self._origin,
             "security_policy_id": security_policy_id(), "selectors": normalized, "mapping_ids": mappings,
+            **({"structural_catalog_id": self._structural.identity} if self._structural is not None else {}),
         })
         return context, binding
 
@@ -426,8 +522,15 @@ class DiscoveryBoundary:
         projection = None
         reason = request["reason_code"]
         if request["state"] == "pending":
-            project = self._evidence.project if persist else self._evidence.read_projection
-            projection = project(_selector(request["selector"]))
+            selector = _selector(request["selector"])
+            if isinstance(selector, StructuralQueryV1):
+                assert self._structural is not None
+                projection = project_structural_query(
+                    self._structural, self._objects, selector, persist=persist
+                )
+            else:
+                project = self._evidence.project if persist else self._evidence.read_projection
+                projection = project(selector)
             reason = _load(projection.provider_bytes())["reason_code"]
         return {
             "schema_version": 1, "kind": "discovery_evidence_outcome",
@@ -919,13 +1022,16 @@ class DiscoveryBoundary:
             if selector.source_id != self._source_id:
                 raise DiscoveryError("discovery-source-mismatch")
             request = {"obligation_id": self._origin, "reason_class": row["reason_class"],
-                       "selector": selector.to_json_dict()}
+                       "selector": _selector_json(selector)}
             request_bytes = canonical_json_bytes(request)
             if request_bytes in seen:
                 raise DiscoveryError("duplicate-evidence-request")
             seen.add(request_bytes)
-            record = inventory.get(selector.path)
-            available = record is not None and record["object_kind"] == "regular" and selector.byte_end <= record["byte_count"]
+            if isinstance(selector, StructuralQueryV1):
+                available = self._structural is not None
+            else:
+                record = inventory.get(selector.path)
+                available = record is not None and record["object_kind"] == "regular" and selector.byte_end <= record["byte_count"]
             normalized.append({**request, "request_id": content_digest({"binding_id": binding_id, **request}),
                                "state": "pending" if available else "unavailable",
                                "reason_code": None if available else "unavailable-evidence"})

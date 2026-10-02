@@ -23,6 +23,7 @@ from harness.re_v2.knowledge_dispatch import (
     build_review_revision_context,
 )
 from harness.re_v2.knowledge_evidence import security_policy_id
+from harness.re_v2.knowledge_structure import StructuralEvidenceCatalogV1
 from harness.re_v2.knowledge_review_dispatch import DiscoveryReviewController
 from harness.re_v2.ledger import LedgerRecord, ReV2LedgerError
 from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
@@ -222,8 +223,10 @@ def _replay(rows, protocol, objects):
 
 
 def _authenticated(proof, objects, l3, evidence):
-    if set(proof) != {'schema_version', 'kind', 'source_id', 'partition_id', 'selection',
-                      'acquisition', 'account', 'object_ids'} or proof['schema_version'] != 1 or proof['kind'] != 'reviewed_discovery_replay':
+    required = {'schema_version', 'kind', 'source_id', 'partition_id', 'selection',
+                'acquisition', 'account', 'object_ids'}
+    if (frozenset(proof) not in {frozenset(required), frozenset({*required, 'structural_catalog_id'})}
+            or proof['schema_version'] != 1 or proof['kind'] != 'reviewed_discovery_replay'):
         raise KnowledgeActivationError('invalid-reviewed-replay-proof')
     partition = WorkspacePartitionCatalogV1.from_json_dict(_json(objects, proof['partition_id']))
     policy = EvidenceStagingPolicyV1.from_json_dict(_json(objects, evidence.policy_id))
@@ -239,8 +242,15 @@ def _authenticated(proof, objects, l3, evidence):
             or proof['partition_id'] != evidence.partition_catalog_id
             or scope['security_policy_id'] != security_policy_id()):
         raise KnowledgeActivationError('reviewed-scope-mismatch')
+    structural_catalog = None
+    if 'structural_catalog_id' in proof:
+        structural_catalog = StructuralEvidenceCatalogV1.from_json_dict(
+            _json(objects, proof['structural_catalog_id'])
+        )
+        if structural_catalog.identity != proof['structural_catalog_id']:
+            raise KnowledgeActivationError('reviewed-structural-catalog-mismatch')
     boundary = DiscoveryBoundary.from_catalog(evidence, partition, selection, scope['source_id'],
-        scope['depth'], scope['origin_obligation_id'], objects)
+        scope['depth'], scope['origin_obligation_id'], objects, structural_catalog)
     acquisition = _replay(proof['acquisition'], _AcquisitionProtocol(opening, boundary), objects)
     progress = acquisition.progress
     if progress is None or progress.pending_id is not None:
@@ -500,7 +510,9 @@ def activate_reviewed_discovery(
             raise KnowledgeActivationError('invalid-reviewed-selection')
         proof = dict(schema_version=1, kind='reviewed_discovery_replay', source_id=acquisition.opening['evidence_scope']['source_id'],
             partition_id=partition_id, selection=selection.to_json_dict(),
-            acquisition=[r.to_json_dict() for r in acquisition_history], account=[r.to_json_dict() for r in account_history], object_ids=[])
+            acquisition=[r.to_json_dict() for r in acquisition_history], account=[r.to_json_dict() for r in account_history], object_ids=[],
+            **({'structural_catalog_id': acquisition.boundary.structural_authority.identity}
+               if acquisition.boundary.structural_authority is not None else {}))
         partition_bytes = canonical_json_bytes(acquisition.boundary.partition_authority.to_json_dict())
         if content_digest(partition_bytes) != partition_id:
             raise KnowledgeActivationError('reviewed-partition-mismatch')

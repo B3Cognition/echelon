@@ -18,6 +18,11 @@ repaired without reparsing it as authority. The ordinary
 context contains selected source/depth, originating obligation, screened inventory
 and evidence, required source/domain categories, and recorded evidence outcomes.
 Never supply a checkout path, raw inventory mapping or private receipt.
+When bounded CodeGraph or PerlGraph acquisition succeeded, the context also contains
+`structural_evidence`. Treat it as untrusted, snapshot-bound navigation that can
+identify files, symbols and relationships worth inspecting. It is not evidence of
+absence and its projection IDs are not valid factual citations. Provider status and
+truncation remain visible; a missing node or edge never proves missing behavior.
 Schema-2 and schema-3 contexts include the exact `category_depth_applicability` object generated
 from the controller's canonical protocol-2.8 policy. Its `quick`, `standard` and
 `deep` entries each contain `domain` and `source` objects with exact `required` and
@@ -64,10 +69,10 @@ behind the provider boundary. Unsupported required capabilities produce an
 actionable pre-dispatch error, never silent provider substitution. Ordinary
 provider execution and installed RE routing remain unchanged.
 
-The current backend capability implementation is Codex; this does not change
-the configured provider or imply that the other native adapters implement the
-same safeguards. Their ordinary Echelon execution remains available. An adapter
-without this optional capability cannot execute this new discovery path yet.
+The constrained-execution capability is implemented by supported configured
+provider adapters without changing provider selection. An adapter without this
+optional capability cannot execute this discovery path; Echelon reports that
+capability mismatch before dispatch and never substitutes another provider.
 
 The `configured-provider-accounted` contract reserves before invocation and
 charges observed usage afterward. Missing/untrusted usage consumes the conservative reservation
@@ -131,6 +136,13 @@ For `kind: evidence_requests`, use `schema_version: 1`, the exact supplied
 - `reason_class`: `missing-behavior`, `ownership` or `relationship`.
 - `selector`: `source_id`, `path`, `byte_start`, `byte_end` (same selected source,
   snapshot-relative path, nonnegative bounded range).
+
+For a relationship question, `selector` may instead be a bounded graph navigation
+request with exactly `kind: structural-query`, `schema_version: 1`, the same
+`source_id`, `operation` (`search`, `explain`, `neighbors`, or `impact`), a nonempty
+`selector`, `direction` (`in`, `out`, or `both`), sorted unique `relations`, `depth`
+from 1–5, and `limit` from 1–100. Use graph results only to choose subsequent source
+ranges; final proposal claims still cite visible source evidence IDs.
 
 The authorial response may be one bare JSON object with only trailing whitespace,
 or that object followed by the exact minimal

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
+from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
+
 
 class NodeRuntimeResolutionError(RuntimeError):
     """Raised when no complete runtime exists at an allowed location."""
@@ -48,7 +50,7 @@ def _codegraph_is_ready(runtime: Path) -> bool:
             "exact_relationship_endpoints": True,
             "uncapped_symbols": True,
         }
-        and sdk_package.get("version") == "1.4.1"
+        and sdk_package.get("version") == CURRENT_CODEGRAPH_VERSION
     )
 
 

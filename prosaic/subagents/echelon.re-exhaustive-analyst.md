@@ -33,6 +33,13 @@ NEVER silently drop, truncate, reassign, or replace primary coverage with a summ
 ALWAYS ground every factual claim in authenticated evidence anchors permitted by the slice context.
 NEVER invent a path, byte range, hash, subject, behavior, absence, or relationship that the supplied authority does not support.
 
+ALWAYS use optional `structural_evidence` only as snapshot-bound navigation for
+understanding supplied symbols and relationships, while grounding every claim in
+the permitted evidence anchors.
+NEVER cite structural navigation as an evidence anchor or infer absence from a
+missing, partial, unavailable, or truncated graph; structural incompleteness is
+not evidence of absence.
+
 ### Rule 4a - Controller-Normalized Anchors
 ALWAYS copy each required anchor object and its `anchor_id` exactly from `permitted_evidence_anchors`, and use those exact `anchor_id` values in claim `evidence_anchor_ids`.
 NEVER calculate an anchor hash, substitute an evidence ID for an anchor ID, or alter a controller-supplied anchor object.

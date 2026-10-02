@@ -362,6 +362,7 @@ class DockerWorktreeProvider(SandboxProvider):
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         network_name = f"harness-net-{session_id}"
+        created_network: str | None = None
         proxy_container_id = None
         sandbox_container_id = None
         generated_squid_conf: str | None = None
@@ -385,6 +386,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 network_name,
             ], cli=self._container_cli)
             network_id = result.stdout.strip()
+            created_network = network_name
 
             # The private network needs a proxy for package/bootstrap traffic.
             squid_conf_path = self._squid_conf_path
@@ -528,11 +530,17 @@ class DockerWorktreeProvider(SandboxProvider):
         except Exception as e:
             # Clean up partial resources on failure
             self._cleanup_partial(
-                sandbox_container_id, proxy_container_id, network_name,
+                sandbox_container_id, proxy_container_id, created_network,
                 volume_names=volume_names,
             )
             if generated_squid_conf:
-                Path(generated_squid_conf).unlink(missing_ok=True)
+                try:
+                    Path(generated_squid_conf).unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        "Sandbox config cleanup failed for %s: %s",
+                        generated_squid_conf, cleanup_error,
+                    )
             if isinstance(e, (CredentialLeakError, SandboxCreationError, SandboxExecError)):
                 raise
             raise SandboxCreationError(
@@ -848,27 +856,28 @@ class DockerWorktreeProvider(SandboxProvider):
         network_name: Optional[str],
         volume_names: list[str] | None = None,
     ) -> None:
-        """Clean up partially created resources on failure."""
+        """Try each owned resource without masking the original creation error."""
+        commands: list[list[str]] = []
         if sandbox_id:
-            subprocess.run(
-                [self._container_cli, "rm", "-f", sandbox_id],
-                capture_output=True, timeout=10, check=False,
-            )
+            commands.append([self._container_cli, "rm", "-f", sandbox_id])
         if proxy_id:
-            subprocess.run(
-                [self._container_cli, "rm", "-f", proxy_id],
-                capture_output=True, timeout=10, check=False,
-            )
+            commands.append([self._container_cli, "rm", "-f", proxy_id])
         if network_name:
-            subprocess.run(
-                [self._container_cli, "network", "rm", network_name],
-                capture_output=True, timeout=10, check=False,
-            )
+            commands.append([self._container_cli, "network", "rm", network_name])
         for volume_name in volume_names or ():
-            subprocess.run(
-                [self._container_cli, "volume", "rm", "-f", volume_name],
-                capture_output=True, timeout=10, check=False,
-            )
+            commands.append([self._container_cli, "volume", "rm", "-f", volume_name])
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, timeout=10, check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as cleanup_error:
+                logger.warning("Sandbox cleanup failed for %s: %s", command, cleanup_error)
+                continue
+            if result.returncode != 0:
+                logger.warning(
+                    "Sandbox cleanup failed for %s (exit %s)", command, result.returncode,
+                )
 
 
 class _ContainerInfo:

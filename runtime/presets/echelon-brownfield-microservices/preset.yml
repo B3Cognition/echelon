@@ -7,7 +7,7 @@ preset:
   description: "Templates optimized for decomposing monoliths into microservices using DDD patterns"
   author: "Michal Bachorik"
   repository: "https://github.com/B3Cognition/echelon"
-  license: "MIT"
+  license: "Apache-2.0"
 
 requires:
   echelon_version: ">=3.9.0"

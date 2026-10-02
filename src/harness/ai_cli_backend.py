@@ -2,30 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Callable, Mapping, Protocol, runtime_checkable
+from prosaic_runtime.types import Invocation as CliRunRequest, Result as CliRunResult
 
 from harness.config import HarnessConfig
-
-
-@dataclass(frozen=True)
-class CliRunRequest:
-    cwd: str
-    prompt: str
-    env: Mapping[str, str]
-    timeout_s: float
-    metadata: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass
-class CliRunResult:
-    exit_code: int
-    stdout: str
-    stderr: str
-    token_usage: int | None = None
-    cost_usd: float = 0.0
-    timed_out: bool = False
-    metadata: dict[str, object] = field(default_factory=dict)
 
 
 class AICodingCliBackend(Protocol):

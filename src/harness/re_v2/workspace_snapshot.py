@@ -9,7 +9,7 @@ import tempfile
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .canonical import content_digest
 from .snapshot import (
@@ -48,6 +48,21 @@ class WorkspaceCapturePlan:
     workspace_root: Path
     sources: tuple[WorkspaceSourceProof, ...]
     repositories: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializedWorkspaceSource:
+    """One exact source tree exposed only for bounded capture-time observation."""
+
+    source_id: str
+    git_role: str
+    workspace_path: str
+    repository_path: str
+    commit: str
+    source_root: Path
+
+
+SourceObserver = Callable[[MaterializedWorkspaceSource], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +107,7 @@ def capture_workspace_snapshot(
     destination_root: Path,
     *,
     fault_hook: FaultHook | None = None,
+    source_observer: SourceObserver | None = None,
 ) -> CapturedSnapshot:
     """Freeze exactly the clean Git trees declared as workspace sources."""
     declared = tuple(sources)
@@ -152,6 +168,18 @@ def capture_workspace_snapshot(
                     target.parent.mkdir(parents=True, exist_ok=True)
                     _copy_regular_files(source_tree, target, entries)
                     _fault(fault_hook, "source_tree_copied")
+                    if source_observer is not None:
+                        source_observer(
+                            MaterializedWorkspaceSource(
+                                source_id=proof.source_id,
+                                git_role=proof.git_role,
+                                workspace_path=proof.workspace_path,
+                                repository_path=proof.repository_path,
+                                commit=proof.commit,
+                                source_root=source_tree,
+                            )
+                        )
+                        _fault(fault_hook, "source_observed")
                     component_submodules = _component_submodules(
                         proof.repository_path,
                         submodules,

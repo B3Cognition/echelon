@@ -947,6 +947,11 @@ def _re_status_source_rows(run_re_dir: Path, state: dict) -> list[str]:
         if isinstance(domain_failures, list) and domain_failures:
             count = len(domain_failures)
             details.append(f"{count} incomplete domain" + ("s" if count != 1 else ""))
+        from echelon.re_quality_ui import semantic_debt_label
+
+        semantic_label = semantic_debt_label(report)
+        if semantic_label:
+            details.append(semantic_label)
         rows.append(f"  {source_id:<38} {status:<22} {' · '.join(details)}")
     return rows
 
@@ -1116,13 +1121,9 @@ def _cmd_re_status(args: list[str]) -> None:
         and outer.get("golddigger_status") == "partial"
     )
     publication_complete = outer.get("publication_complete") is True
-    synthesis_status = (
-        "complete"
-        if inner.get("re_workspace_synthesis_complete") is True
-        else "incomplete (accepted partial debt)"
-        if finalized_partial
-        else "pending"
-    )
+    from echelon.re_quality_ui import print_quality_debt, repair_command, synthesis_label
+
+    synthesis_status = synthesis_label(run_re_dir, inner, finalized_partial=finalized_partial)
     fields = [
         ("run", run_dir.name),
         ("controller", controller_status),
@@ -1177,9 +1178,15 @@ def _cmd_re_status(args: list[str]) -> None:
         )
     if source_rows:
         print("\nSource quality")
-        print("  source                                 status                 coverage / debt")
+        print("  source                                 status                 file coverage / quality debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
+    quality_blocker = controller_status == "blocked" and str(inner.get("blocked_reason") or "").startswith("re_source_quality_debt:")
+    print_quality_debt(
+        run_re_dir, display_inner, outer, _read_re_summary_state,
+        file=sys.stdout,
+        show_actions=bool(partial_count) and (controller_status == "done" or quality_blocker) and not active_source_count,
+    )
     if finalized_partial and publication_complete:
         action = (
             "This run is finalized and published as partial; debt remains explicit. "
@@ -1193,16 +1200,18 @@ def _cmd_re_status(args: list[str]) -> None:
     elif controller_status == "in_progress":
         action = "Do not start another continuation while the controller is active."
     elif controller_status == "blocked":
-        action = (
+        command = repair_command(inner, outer) if quality_blocker else None
+        action = f"Repair with `{command}`, or explicitly accept partial debt as shown above." if command else (
             "The controller is stopped at the blocker shown above. Resolve it if "
             "needed, then run `echelon re continue`."
         )
     elif active_source_count:
         action = "Do not start another continuation while a source is active."
     elif partial_count:
+        command = repair_command(inner, outer)
         action = (
             f"{partial_count} source(s) have partial quality debt; this is not a full-quality outcome. "
-            "Raise --re-max-inner above the current budget, then continue."
+            + (f"Repair with `{command}`, or explicitly accept partial debt as shown above." if command else "Inspect the unavailable source-local limits before continuing.")
         )
     elif nonpassed_count:
         action = (
@@ -1455,13 +1464,29 @@ def _print_re_lifecycle_result(result: object) -> None:
     else:
         if detail:
             fields.append(("detail", _summarize_re_lifecycle_detail(detail)))
-        fields.append(("action", "Resolve the blocker, then continue or resume the run."))
+        if reason.startswith("re_source_quality_debt:"):
+            fields.append(("action", "Review the quality debt and choose repair or explicit partial acceptance below."))
+        else:
+            fields.append(("action", "Resolve the blocker, then continue or resume the run."))
     _banner(
         "RE FINAL STATE — BLOCKED",
         fields,
         subtitle="No further provider work was run after the controller gate failed.",
         file=sys.stderr,
     )
+    if reason.startswith("re_source_quality_debt:") and run_id:
+        from echelon.re_quality_ui import print_quality_debt, synthesis_label
+
+        try:
+            run_dir = _resolve_named_re_run(Path.cwd(), run_id)
+        except ValueError:
+            run_dir = None
+        if run_dir is not None:
+            run_re_dir = run_dir / "re"
+            inner = _read_re_summary_state(run_re_dir / "state.json")
+            outer = _read_re_summary_state(run_dir / "state.json")
+            print(f"\nWorkspace synthesis: {synthesis_label(run_re_dir, inner)}", file=sys.stderr)
+            print_quality_debt(run_re_dir, inner, outer, _read_re_summary_state, file=sys.stderr, show_actions=True)
     raise SystemExit(1)
 
 
@@ -4670,6 +4695,8 @@ class _ReKnowledgeActionOptions:
     depth: str | None
     token_limit: int | None
     active_ms_limit: int | None
+    reset: bool = False
+    token_limit_explicit: bool = False
 
 
 def _parse_re_knowledge_action_options(
@@ -4682,9 +4709,16 @@ def _parse_re_knowledge_action_options(
     depth: str | None = None
     token_limit: int | None = None
     time_limit_minutes: int | None = None
+    reset = False
     index = 0
     while index < len(args):
         argument = args[index]
+        if argument == "--reset" and not allow_sources:
+            if reset:
+                raise ValueError("--reset may be supplied only once")
+            reset = True
+            index += 1
+            continue
         if argument in {
             "--source",
             "--depth",
@@ -4748,6 +4782,8 @@ def _parse_re_knowledge_action_options(
         depth,
         token_limit,
         None if time_limit_minutes is None else time_limit_minutes * 60_000,
+        reset,
+        token_limit is not None,
     )
 
 
@@ -4836,9 +4872,58 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         print(f"[re] published generation {generation}")
     if reason:
         print(f"[re] reason: {reason}")
+    if reason == "provider-failed" and getattr(result, "request_run_id", None):
+        print(
+            "[re] The failed dispatch is saved. After resolving the provider error, "
+            "use echelon re run --reset for a fresh request; previous artifacts are preserved."
+        )
 
 
-def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tuple[str, ...]]:
+def _re_structural_source_observer(
+    workspace: Path, observations: list[object]
+):
+    """Build a visible bounded snapshot observer with validated cache reuse."""
+    from harness.re_v2.knowledge_structure import (
+        StructuralEvidencePolicyV1,
+        capture_structural_source,
+    )
+
+    policy = StructuralEvidencePolicyV1.defaults()
+    cache_root = workspace / "re" / ".cache" / "structural-v1"
+
+    def observe(source) -> None:
+        print(
+            f"[re] structure {source.source_id} · checking cache / bounded acquisition",
+            flush=True,
+        )
+        observation = capture_structural_source(
+            source,
+            workspace,
+            policy,
+            cache_root=cache_root,
+            progress=lambda provider, index_bytes: print(
+                f"[re] structure {source.source_id} · {provider} working · "
+                f"temporary index {index_bytes // (1024 * 1024)} MiB",
+                flush=True,
+            ),
+        )
+        observations.append(observation)
+        providers = " · ".join(
+            f"{provider.provider} {provider.status}"
+            for provider in observation.providers
+        )
+        mode = "reused" if observation.reused else "captured"
+        print(
+            f"[re] structure {source.source_id} · {mode} · {providers}",
+            flush=True,
+        )
+
+    return observe
+
+
+def _capture_re_knowledge_authority(
+    workspace: Path,
+) -> tuple[object, object, tuple[str, ...], tuple[object, ...]]:
     """Freeze all declared sources for one ordinary reviewed request."""
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
@@ -4847,17 +4932,21 @@ def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tu
     source_ids = tuple(sorted(source.id for source in manifest.sources))
     if not source_ids:
         raise ValueError("needs attention: the workspace declares no sources to analyze")
+    structural_observations: list[object] = []
     snapshot = capture_workspace_snapshot(
         workspace,
         manifest.sources,
         _re_v2_snapshot_root(workspace),
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
+        ),
     )
     partition = build_workspace_partition_catalog(
         snapshot,
         manifest,
         _re_v22_partition_authorities(),
     )
-    return snapshot, partition, source_ids
+    return snapshot, partition, source_ids, tuple(structural_observations)
 
 
 def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str], ...]:
@@ -4874,6 +4963,38 @@ def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str],
             raise ValueError("invalid active reviewed-analysis creation intent")
         rows.append((row[0], row[1]))
     return tuple(rows)
+
+
+def _authorize_re_knowledge_request(
+    partition: object,
+    depths: dict[str, str],
+    options: _ReKnowledgeActionOptions,
+    *,
+    action: str,
+    retained_source_count: int = 0,
+    synthesis_required: bool = True,
+) -> int:
+    from echelon.re_preflight import authorize_knowledge_preflight
+    from harness.re_v2.knowledge_preflight import estimate_knowledge_request
+
+    command = ["echelon", "re", action]
+    if options.reset:
+        command.append("--reset")
+    if options.depth is not None:
+        command.extend(["--depth", options.depth])
+    for source_id in options.source_ids:
+        command.extend(["--source", source_id])
+    command.extend(["--re-time-limit-minutes", str(options.active_ms_limit // 60_000)])
+    return authorize_knowledge_preflight(
+        estimate_knowledge_request(
+            partition, depths, retained_source_count=retained_source_count,
+            synthesis_required=synthesis_required,
+        ),
+        token_limit=options.token_limit,
+        active_ms_limit=options.active_ms_limit,
+        explicit_token_limit=options.token_limit_explicit,
+        command=tuple(command),
+    )
 
 
 def _create_or_resume_re_knowledge_analysis(
@@ -4896,7 +5017,9 @@ def _create_or_resume_re_knowledge_analysis(
         if active is not None
         else None
     )
-    snapshot, partition, source_ids = _capture_re_knowledge_authority(workspace)
+    snapshot, partition, source_ids, structural_observations = (
+        _capture_re_knowledge_authority(workspace)
+    )
     if intent is not None and (
         intent.get("snapshot_id") != getattr(snapshot, "snapshot_id", None)
         or intent.get("workspace_partition_id") != getattr(partition, "identity", None)
@@ -4931,7 +5054,9 @@ def _create_or_resume_re_knowledge_analysis(
         request_run_id = _new_re_v2_run_id(workspace)
         analysis_run_id = f"{request_run_id}-analysis"
         created_at = _re_v2_now()
-        token_limit = options.token_limit
+        token_limit = _authorize_re_knowledge_request(
+            partition, depths, options, action="run"
+        )
         active_ms_limit = options.active_ms_limit
         _activate_re_v2_run(workspace, request_run_id)
     else:
@@ -4981,6 +5106,7 @@ def _create_or_resume_re_knowledge_analysis(
             source_depths=tuple(sorted(depths.items())),
             token_limit=token_limit,
             active_ms_limit=active_ms_limit,
+            structural_observations=structural_observations,
             config=config,
         ),
     )
@@ -4989,6 +5115,38 @@ def _create_or_resume_re_knowledge_analysis(
         raise SystemExit(2)
     _activate_re_v2_run(workspace, creation.analysis_run_id)
     return workspace / "runs" / creation.analysis_run_id, depth_label
+
+
+def _require_re_reset_stopped(run_dir: Path | None) -> None:
+    """Only replace the active pointer after a durable stopped outcome."""
+    if run_dir is None:
+        return
+    import json
+    from harness.re_v2.ledger import ObjectStore
+
+    creation = run_dir / "v2" / "knowledge-creation.json"
+    if creation.is_file():
+        ledger = run_dir / "v2" / "knowledge-dispatch.jsonl"
+        records = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        if records and records[-1].get("type") in {"discovery_applied", "review_applied"}:
+            receipt = json.loads(ObjectStore(run_dir / "v2" / "objects").read_blob(
+                records[-1]["payload"]["receipt_id"]
+            ))
+            if receipt.get("state") == "blocked":
+                return
+    elif (run_dir / "v2" / "run.json").is_file():
+        from harness.re_v2.protocol_28.status import protocol_28_status_document
+        status = protocol_28_status_document(run_dir)
+        if status.get("status") in {"complete", "complete-with-limitations"}:
+            return
+    elif (run_dir / "state.json").is_file():
+        status = json.loads((run_dir / "state.json").read_text())
+        if status.get("status") in {"blocked", "failed", "done", "complete"}:
+            return
+    raise ValueError(
+        "cannot reset a run without a confirmed stopped outcome; "
+        "inspect echelon re status and stop any active controller first"
+    )
 
 
 def _cmd_re_knowledge_run(args: list[str]) -> None:
@@ -5003,6 +5161,11 @@ def _cmd_re_knowledge_run(args: list[str]) -> None:
         workspace = Path.cwd().resolve()
         options = _resolve_re_knowledge_action_options(workspace, options)
         run_dir = resolve_current_re_run(workspace)
+        if options.reset:
+            _require_re_reset_stopped(run_dir)
+            if run_dir is not None:
+                print(f"[re] fresh request · preserving previous run {run_dir.name}", flush=True)
+            run_dir = None
         config = load_config(workspace, squad_only=True)
         depths = (
             _reviewed_run_depths(run_dir)
@@ -5052,6 +5215,7 @@ def _cmd_re_knowledge_refresh(args: list[str]) -> None:
             options.depth,
             options.token_limit,
             options.active_ms_limit,
+            token_limit_explicit=options.token_limit_explicit,
         )
     except SystemExit:
         raise
@@ -5066,6 +5230,8 @@ def _run_re_knowledge_refresh_action(
     explicit_depth: str | None,
     token_limit: int,
     active_ms_limit: int,
+    *,
+    token_limit_explicit: bool = False,
 ) -> None:
     """Create or resume changed-source analysis and publish one refresh."""
     from harness.config import load_config
@@ -5097,10 +5263,14 @@ def _run_re_knowledge_refresh_action(
     selected_roots = tuple(
         source for source in workspace_manifest.sources if source.id in set(selected)
     )
+    structural_observations: list[object] = []
     snapshot = capture_workspace_snapshot(
         workspace,
         selected_roots,
         _re_v2_snapshot_root(workspace),
+        source_observer=_re_structural_source_observer(
+            workspace, structural_observations
+        ),
     )
     selected_manifest = replace(workspace_manifest, sources=selected_roots)
     partition = build_workspace_partition_catalog(
@@ -5169,7 +5339,13 @@ def _run_re_knowledge_refresh_action(
             request_run_id = _new_re_v2_run_id(workspace)
             analysis_run_id = f"{request_run_id}-analysis"
             created_at = _re_v2_now()
-            analysis_token_limit = token_limit
+            analysis_token_limit = _authorize_re_knowledge_request(
+                partition, depth_by_source,
+                _ReKnowledgeActionOptions(source_ids, explicit_depth, token_limit,
+                                          active_ms_limit, False, token_limit_explicit),
+                action="refresh",
+                retained_source_count=len(set(plan.reusable_source_ids) | set(plan.retained_source_ids)),
+            )
             analysis_active_ms_limit = active_ms_limit
             _activate_re_v2_run(workspace, request_run_id)
         else:
@@ -5209,6 +5385,7 @@ def _run_re_knowledge_refresh_action(
                 source_depths=tuple(sorted(depth_by_source.items())),
                 token_limit=analysis_token_limit,
                 active_ms_limit=analysis_active_ms_limit,
+                structural_observations=tuple(structural_observations),
                 config=config,
             ),
         )
@@ -5221,6 +5398,15 @@ def _run_re_knowledge_refresh_action(
             raise SystemExit(2)
         analysis_run_id = creation.analysis_run_id
         _activate_re_v2_run(workspace, analysis_run_id)
+    elif not plan.needs_attention:
+        token_limit = _authorize_re_knowledge_request(
+            partition, {},
+            _ReKnowledgeActionOptions(source_ids, explicit_depth, token_limit,
+                                      active_ms_limit, False, token_limit_explicit),
+            action="refresh",
+            retained_source_count=len(set(plan.reusable_source_ids) | set(plan.retained_source_ids)),
+            synthesis_required=not plan.no_op,
+        )
     result = run_knowledge_refresh(
         workspace,
         plan,

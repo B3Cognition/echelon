@@ -13,6 +13,12 @@ from tests.unit.test_re_v2_knowledge_activation import _candidate
 from tests.unit.test_re_v2_knowledge_discovery_review_v2 import _review_v2
 from tests.unit.test_re_v2_knowledge_dispatch import _contract
 from tests.unit.test_re_v2_protocol_28_evidence import _fixture
+from harness.re_v2.knowledge_structure import (
+    StructuralEvidencePolicyV1,
+    StructuralProviderExecutionV1,
+    capture_structural_source,
+)
+from tests.unit.test_re_v2_knowledge_structure import _codegraph_document, _source
 
 
 class _ReadyBackend:
@@ -292,6 +298,70 @@ def test_fresh_creation_publishes_reviewed_analysis_and_transfers_one_account(tm
     assert revision.manifest.logical_run_id == "re-fresh-request"
     assert len(context.resources.records) == 1
     assert context.resources.records[0].charged_tokens == 40
+
+
+@pytest.mark.unit
+def test_fresh_creation_supplies_snapshot_bound_structure_to_discovery(tmp_path):
+    from harness.re_v2.knowledge_creation import create_or_resume_reviewed_analysis
+
+    class StructuralBackend(_ReadyBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.structural_contexts = 0
+
+        def __call__(self, agent, context, reservation):
+            value = json.loads(context)
+            if value["kind"] == "untrusted_discovery_context":
+                structural = value["structural_evidence"]
+                assert len(structural) == 1
+                assert "api.run" in structural[0]["projection"]["text"]
+                self.structural_contexts += 1
+            return super().__call__(agent, context, reservation)
+
+    backend = StructuralBackend()
+    options = _options(tmp_path, backend)
+    source_root = tmp_path / "materialized"
+    source_root.mkdir()
+    observation = capture_structural_source(
+        _source(source_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=lambda *_args: StructuralProviderExecutionV1(
+            "completed", _codegraph_document(str(source_root))
+        ),
+    )
+
+    result = create_or_resume_reviewed_analysis(
+        tmp_path / "workspace",
+        replace(options, structural_observations=(observation,)),
+    )
+
+    assert result.state == "ready"
+    assert backend.structural_contexts == 1
+    from harness.re_v2.protocol_28.context import (
+        build_protocol_28_slice_context,
+        load_protocol_28_run_context,
+    )
+    from harness.re_v2.protocol_28.planning import realize_slice
+
+    context = load_protocol_28_run_context(
+        tmp_path / "workspace" / "runs" / result.analysis_run_id
+    )
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+    spec = realize_slice(
+        entry,
+        {
+            dependency_id: dependency_id
+            for dependency_id in entry.planned_dependency_root_ids
+        },
+    )
+    analysis_context = json.loads(
+        build_protocol_28_slice_context(
+            context, target, entry, spec, role="producer"
+        )
+    )
+    assert "api.run" in analysis_context["structural_evidence"]["text"]
 
 
 @pytest.mark.unit

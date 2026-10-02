@@ -57,7 +57,7 @@ def test_squad_provider_preserves_backend_stderr(monkeypatch, tmp_path) -> None:
         target_repo=".",
         target_default_branch="main",
         provider="docker",
-        llm=LlmConfig(cli="openai-compatible"),
+        llm=LlmConfig(cli="openai-compatible", base_url="http://127.0.0.1:8000/v1", model="test-model"),
     )
     provider = SquadCliProvider(config)
 

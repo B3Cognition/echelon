@@ -24,6 +24,12 @@ ALWAYS derive your assessment from the visible behavior and evidence boundaries.
 NEVER accept a directory-derived domain, invented behavior or unsupported absence
 merely because the candidate has valid references or all expected headings.
 
+ALWAYS use supplied `structural_evidence` as navigation to challenge omitted or
+mis-scoped behavior, while requiring the candidate's factual claims to cite source evidence.
+NEVER certify a graph projection as source authority or treat a missing, partial, or
+truncated structural result as evidence of absence.
+Structural incompleteness is not evidence of absence.
+
 ALWAYS, when supplied, verify that candidate domains are exactly the nested safe context's
 `analysis_domain_targets` keys and judge the described behavior within those
 frozen execution targets. When that array is empty, require an empty domains array

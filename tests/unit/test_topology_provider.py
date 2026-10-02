@@ -79,8 +79,27 @@ def _codegraph(
     }
 
 
+def test_codegraph_current_release_is_accepted_without_dropping_legacy_support() -> None:
+    from echelon.topology_provider import load_provider_document
+
+    current = _codegraph()
+    current["tool_version"] = "1.6.0"
+
+    assert (
+        load_provider_document(current, provider="codegraph", source_id="source-a").tool_version
+        == "1.6.0"
+    )
+    assert (
+        load_provider_document(
+            _codegraph(), provider="codegraph", source_id="source-a"
+        ).tool_version
+        == "1.4.1"
+    )
+
+
 @pytest.mark.unit
 def test_codegraph_accepts_explicit_occurrences_for_same_native_locator(tmp_path: Path) -> None:
+    from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
     from echelon.topology_model import canonical_symbol_key
     from echelon.topology_provider import load_provider_document
     from harness.codegraph_evidence import _analysis_is_usable
@@ -97,6 +116,7 @@ def test_codegraph_accepts_explicit_occurrences_for_same_native_locator(tmp_path
         symbol["column_end"] = 14
         symbols.append(symbol)
     document = _codegraph(symbols=symbols, relationships=[])
+    document["tool_version"] = CURRENT_CODEGRAPH_VERSION
     analysis = tmp_path / "codegraph-analysis.json"
     analysis.write_text(json.dumps(document), encoding="utf-8")
 

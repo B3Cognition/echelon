@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from echelon.codegraph_contract import CURRENT_CODEGRAPH_VERSION
 from echelon.topology_provider import (
     TopologyProviderError,
     load_provider_document,
@@ -530,7 +531,7 @@ def build_empty_topology_snapshot_candidate(
             "schema_version": 2,
             "version": "2.0.0",
             "tool": "codegraph",
-            "tool_version": "1.4.1",
+            "tool_version": CURRENT_CODEGRAPH_VERSION,
             "repo_path": "",
             "provider_status": "complete",
             "complete": True,
@@ -557,7 +558,7 @@ def build_empty_topology_snapshot_candidate(
         {
             "schema_version": 2,
             "tool": "codegraph",
-            "tool_version": "1.4.1",
+            "tool_version": CURRENT_CODEGRAPH_VERSION,
             "provider_status": "complete",
             "complete": True,
             "counts": json.loads(analysis)["counts"],

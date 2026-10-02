@@ -1,0 +1,12 @@
+Echelon
+
+This project is distributed under the Apache License, Version 2.0; see LICENSE.
+
+Historically MIT-licensed code carries the original attribution:
+Copyright (c) 2026 Testimonial
+The original copyright and permission notice is retained in LICENSE-MIT.
+This historical attribution does not replace the project's Apache-2.0 license.
+
+Third-party components retain their own licenses and attribution notices,
+including those under src/echelon/assets/licenses and runtime/scripts/node.
+Previously published versions and tags retain the license notices shipped with them.

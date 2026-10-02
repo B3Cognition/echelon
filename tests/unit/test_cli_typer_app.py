@@ -73,6 +73,7 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     run_help = CliRunner().invoke(app, ["re", "run", "--help"])
     refresh_help = CliRunner().invoke(app, ["re", "refresh", "--help"])
     run(["re", "run", "--depth", "deep"])
+    run(["re", "run", "--reset", "--depth", "standard"])
     run(
         [
             "re",
@@ -93,7 +94,12 @@ def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch)
     assert "deep" in run_help.output
     assert "--source" in refresh_help.output
     assert "--depth" in refresh_help.output
-    assert run_calls == [ReRunRequest(depth="deep")]
+    assert "--re-token-limit" in run_help.output
+    assert "--re-token-limit" in refresh_help.output
+    assert run_calls == [
+        ReRunRequest(depth="deep"),
+        ReRunRequest(depth="standard", reset=True),
+    ]
     assert refresh_calls == [
         ReRefreshRequest(sources=("api", "worker"), depth="quick")
     ]
@@ -1235,8 +1241,8 @@ def test_retired_top_level_routes_are_absent(command):
 def test_root_aliases_route_through_canonical_commands(
     monkeypatch, argv, target, expected_args, expected_kwargs
 ):
-    from click import Context
     from echelon import cli_app
+    from typer._click.core import Context
 
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 

@@ -8,13 +8,17 @@ version = "4.1.1"
 description = "Multi-agent development system with verified delivery, MemPalace requirements memory, and 34-metric requirements quality analysis"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
   { name = "Ladislav Bihari" },
   { name = "B3 Cognition", email = "b3.cognition@gmail.com" },
 ]
 
 dependencies = [
+  # Python Prosaic v0.3.0, pinned to the immutable release commit.
+  "prosaic @ git+https://github.com/B3Cognition/prosaic.git@cdc9acddf3e58e5563cef06e0db918b5e3729148",
+  # Prosaic Runtime v0.5.1, pinned to the immutable release commit.
+  "prosaic-runtime @ git+https://github.com/B3Cognition/prosaic-runtime.git@9c985e96bba791ae42ad3837facc235528318101",
   # codegen
   "pyyaml>=6.0",
   "jsonschema>=4.23,<5",
@@ -46,6 +50,9 @@ echelon       = "echelon.cli:main"
 understanding = "understanding.cli:main"
 lexicon       = "lexicon.cli:main"
 hormone-calc  = "hormone_calc.cli:main"
+
+[tool.setuptools]
+license-files = ["LICENSE", "LICENSE-MIT", "NOTICE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

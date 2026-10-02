@@ -8,9 +8,16 @@ import pytest
 from harness.re_v2.canonical import canonical_json_bytes
 from harness.re_v2 import knowledge_discovery
 from harness.re_v2.knowledge_evidence import EvidenceSelectorV1
+from harness.re_v2.knowledge_structure import (
+    StructuralEvidencePolicyV1,
+    StructuralProviderExecutionV1,
+    bind_structural_evidence,
+    capture_structural_source,
+)
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_28.policies import DOMAIN_CATEGORIES, SOURCE_CATEGORIES
 from tests.unit.test_re_v2_protocol_28_evidence import _fixture
+from tests.unit.test_re_v2_knowledge_structure import _codegraph_document, _source
 
 ORIGIN = "sha256:" + "a" * 64
 
@@ -101,6 +108,80 @@ def test_inventory_and_safe_context_never_expose_raw_credentials_or_hashes(tmp_p
     assert args[1].sources[0].files[0].content_hash.encode() not in payload
     assert b"retries=3" in payload
     assert context["kind"] == "untrusted_discovery_context"
+
+
+@pytest.mark.unit
+def test_discovery_exposes_bounded_structure_and_resolves_graph_queries(
+    tmp_path: Path,
+) -> None:
+    snapshot, partition = _fixture(
+        tmp_path, {"app.py": "def run(): return 3\n"}
+    )
+    objects = ObjectStore(tmp_path / "objects")
+    quarantine = ObjectStore(tmp_path / "quarantine")
+    source_root = tmp_path / "materialized"
+    source_root.mkdir()
+    observation = capture_structural_source(
+        _source(source_root),
+        tmp_path,
+        StructuralEvidencePolicyV1.defaults(),
+        runner=lambda *_args: StructuralProviderExecutionV1(
+            "completed", _codegraph_document(str(source_root))
+        ),
+    )
+    catalog = bind_structural_evidence(
+        snapshot.snapshot_id,
+        {"api": partition.sources[0].source_content_id},
+        (observation,),
+        objects,
+    )
+    boundary = _api().DiscoveryBoundary(
+        snapshot,
+        partition,
+        "api",
+        "standard",
+        ORIGIN,
+        objects,
+        quarantine,
+        structural_catalog=catalog,
+    )
+    binding = boundary.prepare(
+        (EvidenceSelectorV1("api", "app.py", 0, 20),)
+    )
+    context = json.loads(boundary.provider_bytes(binding))
+
+    structural = context["structural_evidence"]
+    assert len(structural) == 1
+    assert "api.run" in structural[0]["projection"]["text"]
+
+    request = {
+        "schema_version": 1,
+        "kind": "evidence_requests",
+        "source_id": "api",
+        "requests": [{
+            "obligation_id": ORIGIN,
+            "reason_class": "relationship",
+            "selector": {
+                "kind": "structural-query",
+                "schema_version": 1,
+                "source_id": "api",
+                "operation": "search",
+                "selector": "run",
+                "direction": "both",
+                "relations": [],
+                "depth": 1,
+                "limit": 10,
+            },
+        }],
+    }
+    batch = boundary.admit(binding, canonical_json_bytes(request))
+    admitted = boundary.read_requests(binding, batch)
+    assert admitted[0]["state"] == "pending"
+    outcome_id = boundary.resolve_request(binding, batch, admitted[0]["request_id"])
+    outcome = boundary.validate_outcome(outcome_id)
+    assert outcome["disposition"] == "resolved"
+    projection = json.loads(objects.read_blob(outcome["projection_id"]))
+    assert "api.run" in projection["text"]
 
 
 @pytest.mark.unit

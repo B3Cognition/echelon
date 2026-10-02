@@ -20,7 +20,7 @@ from tests.unit.test_re_publication import write_valid_re_run
 def _write_complete_codegraph(runtime: Path) -> None:
     package = runtime / "node_modules" / "@colbymchenry" / "codegraph" / "package.json"
     package.parent.mkdir(parents=True)
-    package.write_text('{"version":"1.4.1"}\n', encoding="utf-8")
+    package.write_text('{"version":"1.6.0"}\n', encoding="utf-8")
     (runtime / "codegraph-bridge.js").write_text("bridge\n", encoding="utf-8")
     (runtime / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
     (runtime / "package.json").write_text(

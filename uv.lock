@@ -608,6 +608,8 @@ dependencies = [
     { name = "jsonschema" },
     { name = "lark" },
     { name = "mempalace" },
+    { name = "prosaic" },
+    { name = "prosaic-runtime" },
     { name = "pypdf" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -633,6 +635,8 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "lark", specifier = ">=1.1" },
     { name = "mempalace", url = "https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz" },
+    { name = "prosaic", git = "https://github.com/B3Cognition/prosaic.git?rev=cdc9acddf3e58e5563cef06e0db918b5e3729148" },
+    { name = "prosaic-runtime", git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=9c985e96bba791ae42ad3837facc235528318101" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
@@ -1789,6 +1793,25 @@ wheels = [
 ]
 
 [[package]]
+name = "prosaic"
+version = "0.3.0"
+source = { git = "https://github.com/B3Cognition/prosaic.git?rev=cdc9acddf3e58e5563cef06e0db918b5e3729148#cdc9acddf3e58e5563cef06e0db918b5e3729148" }
+dependencies = [
+    { name = "pyuca" },
+    { name = "pyyaml" },
+]
+
+[[package]]
+name = "prosaic-runtime"
+version = "0.5.1"
+source = { git = "https://github.com/B3Cognition/prosaic-runtime.git?rev=9c985e96bba791ae42ad3837facc235528318101#9c985e96bba791ae42ad3837facc235528318101" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "prosaic" },
+    { name = "pyyaml" },
+]
+
+[[package]]
 name = "protobuf"
 version = "6.33.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2179,6 +2202,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "pyuca"
+version = "1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/32/95beca7e3308581c6da4735c7102b0c0cbb30a6b863cc1a8e44e6d2f5c3c/pyuca-1.2.tar.gz", hash = "sha256:8a382fe74627f08c0d18908c0713ca4a20aad5385f077579e56208beea2893b2", size = 1398641, upload-time = "2017-09-25T23:12:12.163Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/88/aeeee34d88f841aca712a8c18fbd62a33eaad8f2dbe535e87f3c829b02f9/pyuca-1.2-py2.py3-none-any.whl", hash = "sha256:abaa12e1bd2c7c68ca8396ff8383bc0654a739cef3ae68fd7af58bf29af0a91e", size = 1464896, upload-time = "2017-09-25T23:12:15.67Z" },
 ]
 
 [[package]]

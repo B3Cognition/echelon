@@ -196,6 +196,8 @@ def make_ralph_controller(
     mode: str = "semi",
     spec_id: str = "test-spec",
     mock_gitops: Optional[MockGitOps] = None,
+    llm_provider: Any = None,
+    sandbox_provider: Any = None,
 ) -> tuple:
     """Factory for creating a configured RalphController with all dependencies.
 
@@ -209,7 +211,7 @@ def make_ralph_controller(
     state_store = StateStore(state_dir, spec_id)
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(str(tmp_dir / "runs"))
-    stub_provider = StubSandboxProvider(stub_llm)
+    stub_provider = sandbox_provider if sandbox_provider is not None else StubSandboxProvider(stub_llm)
 
     if mock_gitops is None:
         mock_gitops = MockGitOps(tmp_dir)
@@ -223,6 +225,24 @@ def make_ralph_controller(
         spec_id=spec_id,
         config=harness_config,
         build_id="build-test",
+        llm_provider=llm_provider,
     )
 
     return controller, state_store, mock_gitops, stub_provider, escalation_handler
+
+
+@pytest.fixture
+def controlled_ralph(tmp_harness_dir, harness_config):
+    """Own the lock and canonical test workspace for controlled-role scenarios."""
+    from tests.e2e.controlled_ralph import ControlledRun
+
+    runs = []
+
+    def create(**kwargs):
+        run = ControlledRun(tmp_harness_dir, harness_config, **kwargs)
+        runs.append(run)
+        return run
+
+    yield create
+    for run in reversed(runs):
+        run.store.release_lock()

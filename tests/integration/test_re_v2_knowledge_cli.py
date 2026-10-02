@@ -65,8 +65,9 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("reset", [False, True])
 def test_normal_run_creates_reviewed_analysis_when_none_is_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], reset: bool
 ) -> None:
     import echelon.cli as cli
     import harness.re_v2.knowledge_workflow as workflow
@@ -76,9 +77,14 @@ def test_normal_run_creates_reviewed_analysis_when_none_is_active(
     config = object()
     provider = object()
     creations = []
+    old_run = tmp_path / "runs" / "re-failed"
+    old_run.mkdir(parents=True)
+    old_state = old_run / "state.json"
+    old_state.write_text('{"status":"blocked","blocked_reason":"re_token_budget_exhausted"}')
+    old_bytes = old_state.read_bytes()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "harness.re_lifecycle.resolve_current_re_run", lambda _root: None
+        "harness.re_lifecycle.resolve_current_re_run", lambda _root: old_run if reset else None
     )
     monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: config)
     monkeypatch.setattr(
@@ -107,9 +113,10 @@ def test_normal_run_creates_reviewed_analysis_when_none_is_active(
         )[1],
     )
 
-    cli._cmd_re_knowledge_run([])
+    cli._cmd_re_knowledge_run(["--reset"] if reset else [])
 
     assert creations == [(tmp_path.resolve(), None, None, config)]
+    assert old_state.read_bytes() == old_bytes
     output = capsys.readouterr().out
     assert "completed" in output
     assert "generation 1" in output
@@ -173,13 +180,13 @@ def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
 ) -> None:
     import echelon.cli as cli
 
-    captured: list[tuple[tuple[str, ...], str | None, int, int]] = []
+    captured: list[tuple[tuple[str, ...], str | None, int, int, bool]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cli,
         "_run_re_knowledge_refresh_action",
-        lambda _root, sources, depth, tokens, active: captured.append(
-            (sources, depth, tokens, active)
+        lambda _root, sources, depth, tokens, active, **kwargs: captured.append(
+            (sources, depth, tokens, active, kwargs["token_limit_explicit"])
         ),
         raising=False,
     )
@@ -198,7 +205,7 @@ def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
         ]
     )
 
-    assert captured == [(('api', 'worker'), 'standard', 7_000_000, 14_400_000)]
+    assert captured == [(('api', 'worker'), 'standard', 7_000_000, 14_400_000, True)]
 
 
 @pytest.mark.integration
@@ -219,20 +226,20 @@ def test_normal_refresh_uses_workspace_profile_limits_when_not_explicit(
 """,
         encoding="utf-8",
     )
-    captured: list[tuple[tuple[str, ...], str | None, int, int]] = []
+    captured: list[tuple[tuple[str, ...], str | None, int, int, bool]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cli,
         "_run_re_knowledge_refresh_action",
-        lambda _root, sources, depth, tokens, active: captured.append(
-            (sources, depth, tokens, active)
+        lambda _root, sources, depth, tokens, active, **kwargs: captured.append(
+            (sources, depth, tokens, active, kwargs["token_limit_explicit"])
         ),
         raising=False,
     )
 
     cli._cmd_re_knowledge_refresh(["--depth", "deep"])
 
-    assert captured == [((), "deep", 17_000_000, 21_600_000)]
+    assert captured == [((), "deep", 17_000_000, 21_600_000, False)]
 
 
 @pytest.mark.integration
@@ -342,7 +349,9 @@ def test_depth_refresh_creates_fresh_reviewed_analysis_instead_of_using_publishe
 
     monkeypatch.setattr(cli, "discover_workspace", lambda _root: manifest)
     monkeypatch.setattr(registry, "load_published_index", lambda _root: published)
-    monkeypatch.setattr(snapshot_module, "capture_workspace_snapshot", lambda *_a: snapshot)
+    monkeypatch.setattr(
+        snapshot_module, "capture_workspace_snapshot", lambda *_a, **_kw: snapshot
+    )
     monkeypatch.setattr(
         partition_module, "build_workspace_partition_catalog", lambda *_a: partition
     )

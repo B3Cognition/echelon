@@ -31,8 +31,7 @@ case "$1" in
 esac
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CODEGRAPH_CLI_VERSION="1.4.1"
-PROSAIC_GIT_SPEC="git+ssh://git@github.com/B3Cognition/prosaic.git#b6c9701"
+CODEGRAPH_CLI_VERSION="1.6.0"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
 NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"
@@ -42,8 +41,6 @@ CTX7_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/context7"
 CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"
 PERLGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/perlgraph"
 CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"
-PROSAIC_NODE_DIR="$NODE_RUNTIME_ROOT/prosaic"
-PROSAIC_LAUNCHER="$VENV_DIR/bin/prosaic"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -121,6 +118,8 @@ echo "  ✓ echelon installed ($ECHELON_VER)"
 echo "    echelon       → $VENV_DIR/bin/echelon"
 echo "    understanding → $VENV_DIR/bin/understanding"
 echo "    harness       → $VENV_DIR/bin/harness"
+PROSAIC_VER=$("$VENV_DIR/bin/prosaic" --version)
+echo "  ✓ Prosaic installed ($PROSAIC_VER) → $VENV_DIR/bin/prosaic"
 
 # Add venv/bin to PATH if needed (idempotent)
 if ! grep -qF "$VENV_DIR/bin" "$SHELL_RC"; then
@@ -226,26 +225,6 @@ else
   echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
 fi
 
-# ── 3e. Prosaic package deployment runtime ───────────────────────────────────
-echo "▶ Installing Prosaic package deployment runtime..."
-if ! command -v node &>/dev/null; then
-  echo "  ⚠ Node.js not found; Prosaic workspace bundle deployment will be unavailable."
-  rm -f "$PROSAIC_LAUNCHER"
-elif ! command -v npm &>/dev/null; then
-  echo "  ⚠ npm not found; Prosaic workspace bundle deployment will be unavailable."
-  rm -f "$PROSAIC_LAUNCHER"
-else
-  mkdir -p "$PROSAIC_NODE_DIR"
-  npm install --prefix "$PROSAIC_NODE_DIR" --no-audit --no-fund "$PROSAIC_GIT_SPEC"
-  cat > "$PROSAIC_LAUNCHER" <<EOF
-#!/usr/bin/env bash
-exec node "$PROSAIC_NODE_DIR/node_modules/prosaic/dist/cli/index.js" "\$@"
-EOF
-  chmod +x "$PROSAIC_LAUNCHER"
-  echo "  ✓ Prosaic runtime installed → $PROSAIC_NODE_DIR/node_modules"
-  echo "  ✓ Prosaic launcher installed → $PROSAIC_LAUNCHER"
-fi
-
 # ── 4. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"
@@ -297,11 +276,7 @@ if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
 else
   echo "  Context7 CLI  → not ready (rerun this installer after installing Node.js/npm)"
 fi
-if [ -x "$PROSAIC_LAUNCHER" ]; then
-  echo "  Prosaic       → $PROSAIC_LAUNCHER"
-else
-  echo "  Prosaic       → not ready (rerun this installer after installing Node.js/npm)"
-fi
+echo "  Prosaic       → $VENV_DIR/bin/prosaic (Python $PROSAIC_VER)"
 echo "  Memory        → $MEMORY_DIR"
 echo ""
 echo "  Per-project setup (deploys Prosaic and runtime bundles):"

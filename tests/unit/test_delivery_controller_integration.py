@@ -228,7 +228,7 @@ def test_gate_failure_cannot_be_promoted_by_ralph(slice_project, tmp_path, mode)
     assert result["passed"] is False and result["build_status"] == "blocked"
     assert result["task_ids"] == []
     chain = ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
-    assert _steps(executor) == chain * 5
+    assert _steps(executor) == chain * 5  # Initial attempt plus four bounded repairs.
     assert "delivery_slice_task_id" not in store.read()
 
 

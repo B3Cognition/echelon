@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Whole-request RE preflight** — Fresh ordinary `re run` and `re refresh`
+  requests show one local inventory/depth/reuse-based token planning range,
+  including review, repair and workspace synthesis. Higher recommended ceilings
+  require terminal confirmation or an explicit `--re-token-limit`; piped and
+  noninteractive requests stop safely with a rerun command. Existing requests
+  retain frozen accounting and limits, and active-time ceilings are unchanged.
+
 - **Opt-in controller-owned delivery gates** — `harness.llm.features.delivery_gate_controller`
   selects one dependency-ready task and runs IMPLEMENTER, SPEC GUARD, CODE
   REVIEWER, and TEST GUARDIAN as separate provider calls. Every repair reruns
@@ -44,6 +51,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   preserves the existing convergence lease and durable checkpoint.
 
 ### Fixed
+
+- **Staged RE quality-debt reporting** — Status and the final source-quality
+  blocker distinguish file coverage from semantic correctness, name affected
+  domains with example findings and full report paths, and show concrete repair
+  or explicit partial-finalization/publication commands. Existing synthesis
+  drafts are no longer misleadingly labeled pending. Reporting remains read-only
+  and does not change repair policy or authorize higher token/time ceilings.
 
 - **Delivery command setup** — LLM delivery requires a valid canonical build
   command and uses role-neutral framing, removing the extra COMMANDER assignment.

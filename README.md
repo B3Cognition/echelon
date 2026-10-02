@@ -28,6 +28,8 @@ source ~/.zshrc   # or restart terminal
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
 This is enough to author specs and run the default delivery strategy.
+Prosaic 0.3.0 is pinned as a Python dependency in that same environment;
+workspace bundle deployment and prompt inspection do not require Node.js/npm.
 
 | Tool | Purpose |
 | ---- | ------- |
@@ -188,12 +190,36 @@ workspace documents, and publishes either exactly one generation or a durable
 no-op. An explicit `--depth` selects `quick`, `standard`, or `deep`; refresh
 otherwise preserves each source's published depth.
 
-Each new request freezes the finite token and active-time ceilings from the
-workspace's selected `re.default_profile` in `.echelon/config.yml`; the CLI
-prints those aggregate limits before provider work begins. The shipped
-`balanced` profile remains 5,000,000 tokens and 180 active minutes. Customize
-the selected profile when a workspace needs more room—depth does not silently
-raise authorization.
+After correcting a provider failure during discovery, `echelon re run --reset`
+starts a fresh request in the reviewed knowledge engine. Previous run artifacts
+and the current publication remain available. The old run must have a recorded
+stopped outcome; resetting does not stop a running controller. The new request
+uses the configured resource ceilings. Explicit legacy controls retain their
+compatibility routing.
+
+Before provider work, each new ordinary request gets **one local whole-request
+preflight** using the frozen text-file/domain inventory, selected depth and
+refresh reuse. It shows a heuristic token range and recommended absolute ceiling
+covering discovery, analysis, review/repair and workspace synthesis. There are
+no estimator LLM calls or per-dispatch estimates. Discovery can add domains and
+provider tool/cache context replay varies, so the range is not a guarantee.
+
+The shipped `balanced` profile starts at 5,000,000 tokens and 180 active minutes.
+If the recommendation is higher, an interactive terminal asks before increasing
+the token ceiling. Noninteractive runs stop before dispatch with an explicit
+rerun command. `--re-token-limit` authorizes your exact absolute ceiling—even
+below the recommendation—and never triggers an automatic increase. For example:
+
+```bash
+echelon re run --re-token-limit 50000000 --re-time-limit-minutes 720
+```
+
+Approved limits are frozen into the request. Existing/resumed requests keep
+their accounting and ceilings and do not repeat preflight. Refresh estimates
+count only sources requiring reanalysis plus dependent synthesis; a no-op
+refresh needs zero provider tokens. Active-time limits are shown but never
+automatically raised. Customize `re.profiles` in `.echelon/config.yml` for
+persistent workspace ceilings.
 
 Echelon keeps the latest complete publication under `re/` and the durable run
 state under `runs/re-*`. Spec and delivery runs never execute or freshness-check
@@ -229,7 +255,16 @@ and secrets are excluded. Diagnostic commands are intentionally hidden from
 ordinary help; run `echelon admin commands` to discover them, including the
 read-only `echelon re analyze` baseline and cost report.
 
-When Node.js and npm are installed, RE analysis can include optional CodeGraph and PerlGraph artifacts; their absence does not block core RE or spec authoring.
+When Node.js and npm are installed, ordinary `echelon re run` and `echelon re
+refresh` use optional CodeGraph and PerlGraph evidence. Each tool runs against a
+temporary pinned source tree, under finite time, index, artifact, and log-size
+limits; it never indexes the mutable source checkout. Validated graph projections
+help discovery, review, and detailed analysis navigate symbols and relationships,
+but published claims still require screened source evidence. Graph omissions are
+never treated as proof of absence. Exact unchanged commits can reuse owner-private,
+schema-revalidated entries under `re/.cache/structural-v1/`; changed commits,
+policies, or tool versions acquire fresh evidence. Missing or degraded optional
+providers remain visible and do not block core RE or spec authoring.
 
 ```text
 re/
@@ -750,6 +785,24 @@ configure `harness.llm.cli` to select the concrete adapter:
 | `copilot` | GitHub Copilot CLI |
 | `opencode` | Opencode CLI |
 | `openai-compatible` | Configured OpenAI-compatible HTTP endpoint |
+
+The OpenAI-compatible adapter supports artifact workflows and bounded RE
+knowledge generation. Its neutral `fast`, `balanced`, `strong`, and `ultra`
+tiers currently resolve to the single configured `harness.llm.model`; delivery
+build execution remains unsupported.
+
+The HTTP transport, streaming parser, tool loop, compaction and file-tool
+implementation come from the pinned
+[Prosaic Runtime](https://github.com/B3Cognition/prosaic-runtime) dependency.
+Echelon pins Python Prosaic 0.3.0 and Prosaic Runtime 0.5.1 to immutable release
+commits; both are installed into the same Python environment. Prosaic itself no
+longer requires Node.js/npm. Runtime's optional custom-tool catalogue and staged
+acquisition features are not automatically enabled by this dependency update.
+Echelon supplies its RE tools, execution policy, result contracts and transcript
+location discovery. Explicit read-only roles and exclusive empty write scopes
+cannot write files. Echelon's provider selection and model configuration remain
+unchanged; the standalone runtime also offers its own Prosaic-only CLI and
+endpoint profiles for other applications.
 
 Echelon starts Codex with user configuration ignored by default. Authentication
 and Codex sessions still work, but personal plugins and skills do not leak into
@@ -1772,6 +1825,8 @@ echelon_result:
 
 ## License
 
-MIT
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE)
+and [LICENSE-MIT](LICENSE-MIT) for retained historical attribution.
+Third-party components retain their own licenses.
 
 ---

@@ -134,6 +134,19 @@ def _summary(provider: str, analysis: dict[str, object]) -> dict[str, object]:
 
 
 @pytest.mark.unit
+def test_empty_topology_candidate_uses_current_codegraph_provenance() -> None:
+    from harness.topology_evidence import build_empty_topology_snapshot_candidate
+
+    evidence = build_empty_topology_snapshot_candidate(
+        "api", "sources/api", _fingerprint(), {"kind": "re", "run_id": "re-1"}
+    )
+    provider = evidence.candidate.providers[0]
+
+    assert json.loads(provider.analysis)["tool_version"] == "1.6.0"
+    assert json.loads(provider.summary)["tool_version"] == "1.6.0"
+
+
+@pytest.mark.unit
 def test_build_candidate_validates_explicit_paths_and_preserves_provider_bytes(
     tmp_path: Path,
 ) -> None:
