@@ -1242,7 +1242,7 @@ def test_root_aliases_route_through_canonical_commands(
     monkeypatch, argv, target, expected_args, expected_kwargs
 ):
     from echelon import cli_app
-    from typer._click.core import Context
+    from click import Context
 
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
