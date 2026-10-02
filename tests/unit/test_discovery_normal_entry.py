@@ -101,14 +101,19 @@ def test_normal_restart_replays_receipts_without_dispatch_or_usage_duplication(p
     target, method = {
         "accepted_operation": (prepared[1], "advance_discovery_operation"),
         "sealed_completion": (ctrl, "_prepare_spec_step_effects"),
-        "routed": (prepared[1], "advance"),
-        "handoff": (prepared[1], "handoff_external_publication"),
-        "completed": (prepared[1], "complete_controller_completion"),
+        "routed": (prepared[1], "begin_spec_step"),
+        "handoff": (prepared[1], "advance_spec_step"),
+        "completed": (prepared[1], "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
     }[point]
     original = getattr(target, method)
     def stop_after(*args, **kwargs):
         value = original(*args, **kwargs)
+        if point in {"routed", "handoff"}:
+            pending = prepared[1].load()
+            assert "pending_spec_step" in pending
+            assert pending["phase"] == "phase1-discover"
+            assert pending["token_usage"] == 0
         if point != "accepted_operation" or args[1] == "finish":
             raise Interrupted()
         return value
@@ -137,6 +142,37 @@ def test_exhausted_outer_phase_budget_cannot_dispatch_managed_discovery(prepared
     assert prepared[1].load() == before
 
 
+@pytest.mark.parametrize("proof", ["intent", "receipts", "companion"])
+def test_committed_discovery_release_rejects_changed_retained_proof(prepared, monkeypatch, proof):
+    executor = FullDiscoveryExecutor()
+    store = prepared[1]
+    original = store.complete_spec_step
+
+    def interrupt_after_commit(*args, **kwargs):
+        original(*args, **kwargs)
+        raise Interrupted()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "complete_spec_step", interrupt_after_commit)
+        with pytest.raises(Interrupted):
+            controller(prepared, executor).run(
+                managed_discovery=selection(prepared), create_managed_discovery=True,
+            )
+    before = store.load()
+    completion_id = before["last_dispatch"]["spec_step_id"]
+    directory = ".spec-step-effects" if proof == "companion" else ".spec-step-outbox"
+    name = "intent.json" if proof == "intent" else "receipts.json"
+    (store.squad_dir / directory / completion_id / name).write_text("{}\n")
+    pending = prepared[2].pending_identity_publication(spec_id="game")
+    history = prepared[2].identity_history(spec_id="game")
+    result = controller(prepared, executor).run(managed_discovery=selection(prepared))
+    assert result.status == "blocked"
+    assert store.load() == before
+    assert prepared[2].pending_identity_publication(spec_id="game") == pending
+    assert prepared[2].identity_history(spec_id="game") == history
+    assert len(executor.calls) == 3
+
+
 def test_routing_preparation_failure_does_not_charge_receipt_usage(prepared, monkeypatch):
     from harness.squad_state import StateAdvanceError
     executor = FullDiscoveryExecutor()
@@ -154,13 +190,13 @@ def test_routing_preparation_failure_does_not_charge_receipt_usage(prepared, mon
     assert len(executor.calls) == 3
 
 
-def test_failed_state_advance_does_not_charge_receipt_usage(prepared, monkeypatch):
+def test_failed_step_begin_does_not_charge_receipt_usage(prepared, monkeypatch):
     from harness.squad_state import StateAdvanceError
     executor = FullDiscoveryExecutor()
     def unavailable(*args, **kwargs):
         raise StateAdvanceError("state unavailable", json_path="$.state", validator="stale_state")
     with monkeypatch.context() as patch:
-        patch.setattr(prepared[1], "advance", unavailable)
+        patch.setattr(prepared[1], "begin_spec_step", unavailable)
         result = controller(prepared, executor).run(managed_discovery=selection(prepared), create_managed_discovery=True)
     assert result.status == "blocked"
     assert prepared[1].load()["token_usage"] == 0
@@ -201,12 +237,12 @@ def test_orphan_cleanup_can_resume_after_publication_stage_disposal(prepared, mo
 def test_independent_selection_drift_cannot_drain_pending_completion(prepared, monkeypatch, change):
     from copy import deepcopy
     executor = FullDiscoveryExecutor()
-    original = prepared[1].advance
+    original = prepared[1].begin_spec_step
     def stop_after(*args, **kwargs):
         original(*args, **kwargs)
         raise Interrupted()
     with monkeypatch.context() as patch:
-        patch.setattr(prepared[1], "advance", stop_after)
+        patch.setattr(prepared[1], "begin_spec_step", stop_after)
         with pytest.raises(Interrupted):
             controller(prepared, executor).run(managed_discovery=selection(prepared), create_managed_discovery=True)
     changed = deepcopy(selection(prepared))

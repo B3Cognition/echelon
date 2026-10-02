@@ -2187,6 +2187,56 @@ class SquadController:
                 continue
         return not retained_id
 
+    def _release_committed_managed_publication(self, state: dict) -> bool:
+        """Close the post-commit release gap using retained completion proof."""
+        if "managed_identity" not in state:
+            return True
+        from harness.element_identity_store import IdentityStore, IdentityStoreError
+        from harness import discovery_completion
+
+        try:
+            pending = IdentityStore.open(self._project_root).pending_identity_publication(
+                spec_id=str(state.get("spec_id") or ""),
+            )
+            if pending is None:
+                return True
+            operation_id = pending["preparation"]["operation_id"]
+            dispatch = state.get("last_dispatch") or {}
+            if (
+                not isinstance(dispatch, Mapping)
+                or dispatch.get("post_dispatch_complete") is not True
+                or operation_id != "discovery-completion-" + str(dispatch.get("spec_step_id") or "")
+            ):
+                return False
+            step = load_prepared_spec_step(self._squad_dir, {
+                "schema_version": 1, "origin": "routed", "cursor": "commit",
+                "step_id": dispatch["spec_step_id"],
+                "intent_sha256": dispatch["completion_intent_sha256"],
+                "receipts_sha256": dispatch["completion_receipts_sha256"],
+                "publication_binding_sha256": dispatch["completed_publication_binding_sha256"],
+                "failure": None,
+            })
+            companion = self._completion_marker_from_spec_step(step)
+            completion = load_prepared_spec_step_effects(
+                self._project_root, self._squad_dir, companion,
+            )
+            discovery_completion.release(
+                self._project_root, self._squad_dir, self._state_store, completion,
+            )
+            publication = completion.intent.publication
+            try:
+                load_prepared_publication(
+                    self._project_root, self._squad_dir, publication["marker"],
+                ).discard()
+            except PublicationError as exc:
+                if exc.code != "stage_missing":
+                    raise
+            completion.discard()
+            return True
+        except (CompletionError, SpecStepError, PublicationError, IdentityStoreError, OSError, ValueError, KeyError):
+            logger.warning("Committed managed publication requires reconciliation")
+            return False
+
     def _cleanup_spec_step_orphans(self) -> bool:
         """Remove valid spec-step stages that have no durable state authority."""
         try:
@@ -2194,6 +2244,8 @@ class SquadController:
         except Exception:
             return False
         if PENDING_SPEC_STEP_KEY in state:
+            return False
+        if not self._release_committed_managed_publication(state):
             return False
         outbox = self._squad_dir / ".spec-step-outbox"
         try:
