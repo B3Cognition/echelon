@@ -5826,8 +5826,11 @@ class SquadController:
             if legacy is not None:
                 try:
                     current = self._state_store.load()
-                    if current.get(PENDING_SPEC_STEP_KEY) != (
-                        step.marker.to_dict() if step is not None else None
+                    # A failure before step preparation leaves no marker at
+                    # all. Two absent values are not durable stage ownership.
+                    if PENDING_SPEC_STEP_KEY not in current or (
+                        step is not None
+                        and current.get(PENDING_SPEC_STEP_KEY) != step.marker.to_dict()
                     ):
                         legacy.discard()
                 except Exception:

@@ -4114,6 +4114,65 @@ def test_debt_acceptance_rejects_unbound_effect_postimage_before_commit(
     assert not list((store.squad_dir / ".spec-step-effects").glob("*"))
 
 
+@pytest.mark.parametrize("failure_point", ["prepare_final_state", "before_marker", "after_marker"])
+def test_debt_resolution_exception_cleans_only_unowned_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    before = store._path.read_bytes()
+    original_prepare = store.apply_human_input_state_resolution
+    original_begin = store.begin_spec_step
+
+    def fail_after_prepare(*args, **kwargs):
+        original_prepare(*args, **kwargs)
+        raise RuntimeError("interrupted resolution preparation")
+
+    def fail_at_marker(*args, **kwargs):
+        if failure_point == "after_marker":
+            original_begin(*args, **kwargs)
+        raise RuntimeError("interrupted resolution preparation")
+
+    with monkeypatch.context() as fault:
+        if failure_point == "prepare_final_state":
+            fault.setattr(store, "apply_human_input_state_resolution", fail_after_prepare)
+        else:
+            fault.setattr(store, "begin_spec_step", fail_at_marker)
+        with pytest.raises(RuntimeError, match="interrupted resolution preparation"):
+            controller.resume_with_human_input("continue_with_debt")
+
+    effect_stages = store.squad_dir / ".spec-step-effects"
+    step_stages = store.squad_dir / ".spec-step-outbox"
+    spec_dir = Path(store.load()["spec_dir"])
+    if not spec_dir.is_absolute():
+        spec_dir = tmp_path / spec_dir
+    debt_path = spec_dir / "quality-debt.json"
+    assert not debt_path.exists()
+    controller._provider.exec_agent.assert_not_called()
+    if failure_point != "after_marker":
+        assert store._path.read_bytes() == before
+        assert not list(effect_stages.glob("*"))
+        assert not list(step_stages.glob("*"))
+        return
+
+    pending = store.load()["pending_spec_step"]
+    assert [path.name for path in effect_stages.iterdir()] == [pending["step_id"]]
+    assert [path.name for path in step_stages.iterdir()] == [pending["step_id"]]
+    recovery = controller._drain_pending_spec_step()
+    assert recovery.recovered and not recovery.blocked
+    assert recovery.step_id == pending["step_id"]
+    resolved = store.load()
+    assert "pending_spec_step" not in resolved
+    assert resolved["blocked_decision"]["status"] == "resolved"
+    assert resolved["blocked_decision"]["selected_option_id"] == "continue_with_debt"
+    assert resolved["spec_status"] == "accepted_with_debt"
+    debt_bytes = debt_path.read_bytes()
+    assert not controller._drain_pending_spec_step().recovered
+    assert debt_path.read_bytes() == debt_bytes
+    controller._provider.exec_agent.assert_not_called()
+
+
 def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(
     tmp_path: Path,
 ) -> None:
