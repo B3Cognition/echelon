@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
@@ -28,6 +29,28 @@ def test_flags_vague_validator_reference(tmp_path: Path) -> None:
 
     findings = scan_prompt_tool_contracts(tmp_path, [prompt])
 
+    assert len(findings) == 1
+    assert findings[0].reason == "missing_exact_invocation"
+
+
+@pytest.mark.parametrize("prefix", ["NEVER", "Do not", "Must not", "does not"])
+def test_understanding_prohibition_is_not_an_execution_request(tmp_path: Path, prefix: str) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(f"{prefix} run Understanding metrics or claim investigation that did not occur.\n")
+    assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
+
+
+@pytest.mark.parametrize("text", [
+    "NEVER run Understanding metrics; run the validator.\n",
+    "Do not run Understanding metrics. Run the validator.\n",
+    "Never run Understanding metrics but invoke the validator.\n",
+    "Never run Understanding metrics and use the Skill tool.\n",
+    "Run Understanding metrics and never claim investigation that did not occur.\n",
+])
+def test_prohibition_does_not_hide_a_positive_tool_request(tmp_path: Path, text: str) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(text)
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
     assert len(findings) == 1
     assert findings[0].reason == "missing_exact_invocation"
 

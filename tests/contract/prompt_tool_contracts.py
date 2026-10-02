@@ -501,7 +501,16 @@ def _has_exact_invocation(context: str) -> bool:
 
 def _is_non_executable_reference(line: str) -> bool:
     lowered = line.lower()
-    if "do not run understanding" in lowered or "does not run understanding" in lowered:
+    # A prohibition needs no invocation, but cannot mask a separate positive
+    # request on the same line. Keep independently actionable clauses visible.
+    references = [
+        clause for clause in re.split(r"[.;]|\b(?:and|but)\b", lowered)
+        if EXECUTABLE_REFERENCE_RE.search(clause)
+    ]
+    if references and all(
+        re.search(r"\b(?:do not|does not|must not|never)\s+run\s+understanding\b", clause)
+        for clause in references
+    ):
         return True
     if "understanding is not required" in lowered:
         return True
