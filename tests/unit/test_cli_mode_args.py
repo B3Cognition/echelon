@@ -337,23 +337,36 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     assert captured["product_inputs"].manifest_hash
 
 
-def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
+@pytest.mark.parametrize(
+    ("perfectionist_requested", "retained_mode", "expected_mode"),
+    [(True, None, "perfectionist"), (False, None, "proportional"),
+     (False, "perfectionist", "perfectionist")],
+)
+def test_cmd_run_persists_authoring_mode_through_real_initialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    perfectionist_requested: bool,
+    retained_mode: str | None,
+    expected_mode: str,
 ) -> None:
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
     captured: dict[str, object] = {}
+    from harness.squad import SquadController
+    from tests.integration.test_squad_controller import _controller
 
-    class FakeController:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
+    fixture_controller, _ = _controller(tmp_path)
+    if retained_mode is not None:
+        store = SquadStateStore(squad_dir)
+        store.initialize(squad_dir.name, "greenfield", "build notes", 0, "init",
+                         spec_authoring_mode=retained_mode)
+        retained = store.load()
+        retained["status"] = "done"
+        store.save(retained)
 
-        def run(self, **_kwargs: object) -> SimpleNamespace:
-            captured.update(
-                json.loads((squad_dir / "state.json").read_text(encoding="utf-8"))
-            )
-            return SimpleNamespace(status="done", phase="DONE", run_id=squad_dir.name)
+    def observe_initialized_run(controller, **_kwargs: object) -> SimpleNamespace:
+        captured.update(controller._state_store.load())
+        return SimpleNamespace(status="done", phase="DONE", run_id=squad_dir.name)
 
     monkeypatch.setattr("echelon.spec_service._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.spec_service._workspace_git_preflight", lambda *_args, **_kwargs: None)
@@ -372,20 +385,25 @@ def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
     monkeypatch.setattr("echelon.spec_service._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (object(), tmp_path / ".echelon" / "runtime"))
-    monkeypatch.setattr("harness.squad.SquadController", FakeController)
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: fixture_controller._provider)
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (fixture_controller._graph, fixture_controller._ext_dir))
+    # Exercise CLI -> real initialization, not independent execution admission.
+    # Stop before provider dispatch; normal-entry admission has its own suite.
+    monkeypatch.setattr(SquadController, "_run_with_execution_lease", lambda _self, execute, **_kwargs: execute())
+    monkeypatch.setattr(SquadController, "_run_current_phase_step", observe_initialized_run)
 
     _cmd_run(
-        ["build notes", "--perfectionist"],
+        ["build notes", *(["--perfectionist"] if perfectionist_requested else [])],
         project_root=tmp_path,
         ext_dir=tmp_path / "ext",
     )
 
-    assert captured["spec_authoring_mode"] == "perfectionist"
+    assert captured["spec_authoring_mode"] == expected_mode
+    assert (captured.get("phase1_quality_repair") is None) == (expected_mode == "perfectionist")
+    fixture_controller._provider.exec_agent.assert_not_called()
     output = capsys.readouterr().out
     assert "Spec authoring" in output
-    assert "perfectionist" in output
+    assert expected_mode in output
 
 
 @pytest.mark.parametrize("state", [{}, {"spec_authoring_mode": "proportional"}])

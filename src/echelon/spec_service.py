@@ -5478,6 +5478,7 @@ def _cmd_run(
         re_sources=re_sources,
         product_inputs=product_inputs,
         stack_contract=stack_contract,
+        spec_authoring_mode=spec_authoring_mode,
     )
 
     _print_cost_summary(project_root)

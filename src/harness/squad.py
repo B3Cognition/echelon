@@ -1067,6 +1067,7 @@ class SquadController:
         re_sources: list[str] | None = None,
         product_inputs: object | None = None,
         stack_contract: dict[str, object] | None = None,
+        spec_authoring_mode: str = "proportional",
     ) -> None:
         existing_state = state_store.load()
         resolved_squad_dir = squad_dir or state_store.squad_dir
@@ -1112,6 +1113,7 @@ class SquadController:
         self._re_sources = list(re_sources or [])
         self._product_inputs = product_inputs
         self._stack_contract = dict(stack_contract or {})
+        self._spec_authoring_mode = normalize_spec_authoring_mode(spec_authoring_mode)
         self._prepared_product_input_updates: dict[
             str,
             dict[str, object],
@@ -8360,7 +8362,7 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
                 spec_authoring_mode=str(
-                    prepared_identity.get("spec_authoring_mode") or "proportional"
+                    prepared_identity.get("spec_authoring_mode") or self._spec_authoring_mode
                 ),
                 implementation_targets=self._implementation_targets,
                 product_inputs=(
