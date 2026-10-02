@@ -458,10 +458,18 @@ def test_final_review_cannot_rewrite_its_candidate(tmp_path, mode, path):
         target.parent.mkdir(exist_ok=True)
         target.write_text("Unexpected candidate change")
 
-    ctrl, store, executor, node, _, calls = final_fixture(tmp_path, mode, after_review=mutate)
+    ctrl, store, executor, node, spec, calls = final_fixture(tmp_path, mode, after_review=mutate)
     assert advance(ctrl, store, executor.execute(node, store)) == "phase3-consensus"
+    before = store.load()
     result = executor.execute(node, store)
-    assert isinstance(result, ExecutorBlockedResult) and result.reason == "repair_review_stale"
+    # Publication rejects the reviewer-owned scope violation before the later
+    # candidate-staleness check. Require the concrete rejection, not any block.
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "invalid_phase_outputs"
+    assert result.result.state_updates["invalid_outputs"] == [
+        {"path": str(spec / path), "reason": "mutation outside write scope"},
+    ]
+    assert store.load() == before
     assert calls.count(("PLAN2", False)) == 1
 
 
