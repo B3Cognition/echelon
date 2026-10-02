@@ -2116,20 +2116,32 @@ class TestSmartResumeDetection:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Target-side harness runs keep spec artifacts at the polyrepo root."""
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.spec_frontmatter import write_targets
+        from harness.verification_stack_runtime import apply_verification_stacks
+
         polyrepo = tmp_path / "wrapper"
         target = polyrepo / "ow-opta-widgets-v3-orig"
         target.mkdir(parents=True)
         spec_dir = polyrepo / "specs" / "002-law-sddp-snapshot-fix"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
+        write_targets(spec_dir, [target.name])
         spec_file = spec_dir / "spec.md"
         tasks_file = spec_dir / "tasks.md"
-        spec_file.write_text("# Spec\n", encoding="utf-8")
-        tasks_file.write_text("# Tasks\n", encoding="utf-8")
+        tasks_file.write_text(
+            f"- [ ] T-001 complexity=standard phase=build req=INFRA depends=none target={target.name}\n",
+            encoding="utf-8",
+        )
         monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", target.name)
 
         coord = _make_controller(target, should_pass=True)
+        apply_verification_stacks(coord._config, project_root=polyrepo, target_root=target)
+        commit = coord._worktree_head(target)
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
+        )
         intent = RunIntent(
             spec_id="002-law-sddp-snapshot-fix",
             max_outer=5,
@@ -2146,8 +2158,9 @@ class TestSmartResumeDetection:
             )
             MockRalph.return_value = mock_controller
 
-            coord.run(intent)
+            result = coord.run(intent)
 
+        assert result.status == "converged"
         from harness.state import StateStore
 
         state_dir = target / "runs" / "state"
