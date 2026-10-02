@@ -183,16 +183,33 @@ def test_why1_stop_restart_preserves_decision_ids_and_usage(checkpoint_case, mon
     request = {**selection(checkpoint_case), "through_phase": "phase1-why1"}
     target, method = {
         "accepted": (store, "advance_discovery_operation"), "staged": (ctrl, "_prepare_spec_step_effects"),
-        "routed": (store, "advance"), "promoted": (IdentityStore, "apply_identity_publication"),
-        "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_controller_completion"),
+        "routed": (store, "begin_spec_step"), "promoted": (IdentityStore, "apply_identity_publication"),
+        "context": (ctrl, "_apply_controller_completion_effect"), "completed": (store, "complete_spec_step"),
         "released": (IdentityStore, "release_identity_publication"),
     }[point]
     original = getattr(target, method)
     def interrupt(*args, **kwargs):
         value = original(*args, **kwargs)
-        if (store.load().get("last_dispatch") or {}).get("phase_id") == "phase1-why1" or (
-                point == "accepted" and kwargs.get("producer") == "why1" and args[1] == "finish") or (
-                point == "staged" and kwargs.get("from_phase") == "phase1-why1"):
+        current = store.load()
+        selected = {
+            "accepted": lambda: kwargs.get("producer") == "why1" and args[1] == "finish",
+            "staged": lambda: kwargs.get("from_phase") == "phase1-why1",
+            "routed": lambda: args[0].intent.route["from_phase"] == "phase1-why1",
+            "promoted": lambda: current["phase"] == "phase1-why1" and "pending_spec_step" in current,
+            "context": lambda: args[0].intent.route["from_phase"] == "phase1-why1" and args[0].marker.step == "context",
+            "completed": lambda: args[0].intent.route["from_phase"] == "phase1-why1",
+            "released": lambda: (current.get("last_dispatch") or {}).get("phase_id") == "phase1-why1",
+        }[point]()
+        if selected:
+            if point == "routed":
+                assert current["pending_spec_step"] == args[0].marker.to_dict()
+                assert current["token_usage"] == 63
+                assert "blocked_decision" not in current
+            elif point == "completed":
+                assert "pending_spec_step" not in current
+                assert current["last_dispatch"]["spec_step_id"] == args[0].marker.step_id
+                assert current["token_usage"] == 84
+                assert current["blocked_decision"]["status"] == "awaiting_human"
             raise Interrupted()
         return value
     with monkeypatch.context() as patch:
@@ -229,13 +246,23 @@ def test_why1_clarification_restart_is_exact(checkpoint_case, monkeypatch, point
     history = identity.identity_history(spec_id="game")
     answer = AppliedHumanInputResolution(None, "Single player", "user")
     target, method = {
-        "staged": (ctrl, "_prepare_spec_step_effects"), "resolved": (store, "apply_human_input_state_resolution"),
+        "staged": (ctrl, "_prepare_spec_step_effects"), "resolved": (store, "begin_spec_step"),
         "promoted": (IdentityStore, "apply_identity_publication"), "context": (ctrl, "_apply_controller_completion_effect"),
-        "completed": (store, "complete_controller_completion"), "released": (IdentityStore, "release_identity_publication"),
+        "completed": (store, "complete_spec_step"), "released": (IdentityStore, "release_identity_publication"),
     }[point]
     original = getattr(target, method)
     def interrupt(*args, **kwargs):
         value = original(*args, **kwargs)
+        if point == "resolved":
+            current = store.load()
+            assert current["pending_spec_step"] == args[0].marker.to_dict()
+            assert current["pending_spec_step"]["origin"] == "resolution"
+            assert current["blocked_decision"] == before["blocked_decision"]
+        elif point == "completed":
+            current = store.load()
+            assert "pending_spec_step" not in current
+            assert current["blocked_decision"]["status"] == "resolved"
+            assert current["last_human_input_completion"]["decision_id"] == before["blocked_decision"]["id"]
         raise Interrupted()
     with monkeypatch.context() as patch:
         patch.setattr(target, method, interrupt)
