@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.support.temp_storage import copy_package_build_tree
+from tests.integration.test_squad_controller import _materialize_canonical_test_config
 
 from echelon.spec_service import (
     _cmd_continue,
@@ -63,6 +64,7 @@ def _deploy_workspace_bundles(tmp_path: Path) -> None:
 
 
 def _initialize_active_run(project_root: Path) -> Path:
+    _materialize_canonical_test_config(project_root)
     subprocess.run(
         ["git", "init", "-b", "main"],
         cwd=project_root,
@@ -92,6 +94,19 @@ def _initialize_active_run(project_root: Path) -> Path:
     (run_dir / "staging").mkdir()
     (project_root / "runs" / ".current").write_text("run-active\n", encoding="utf-8")
     return run_dir
+
+
+def test_manual_phase_fixture_declares_discovery_intent_before_dispatch(tmp_path: Path) -> None:
+    from tests.integration.test_squad_controller import _controller
+    from harness.config import get_full_resolved_config
+
+    run_dir = _initialize_active_run(tmp_path)
+    controller, store = _controller(tmp_path, squad_dir=run_dir)
+    before = store.load()
+    assert get_full_resolved_config(tmp_path)["stacks"]["selected"] == ["generic"]
+    assert controller._verification_dispatch_admission(before) is None
+    assert store.load() == before
+    controller._provider.exec_agent.assert_not_called()
 
 
 def _seal_pending_v2_decision(
@@ -704,6 +719,7 @@ def test_phase_run_experimental_artifact_quality_phases(
     config_path = tmp_path / ".echelon" / "config.yml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+    _materialize_canonical_test_config(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
