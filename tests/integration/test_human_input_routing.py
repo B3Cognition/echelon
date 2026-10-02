@@ -763,7 +763,16 @@ def _legacy_workflow_controller(
     provider_result: SquadAgentResult | None = None,
     recommended_answer: str | None = None,
     risk_level: str | None = None,
+    selected_stacks: tuple[str, ...] = ("generic",),
 ) -> tuple[SquadController, SquadStateStore, object]:
+    # Public controller entry points require explicit discovery intent before
+    # reaching the human-input boundary. Keep that production admission real.
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump({"stacks": {"selected": list(selected_stacks)}}),
+        encoding="utf-8",
+    )
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     setup_policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
@@ -2887,6 +2896,37 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     assert decision["autonomy_mode"] == "guided"
     assert decision["status"] == "awaiting_human"
     assert state["recovery_instruction"]["decision_id"] == decision["id"]
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("entry", ["run", "run_single_phase"])
+def test_legacy_decision_requires_stack_selection_before_adaptation(
+    tmp_path: Path,
+    entry: str,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+        selected_stacks=(),
+    )
+    before = store._path.read_bytes()
+
+    result = (
+        controller.run(user_message="registered user message", mode="guided")
+        if entry == "run"
+        else controller.run_single_phase(
+            "phase1-tracker",
+            user_message="registered user message",
+            mode="guided",
+            initial_state_updates={"manual_mutation": "must-not-commit"},
+        )
+    )
+
+    assert result.status == "blocked"
+    assert "stack_selection_required" in result.summary
+    assert store._path.read_bytes() == before
     provider.exec_agent.assert_not_called()
 
 
