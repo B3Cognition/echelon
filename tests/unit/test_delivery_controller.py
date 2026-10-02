@@ -1681,11 +1681,15 @@ class TestTaskDescriptionInBuildPrompt:
 
             mock_controller.run_loop.side_effect = capture_run_loop
 
-            coord = _make_controller(tmp_path, should_pass=True)
+            coord = _make_controller(tmp_path, should_pass=True, published_spec=True)
             intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
             coord.run(intent)
 
-        assert captured["build_prompt"] == "spec spec-001 semi mode"
+        base, separator, stack_contract = captured["build_prompt"].partition(
+            "\n\n## Echelon Stack Contract"
+        )
+        assert base == "spec spec-001 semi mode"
+        assert separator and "cli-artifacts" in stack_contract
 
 
 @pytest.mark.unit
