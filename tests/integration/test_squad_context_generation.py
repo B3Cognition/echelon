@@ -149,6 +149,19 @@ def test_phase1_tracker_canonical_progress_verdicts_route_forward(
     provider = _tracker_provider(verdict)
     ctrl, store = _controller(tmp_path, provider=provider)
 
+    def publish_intent(*args, **kwargs):
+        spec = Path(store.load().get("spec_dir") or "specs")
+        if not spec.is_absolute():
+            spec = tmp_path / spec
+        spec.mkdir(parents=True, exist_ok=True)
+        intent = spec / "user-intent.md"
+        intent.write_text("# User Intent\n\nBuild photo sharing.\n")
+        result = provider.exec_agent.return_value
+        result.echelon_result["output_files"] = [str(intent)]
+        return result
+
+    provider.exec_agent.side_effect = publish_intent
+
     result = ctrl.run_single_phase("phase1-tracker", "build photo sharing", "semi")
     state = store.load()
     context_dir = Path(state["context_dir"])
