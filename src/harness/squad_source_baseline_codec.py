@@ -37,6 +37,8 @@ _IMAGE_KEYS = frozenset({"kind", "sha256", "mode", "content_base64"})
 _TREE_KEYS = frozenset({"path", "exists", "directories", "files"})
 _DIRECTORY_KEYS = frozenset({"path", "mode"})
 _FILE_KEYS = frozenset({"path", "image"})
+_PATH_CACHE_ENTRIES = 1024
+_PATH_CACHE_LENGTH_LIMIT = 4096
 
 
 def _invalid() -> None:
@@ -53,8 +55,17 @@ def _text(value: object) -> str:
     return value
 
 
+@lru_cache(maxsize=_PATH_CACHE_ENTRIES)
+def _validated_source_path(value: str) -> str:
+    """Memoize only immutable path syntax, never existence or permissions."""
+    return _source_path(value).as_posix()
+
+
 def _path(value: object) -> str:
-    return _source_path(_text(value)).as_posix()
+    raw = _text(value)
+    if len(raw) > _PATH_CACHE_LENGTH_LIMIT:
+        return _source_path(raw).as_posix()
+    return _validated_source_path(raw)
 
 
 def _mode(value: object) -> int:
@@ -93,8 +104,15 @@ def _encode_image(
     }
 
 
-def _parts(path: str) -> tuple[str, ...]:
+@lru_cache(maxsize=_PATH_CACHE_ENTRIES)
+def _validated_source_parts(path: str) -> tuple[str, ...]:
     return tuple(Path(path).parts)
+
+
+def _parts(path: str) -> tuple[str, ...]:
+    if len(path) > _PATH_CACHE_LENGTH_LIMIT:
+        return tuple(Path(path).parts)
+    return _validated_source_parts(path)
 
 
 def _is_at_or_below(path: str, root: str) -> bool:

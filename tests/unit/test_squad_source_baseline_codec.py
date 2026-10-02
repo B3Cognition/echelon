@@ -139,6 +139,46 @@ def test_exact_v1_wire_shape_is_canonical_and_independently_literal():
     assert encode_initial_publication_sources(_wire_snapshot()) == EXPECTED_WIRE
 
 
+def test_repeated_source_path_validation_is_pure_bounded_and_type_strict(monkeypatch):
+    from collections import Counter
+    from harness import squad_source_baseline_codec as codec
+
+    codec._validated_source_path.cache_clear()
+    codec._validated_source_parts.cache_clear()
+    counts = Counter()
+    original = codec._source_path
+
+    def counted(value):
+        counts[value] += 1
+        return original(value)
+
+    monkeypatch.setattr(codec, "_source_path", counted)
+    for _ in range(2):
+        assert codec.encode_initial_publication_sources(_wire_snapshot()) == EXPECTED_WIRE
+    assert all(count == 1 for count in counts.values())
+    assert set(counts) == {"gone", "new", "source", "source/nested", "source/.hidden", "constitution.md"}
+    # Cache hits never admit a path subclass or a noncanonical alias.
+    class ForgedPath(str):
+        pass
+    for path in (ForgedPath("source"), "source/../source", "source//nested", "/source"):
+        with pytest.raises(publication.PublicationError):
+            codec._path(path)
+    for index in range(codec._PATH_CACHE_ENTRIES + 1):
+        path = codec._path(f"bounded/{index}")
+        codec._parts(path)
+    assert codec._validated_source_path.cache_info().currsize == codec._PATH_CACHE_ENTRIES
+    assert codec._validated_source_parts.cache_info().currsize == codec._PATH_CACHE_ENTRIES
+    long_path = "x" * (codec._PATH_CACHE_LENGTH_LIMIT + 1)
+    for _ in range(2):
+        assert codec._path(long_path) == long_path
+        assert codec._parts(long_path) == (long_path,)
+        with pytest.raises(publication.PublicationError):
+            codec._path("bad/../alias")
+    assert counts[long_path] == counts["bad/../alias"] == 2
+    codec._validated_source_path.cache_clear()
+    codec._validated_source_parts.cache_clear()
+
+
 def test_decode_returns_only_exact_immutable_sequences_and_bytes():
     from harness.squad_source_baseline_codec import (
         decode_initial_publication_sources,
