@@ -213,7 +213,8 @@ def test_fresh_run_can_select_synthesis_without_a_second_invocation(checkpoint_c
     assert checkpoint_case[1].load()["phase_dispatch_counts"] == {"phase1-discover": 1, "phase1-synthesizer": 1}
 
 
-def test_missing_prior_ledger_blocks_before_checkpoint_writer(accepted, monkeypatch):
+@pytest.mark.parametrize("damage", ["missing", "empty", "changed", "symlink"])
+def test_invalid_prior_ledger_blocks_before_checkpoint_writer(accepted, monkeypatch, damage):
     from harness import phase_checkpoints
     case, executor, request = accepted
     def interrupt(*args, **kwargs):
@@ -226,11 +227,26 @@ def test_missing_prior_ledger_blocks_before_checkpoint_writer(accepted, monkeypa
             capture_output=True, text=True).stdout
     before = head()
     ledger = case[0] / "specs/game/.echelon/checkpoints.json"
-    ledger.unlink()
+    if damage == "missing":
+        ledger.unlink()
+    elif damage == "empty":
+        ledger.write_text(json.dumps({"spec_id": "game", "checkpoints": []}))
+    elif damage == "changed":
+        value = json.loads(ledger.read_bytes())
+        value["checkpoints"][0]["phase"] = "phase1-what"
+        ledger.write_text(json.dumps(value))
+    else:
+        retained = case[0] / "foreign-ledger.json"
+        ledger.rename(retained)
+        ledger.symlink_to(retained)
+    damaged_image = ledger.read_bytes() if damage != "missing" else None
     result = controller(case, executor).run(managed_discovery=request)
     assert result.status == "blocked"
     assert head() == before
-    assert not ledger.exists()
+    if damage == "missing":
+        assert not ledger.exists()
+    else:
+        assert ledger.read_bytes() == damaged_image
     assert len(executor.calls) == 6
 
 

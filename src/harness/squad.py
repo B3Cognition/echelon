@@ -1852,6 +1852,23 @@ class SquadController:
         prepared: PreparedSpecStepEffects | PreparedSpecStep,
         state: Mapping[str, object],
     ) -> dict[str, object]:
+        if isinstance(prepared, PreparedSpecStep) and "managed_identity" in state:
+            # Native checkpoint execution must retain the managed pre-write
+            # guard formerly supplied by the companion effect dispatcher.
+            marker = self._completion_marker_from_spec_step(prepared)
+            completion = load_prepared_spec_step_effects(
+                self._project_root, self._squad_dir, marker,
+            )
+            effect_state = self._legacy_completion_effect_state(
+                prepared, marker, completion,
+            )
+            self._require_companion_effect_provenance(
+                effect_state, marker, completion.intent.to_dict(),
+            )
+            from harness import discovery_completion
+            discovery_completion.require_applied(
+                self._project_root, self._squad_dir, effect_state, completion,
+            )
         route = (
             step_effect_intent(prepared).route
             if isinstance(prepared, PreparedSpecStep)
