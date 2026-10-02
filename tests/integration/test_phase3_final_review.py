@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 
 from harness.squad_provider import SquadAgentResult
 from harness.squad_executors import ExecutorBlockedResult
@@ -179,6 +180,12 @@ def test_final_review_completes_without_report_revision_replanning(tmp_path, mod
 def prepare_normal_plan(tmp_path, ctrl, store, spec):
     from tests.integration.test_squad_controller import _mark_constitution_complete
     from harness.spec_lexicon_gate import run_spec_lexicon_gate
+    # This fixture exercises discovery, not runnable-plan publication. Declare
+    # that intent explicitly without bypassing the stack admission gate.
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config = yaml.safe_load(config_path.read_text())
+    config["stacks"]["selected"] = ["generic"]
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     fixtures = Path(__file__).resolve().parents[1] / "fixtures/lexicon"
     source = "# Feature\n\n- **REQ-001**: Parse the document.\n- **REQ-002**: Check coverage.\n- **AC-001**: Return the tree.\n- **AC-002**: All requirements covered.\n"
     (spec / "spec.md").write_text(source)
@@ -197,6 +204,27 @@ def prepare_normal_plan(tmp_path, ctrl, store, spec):
     state.update(gate.state_updates())
     state.update(phase="phase3-plan", max_iterations=5)
     store.save(state)
+
+
+@pytest.mark.parametrize("selection", [None, []], ids=["missing", "empty"])
+def test_normal_plan_still_requires_explicit_stack_selection(tmp_path, selection):
+    ctrl, store, _, _, spec, calls = final_fixture(tmp_path, "banzai")
+    prepare_normal_plan(tmp_path, ctrl, store, spec)
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config = yaml.safe_load(config_path.read_text())
+    if selection is None:
+        config["stacks"].pop("selected")
+    else:
+        config["stacks"]["selected"] = selection
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    before = store.load()
+
+    result = ctrl.run("task", "greenfield")
+
+    assert result.status == "blocked"
+    assert "stack_selection_required" in result.summary
+    assert store.load() == before
+    assert calls == []
 
 
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
