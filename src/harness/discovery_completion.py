@@ -1322,14 +1322,10 @@ def _released_discovery_projections(root, run, state, *, require_checkpoint=Fals
     raise CompletionError("intent_mismatch")
 
 
-def _retained_input_projection(root, run, state, store, *, operation_id, source, require_checkpoint, required_route=None, required_origin="routed"):
-    """Read one exact retained completion; ancestry selection stays with caller."""
+def _retained_completion_proof(proof, *, source=None):
+    """Validate retained bytes and distinguish step from companion bindings."""
     from harness.squad_completion import validate_retained_completion_proof
-    selection = bootstrap_from_state(state)["selection"]
-    row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
-    _require(row is not None and row["state"] == "released")
-    proof = _document(row["completion_payload"])
-    _require(type(require_checkpoint) is bool and type(proof["version"]) is int and proof["version"] in {2, 3, 4})
+    _require(type(proof["version"]) is int and proof["version"] in {2, 3, 4})
     field = "checkpoint" if proof["version"] == 2 else "proof"
     _closed(
         proof,
@@ -1340,23 +1336,32 @@ def _retained_input_projection(root, run, state, store, *, operation_id, source,
     _closed(proof[field], ("intent", "receipts"))
     marker, intent, receipts = validate_retained_completion_proof(proof["completion"],
         proof[field]["intent"], proof[field]["receipts"])
+    expected_source = proof["source"] if proof["version"] == 4 else dict(
+        dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
+        completion_receipts_sha256=marker.receipts_sha256,
+        completed_publication_binding_sha256=marker.publication_binding_sha256)
+    _closed(expected_source, SOURCE_FIELDS)
+    _require(expected_source["dispatch_id"] == marker.completion_id
+        and all(type(expected_source[key]) is str and re.fullmatch(r"[0-9a-f]{64}", expected_source[key])
+            for key in SOURCE_FIELDS if key != "dispatch_id"))
+    if source is not None:
+        _require(source == expected_source)
+    return marker, intent, receipts
+
+
+def _retained_input_projection(root, run, state, store, *, operation_id, source, require_checkpoint, required_route=None, required_origin="routed"):
+    """Read one exact retained completion; ancestry selection stays with caller."""
+    selection = bootstrap_from_state(state)["selection"]
+    row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
+    _require(row is not None and row["state"] == "released")
+    proof = _document(row["completion_payload"])
+    _require(type(require_checkpoint) is bool)
+    marker, intent, receipts = _retained_completion_proof(proof, source=source)
     if required_route is not None:
         _require(required_origin in {"routed", "resolution"} and intent.origin == required_origin and intent.route["from_phase"] == required_route[0]
             and intent.route["to_phase"] == required_route[1])
         if required_origin == "routed":
             _require(intent.route["manual_phase_run"] is False and intent.route["record_completion"] is True)
-    if source is not None:
-        expected_source = (
-            proof["source"]
-            if proof["version"] == 4
-            else dict(
-                dispatch_id=marker.completion_id,
-                completion_intent_sha256=marker.intent_sha256,
-                completion_receipts_sha256=marker.receipts_sha256,
-                completed_publication_binding_sha256=marker.publication_binding_sha256,
-            )
-        )
-        _require(source == expected_source)
     _require(not (require_checkpoint or proof["version"] == 2) or "checkpoint" in intent.effect_plan)
     if intent.origin == "resolution" and intent.route["from_phase"] == "checkpoint-assess":
         # This row is already released with an authenticated native completion

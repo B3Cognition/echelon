@@ -123,8 +123,7 @@ def retained_clarification_records(store, *, spec_id, source):
     complete discovery ancestry validator. This is not an admission API.
     """
     from types import SimpleNamespace
-    from harness.discovery_completion import _document, _require, _closed
-    from harness.squad_completion import validate_retained_completion_proof
+    from harness.discovery_completion import _document, _require, _closed, _retained_completion_proof
     from harness.element_identity_publication import decode_publication_request
     records, seen = [], set()
     while True:
@@ -135,18 +134,7 @@ def retained_clarification_records(store, *, spec_id, source):
         row = store.identity_publication(spec_id=spec_id, operation_id=operation_id)
         _require(row is not None and row["state"] == "released")
         proof = _document(row["completion_payload"])
-        _require(type(proof["version"]) is int and proof["version"] in {2, 3, 4})
-        field = "checkpoint" if proof["version"] == 2 else "proof"
-        _closed(proof, ("version", "completion", field, "source")
-            if proof["version"] == 4 else ("version", "completion", field))
-        _closed(proof[field], ("intent", "receipts"))
-        marker, intent, _ = validate_retained_completion_proof(proof["completion"],
-            proof[field]["intent"], proof[field]["receipts"])
-        expected_source = proof["source"] if proof["version"] == 4 else dict(
-            dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
-            completion_receipts_sha256=marker.receipts_sha256,
-            completed_publication_binding_sha256=marker.publication_binding_sha256)
-        _require(source == expected_source and source["dispatch_id"] == marker.completion_id)
+        marker, intent, _ = _retained_completion_proof(proof, source=source)
         _require(intent.publication["managed_discovery"] == dict(version=1, request=row["request"]))
         request = decode_publication_request(row["request"])
         recovery = _document(request.recovery_payload)
@@ -636,17 +624,14 @@ def decode_clarification_binding(publication, request, recovery, completion_id, 
 
 def require_parent(state, binding, store, *, root=None, run=None):
     """Authenticate the exact retained Tracker result that asked this question."""
-    from harness.discovery_completion import _document, _require, decode_binding
-    from harness.squad_completion import validate_retained_completion_proof
+    from harness.discovery_completion import _document, _require, decode_binding, _retained_completion_proof
     from harness.element_identity_publication import encode_publication_request
     source = binding.recovery["source_completion"]
     retained = store.identity_publication(spec_id=binding.spec_id,
         operation_id="discovery-completion-" + source["dispatch_id"])
     _require(retained is not None and retained["state"] == "released")
     proof = _document(retained["completion_payload"])
-    marker, intent, _ = validate_retained_completion_proof(proof["completion"], proof["proof"]["intent"], proof["proof"]["receipts"])
-    _require(source == dict(dispatch_id=marker.completion_id, completion_intent_sha256=marker.intent_sha256,
-        completion_receipts_sha256=marker.receipts_sha256, completed_publication_binding_sha256=marker.publication_binding_sha256))
+    marker, intent, _ = _retained_completion_proof(proof, source=source)
     parent = decode_binding(intent.publication, completion_id=marker.completion_id, state=state)
     _require(parent is not None and parent.producer == binding.producer and not parent.clarification
         and parent.recovery["operation"] == binding.recovery["operation"]

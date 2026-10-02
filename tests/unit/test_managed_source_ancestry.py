@@ -50,6 +50,7 @@ def source_for(state):
 
 def test_clarification_history_binds_current_released_source(synthesized, monkeypatch):
     from harness.tracker_clarification import retained_clarification_records
+    from harness.discovery_completion import _retained_completion_proof
 
     case, executor = synthesized
     _, state_store, identity, _ = case
@@ -61,6 +62,18 @@ def test_clarification_history_binds_current_released_source(synthesized, monkey
     proof = json.loads(retained["completion_payload"])
     assert proof["version"] == 4 and proof["source"] == source
     assert retained_clarification_records(identity, spec_id="game", source=source) == ()
+    for damage in ("extra", "missing", "digest", "dispatch"):
+        altered = deepcopy(proof)
+        if damage == "extra":
+            altered["source"]["unbound"] = True
+        elif damage == "missing":
+            altered["source"].pop("completion_receipts_sha256")
+        elif damage == "digest":
+            altered["source"]["completion_receipts_sha256"] = "not-a-digest"
+        else:
+            altered["source"]["dispatch_id"] = "0" * 32
+        with pytest.raises(ValueError):
+            _retained_completion_proof(altered)
 
     for key in SOURCE_FIELDS:
         altered = deepcopy(proof)
