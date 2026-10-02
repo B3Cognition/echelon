@@ -861,9 +861,9 @@ def validate_delivery_constitution_preflight_contract(root: Path) -> list[str]:
                 r"_block_if_harness_phase_a_not_ready",
             ),
             PatternCheck(
-                "delivery run preflight uses shared readiness validator",
+                "delivery run preflight uses configured readiness validator",
                 delivery_service,
-                r"validate_phase_a_readiness\(\{\"status\": \"done\"\}, \[spec_dir\]\)",
+                r"validate_configured_phase_a_build_readiness\(\s*\{\"status\":\s*\"done\"\},\s*\[spec_dir\],\s*project_root=project_root\s*\)",
             ),
         ]
     )

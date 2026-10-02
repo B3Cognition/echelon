@@ -94,6 +94,21 @@ def test_delivery_constitution_preflight_contract() -> None:
     assert validate_delivery_constitution_preflight_contract(ROOT) == []
 
 
+def test_delivery_preflight_contract_rejects_unconfigured_readiness_call(tmp_path: Path) -> None:
+    source = ROOT / "src/echelon/delivery_service.py"
+    target = tmp_path / "src/echelon/delivery_service.py"
+    target.parent.mkdir(parents=True)
+    text = source.read_text(encoding="utf-8")
+    current = 'validate_configured_phase_a_build_readiness({"status": "done"}, [spec_dir], project_root=project_root)'
+    assert current in text
+    target.write_text(text.replace(current, 'validate_phase_a_readiness({"status": "done"}, [spec_dir])'), encoding="utf-8")
+
+    failures = validate_delivery_constitution_preflight_contract(tmp_path)
+
+    assert len(failures) == 1
+    assert "configured readiness validator" in failures[0]
+
+
 def test_constitution_source_of_truth_contract() -> None:
     assert validate_constitution_source_of_truth_contract(ROOT) == []
 
