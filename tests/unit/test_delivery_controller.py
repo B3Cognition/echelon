@@ -2183,17 +2183,21 @@ class TestSmartResumeDetection:
         monkeypatch: pytest.MonkeyPatch,
         conflicting_environment: bool,
     ) -> None:
+        from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
+        from harness.spec_frontmatter import write_targets
+        from harness.verification_stack_runtime import apply_verification_stacks
+
         workspace = tmp_path / "workspace"
         harness_root = workspace / "runs" / "targets" / "api"
         target_root = workspace / "sources" / "api"
-        target_root.mkdir(parents=True)
+        _initialize_git_worktree(target_root)
         spec_dir = workspace / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
+        write_targets(spec_dir, ["sources/api"])
         spec_file = spec_dir / "spec.md"
         tasks_file = spec_dir / "tasks.md"
-        spec_file.write_text("# Explicit spec\n", encoding="utf-8")
         tasks_file.write_text(
-            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "- [ ] T-001 complexity=standard phase=build req=INFRA "
             "depends=none target=sources/api\n",
             encoding="utf-8",
         )
@@ -2229,9 +2233,19 @@ class TestSmartResumeDetection:
             provider="docker",
             llm=LlmConfig(enabled=True),
         )
+        apply_verification_stacks(config, project_root=workspace, target_root=target_root)
+        gitops = MagicMock()
+        gitops.get_latest_worktree.return_value = str(target_root)
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=target_root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {commit}\n---\n# Fulfillment\n", encoding="utf-8",
+        )
         coordinator = DeliveryController(
             provider=MockProvider(should_pass=True),
-            gitops=MagicMock(),
+            gitops=gitops,
             config=config,
             base_dir=harness_root,
             orchestration_root=workspace,
@@ -2248,8 +2262,9 @@ class TestSmartResumeDetection:
                 tokens_used=0,
                 final_verify=None,
             )
-            coordinator.run(intent)
+            result = coordinator.run(intent)
 
+        assert result.status == "converged"
         state = StateStore(
             harness_root / "runs" / "state",
             "spec-001",
