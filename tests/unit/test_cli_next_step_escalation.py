@@ -12,6 +12,7 @@ from echelon.spec_service import (
     _print_open_issues,
     _print_staging_artifacts,
 )
+from tests.unit.test_cli_harness_run import _write_phase_a_build_inputs
 
 
 @pytest.mark.parametrize("reason", ["missing_phase_outputs", "invalid_phase_outputs"])
@@ -375,22 +376,7 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
         "# Quality Gates\n\n## Verdict: PASS\n",
         encoding="utf-8",
     )
-    for name in (
-        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-        "00-overview.md", "requirements-overview.md",
-        "plan-conformance.md", "plan-conformance.json",
-        "test-strategy.md", "test-architecture.md", "coverage-map.md",
-    ):
-        content = (
-            _valid_plan_conformance_json()
-            if name == "plan-conformance.json"
-            else f"# {name}\n"
-        )
-        (spec_dir / name).write_text(content, encoding="utf-8")
-    (spec_dir / "constitution.md").write_text(
-        "# Constitution\n\nReady.\n",
-        encoding="utf-8",
-    )
+    _write_phase_a_build_inputs(spec_dir)
 
     _print_next_steps(tmp_path, "done")
 
@@ -675,22 +661,7 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in (
-        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-        "00-overview.md", "requirements-overview.md",
-        "plan-conformance.md", "plan-conformance.json",
-        "test-strategy.md", "test-architecture.md", "coverage-map.md",
-    ):
-        content = (
-            _valid_plan_conformance_json()
-            if name == "plan-conformance.json"
-            else f"# {name}\n"
-        )
-        (spec_dir / name).write_text(content, encoding="utf-8")
-    (spec_dir / "constitution.md").write_text(
-        "# Constitution\n\nReady.\n",
-        encoding="utf-8",
-    )
+    _write_phase_a_build_inputs(spec_dir)
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
     staging_dir = run_dir / "staging"
@@ -749,22 +720,7 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in (
-        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-        "00-overview.md", "requirements-overview.md",
-        "plan-conformance.md", "plan-conformance.json",
-        "test-strategy.md", "test-architecture.md", "coverage-map.md",
-    ):
-        content = (
-            _valid_plan_conformance_json()
-            if name == "plan-conformance.json"
-            else f"# {name}\n"
-        )
-        (spec_dir / name).write_text(content, encoding="utf-8")
-    (spec_dir / "constitution.md").write_text(
-        "# Constitution\n\nReady.\n",
-        encoding="utf-8",
-    )
+    _write_phase_a_build_inputs(spec_dir)
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
     staging_dir = run_dir / "staging"
