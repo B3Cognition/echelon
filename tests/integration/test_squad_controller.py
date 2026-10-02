@@ -3776,9 +3776,9 @@ class TestAgentResultIntegrity:
             monkeypatch.setattr(context_metadata, "write_feature_metadata", fault)
         else:
             monkeypatch.setattr(
-                squad_module,
-                "validate_phase_a_readiness",
-                lambda *_: PhaseAReadinessResult(
+                ctrl,
+                "_build_readiness",
+                lambda *_args, **_kwargs: PhaseAReadinessResult(
                     ready=False,
                     blockers=["injected readiness failure"],
                     missing={},
