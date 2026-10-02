@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -22,6 +23,7 @@ from harness.squad import SquadController
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from tests.integration.test_squad_controller import _materialize_canonical_test_config
 
 DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
@@ -88,6 +90,7 @@ def _controller(
     squad_dir: Path | None = None,
 ) -> tuple[SquadController, SquadStateStore]:
     _ensure_git_repo(tmp_path)
+    _materialize_canonical_test_config(tmp_path)
     if squad_dir is None:
         squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +119,26 @@ def test_run_context_generation_uses_runs_directory(tmp_path: Path) -> None:
     assert result.prior_context.exists()
     assert result.current_context.exists()
     assert result.stale_report.exists()
+
+
+@pytest.mark.parametrize("selected", [None, []])
+def test_context_controller_declares_discovery_without_overriding_empty_selection(tmp_path, selected):
+    if selected is not None:
+        path = tmp_path / ".echelon/config.yml"
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"stacks": {"selected": selected}}))
+    ctrl, store = _controller(tmp_path)
+    config = yaml.safe_load((tmp_path / ".echelon/config.yml").read_text())
+    assert config["stacks"]["selected"] == (["generic"] if selected is None else [])
+    before = store.load()
+    admitted = ctrl._verification_dispatch_admission(before)
+    if selected is None:
+        assert admitted is None
+    else:
+        assert admitted.status == "blocked"
+        assert "stack_selection_required" in admitted.summary
+    assert store.load() == before
+    ctrl._provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize("verdict", ["ALIGNED", "DRIFT"])
