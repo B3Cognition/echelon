@@ -162,7 +162,15 @@ def _controller(
     policy: HumanInputPolicy,
     provider_result: object | None = None,
     provider: object | None = None,
+    selected_stacks: tuple[str, ...] | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
+    if selected_stacks is not None:
+        config_path = tmp_path / ".echelon" / "config.yml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            yaml.safe_dump({"stacks": {"selected": list(selected_stacks)}}),
+            encoding="utf-8",
+        )
     squad_dir = tmp_path / "runs" / "spec-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
@@ -5386,7 +5394,7 @@ def test_human_input_handler_invalid_resolution_writes_nothing(
     ).exists()
 
 
-def test_phase_dispatch_limit_uses_human_input_setter_path(
+def test_phase_dispatch_limit_seals_human_input_before_provider_dispatch(
     tmp_path: Path,
 ) -> None:
     policy = replace(
@@ -5401,6 +5409,7 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
         tmp_path,
         autonomy_mode="guided",
         policy=policy,
+        selected_stacks=("generic",),
     )
     for guard_name in (
         "_guard_constitution_provenance",
@@ -5431,25 +5440,57 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
 """,
         encoding="utf-8",
     )
-    controller.handle_human_input = MagicMock(return_value=False)
+    result = controller.run("message", "guided")
+
+    assert result.status == "blocked"
+    state = store.load()
+    decision = state["blocked_decision"]
+    assert state["status"] == "blocked"
+    assert state["phase_dispatch_counts"]["phase1-what"] == controller._max_iterations + 2
+    assert decision["status"] == "awaiting_human"
+    assert decision["source_kind"] == "controller_safeguard"
+    assert decision["producer_id"] == "phase_dispatch_limit"
+    assert decision["reason_code"] == "phase_dispatch_limit"
+    assert decision["source_phase"] == "phase1-what"
+    assert state["recovery_instruction"]["decision_id"] == decision["id"]
+    assert decision["recommended_option_id"] == "ISS-001"
+    assert [option["id"] for option in decision["options"] if option["recommended"]] == [
+        "ISS-001"
+    ]
+    assert "first eligible entry" in decision["recommendation_rationale"]
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("selected_stacks", [None, ()], ids=["missing", "empty"])
+def test_phase_dispatch_limit_requires_stack_selection_before_state_changes(
+    tmp_path: Path,
+    selected_stacks: tuple[str, ...] | None,
+) -> None:
+    policy = replace(
+        _safeguard_policy("phase_dispatch_limit", phase_id="phase1-what"),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+        selected_stacks=selected_stacks,
+    )
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+    state_path = store.squad_dir / "state.json"
+    before = state_path.read_bytes()
 
     result = controller.run("message", "guided")
 
-    assert result.status == "running"
-    controller.handle_human_input.assert_called_once()
-    call = controller.handle_human_input.call_args
-    request = call.args[0]
-    assert request.source_kind == "controller_safeguard"
-    assert request.producer_id == "phase_dispatch_limit"
-    assert request.reason_code == "phase_dispatch_limit"
-    assert request.phase_id == "phase1-what"
-    assert request.source_state_revision == store.load()["state_revision"]
-    assert request.recommended_option_id == "ISS-001"
-    assert [option.id for option in request.options if option.recommended] == [
-        "ISS-001"
-    ]
-    assert "first eligible entry" in request.recommendation_rationale
-    assert call.kwargs == {}
+    assert result.status == "blocked"
+    assert "stack_selection_required" in result.summary
+    assert state_path.read_bytes() == before
+    assert "blocked_decision" not in store.load()
     provider.exec_agent.assert_not_called()
 
 
@@ -5561,6 +5602,7 @@ def test_dispatch_cap_option_contract_failure_is_not_malformed_evidence(
         tmp_path,
         autonomy_mode="guided",
         policy=policy,
+        selected_stacks=("generic",),
     )
     for guard_name in (
         "_guard_constitution_provenance",
@@ -5648,6 +5690,7 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
         tmp_path,
         autonomy_mode=mode,
         policy=policy,
+        selected_stacks=("generic",),
     )
     for guard_name in (
         "_guard_constitution_provenance",
@@ -5773,6 +5816,7 @@ def test_dispatch_cap_bounds_issue_reads_and_candidate_count(
         tmp_path,
         autonomy_mode="guided",
         policy=policy,
+        selected_stacks=("generic",),
     )
     for guard_name in (
         "_guard_constitution_provenance",
@@ -5837,6 +5881,7 @@ def test_unresolvable_dispatch_cap_retires_prior_terminal_decision_authority(
         tmp_path,
         autonomy_mode="guided",
         policy=policy,
+        selected_stacks=("generic",),
     )
     for guard_name in (
         "_guard_constitution_provenance",
