@@ -1437,6 +1437,51 @@ def test_managed_why2_restores_best_candidate_with_forward_history(checkpoint_ca
     assert identity.reserve(spec_id="game", kind="FR", operation_id="post-restoration-counter", count=1) == ("FR-000003",)
 
 
+def test_selected_quality_candidate_reads_current_native_retained_proof(checkpoint_case, monkeypatch):
+    from harness.discovery_restoration import retained_quality_candidate_history
+    from harness.discovery_producer import SOURCE_FIELDS
+    from harness.element_identity_store import IdentityStore
+    from harness.proportional_quality import preflight_quality_candidate_restore
+    from tests.unit.test_discovery_turns import Interrupted
+
+    root, store, identity, _ = checkpoint_case
+    install_why2(checkpoint_case)
+    executor = UnresolvedRepairExecutor()
+    release = IdentityStore.release_identity_publication
+
+    def stop_at_first_assessment(self, **kwargs):
+        value = release(self, **kwargs)
+        if (store.load().get("last_dispatch") or {}).get("phase_id") == "phase1-why2":
+            raise Interrupted()
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(IdentityStore, "release_identity_publication", stop_at_first_assessment)
+        with pytest.raises(Interrupted):
+            controller(checkpoint_case, executor).run(
+                managed_discovery={**selection(checkpoint_case), "through_phase": "phase1-why2"},
+                create_managed_discovery=True,
+            )
+    before = store.load()
+    source = {key: before["last_dispatch"][key] for key in SOURCE_FIELDS}
+    operation_id = "discovery-completion-" + source["dispatch_id"]
+    row = identity.identity_publication(spec_id="game", operation_id=operation_id)
+    assert json.loads(row["completion_payload"])["version"] == 4
+    assert before["phase1_quality_repair"]["candidate_ids"] == ["quality-candidate-0"]
+    selected = preflight_quality_candidate_restore(
+        project_root=root, spec_dir=root / "specs/game",
+        manifest_path=store.squad_dir / "quality-candidates/quality-candidate-0.json",
+        expected_candidate_id="quality-candidate-0",
+        expected_manifest_sha256=json.loads(row["completion_payload"])["proof"]["receipts"]["effects"]["quality"]["candidate"]["manifest_sha256"],
+    )
+    history = identity.identity_history(spec_id="game")
+    assert retained_quality_candidate_history(root, store.squad_dir, before, source=source, selected=selected) == (history, source)
+    assert store.load() == before
+    assert identity.identity_history(spec_id="game") == history
+    assert identity.identity_publication(spec_id="game", operation_id=operation_id) == row
+    assert len(executor.calls) == 21 and before["token_usage"] == 147
+
+
 @pytest.mark.parametrize("choice", ["continue_with_debt", "stop"])
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_managed_quality_debt_choice_preserves_history_and_restarts(checkpoint_case, choice, provider, monkeypatch):

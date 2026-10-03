@@ -114,7 +114,10 @@ def retained_quality_candidate_history(project_root, run_dir, state, *, source, 
 
 def _retained_candidate_history(root, run, state, source, selected):
     from harness.discovery_bootstrap_state import bootstrap_from_state
-    from harness.discovery_completion import _released_discovery_projections, _retained_input_projection, _document
+    from harness.discovery_completion import (
+        _released_discovery_projections, _retained_input_projection,
+        _retained_completion_proof, _document,
+    )
     from harness.element_identity_store import IdentityStore
     from harness.proportional_quality import (
         PreflightedCandidateRestore, _is_candidate_id, preflight_quality_candidate_restore,
@@ -144,12 +147,12 @@ def _retained_candidate_history(root, run, state, source, selected):
         if binding.producer == "why2" and not binding.clarification:
             row = store.identity_publication(spec_id=selection["spec_id"], operation_id=operation_id)
             proof = _document(row["completion_payload"])
-            retained = proof["proof" if proof["version"] == 3 else "checkpoint"]
-            effect = retained["intent"]["quality_effect"]
+            _, intent, receipts = _retained_completion_proof(proof, source=source)
+            effect = intent.quality_effect
             if effect.get("candidate", {}).get("candidate_id") == candidate.candidate_id:
                 _require(effect["kind"] == "proportional_quality" and effect["operation"] == "candidate"
                     and effect["candidate"] == quality_candidate_effect_payload(replace(candidate, checkpoint_commit="0" * 40)))
-                receipt = _preflight_quality_effect_receipt(effect, "candidate", retained["receipts"]["effects"].get("quality"))
+                receipt = _preflight_quality_effect_receipt(effect, "candidate", receipts["effects"].get("quality"))
                 _require(receipt is not None and receipt["candidate"]["candidate_id"] == candidate.candidate_id
                     and receipt["candidate"]["manifest_sha256"] == selected.snapshot.sha256
                     and receipt["candidate"]["checkpoint"]["commit"] == candidate.checkpoint_commit)
